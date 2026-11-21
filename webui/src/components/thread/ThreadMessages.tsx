@@ -4,13 +4,22 @@ import { MessageBubble } from "@/components/MessageBubble";
 import { AgentActivityCluster } from "@/components/thread/AgentActivityCluster";
 import { AssistantSelectionAction } from "@/components/thread/AssistantSelectionAction";
 import { projectActivityTimeline, type TurnUnit } from "@/lib/activity-timeline";
-import type { CliAppInfo, McpPresetInfo, RetryStatus, SlashCommand, UIMessage } from "@/lib/types";
+import type {
+  CliAppInfo,
+  DelegatedChildReference,
+  McpPresetInfo,
+  RetryStatus,
+  SlashCommand,
+  UIMessage,
+} from "@/lib/types";
 
 interface ThreadMessagesProps {
   messages: UIMessage[];
   temporary?: boolean;
   /** When true, agent turn still in flight — keeps activity timeline expanded. */
   isStreaming?: boolean;
+  /** Reveal the latest ordinary assistant body after a conversation handoff. */
+  revealLatestHistoryMessage?: boolean;
   activeTurnId?: string | null;
   /** Optimistic or canonical active-turn start, in unix seconds. */
   runStartedAt?: number | null;
@@ -23,6 +32,10 @@ interface ThreadMessagesProps {
   onOpenFilePreview?: (path: string) => void;
   onForkFromMessage?: (beforeUserIndex: number) => void;
   onQuoteSelection?: (text: string) => void;
+  onOpenChildHistory?: (child: DelegatedChildReference, trigger: HTMLButtonElement) => void;
+  delegatedStatusAvailable?: boolean;
+  /** Prompt id (stable ``promptId`` or row ``id``) currently highlighted after a reveal. */
+  highlightedPromptId?: string | null;
 }
 
 export type DisplayUnit = TurnUnit;
@@ -62,6 +75,7 @@ export function ThreadMessages({
   messages,
   temporary = false,
   isStreaming = false,
+  revealLatestHistoryMessage = false,
   activeTurnId = null,
   runStartedAt = null,
   retryStatus = null,
@@ -73,6 +87,9 @@ export function ThreadMessages({
   onOpenFilePreview,
   onForkFromMessage,
   onQuoteSelection,
+  onOpenChildHistory,
+  delegatedStatusAvailable = true,
+  highlightedPromptId = null,
 }: ThreadMessagesProps) {
   const { t } = useTranslation();
   const messageListRef = useRef<HTMLDivElement>(null);
@@ -91,20 +108,46 @@ export function ThreadMessages({
       : new Set<number>(),
     [activeTurnId, isStreaming, units],
   );
-  const pendingTurn = useMemo(
-    () => pendingTurnProjection(messages, activeTurnId),
-    [activeTurnId, messages],
-  );
-  const pendingActivity = (
-    isStreaming
-    && liveActivityClusterIndices.size === 0
-    && pendingTurn !== null
-    && (retryStatus !== null || !pendingTurn.hasVisibleOutput)
-  ) ? pendingTurn : null;
   const currentTurnStartIndex = isStreaming
     ? activeTurnStartIndex(units, activeTurnId)
     : units.length;
+  const promptUnit = units[currentTurnStartIndex];
+  const activePrompt = promptUnit?.type === "message"
+    && (activeTurnId === null || promptUnit.message.turnId === activeTurnId)
+    ? promptUnit.message
+    : null;
+  // The elapsed clock must measure model work, not the client's send path.
+  // The prompt row is stamped when the user sends; the server's run start is
+  // stamped when the gateway actually begins the turn. Prefer the server.
+  const promptStartedAtMs = activePrompt
+    && activePrompt.timestampAvailable !== false
+    && Number.isFinite(activePrompt.createdAt)
+    ? activePrompt.createdAt
+    : undefined;
+  const activeStartedAtMs = runStartedAt != null
+    ? runStartedAt * 1000
+    : promptStartedAtMs;
+  const showPendingActivity = isStreaming
+    && liveActivityClusterIndices.size === 0
+    && (activePrompt !== null || activeStartedAtMs !== undefined);
   const unitKeys = useMemo(() => unitKeysForDisplay(units), [units]);
+  let revealMessageId: string | null = null;
+  if (revealLatestHistoryMessage && !isStreaming) {
+    for (let index = units.length - 1; index >= 0; index -= 1) {
+      const unit = units[index];
+      if (unit.type !== "message") continue;
+      const message = unit.message;
+      if (
+        message.role !== "assistant"
+        || (message.kind !== undefined && message.kind !== "message")
+        || message.compactReply !== undefined
+        || message.sessionMessage !== undefined
+        || message.activityKind === "model"
+      ) continue;
+      revealMessageId = message.id;
+      break;
+    }
+  }
   let nextUserIndex = hiddenUserMessageCount;
 
   // Render historical units eagerly. `content-visibility: auto` skipped their
@@ -130,6 +173,19 @@ export function ThreadMessages({
           unit.type === "message" && unit.message.role === "user"
             ? unit.message.id
             : undefined;
+        const userPromptKey =
+          unit.type === "message" && unit.message.role === "user"
+            ? (unit.message.promptId ?? unit.message.id)
+            : undefined;
+        const isPromptHighlighted = Boolean(
+          highlightedPromptId
+          && unit.type === "message"
+          && unit.message.role === "user"
+          && (
+            unit.message.id === highlightedPromptId
+            || unit.message.promptId === highlightedPromptId
+          ),
+        );
         const forkIndex =
           unit.type === "message" && unit.message.role === "assistant" && forkFlags[index]
             ? nextUserIndex
@@ -147,6 +203,11 @@ export function ThreadMessages({
             unit={unit}
             marginTop={marginTop}
             userPromptId={userPromptId}
+            userPromptKey={userPromptKey}
+            isPromptHighlighted={isPromptHighlighted}
+            revealOnHistoryEntry={
+              unit.type === "message" && unit.message.id === revealMessageId
+            }
             hasBodyBelow={hasBodyBelow}
             isTurnStreaming={
               unit.type === "activity"
@@ -162,6 +223,7 @@ export function ThreadMessages({
                 ? retryStatus
                 : null
             }
+            activeStartedAtMs={liveActivityClusterIndices.has(index) ? activeStartedAtMs : undefined}
             forkIndex={forkIndex}
             showForkBoundary={index === forkBoundaryAfterUnitIndex}
             forkBoundaryLabel={t("thread.forkedFromHistory")}
@@ -171,20 +233,19 @@ export function ThreadMessages({
             slashCommands={slashCommands}
             onOpenFilePreview={onOpenFilePreview}
             onForkFromMessage={onForkFromMessage}
+            onOpenChildHistory={onOpenChildHistory}
+            delegatedStatusAvailable={delegatedStatusAvailable}
           />
         );
       })}
-      {pendingActivity ? (
+      {showPendingActivity ? (
         <div className={units.length > 0 ? "mt-5" : undefined}>
           <AgentActivityCluster
             messages={[]}
             isTurnStreaming
             hasBodyBelow={false}
             retryStatus={retryStatus}
-            startedAtMs={
-              // Match the activity timeline's prompt-based clock across the first output.
-              pendingActivity.startedAtMs ?? (runStartedAt != null ? runStartedAt * 1000 : undefined)
-            }
+            startedAtMs={activeStartedAtMs}
           />
         </div>
       ) : null}
@@ -192,58 +253,18 @@ export function ThreadMessages({
   );
 }
 
-interface PendingTurnProjection {
-  startedAtMs?: number;
-  hasVisibleOutput: boolean;
-}
-
-function pendingTurnProjection(
-  messages: UIMessage[],
-  activeTurnId: string | null,
-): PendingTurnProjection | null {
-  let promptIndex = -1;
-  for (let index = messages.length - 1; index >= 0; index -= 1) {
-    const message = messages[index];
-    if (
-      message.role === "user"
-      && message.deliveryStatus !== "failed"
-      && (activeTurnId === null || message.turnId === activeTurnId)
-    ) {
-      promptIndex = index;
-      break;
-    }
-  }
-  if (promptIndex < 0) return null;
-
-  const prompt = messages[promptIndex];
-  const hasVisibleOutput = messages.slice(promptIndex + 1).some((message) => {
-    if (message.role === "user") return false;
-    if (activeTurnId && message.turnId && message.turnId !== activeTurnId) return false;
-    return (
-      message.content.trim().length > 0
-      || !!message.reasoning?.trim()
-      || !!message.reasoningStreaming
-      || message.kind === "trace"
-      || !!message.media?.length
-    );
-  });
-
-  return {
-    ...(typeof prompt.createdAt === "number" && Number.isFinite(prompt.createdAt)
-      ? { startedAtMs: prompt.createdAt }
-      : {}),
-    hasVisibleOutput,
-  };
-}
-
 interface ThreadDisplayUnitProps {
   unitKey: string;
   unit: DisplayUnit;
   marginTop: string;
   userPromptId?: string;
+  userPromptKey?: string;
+  isPromptHighlighted?: boolean;
+  revealOnHistoryEntry: boolean;
   hasBodyBelow: boolean;
   isTurnStreaming: boolean;
   retryStatus: RetryStatus | null;
+  activeStartedAtMs?: number;
   forkIndex?: number;
   showForkBoundary: boolean;
   forkBoundaryLabel: string;
@@ -253,6 +274,8 @@ interface ThreadDisplayUnitProps {
   slashCommands: SlashCommand[];
   onOpenFilePreview?: (path: string) => void;
   onForkFromMessage?: (beforeUserIndex: number) => void;
+  onOpenChildHistory?: (child: DelegatedChildReference, trigger: HTMLButtonElement) => void;
+  delegatedStatusAvailable: boolean;
 }
 
 const ThreadDisplayUnit = memo(function ThreadDisplayUnit({
@@ -260,9 +283,13 @@ const ThreadDisplayUnit = memo(function ThreadDisplayUnit({
   unit,
   marginTop,
   userPromptId,
+  userPromptKey,
+  isPromptHighlighted = false,
+  revealOnHistoryEntry,
   hasBodyBelow,
   isTurnStreaming,
   retryStatus,
+  activeStartedAtMs,
   forkIndex,
   showForkBoundary,
   forkBoundaryLabel,
@@ -272,6 +299,8 @@ const ThreadDisplayUnit = memo(function ThreadDisplayUnit({
   slashCommands,
   onOpenFilePreview,
   onForkFromMessage,
+  onOpenChildHistory,
+  delegatedStatusAvailable,
 }: ThreadDisplayUnitProps) {
   const onForkFromHere = useCallback(() => {
     if (forkIndex !== undefined) onForkFromMessage?.(forkIndex);
@@ -279,9 +308,15 @@ const ThreadDisplayUnit = memo(function ThreadDisplayUnit({
   return (
     <>
       <div
-        className={marginTop}
+        className={
+          isPromptHighlighted
+            ? `${marginTop} rounded-2xl ring-2 ring-primary/40 bg-primary/5 transition-colors duration-500`.trim()
+            : marginTop
+        }
         data-thread-display-unit={unitKey}
         data-user-prompt-id={userPromptId}
+        data-prompt-key={userPromptKey}
+        data-prompt-highlighted={isPromptHighlighted ? "true" : undefined}
       >
         {unit.type === "activity" ? (
           <AgentActivityCluster
@@ -289,8 +324,9 @@ const ThreadDisplayUnit = memo(function ThreadDisplayUnit({
             isTurnStreaming={isTurnStreaming}
             retryStatus={retryStatus}
             hasBodyBelow={hasBodyBelow}
+            showTurnDuration={isTurnStreaming || unit.showTurnDuration === true}
             turnLatencyMs={unit.turnLatencyMs}
-            startedAtMs={unit.startedAtMs}
+            startedAtMs={activeStartedAtMs ?? unit.startedAtMs}
             cliApps={cliApps}
             mcpPresets={mcpPresets}
             onOpenFilePreview={onOpenFilePreview}
@@ -299,12 +335,17 @@ const ThreadDisplayUnit = memo(function ThreadDisplayUnit({
           <MessageBubble
             message={unit.message}
             isTurnStreaming={isTurnStreaming}
+            revealOnHistoryEntry={revealOnHistoryEntry}
             temporary={temporary}
             cliApps={cliApps}
             mcpPresets={mcpPresets}
             slashCommands={slashCommands}
             onOpenFilePreview={onOpenFilePreview}
-            onForkFromHere={forkIndex !== undefined ? onForkFromHere : undefined}
+            onForkFromHere={
+              forkIndex !== undefined && onForkFromMessage ? onForkFromHere : undefined
+            }
+            onOpenChildHistory={onOpenChildHistory}
+            delegatedStatusAvailable={delegatedStatusAvailable}
           />
         )}
       </div>
@@ -321,9 +362,13 @@ function threadDisplayUnitPropsEqual(
     displayUnitsEqual(previous.unit, next.unit)
     && previous.marginTop === next.marginTop
     && previous.userPromptId === next.userPromptId
+    && previous.userPromptKey === next.userPromptKey
+    && previous.isPromptHighlighted === next.isPromptHighlighted
+    && previous.revealOnHistoryEntry === next.revealOnHistoryEntry
     && previous.hasBodyBelow === next.hasBodyBelow
     && previous.isTurnStreaming === next.isTurnStreaming
     && previous.retryStatus === next.retryStatus
+    && previous.activeStartedAtMs === next.activeStartedAtMs
     && previous.forkIndex === next.forkIndex
     && previous.showForkBoundary === next.showForkBoundary
     && previous.forkBoundaryLabel === next.forkBoundaryLabel
@@ -332,6 +377,8 @@ function threadDisplayUnitPropsEqual(
     && previous.mcpPresets === next.mcpPresets
     && previous.slashCommands === next.slashCommands
     && previous.onOpenFilePreview === next.onOpenFilePreview
+    && previous.onOpenChildHistory === next.onOpenChildHistory
+    && previous.delegatedStatusAvailable === next.delegatedStatusAvailable
     && previous.onForkFromMessage === next.onForkFromMessage
   );
 }
@@ -368,6 +415,8 @@ function displayUnitsEqual(previous: DisplayUnit, next: DisplayUnit): boolean {
   if (previous.type !== "activity" || next.type !== "activity") return false;
   return (
     previous.sourceMessageCount === next.sourceMessageCount
+    && previous.turnId === next.turnId
+    && previous.showTurnDuration === next.showTurnDuration
     && previous.turnLatencyMs === next.turnLatencyMs
     && previous.startedAtMs === next.startedAtMs
     && previous.messages.length === next.messages.length
@@ -414,11 +463,14 @@ function currentActivityClusterIndices(
 ): Set<number> {
   const indices = new Set<number>();
   if (activeTurnId) {
+    // The active turn owns exactly one activity fold, so that fold keeps the
+    // live label and stays open while the request is processing. Nothing below
+    // the transcript repeats the same state.
     for (let i = units.length - 1; i >= 0; i -= 1) {
       const unit = units[i];
       if (
         unit.type === "activity"
-        && unit.messages.some((message) => message.turnId === activeTurnId)
+        && unit.turnId === activeTurnId
       ) {
         indices.add(i);
         return indices;

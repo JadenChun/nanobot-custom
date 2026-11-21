@@ -7,7 +7,7 @@ from nanobot.remote.owner import RemoteAccessOwner
 
 
 def test_local_manager_pair_devices_and_toggle(tmp_path: Path) -> None:
-    owner = RemoteAccessOwner(tmp_path / "remote-access")
+    owner = RemoteAccessOwner(tmp_path / "remote-access", serve_verifier=lambda _origin: True)
     owner.start()
     token = owner.store.admin_token()
     manager = RemoteAccessManager(owner.socket_path, token)

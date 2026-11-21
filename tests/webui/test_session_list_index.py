@@ -7,8 +7,11 @@ import threading
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
+from unittest.mock import Mock
 
 import pytest
+from websockets.datastructures import Headers
+from websockets.http11 import Request
 
 import nanobot.webui.session_list_index as session_list_index
 from nanobot.cron.session_turns import CRON_HISTORY_META
@@ -19,6 +22,9 @@ from nanobot.session.history_visibility import HIDDEN_HISTORY_META
 from nanobot.session.manager import SessionManager
 from nanobot.session.model_selection import SESSION_MODEL_PRESET_METADATA_KEY
 from nanobot.session.recovery import RECOVERY_METADATA_KEY
+from nanobot.session.runtime_authority import DurableSessionAuthority
+from nanobot.session.session_handles import SESSION_HANDLE_METADATA_KEY, session_handle_for_name
+from tests.webui.test_child_thread_route import _make_channel
 
 
 @pytest.fixture(autouse=True)
@@ -26,6 +32,61 @@ def _isolate_webui_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     webui_dir = tmp_path / "webui"
     webui_dir.mkdir(exist_ok=True)
     monkeypatch.setattr(session_list_index, "get_webui_dir", lambda: webui_dir)
+
+
+async def test_sidebar_get_projects_handles_without_authority_inventory_or_session_writes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    lease = await DurableSessionAuthority(workspace, sessions_root=tmp_path / "sessions").acquire()
+    try:
+        manager = lease.manager
+        key = "websocket:existing"
+        manager.admit_persistent_write(key)
+        manager.update_session_metadata(key, {SESSION_HANDLE_METADATA_KEY: "luma"})
+        manager.admit_persistent_write("websocket:other")
+        manager.upsert_session_metadata("websocket:other", {}, removals=(SESSION_HANDLE_METADATA_KEY,))
+        before = {path.name: path.read_bytes() for path in manager.sessions_dir.glob("*.jsonl")}
+        list_webui_sessions(manager)
+        inventory = Mock(wraps=manager.list_sessions)
+        update = Mock(wraps=manager.update_session_metadata)
+        monkeypatch.setattr(manager, "list_sessions", inventory)
+        monkeypatch.setattr(manager, "update_session_metadata", update)
+        gateway = _make_channel(tmp_path, manager).gateway
+        monkeypatch.setattr(gateway.http, "check_api_token", lambda _request: True)
+
+        response = await gateway.http._handle_sessions_list(Request("/api/sessions", Headers()))
+
+        assert response.status_code == 200
+        rows = {row["key"]: row for row in json.loads(response.body)["sessions"]}
+        assert rows[key]["handle"] == session_handle_for_name(key, "luma").public_payload()
+        assert "handle" not in rows["websocket:other"]
+        inventory.assert_not_called()
+        update.assert_not_called()
+        assert {path.name: path.read_bytes() for path in manager.sessions_dir.glob("*.jsonl")} == before
+    finally:
+        assert lease.close is not None
+        await lease.close()
+
+
+async def test_new_managed_chat_and_fork_have_distinct_handles_before_any_list_read(tmp_path: Path):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    lease = await DurableSessionAuthority(workspace, sessions_root=tmp_path / "sessions").acquire()
+    try:
+        manager = lease.manager
+        manager.admit_persistent_write("websocket:original")
+        manager.fork_session_before_user_index("websocket:original", "websocket:fork", 0)
+
+        rows = {row["key"]: row["handle"] for row in list_webui_sessions(manager)}
+        assert set(rows) == {"websocket:original", "websocket:fork"}
+        assert rows["websocket:original"]["name"] != rows["websocket:fork"]["name"]
+        for key, handle in rows.items():
+            assert manager.read_session_metadata(key)["metadata"][SESSION_HANDLE_METADATA_KEY] == handle["name"]
+    finally:
+        assert lease.close is not None
+        await lease.close()
 
 
 def test_webui_session_list_reuses_valid_index_without_scanning_files(

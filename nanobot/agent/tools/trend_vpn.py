@@ -36,6 +36,7 @@ else:
 
 DEFAULT_SOCKET_PATH = "/run/agent-vpn-broker/broker.sock"
 MAX_RESPONSE_BYTES = 256 * 1024
+_LATE_START_CLEANUPS: set[asyncio.Task[None]] = set()
 
 
 class TrendVpnBrokerError(RuntimeError):
@@ -148,22 +149,63 @@ class TrendVpnSessionStartTool(_TrendVpnTool, metaclass=_ConstantToolMetadata):
             },
         }
 
+    @staticmethod
+    async def _close_late_start(
+        task: asyncio.Task[dict[str, Any]],
+        client: TrendVpnBrokerClient,
+    ) -> None:
+        """Settle one cancelled start and close any session it acquired."""
+        try:
+            response = await task
+        except BaseException:
+            return
+        session_id = response.get("session_id")
+        if not isinstance(session_id, str) or not session_id:
+            return
+        try:
+            await client.request_async(
+                "close_session",
+                session_id=session_id,
+            )
+        except Exception:
+            logger.warning("late trend VPN session {} could not be closed", session_id)
+
+    @classmethod
+    def _track_late_start(
+        cls,
+        task: asyncio.Task[dict[str, Any]],
+        client: TrendVpnBrokerClient,
+    ) -> None:
+        cleanup = asyncio.create_task(cls._close_late_start(task, client))
+        _LATE_START_CLEANUPS.add(cleanup)
+        cleanup.add_done_callback(_LATE_START_CLEANUPS.discard)
+
     async def execute(self, ttl_seconds: int | None = None, **kwargs: Any) -> str:
         try:
             params = {} if ttl_seconds is None else {"ttl_seconds": ttl_seconds}
             candidates = await asyncio.to_thread(fetch_candidates, max_candidates=8)
             failures: list[str] = []
             for candidate in candidates:
-                try:
-                    response = await self._client().request_async(
+                client = self._client()
+                start_task = asyncio.create_task(
+                    client.request_async(
                         "start_session",
                         **params,
                         relay_profile=candidate.profile_text,
                         relay_label=candidate.label,
                         relay_timeout_seconds=20,
                     )
+                )
+                try:
+                    response = await asyncio.shield(start_task)
                     logger.info("trend VPN session started via {}", candidate.label)
                     return json.dumps(response, ensure_ascii=False)
+                except asyncio.CancelledError:
+                    # A broker thread may still acquire a lease after this turn
+                    # is cancelled. Keep the attempt with the VPN owner and
+                    # close any returned session.
+                    self._track_late_start(start_task, client)
+                    raise
                 except TrendVpnBrokerError as exc:
                     detail = str(exc)[:180]
                     failures.append(f"{candidate.hostname}: {detail}")

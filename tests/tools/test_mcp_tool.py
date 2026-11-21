@@ -1,14 +1,18 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+import io
 import json
 import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
+from unittest.mock import AsyncMock
 
 import httpx
 import pytest
+from mcp.types import ResourceLink as _RealResourceLink
 
 import nanobot.agent.tools.mcp as mcp_mod
 from nanobot.agent.tools.mcp import (
@@ -19,8 +23,10 @@ from nanobot.agent.tools.mcp import (
     _normalize_windows_stdio_command,
     _sanitize_mcp_tool_name,
     _sanitize_name,
+    _validate_mcp_schema,
     connect_mcp_servers,
 )
+from nanobot.agent.tools.progress import ToolProgressSink, bind_tool_progress_sink
 from nanobot.agent.tools.registry import ToolRegistry, is_tool_error_result
 from nanobot.config.schema import MCPServerConfig
 
@@ -213,7 +219,7 @@ async def test_saved_oauth_http_403_projects_failed_runtime_without_details(
     class AuthorizationRequiredError(RuntimeError):
         pass
 
-    async def create_auth(_name: str, _url: str, _handlers=None) -> httpx.Auth:
+    async def create_auth(_name: str, _url: str, _handlers=None, **_kwargs: object) -> httpx.Auth:
         return OAuthAuth()
 
     @asynccontextmanager
@@ -233,7 +239,7 @@ async def test_saved_oauth_http_403_projects_failed_runtime_without_details(
     oauth_mod = ModuleType("nanobot.agent.tools.mcp_oauth")
     oauth_mod.MCPAuthorizationRequiredError = AuthorizationRequiredError  # type: ignore[attr-defined]
     oauth_mod.create_mcp_oauth_auth = create_auth  # type: ignore[attr-defined]
-    oauth_mod.mcp_oauth_has_credentials = lambda _name, _url: True  # type: ignore[attr-defined]
+    oauth_mod.mcp_oauth_has_credentials = lambda _name, _url, **_kwargs: True  # type: ignore[attr-defined]
     monkeypatch.setitem(sys.modules, "nanobot.agent.tools.mcp_oauth", oauth_mod)
     monkeypatch.setattr(mcp_mod, "validate_url_target", lambda _url: (True, ""))
     monkeypatch.setattr(mcp_mod, "_probe_http_url", reachable)
@@ -419,6 +425,44 @@ def test_wrapper_resolves_uri_encoded_json_pointer() -> None:
     assert wrapper.parameters["$defs"][generated_name] == {"type": "string"}
 
 
+def test_wrapper_treats_remote_read_only_annotation_as_untrusted_hint() -> None:
+    def _tool_def(read_only: bool) -> SimpleNamespace:
+        return SimpleNamespace(
+            name="read_demo",
+            description="demo",
+            inputSchema={"type": "object", "properties": {}},
+            annotations=SimpleNamespace(readOnlyHint=read_only),
+        )
+
+    remote = MCPToolWrapper(
+        SimpleNamespace(call_tool=None),
+        "remote",
+        _tool_def(read_only=True),
+        transport_type="streamable_http",
+        server_url="https://example.com/mcp",
+    )
+    local = MCPToolWrapper(
+        SimpleNamespace(call_tool=None),
+        "remote",
+        _tool_def(read_only=True),
+        transport_type="stdio",
+        server_url="https://example.com/mcp",
+    )
+    remote_mutating = MCPToolWrapper(
+        SimpleNamespace(call_tool=None),
+        "remote",
+        _tool_def(read_only=False),
+        transport_type="streamable_http",
+        server_url="https://example.com/mcp",
+    )
+
+    assert remote.is_read_only is False
+    assert remote.mcp_metadata.read_only_source == "annotation_untrusted"
+    assert local.is_read_only is True
+    assert local.mcp_metadata.read_only_source == "annotation"
+    assert remote_mutating.is_read_only is False
+
+
 def test_normalize_windows_stdio_command_is_noop_off_windows(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -523,6 +567,63 @@ async def test_execute_returns_text_blocks() -> None:
     result = await wrapper.execute(value=1)
 
     assert result == "hello\n42"
+
+
+@pytest.mark.asyncio
+async def test_execute_passes_progress_callback_to_running_sink() -> None:
+    progress_frames: list[dict[str, object]] = []
+
+    async def publish(payload: dict[str, object]) -> None:
+        progress_frames.append(payload)
+
+    async def call_tool(
+        _name: str,
+        arguments: dict,
+        *,
+        progress_callback: object = None,
+    ) -> object:
+        assert arguments == {"prompt": "a cat"}
+        assert callable(progress_callback)
+        await progress_callback(35, 100, "Starting ComfyUI")  # type: ignore[misc]
+        await progress_callback(35, 100, "Starting ComfyUI")  # type: ignore[misc]
+        await progress_callback(62, 100, "ComfyUI is generating prompt...")  # type: ignore[misc]
+        return SimpleNamespace(content=[_FakeTextContent("done")])
+
+    sink = ToolProgressSink(
+        call_id="call-comfy",
+        name="mcp_comfy_generate_video",
+        publish=publish,
+    )
+    wrapper = _make_wrapper(SimpleNamespace(call_tool=call_tool))
+
+    with bind_tool_progress_sink(sink):
+        result = await wrapper.execute(prompt="a cat")
+
+    assert result == "done"
+    assert [frame["message"] for frame in progress_frames] == [
+        "Starting ComfyUI",
+        "ComfyUI is generating prompt...",
+    ]
+    assert all(frame["phase"] == "progress" for frame in progress_frames)
+    assert all(frame["call_id"] == "call-comfy" for frame in progress_frames)
+    assert progress_frames[-1]["progress"] == 62
+    assert progress_frames[-1]["total"] == 100
+
+
+@pytest.mark.asyncio
+async def test_execute_omits_progress_callback_without_a_sink() -> None:
+    received: dict[str, object] = {}
+
+    async def call_tool(_name: str, arguments: dict, **options: object) -> object:
+        received.update(options)
+        return SimpleNamespace(content=[_FakeTextContent("plain")])
+
+    wrapper = _make_wrapper(SimpleNamespace(call_tool=call_tool))
+
+    result = await wrapper.execute()
+
+    assert result == "plain"
+    assert "progress_callback" not in received
 
 
 @pytest.mark.asyncio
@@ -636,36 +737,77 @@ async def test_execute_persists_image_block_as_artifact(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_execute_structured_refs_keep_only_generated_candidates(tmp_path: Path) -> None:
+@pytest.mark.parametrize("missing_candidate", [None, 2], ids=["with-file-link", "partial"])
+async def test_execute_image_batch_advertises_only_generated_candidates(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, missing_candidate: int | None,
+) -> None:
+    from PIL import Image
+
     from nanobot.agent.turn import ToolOutcome
     from nanobot.config.loader import set_config_path
+    from nanobot.utils import artifacts
 
     set_config_path(tmp_path / "config.json")
-    payload = json.dumps({
-        "candidate_count": 1,
-        "candidates": [{"candidate": 1, "prompt": "candidate prompt"}],
-    })
+
+    def png(color: str) -> bytes:
+        buffer = io.BytesIO()
+        Image.new("RGB", (2, 2), color).save(buffer, format="PNG")
+        return buffer.getvalue()
+
+    source = png("black")
+    images = [png(color) for color in ("red", "green", "blue", "white")]
+    output_root = tmp_path / "generated-candidates"
+    output_root.mkdir()
+    candidate_files = [output_root / f"option-{number}.png" for number in range(1, 5)]
+    for path, data in zip(candidate_files, images, strict=True):
+        path.write_bytes(data)
+
+    if missing_candidate is not None:
+        persist = artifacts.atomic_write_bytes
+        missing_bytes = images[missing_candidate - 1]
+
+        def write_bytes(path: Path, data: bytes) -> None:
+            if data == missing_bytes:
+                raise OSError("Fixture image write failed")
+            persist(path, data)
+
+        monkeypatch.setattr(artifacts, "atomic_write_bytes", write_bytes)
+
+    def image_block(data: bytes) -> _FakeImageContent:
+        return _FakeImageContent(base64.b64encode(data).decode())
+
+    candidates = [
+        {"candidate": number, "prompt": f"Option {number}", "file": str(path)}
+        for number, path in enumerate(candidate_files, 1)
+    ]
 
     async def call_tool(_name: str, arguments: dict) -> object:
-        return SimpleNamespace(
-            content=[
-                _FakeTextContent(payload),
-                _FakeTextContent("CRITIC CONTEXT"),
-                _FakeImageContent(_PNG_B64, "image/png"),
-                _FakeTextContent("CANDIDATE 1"),
-                _FakeImageContent(_PNG_B64, "image/png"),
-            ]
-        )
+        content: list[object] = [
+            _FakeTextContent(json.dumps({"candidate_count": 4, "candidates": candidates})),
+            _FakeTextContent("EDIT TARGET / SOURCE"),
+            image_block(source),
+        ]
+        for number, (data, path) in enumerate(zip(images, candidate_files, strict=True), 1):
+            content.extend([_FakeTextContent(f"CANDIDATE {number}"), image_block(data)])
+            if number == 3 and missing_candidate is None:
+                content.append(_FakeResourceLink(path.as_uri(), "image/png"))
+        return SimpleNamespace(content=content)
 
-    wrapper = _make_wrapper(SimpleNamespace(call_tool=call_tool))
+    wrapper = _make_wrapper(SimpleNamespace(call_tool=call_tool), media_output_roots=(output_root,))
 
-    result = await wrapper.execute(prompt="a cat")
+    result = await wrapper.execute(prompt="Edit the source", candidates=4)
 
     assert isinstance(result, ToolOutcome)
     visible = json.loads(result.content)
-    assert len(visible["artifacts"]) == 2
-    assert len(result.media_artifacts) == 1
-    assert result.media_artifacts[0]["id"] == visible["artifacts"][1]["id"]
+    assert [(item["candidate"], Path(item["path"]).read_bytes()) for item in visible["artifacts"]] == [
+        (number, data) for number, data in enumerate(images, 1) if number != missing_candidate
+    ]
+    assert [(item["id"], item["path"]) for item in result.media_artifacts] == [
+        (item["id"], item["path"]) for item in visible["artifacts"]
+    ]
+    assert [Path(path).read_bytes() for path in visible["reference_images"]] == [source]
+    if missing_candidate is not None:
+        assert "image that could not be stored" in visible["text"]
 
 
 @pytest.mark.asyncio
@@ -700,6 +842,105 @@ async def test_execute_stages_trusted_video_resource(tmp_path: Path) -> None:
     assert artifact["bytes"] == len(b"video-bytes")
     assert Path(artifact["path"]).is_file()
     assert Path(artifact["path"]).read_bytes() == b"video-bytes"
+
+
+@pytest.mark.asyncio
+async def test_execute_stages_resource_link_with_any_url(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from pydantic.networks import AnyUrl
+
+    from nanobot.agent.turn import ToolOutcome
+    from nanobot.config.loader import set_config_path
+
+    set_config_path(tmp_path / "config.json")
+    output_root = tmp_path / "comfy-output"
+    output_root.mkdir()
+    video = output_root / "clip.mp4"
+    video.write_bytes(b"video-bytes")
+
+    link = _RealResourceLink(
+        type="resource_link",
+        uri=video.as_uri(),
+        name="clip.mp4",
+        mimeType="video/mp4",
+    )
+    assert isinstance(link.uri, AnyUrl)
+    assert not isinstance(link.uri, str)
+    monkeypatch.setattr(sys.modules["mcp"].types, "ResourceLink", _RealResourceLink)
+
+    async def call_tool(_name: str, arguments: dict) -> object:
+        return SimpleNamespace(content=[
+            _FakeTextContent(json.dumps({"prompt": "a clip"})),
+            link,
+        ])
+
+    wrapper = _make_wrapper(
+        SimpleNamespace(call_tool=call_tool),
+        media_output_roots=(output_root,),
+    )
+
+    result = await wrapper.execute(prompt="a clip")
+
+    assert isinstance(result, ToolOutcome)
+    assert len(result.media_artifacts) == 1
+    artifact = result.media_artifacts[0]
+    assert artifact["kind"] == "video"
+    assert artifact["mime"] == "video/mp4"
+    assert Path(artifact["path"]).read_bytes() == b"video-bytes"
+    visible = json.loads(result.content)
+    assert [item["id"] for item in visible["artifacts"]] == [artifact["id"]]
+
+
+@pytest.mark.asyncio
+async def test_execute_keeps_video_artifact_and_demotes_review_frames(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from nanobot.agent.turn import ToolOutcome
+    from nanobot.config.loader import set_config_path
+
+    set_config_path(tmp_path / "config.json")
+    output_root = tmp_path / "comfy-output"
+    output_root.mkdir()
+    video = output_root / "clip.mp4"
+    video.write_bytes(b"video-bytes")
+    monkeypatch.setattr(sys.modules["mcp"].types, "ResourceLink", _RealResourceLink)
+
+    payload = {
+        "video": str(video),
+        "review": {"sampled_frames": [1, 2, 3]},
+    }
+
+    async def call_tool(_name: str, arguments: dict) -> object:
+        content: list[object] = [
+            _FakeTextContent(json.dumps(payload)),
+            _RealResourceLink(
+                type="resource_link",
+                uri=video.as_uri(),
+                name="clip.mp4",
+                mimeType="video/mp4",
+            ),
+        ]
+        for frame in range(3):
+            content.append(_FakeTextContent(f"REVIEW FRAME {frame + 1}/3"))
+            content.append(_FakeImageContent(_PNG_B64, "image/png"))
+        return SimpleNamespace(content=content)
+
+    wrapper = _make_wrapper(
+        SimpleNamespace(call_tool=call_tool),
+        media_output_roots=(output_root,),
+    )
+
+    result = await wrapper.execute(prompt="a clip", workflow="minimax_h3")
+
+    assert isinstance(result, ToolOutcome)
+    assert [artifact["kind"] for artifact in result.media_artifacts] == ["video"]
+    visible = json.loads(result.content)
+    assert [artifact["kind"] for artifact in visible["artifacts"]] == ["video"]
+    assert visible["artifacts"][0]["model"] == "minimax_h3"
+    reference_images = visible["reference_images"]
+    assert len(reference_images) == 3
+    assert all(Path(path).is_file() for path in reference_images)
 
 
 @pytest.mark.asyncio
@@ -1497,7 +1738,7 @@ async def test_connect_mcp_servers_attaches_oauth_to_remote_http_client(
     def _validate(_url: str) -> tuple[bool, str]:
         return True, ""
 
-    async def _create_auth(name: str, url: str, handlers: object) -> object:
+    async def _create_auth(name: str, url: str, handlers: object, **_kwargs: object) -> object:
         captured.update(name=name, url=url, handlers=handlers)
         return oauth_auth
 
@@ -1570,7 +1811,7 @@ async def test_connect_mcp_servers_skips_background_oauth_without_credentials(
     class AuthorizationRequiredError(RuntimeError):
         pass
 
-    async def _create_auth(*_args: object) -> object:
+    async def _create_auth(*_args: object, **_kwargs: object) -> object:
         raise AuthorizationRequiredError
 
     probe_called = False
@@ -2082,3 +2323,178 @@ def test_long_server_name_tools_are_matched_by_server_name() -> None:
     assert removed == 1
     assert wrapper.name not in registry.tool_names
     assert other_wrapper.name in registry.tool_names
+
+
+@pytest.mark.asyncio
+async def test_connect_mcp_servers_readiness_timeout_publishes_nothing(
+    fake_mcp_runtime: dict[str, object | None],
+) -> None:
+    session = _make_fake_session(["demo"])
+
+    async def _blocking_initialize() -> None:
+        await asyncio.Event().wait()
+
+    session.initialize = _blocking_initialize
+    fake_mcp_runtime["session"] = session
+    registry = ToolRegistry()
+
+    result = await asyncio.wait_for(
+        connect_mcp_servers(
+            {"slow": MCPServerConfig(command="fake")},
+            registry,
+            readiness_timeout=0.05,
+        ),
+        timeout=2,
+    )
+
+    assert result == {}
+    assert registry.tool_names == []
+
+
+@pytest.mark.asyncio
+async def test_connect_mcp_servers_rejects_unsupported_schema_before_publication(
+    fake_mcp_runtime: dict[str, object | None],
+) -> None:
+    valid_tool = SimpleNamespace(
+        name="valid",
+        description="valid tool",
+        inputSchema={"type": "object", "properties": {}},
+    )
+    bad_tool = SimpleNamespace(
+        name="bad",
+        description="bad tool",
+        inputSchema={
+            "type": "object",
+            "properties": {"name": {"type": "string", "pattern": "^a"}},
+        },
+    )
+
+    async def initialize() -> None:
+        return None
+
+    async def list_tools() -> SimpleNamespace:
+        return SimpleNamespace(tools=[valid_tool, bad_tool])
+
+    fake_mcp_runtime["session"] = SimpleNamespace(
+        initialize=initialize,
+        list_tools=list_tools,
+    )
+    registry = ToolRegistry()
+
+    stacks = await connect_mcp_servers({"test": MCPServerConfig(command="fake")}, registry)
+    for stack in stacks.values():
+        await stack.aclose()
+
+    assert registry.tool_names == ["mcp_test_valid"]
+
+
+@pytest.mark.asyncio
+async def test_connect_mcp_servers_admits_draft7_annotations_and_numeric_constraints(
+    fake_mcp_runtime: dict[str, object | None],
+) -> None:
+    draft7 = {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+            "width": {"type": "integer", "minimum": 512, "maximum": 6272, "multipleOf": 32},
+            "threshold": {"type": ["number", "null"], "exclusiveMinimum": 0},
+        },
+        "required": ["width"],
+    }
+    admitted_tool = SimpleNamespace(name="admitted", description="admitted", inputSchema=draft7)
+
+    async def initialize() -> None:
+        return None
+
+    async def list_tools() -> SimpleNamespace:
+        return SimpleNamespace(tools=[admitted_tool])
+
+    fake_mcp_runtime["session"] = SimpleNamespace(initialize=initialize, list_tools=list_tools)
+    registry = ToolRegistry()
+
+    stacks = await connect_mcp_servers({"test": MCPServerConfig(command="fake")}, registry)
+    for stack in stacks.values():
+        await stack.aclose()
+
+    assert registry.tool_names == ["mcp_test_admitted"]
+
+
+@pytest.mark.parametrize(
+    ("keyword", "limit"),
+    [
+        ("multipleOf", 0),
+        ("multipleOf", -1),
+        ("multipleOf", True),
+        ("multipleOf", "2"),
+        ("multipleOf", None),
+        ("exclusiveMinimum", True),
+        ("exclusiveMinimum", "0"),
+        ("exclusiveMinimum", None),
+        ("exclusiveMaximum", False),
+        ("exclusiveMaximum", "100"),
+        ("exclusiveMaximum", None),
+    ],
+)
+def test_validate_mcp_schema_refuses_unusable_numeric_limits(keyword: str, limit: object) -> None:
+    schema = {
+        "type": "object",
+        "properties": {"value": {"type": "number", keyword: limit}},
+        "required": ["value"],
+    }
+
+    error = _validate_mcp_schema(schema)
+
+    assert error is not None
+    assert keyword in error
+
+
+@pytest.mark.parametrize(
+    ("keyword", "limit"),
+    [
+        ("multipleOf", 1),
+        ("multipleOf", 0.5),
+        ("exclusiveMinimum", 0),
+        ("exclusiveMinimum", -1),
+        ("exclusiveMaximum", 0),
+        ("exclusiveMaximum", 100.5),
+    ],
+)
+def test_validate_mcp_schema_admits_enforceable_numeric_limits(
+    keyword: str, limit: float
+) -> None:
+    schema = {
+        "type": "object",
+        "properties": {"value": {"type": "number", keyword: limit}},
+        "required": ["value"],
+    }
+
+    assert _validate_mcp_schema(schema) is None
+
+
+@pytest.mark.parametrize(
+    "schema",
+    [
+        {"$schema": 7, "type": "object"},
+        {"$schema": {}, "type": "object"},
+        {"$schema": "", "type": "object"},
+    ],
+)
+def test_validate_mcp_schema_refuses_malformed_dialect_annotation(schema: dict[str, object]) -> None:
+    error = _validate_mcp_schema(schema)
+
+    assert error is not None
+    assert "$schema" in error
+
+
+@pytest.mark.asyncio
+async def test_provider_concurrent_connect_shares_one_attempt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    registry = ToolRegistry()
+    provider = MCPProvider({"test": MCPServerConfig(command="fake")}, registry)
+    connect_attempt = AsyncMock(return_value={})
+    monkeypatch.setattr(mcp_mod, "connect_mcp_servers", connect_attempt)
+
+    await asyncio.gather(provider.connect(), provider.connect())
+
+    assert connect_attempt.await_count == 1

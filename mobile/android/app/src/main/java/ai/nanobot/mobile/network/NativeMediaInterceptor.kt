@@ -59,7 +59,7 @@ object NativeMediaInterceptor {
         }
         Log.i(
             "NanobotMedia",
-            "open ${request.url} status=$status cached=${info.optBoolean("cached")}",
+            mediaLogLine(status, info.optBoolean("cached"), headers),
         )
         val mime = headers["Content-Type"] ?: "application/octet-stream"
         return WebResourceResponse(
@@ -72,8 +72,33 @@ object NativeMediaInterceptor {
         )
     }
 
-    private fun failure(status: Int, reason: String): WebResourceResponse =
-        WebResourceResponse(
+    /**
+     * Signed media URLs are bearer capabilities: the signature is the
+     * authorization material. A log line may carry numeric response facts only,
+     * so no URL, signature or credential can be replayed from logcat.
+     */
+    internal fun mediaLogLine(
+        status: Int,
+        cached: Boolean,
+        headers: Map<String, String>,
+    ): String {
+        val bytes = headerValue(headers, "Content-Length")?.trim()?.toLongOrNull() ?: -1L
+        val range = headerValue(headers, "Content-Range")?.let(::contentRangeCounts) ?: "-"
+        return "open status=$status cached=$cached bytes=$bytes range=$range"
+    }
+
+    private fun headerValue(headers: Map<String, String>, name: String): String? =
+        headers.entries.firstOrNull { it.key.equals(name, ignoreCase = true) }?.value
+
+    private val contentRangePattern = Regex("""bytes\s+(\d+)-(\d+)/(\d+|\*)""")
+
+    private fun contentRangeCounts(value: String): String? {
+        val match = contentRangePattern.find(value.trim()) ?: return null
+        val (start, end, total) = match.destructured
+        return "$start-$end/$total"
+    }
+
+    private fun failure(status: Int, reason: String): WebResourceResponse =        WebResourceResponse(
             "text/plain",
             "utf-8",
             status,

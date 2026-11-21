@@ -6,6 +6,8 @@ import importlib.util
 import json
 from pathlib import Path
 
+import pytest
+
 
 def _load_module():
     script_path = (
@@ -130,6 +132,58 @@ def test_event_selection_preserves_endpoints_and_frame_limit():
     assert events[0] == {"time": 0.0, "reason": "start", "priority": 3}
     assert events[-1] == {"time": 29.95, "reason": "end", "priority": 3}
     assert all(left["time"] < right["time"] for left, right in zip(events, events[1:]))
+
+
+@pytest.mark.parametrize(
+    "max_gap_seconds",
+    [0.0, -1.0, float("nan"), float("inf")],
+)
+def test_add_gap_frames_rejects_invalid_max_gap_seconds(max_gap_seconds):
+    module = _load_module()
+    events = [
+        {"time": 0.0, "reason": "start", "priority": 3},
+        {"time": 30.0, "reason": "end", "priority": 3},
+    ]
+
+    with pytest.raises(ValueError):
+        module._add_gap_frames(events, max_gap_seconds)
+
+
+def test_build_events_with_default_gap_produces_strictly_increasing_times():
+    module = _load_module()
+    events = module._build_events(
+        30.0, [2.0, 20.0],
+        min_spacing_seconds=0.75, max_gap_seconds=6.0, max_frames=100,
+    )
+
+    times = [event["time"] for event in events]
+    assert len(times) > 2
+    assert all(left < right for left, right in zip(times, times[1:]))
+
+
+@pytest.mark.parametrize("value", ["0", "nan"])
+def test_main_rejects_invalid_max_gap_before_output_or_extraction(
+    tmp_path, monkeypatch, value,
+):
+    module = _load_module()
+    video = tmp_path / "demo.mp4"
+    video.write_bytes(b"offline fixture")
+    output = tmp_path / "keyframes"
+
+    def unexpected(*args, **kwargs):
+        raise AssertionError("must not run for invalid --max-gap-seconds")
+
+    monkeypatch.setattr(module.sys, "argv", [
+        "extract_keyframes.py", str(video), "--output-dir", str(output),
+        "--max-gap-seconds", value,
+    ])
+    monkeypatch.setattr(module, "_probe_duration", unexpected)
+    monkeypatch.setattr(module, "_extract_frame", unexpected)
+
+    with pytest.raises(SystemExit):
+        module.main()
+
+    assert not output.exists()
 
 
 def test_main_writes_storyboards_and_reuses_cache(tmp_path, monkeypatch, capsys):

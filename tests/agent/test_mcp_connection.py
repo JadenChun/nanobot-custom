@@ -17,7 +17,12 @@ from mcp.types import ErrorData
 
 from nanobot.agent.tools import mcp as mcp_runtime
 from nanobot.agent.tools.base import Tool
-from nanobot.agent.tools.mcp import MCPProvider, MCPResourceWrapper, MCPToolWrapper
+from nanobot.agent.tools.mcp import (
+    MCPProvider,
+    MCPReadinessAbortedError,
+    MCPResourceWrapper,
+    MCPToolWrapper,
+)
 from nanobot.agent.tools.registry import ToolRegistry
 from nanobot.config.loader import load_config, save_config
 from nanobot.config.schema import MCPServerConfig
@@ -174,7 +179,7 @@ async def test_connect_mcp_does_not_report_failure_before_oauth_authorization(
     monkeypatch.setattr("nanobot.agent.tools.mcp.connect_mcp_servers", connect)
     monkeypatch.setattr(
         "nanobot.agent.tools.mcp_oauth.mcp_oauth_has_credentials",
-        lambda _name, _url: False,
+        lambda _name, _url, **_kwargs: False,
     )
 
     await provider.connect()
@@ -525,7 +530,7 @@ async def test_reload_mcp_servers_skips_oauth_server_waiting_for_authorization(
     monkeypatch.setattr("nanobot.agent.tools.mcp.connect_mcp_servers", _fake_connect)
     monkeypatch.setattr(
         "nanobot.agent.tools.mcp_oauth.mcp_oauth_has_credentials",
-        lambda name, _url: name == "linear",
+        lambda name, _url, **_kwargs: name == "linear",
     )
     provider, _registry = _make_provider(mcp_servers={"notion": notion})
 
@@ -548,11 +553,13 @@ async def test_mcp_tool_reconnects_after_session_terminated(
         mcp_servers={"remote": _stdio_server("remote")}
     )
     closed: list[str] = []
+    close_event = asyncio.Event()
     sessions: list[Any] = []
     connect_count = 0
 
     async def _mark_closed(name: str) -> None:
         closed.append(name)
+        close_event.set()
 
     class _FakeSession:
         def __init__(self, index: int) -> None:
@@ -593,15 +600,20 @@ async def test_mcp_tool_reconnects_after_session_terminated(
     old_tool = registry.get("mcp_remote_quote")
     assert isinstance(old_tool, MCPToolWrapper)
 
-    output = await old_tool.execute(symbol="AAPL")
+    refused = await old_tool.execute(symbol="AAPL")
 
+    await asyncio.wait_for(close_event.wait(), timeout=1)
+    assert "refused" in refused
+    assert sessions[0].call_count == 1
+    replacement = registry.get("mcp_remote_quote")
+    assert replacement is not old_tool
+    assert isinstance(replacement, MCPToolWrapper)
+    output = await replacement.execute(symbol="AAPL")
     assert output == "recovered"
     assert connect_count == 2
     assert closed == ["remote"]
-    assert sessions[0].call_count == 1
     assert sessions[1].call_count == 1
     assert provider.connected_server_names == {"remote"}
-    assert registry.get("mcp_remote_quote") is not old_tool
 
 
 @pytest.mark.asyncio
@@ -648,11 +660,14 @@ async def test_mcp_reconnect_handler_uses_sanitized_server_prefix(
     old_tool = registry.get("mcp_remote_quote")
     assert isinstance(old_tool, MCPToolWrapper)
 
-    output = await old_tool.execute()
+    refused = await old_tool.execute()
 
-    assert output == "recovered"
+    assert "refused" in refused
     assert connect_count == 2
-    assert registry.get("mcp_remote_quote") is not old_tool
+    replacement = registry.get("mcp_remote_quote")
+    assert replacement is not old_tool
+    assert isinstance(replacement, MCPToolWrapper)
+    assert await replacement.execute() == "recovered"
 
 
 @pytest.mark.asyncio
@@ -714,6 +729,105 @@ async def test_concurrent_mcp_reconnect_reuses_fresh_session(
 
     outputs = await asyncio.gather(old_alpha.execute(), old_beta.execute())
 
-    assert outputs == ["fresh:alpha", "fresh:beta"]
+    assert all("refused" in output for output in outputs)
     assert connect_count == 2
     assert closed == ["remote"]
+    new_alpha = registry.get("mcp_remote_resource_alpha")
+    new_beta = registry.get("mcp_remote_resource_beta")
+    assert new_alpha is not old_alpha
+    assert new_beta is not old_beta
+    fresh = await asyncio.gather(new_alpha.execute(), new_beta.execute())
+    assert fresh == ["fresh:alpha", "fresh:beta"]
+    assert connect_count == 2
+
+
+class _ReadinessSession:
+    """Session stand-in: readiness publication is what C3 observes."""
+
+
+async def _hanging_server_connect(started: asyncio.Event, tool_names: tuple[str, ...]):
+    """Return a fake connect that declares the server tool set, then hangs."""
+    async def _fake_connect(servers, candidate_registry, **_kwargs: object):
+        for tool_name in tool_names:
+            tool_def = SimpleNamespace(
+                name=tool_name,
+                description=f"{tool_name} tool",
+                inputSchema={"type": "object", "properties": {}},
+            )
+            candidate_registry.register(
+                MCPToolWrapper(_ReadinessSession(), "remote", tool_def, tool_timeout=5)
+            )
+        started.set()
+        await asyncio.Event().wait()
+
+    return _fake_connect
+
+
+@pytest.mark.asyncio
+async def test_owner_cancellation_gives_the_waiter_one_bounded_readiness_outcome(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """U3/C3: the owner's cancellation must not cancel a concurrent waiter."""
+    provider, registry = _make_provider(mcp_servers={"remote": _stdio_server("remote")})
+    started = asyncio.Event()
+    connect_count = 0
+    fake_connect = await _hanging_server_connect(started, ("alpha", "beta", "gamma"))
+
+    async def _counted_connect(servers, candidate_registry, **kwargs: object):
+        nonlocal connect_count
+        connect_count += 1
+        await fake_connect(servers, candidate_registry, **kwargs)
+
+    monkeypatch.setattr("nanobot.agent.tools.mcp.connect_mcp_servers", _counted_connect)
+
+    owner = asyncio.create_task(provider.connect())
+    await started.wait()
+    waiter = asyncio.create_task(provider.connect())
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+    owner.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await owner
+
+    with pytest.raises(MCPReadinessAbortedError) as outcome:
+        await waiter
+
+    assert not isinstance(outcome.value, asyncio.CancelledError)
+    assert connect_count == 1
+    assert registry.tool_names == []
+
+
+@pytest.mark.asyncio
+async def test_waiter_cancellation_stays_scoped_to_the_waiter(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """U3/C3: a waiter's own cancellation does not cancel the shared attempt."""
+    provider, registry = _make_provider(mcp_servers={"remote": _stdio_server("remote")})
+    started = asyncio.Event()
+    connect_count = 0
+    fake_connect = await _hanging_server_connect(started, ("alpha", "beta", "gamma"))
+
+    async def _counted_connect(servers, candidate_registry, **kwargs: object):
+        nonlocal connect_count
+        connect_count += 1
+        await fake_connect(servers, candidate_registry, **kwargs)
+
+    monkeypatch.setattr("nanobot.agent.tools.mcp.connect_mcp_servers", _counted_connect)
+
+    owner = asyncio.create_task(provider.connect())
+    await started.wait()
+    waiter = asyncio.create_task(provider.connect())
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+    waiter.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await waiter
+
+    assert owner.done() is False
+    assert connect_count == 1
+    owner.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await owner
+    assert registry.tool_names == []

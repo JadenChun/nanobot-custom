@@ -9,6 +9,7 @@ from nanobot.agent.turn_delivery import TurnDeliveryFactory
 from nanobot.bus.events import InboundMessage
 from nanobot.bus.outbound_events import (
     GoalStatusEvent,
+    MessageAdmittedEvent,
     RetryStatusEvent,
     TurnEndEvent,
     TurnModelUpdatedEvent,
@@ -16,9 +17,12 @@ from nanobot.bus.outbound_events import (
 )
 from nanobot.bus.queue import MessageBus
 from nanobot.bus.runtime_events import (
+    InjectionCommitted,
     RuntimeEventContext,
+    SessionTurnStarted,
     TurnRuntimeAdmitted,
     UserInputAccepted,
+    UserInputCommitted,
 )
 from nanobot.providers.base import GenerationSettings
 from nanobot.session import webui_turns as wth
@@ -27,6 +31,7 @@ from nanobot.session.session_handles import session_handle_for_name
 from nanobot.session.session_messages import SESSION_MESSAGE_METADATA_KEY
 from nanobot.utils.llm_runtime import LLMRuntime
 from nanobot.webui.metadata import WEBSOCKET_TURN_OWNER_METADATA_KEY
+from nanobot.webui.session_projection import WebUISessionProjection
 
 
 @pytest.fixture(autouse=True)
@@ -337,6 +342,159 @@ async def test_session_input_is_projected_by_the_webui_coordinator(
 
 
 @pytest.mark.asyncio
+async def test_session_turn_started_only_marks_the_webui_session(tmp_path) -> None:
+    bus = MessageBus()
+    bus.publish_outbound = AsyncMock()
+    coordinator = wth.WebuiTurnCoordinator(
+        bus=bus,
+        sessions=SessionManager(tmp_path),
+        schedule_background=lambda coro: coro.close(),
+    )
+    coordinator.subscribe()
+
+    await bus.publish(SessionTurnStarted(
+        context=RuntimeEventContext(
+            channel="websocket",
+            chat_id="chat-a",
+            session_key="websocket:chat-a",
+            metadata={"webui": True, "webui_turn_id": "turn-a"},
+        ),
+    ))
+
+    bus.publish_outbound.assert_not_awaited()
+    session = coordinator.sessions.get_or_create("websocket:chat-a")
+    assert session.metadata["webui"] is True
+
+
+@pytest.mark.asyncio
+async def test_user_input_committed_projects_owner_admission_receipt(tmp_path) -> None:
+    bus = MessageBus()
+    bus.publish_outbound = AsyncMock()
+    coordinator = wth.WebuiTurnCoordinator(
+        bus=bus,
+        sessions=SessionManager(tmp_path),
+        schedule_background=lambda coro: coro.close(),
+    )
+    coordinator.subscribe()
+
+    await bus.publish(UserInputCommitted(
+        context=RuntimeEventContext(
+            channel="websocket",
+            chat_id="chat-a",
+            session_key="websocket:chat-a",
+            metadata={"webui": True, "webui_turn_id": "turn-a"},
+        ),
+    ))
+
+    outbound = bus.publish_outbound.await_args.args[0]
+    assert isinstance(outbound.event, MessageAdmittedEvent)
+    assert outbound.event.turn_id == "turn-a"
+    assert outbound.event.attempt_id == "turn-a"
+    assert outbound.event.session_key == "websocket:chat-a"
+    assert outbound.event.session_incarnation
+    assert outbound.event.starts_turn is True
+
+
+@pytest.mark.asyncio
+async def test_user_input_committed_ignores_non_browser_or_unnamed_attempts(tmp_path) -> None:
+    bus = MessageBus()
+    bus.publish_outbound = AsyncMock()
+    coordinator = wth.WebuiTurnCoordinator(
+        bus=bus,
+        sessions=SessionManager(tmp_path),
+        schedule_background=lambda coro: coro.close(),
+    )
+    coordinator.subscribe()
+
+    for context in (
+        RuntimeEventContext(
+            channel="telegram",
+            chat_id="chat-a",
+            session_key="telegram:chat-a",
+            metadata={"webui": True, "webui_turn_id": "turn-a"},
+        ),
+        RuntimeEventContext(
+            channel="websocket",
+            chat_id="chat-a",
+            session_key="websocket:chat-a",
+            metadata={"webui": True},
+        ),
+        RuntimeEventContext(
+            channel="websocket",
+            chat_id="chat-a",
+            session_key="websocket:chat-a",
+            metadata={"webui_turn_id": "turn-a"},
+        ),
+    ):
+        await bus.publish(UserInputCommitted(context=context))
+
+    bus.publish_outbound.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_injection_committed_publishes_receipt_for_the_steer_turn(tmp_path) -> None:
+    """A committed steer acknowledges its own turn and keeps the running turn."""
+    bus = MessageBus()
+    bus.publish_outbound = AsyncMock()
+    coordinator = wth.WebuiTurnCoordinator(
+        bus=bus,
+        sessions=SessionManager(tmp_path),
+        schedule_background=lambda coro: coro.close(),
+    )
+    coordinator.subscribe()
+
+    await bus.publish(InjectionCommitted(
+        context=RuntimeEventContext(
+            channel="websocket",
+            chat_id="chat-a",
+            session_key="websocket:chat-a",
+            metadata={"webui": True, "webui_turn_id": "turn-steer"},
+        ),
+    ))
+
+    outbound = bus.publish_outbound.await_args.args[0]
+    assert outbound.channel == "websocket"
+    assert outbound.chat_id == "chat-a"
+    assert isinstance(outbound.event, MessageAdmittedEvent)
+    assert outbound.event.turn_id == "turn-steer"
+    assert outbound.event.attempt_id == "turn-steer"
+    assert outbound.event.session_key == "websocket:chat-a"
+    assert outbound.event.session_incarnation
+    assert outbound.event.starts_turn is False
+
+
+@pytest.mark.asyncio
+async def test_injection_committed_ignores_non_browser_and_unnamed_turns(tmp_path) -> None:
+    """Only browser guidance with a turn identity produces a receipt."""
+    bus = MessageBus()
+    bus.publish_outbound = AsyncMock()
+    coordinator = wth.WebuiTurnCoordinator(
+        bus=bus,
+        sessions=SessionManager(tmp_path),
+        schedule_background=lambda coro: coro.close(),
+    )
+    coordinator.subscribe()
+
+    for context in (
+        RuntimeEventContext(
+            channel="telegram",
+            chat_id="chat-a",
+            session_key="websocket:chat-a",
+            metadata={"webui": True, "webui_turn_id": "turn-steer"},
+        ),
+        RuntimeEventContext(
+            channel="websocket",
+            chat_id="chat-a",
+            session_key="websocket:chat-a",
+            metadata={"webui": True},
+        ),
+    ):
+        await bus.publish(InjectionCommitted(context=context))
+
+    bus.publish_outbound.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_fallback_model_ignores_non_websocket_requests() -> None:
     bus = MessageBus()
     bus.publish_outbound = AsyncMock()
@@ -346,3 +504,31 @@ async def test_fallback_model_ignores_non_websocket_requests() -> None:
         await observer("fallback")
 
     bus.publish_outbound.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_reconnect_hydration_preserves_stopping_status(tmp_path) -> None:
+    bus = MessageBus()
+    bus.publish_outbound = AsyncMock()
+    msg = InboundMessage(
+        channel="websocket",
+        sender_id="u",
+        chat_id="chat-stop",
+        content="hi",
+        metadata={"webui_turn_id": "turn-stop"},
+    )
+    await wth.publish_turn_run_status(bus, msg, "running")
+    projection = WebUISessionProjection(SessionManager(tmp_path))
+
+    wth.mark_websocket_turn_stopping("chat-stop", True)
+    stopping = projection.hydration_events("websocket:chat-stop", "chat-stop")
+    goal_status = next(event for event in stopping if event["event"] == "goal_status")
+    assert goal_status["status"] == "stopping"
+
+    wth.mark_websocket_turn_stopping("chat-stop", False)
+    resumed = projection.hydration_events("websocket:chat-stop", "chat-stop")
+    goal_status = next(event for event in resumed if event["event"] == "goal_status")
+    assert goal_status["status"] == "running"
+
+    wth.clear_websocket_turns("chat-stop")
+    assert wth.websocket_turn_stopping("chat-stop") is False

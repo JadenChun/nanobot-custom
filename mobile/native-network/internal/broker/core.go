@@ -44,13 +44,22 @@ type Core struct {
 	pending []byte
 	eventMu sync.Mutex
 
+	terminalMu         sync.Mutex
+	terminalEvents     map[terminalKey][]byte
+	terminalOrder      []terminalKey
+	terminalBytes      int
+	terminalByteLimit  int
+	maxTerminalResults int
+
 	peerMu  sync.Mutex
 	peerIPs map[string]string
 	peerAt  time.Time
 
-	mediaToken   string
-	mediaStreams map[uint64]*mediaStream
-	nextMediaID  uint64
+	mediaToken        string
+	mediaStreams      map[uint64]*mediaStream
+	nextMediaID       uint64
+	mediaCacheBudget  int64
+	mediaCacheReserve int64
 }
 
 func NewCore(cfg Config) (*Core, error) {
@@ -61,13 +70,34 @@ func NewCore(cfg Config) (*Core, error) {
 	if err != nil {
 		return nil, fmt.Errorf("%w: origin cannot be parsed", ErrInvalid)
 	}
+	// A terminal event carries base64-encoded response bytes plus JSON
+	// overhead. Reserve one terminal slot for each of several maximum
+	// responses; admission refuses when all reserved slots are in use.
+	// JSON can encode each header byte as a six-byte escape.
+	headerBudget := len(safeResponseHeaderNames) * maxResponseHeaderBytes * 6
+	perResponse := base64.StdEncoding.EncodedLen(cfg.MaxResponseBytes) + headerBudget + 4096
+	terminalLimit := perResponse * 4
+	if terminalLimit < 16<<20 {
+		terminalLimit = 16 << 20
+	}
+	if terminalLimit > 64<<20 {
+		terminalLimit = 64 << 20
+	}
+	maxTerminalResults := terminalLimit / perResponse
+	if maxTerminalResults > cfg.MaxRequests {
+		maxTerminalResults = cfg.MaxRequests
+	}
 	return &Core{
-		cfg:          cfg,
-		origin:       origin,
-		state:        "new",
-		requests:     make(map[uint64]context.CancelFunc),
-		events:       make(chan []byte, cfg.QueueSize),
-		mediaStreams: make(map[uint64]*mediaStream),
+		cfg:                cfg,
+		origin:             origin,
+		state:              "new",
+		requests:           make(map[uint64]context.CancelFunc),
+		events:             make(chan []byte, cfg.QueueSize),
+		mediaStreams:       make(map[uint64]*mediaStream),
+		mediaCacheBudget:   mediaCacheBudget,
+		terminalEvents:     make(map[terminalKey][]byte),
+		terminalByteLimit:  terminalLimit,
+		maxTerminalResults: maxTerminalResults,
 	}, nil
 }
 

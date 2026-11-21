@@ -133,3 +133,48 @@ async def test_turn_hook_builder_can_include_extra_hooks_for_ephemeral_turns() -
     await hook.before_iteration(AgentHookContext(iteration=1, messages=[]))
 
     assert events == ["hook:1"]
+
+
+@pytest.mark.parametrize("ephemeral", [False, True])
+@pytest.mark.parametrize("plugin_raises", [False, True])
+async def test_scoped_context_finalizer_precedes_plugins_and_survives_ephemeral_skip(ephemeral, plugin_raises) -> None:
+    import asyncio
+
+    from nanobot.agent.hook import AgentRunHookContext
+    from nanobot.agent.turn_delivery import TurnDeliveryFactory
+    from nanobot.bus.events import InboundMessage
+    from nanobot.bus.queue import MessageBus
+    from nanobot.bus.runtime_events import TurnCompleted
+    from nanobot.providers.base import ContextUsageSnapshot
+
+    factory = TurnDeliveryFactory(MessageBus())
+    delivery = factory.create(InboundMessage(channel="websocket", sender_id="u", chat_id="t", content="hello"), "t")
+    observed = []
+    factory.bus.subscribe(observed.append, TurnCompleted)
+    entered = asyncio.Event()
+
+    class Plugin(AgentHook):
+        async def on_finally(self, context):
+            entered.set()
+            if plugin_raises:
+                raise RuntimeError("plugin finalizer")
+            await asyncio.Future()
+
+    hook = build_agent_turn_hook(AgentTurnHookSpec(
+        context_usage_hook=delivery.context_usage_hook(), registered_hooks=[Plugin()], ephemeral=ephemeral,
+    ))
+    snapshot = ContextUsageSnapshot(None, None)
+    task = asyncio.create_task(hook.on_finally(AgentRunHookContext(messages=[], context_usage=snapshot)))
+    if ephemeral:
+        await task
+        assert not entered.is_set()
+    elif plugin_raises:
+        await task  # Existing CompositeHook policy isolates ordinary exceptions.
+        assert entered.is_set()
+    else:
+        await entered.wait()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+    await delivery.publish_cancelled_terminal()
+    assert observed[-1].context_usage == snapshot

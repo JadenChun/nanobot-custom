@@ -10,6 +10,8 @@ Also houses shared HTTP utility functions used by both this module and
 from __future__ import annotations
 
 import asyncio
+import base64
+import hashlib
 import json
 import mimetypes
 import re
@@ -17,8 +19,9 @@ import shutil
 import subprocess
 import threading
 import time
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
+from functools import cache
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 from urllib.parse import quote, unquote, urlencode, urlsplit, urlunsplit
@@ -53,9 +56,7 @@ from nanobot.security.folder_locations import FolderEditIncompleteError
 from nanobot.security.workspace_access import WorkspaceScope
 from nanobot.session.manager import JsonlSessionStore, SessionManager
 from nanobot.session.recovery import RecoveryActionError
-from nanobot.session.session_handles import (
-    SessionHandleResolver,
-)
+from nanobot.session.source_store import SavedSourceMetadata, SourceSnapshot, SourceState
 from nanobot.triggers.local_types import LocalTrigger
 from nanobot.webui.file_preview import (
     WebUIFilePreviewError,
@@ -94,6 +95,9 @@ from nanobot.webui.http_utils import (
     is_local_browser_request as _is_local_browser_request,
 )
 from nanobot.webui.http_utils import is_loopback_host as _is_loopback_host
+from nanobot.webui.http_utils import (
+    is_same_origin_request as _is_same_origin_request,
+)
 from nanobot.webui.http_utils import (
     is_trusted_proxy_authenticated_request as _is_trusted_proxy_authenticated_request,
 )
@@ -153,10 +157,11 @@ from nanobot.webui.skills_marketplace import (
     search_marketplace_skills,
     trending_marketplace_skills,
 )
-from nanobot.webui.thread_disk import delete_webui_thread
 from nanobot.webui.transcript import (
     WEBUI_TRANSCRIPT_SCHEMA_VERSION,
+    HistoryWindowError,
     build_webui_thread_response,
+    delete_webui_transcript_result,
     read_transcript_lines,
     webui_transcript_signature,
 )
@@ -317,9 +322,11 @@ WEBSOCKET_MUTATION_ROUTES = {
     "settings.mcp.oauth_start": "/api/settings/mcp-oauth/start",
     "settings.mcp.oauth_complete": "/api/settings/mcp-oauth/complete",
     "settings.mcp.oauth_cancel": "/api/settings/mcp-oauth/cancel",
+    "desktop.notify": "/api/desktop/notify",
 }
 
 _LOCAL_ONLY_WEBUI_MUTATION_PATHS = frozenset({
+    "/api/desktop/notify",
     "/api/workspaces/pick-folder",
     "/api/workspaces/grants/upsert",
     "/api/workspaces/grants/revoke",
@@ -342,6 +349,15 @@ _LOCAL_ONLY_WEBUI_MUTATION_PATHS = frozenset({
     "/api/settings/remote-access/pairing/cancel",
     "/api/settings/remote-access/pairing/renew",
 })
+
+
+def attached_mobile_identity(connection: object) -> object | None:
+    """Read mobile identity metadata explicitly attached to this connection."""
+    try:
+        attributes: Mapping[str, object] = vars(connection)
+    except TypeError:
+        return None
+    return attributes.get("mobile_identity")
 
 
 def _typed_owner_identity(connection: Any) -> Any | None:
@@ -422,6 +438,7 @@ for _ext, _ctype in _MIME_FIXES.items():
 
 
 if TYPE_CHECKING:
+    from nanobot.agent.stop_target import StopTargetReader
     from nanobot.bus.queue import MessageBus
     from nanobot.channels.websocket.runtime import WebSocketConfig
     from nanobot.cron.service import CronService
@@ -565,6 +582,7 @@ class GatewayHTTPHandler:
         recovery_action: (
             Callable[[str, dict[str, Any]], Awaitable[dict[str, Any]]] | None
         ) = None,
+        stop_target_for_key: StopTargetReader | None = None,
         log: Any = logger,
     ) -> None:
         self.config = config
@@ -615,6 +633,7 @@ class GatewayHTTPHandler:
         )
         self.skill_state_action = skill_state_action
         self.recovery_action = recovery_action
+        self.stop_target_for_key = stop_target_for_key
         self._skill_install_lock = asyncio.Lock()
         self._folder_picker_lock = asyncio.Lock()
         self.cron_service = cron_service
@@ -625,6 +644,7 @@ class GatewayHTTPHandler:
         self._runtime_surface = runtime_surface
         self.owner_permission_adapter: Any | None = None
         self.owner_audit_client: Any | None = None
+        self.mobile_revalidator: Callable[[Any], Awaitable[bool]] | None = None
 
         from nanobot.webui.settings_api import runtime_capabilities as _rc
         from nanobot.webui.settings_routes import WebUISettingsRouter
@@ -807,12 +827,7 @@ class GatewayHTTPHandler:
         *,
         owner: bool = False,
     ) -> tuple[int, dict[str, Any]]:
-        """Return one persisted thread, including restricted permission state.
-
-        Mobile may read the projection but cannot enable Full access: the
-        permission projection is requested with ``controls_available=False`` so
-        the existing mode control explains the local-only boundary.
-        """
+        """Project the requested thread view after the mobile edge checks scope."""
         suffix = f"?{urlencode(query, doseq=True)}" if query else ""
         path = f"/api/sessions/{quote(key, safe='')}/webui-thread{suffix}"
         request = WsRequest(path, Headers())
@@ -826,9 +841,32 @@ class GatewayHTTPHandler:
         try:
             body = json.loads(response.body)
         except (UnicodeDecodeError, json.JSONDecodeError):
+            if response.status_code >= 400:
+                # The desktop handler uses plain-text errors. Preserve their
+                # status through the bridge, especially missing/revoked reads.
+                return response.status_code, {"error": response.body.decode("utf-8", "replace")}
             return 502, {"error": "invalid_thread_payload"}
         if not isinstance(body, dict):
             return 502, {"error": "invalid_thread_payload"}
+        return response.status_code, cast(dict[str, Any], body)
+
+    def mobile_delegated_children_payload(
+        self,
+        key: str,
+        query: dict[str, list[str]],
+    ) -> tuple[int, dict[str, Any]]:
+        """Return the authorized delegated-child read projection for mobile."""
+        suffix = f"?{urlencode(query, doseq=True)}" if query else ""
+        path = f"/api/sessions/{quote(key, safe='')}/delegated-children{suffix}"
+        request = WsRequest(path, Headers())
+        setattr(request, "_nanobot_trusted_proxy_authenticated", True)
+        response = self._handle_delegated_children_get(request, key)
+        try:
+            body = json.loads(response.body)
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            return 502, {"error": "invalid_delegated_children_payload"}
+        if not isinstance(body, dict):
+            return 502, {"error": "invalid_delegated_children_payload"}
         return response.status_code, cast(dict[str, Any], body)
 
     def workspace_controls_available(self, connection: Any) -> bool:
@@ -893,6 +931,15 @@ class GatewayHTTPHandler:
         payload: dict[str, Any],
     ) -> WebUIMutationAuthorizationFailure | None:
         """Authorize the current socket for this action before cache admission or replay."""
+        identity = attached_mobile_identity(connection)
+        if identity is not None:
+            from nanobot.remote.edge import AccessIdentity
+            from nanobot.remote.operations import mobile_mutation_allowed
+
+            if not isinstance(identity, AccessIdentity):
+                return WebUIMutationAuthorizationFailure(403, "scope_denied")
+            if not mobile_mutation_allowed(identity.scopes, action):
+                return WebUIMutationAuthorizationFailure(403, "scope_denied")
         path = self._webui_mutation_path(action, payload)
         if not isinstance(path, str):
             return None
@@ -943,6 +990,15 @@ class GatewayHTTPHandler:
         check_expected_source_binding: bool = False,
     ) -> Response:
         """Run one explicitly allowlisted mutation for an authenticated WebUI socket."""
+        from nanobot.remote.edge import AccessIdentity
+
+        raw_identity = attached_mobile_identity(connection)
+        if raw_identity is not None:
+            if not isinstance(raw_identity, AccessIdentity):
+                return _http_error(403, "scope_denied")
+            revalidate = getattr(self, "mobile_revalidator", None)
+            if revalidate is None or not await revalidate(connection):
+                return _http_error(403, "scope_denied")
         authorization = self.authorize_webui_mutation(connection, action, payload)
         if authorization is not None:
             return _http_error(authorization.status, authorization.message)
@@ -965,9 +1021,9 @@ class GatewayHTTPHandler:
         request = WsRequest(path, headers)
         setattr(request, "_nanobot_trusted_proxy_authenticated", True)
         setattr(request, _WEBUI_MUTATION_REQUEST_ATTR, True)
-        identity = getattr(connection, "mobile_identity", None)
-        installation = getattr(identity, "installation_id", None)
-        if isinstance(installation, str) and installation:
+        identity = attached_mobile_identity(connection)
+        installation = identity.installation_id if isinstance(identity, AccessIdentity) else None
+        if installation:
             setattr(request, "_nanobot_owner_installation", installation)
         setattr(request, _WEBUI_MUTATION_PAYLOAD_ATTR, dict(payload))
         if check_expected_source_binding or expected_source_binding is not None:
@@ -978,13 +1034,8 @@ class GatewayHTTPHandler:
             )
             setattr(request, _WEBUI_EXPECTED_SOURCE_BINDING_ATTR, expected_binding)
         audit_client = getattr(self, "owner_audit_client", None)
-        audit_identity = getattr(connection, "mobile_identity", None)
-        audit_installation = getattr(audit_identity, "installation_id", None)
-        if (
-            audit_client is not None
-            and isinstance(audit_installation, str)
-            and audit_installation
-        ):
+        audit_installation = installation
+        if audit_client is not None and audit_installation:
             try:
                 await asyncio.to_thread(
                     audit_client.audit_event,
@@ -997,11 +1048,17 @@ class GatewayHTTPHandler:
                 self._log.exception("owner audit pre-effect write failed")
                 return _http_error(503, "audit_unavailable")
         try:
+            if audit_installation:
+                revalidate = getattr(self, "mobile_revalidator", None)
+                if revalidate is None or not await revalidate(connection):
+                    return _http_error(403, "scope_denied")
+                authorization = self.authorize_webui_mutation(connection, action, payload)
+                if authorization is not None:
+                    return _http_error(authorization.status, authorization.message)
             response = await self._dispatch_resolved(connection, request, path)
         except asyncio.CancelledError:
             if (
                 getattr(self, "owner_audit_client", None) is not None
-                and isinstance(audit_installation, str)
                 and audit_installation
             ):
                 try:
@@ -1017,7 +1074,6 @@ class GatewayHTTPHandler:
         except Exception:
             if (
                 getattr(self, "owner_audit_client", None) is not None
-                and isinstance(audit_installation, str)
                 and audit_installation
             ):
                 try:
@@ -1035,7 +1091,6 @@ class GatewayHTTPHandler:
         if isinstance(response, Response):
             if (
                 getattr(self, "owner_audit_client", None) is not None
-                and isinstance(audit_installation, str)
                 and audit_installation
             ):
                 try:
@@ -1051,7 +1106,6 @@ class GatewayHTTPHandler:
             return response
         if (
             getattr(self, "owner_audit_client", None) is not None
-            and isinstance(audit_installation, str)
             and audit_installation
         ):
             try:
@@ -1076,6 +1130,7 @@ class GatewayHTTPHandler:
         if path in {"/api/webui/recovery/continue", "/api/webui/recovery/dismiss"}:
             return True
         return path in {
+            "/api/desktop/notify",
             "/api/webui/skills/install",
             "/api/webui/skills/update",
             "/api/webui/skills/delete",
@@ -1192,6 +1247,28 @@ class GatewayHTTPHandler:
 
         return connection.respond(404, "Not Found")
 
+    def _log_permission_stage(
+        self,
+        path: str,
+        started: float,
+        payload: Mapping[str, Any],
+        result: Mapping[str, Any],
+    ) -> None:
+        """Report access-mode mutation cost so a slow switch is attributable."""
+        action = "prepare_full" if path.endswith("/prepare-full") else "mode_set"
+        mode = payload.get("mode")
+        conflict = "error" in result
+        report = getattr(self._log, "info", None)
+        if report is None:
+            return
+        report(
+            "webui permission action={} mode={} conflict={} duration_ms={}",
+            action,
+            mode if isinstance(mode, str) else "none",
+            conflict,
+            int((time.perf_counter() - started) * 1000),
+        )
+
     def _log_slow_http(self, path: str, response: Any | None, started: float) -> None:
         elapsed_ms = int((time.perf_counter() - started) * 1000)
         if elapsed_ms < _SLOW_WEBUI_HTTP_LOG_MS:
@@ -1210,14 +1287,18 @@ class GatewayHTTPHandler:
 
     def _handle_token_issue(self, connection: Any, request: Any) -> Any:
         secret = self.config.token_issue_secret.strip() or self.config.token.strip()
-        if secret:
-            if not _issue_route_secret_matches(request.headers, secret):
-                return connection.respond(401, "Unauthorized")
-        else:
-            self._log.warning(
-                "token_issue_path is set but token_issue_secret is empty; "
-                "any client can obtain connection tokens — set token_issue_secret for production."
+        if not secret:
+            self._log.error(
+                "token_issue_path is set but token_issue_secret and token are empty; "
+                "refusing to issue connection tokens without a secret"
             )
+            return _http_json_response(
+                {"error": "token issuance requires a configured secret"},
+                status=403,
+                extra_headers=_NO_STORE_HEADERS,
+            )
+        if not _issue_route_secret_matches(request.headers, secret):
+            return connection.respond(401, "Unauthorized")
         if not self.tokens.can_issue():
             self._log.error(
                 "too many outstanding issued tokens ({}), rejecting issuance",
@@ -1343,6 +1424,17 @@ class GatewayHTTPHandler:
         request: WsRequest,
         got: str,
     ) -> Response | None:
+        m = re.match(r"^/api/sessions/([^/]+)/delegated-children$", got)
+        if m:
+            # The Stop target reads live event-loop task state, so resolve it
+            # here. Only the child scan moves to the worker thread.
+            return await asyncio.to_thread(
+                self._build_delegated_children_response,
+                request,
+                m.group(1),
+                self._live_stop_target(m.group(1)),
+            )
+
         m = re.match(r"^/api/sessions/([^/]+)/webui-thread$", got)
         if m:
             return self._handle_webui_thread_get(request, m.group(1), connection=connection)
@@ -1350,6 +1442,10 @@ class GatewayHTTPHandler:
         m = re.match(r"^/api/sessions/([^/]+)/context$", got)
         if m:
             return await self._handle_session_context_get(request, m.group(1))
+
+        m = re.match(r"^/api/sessions/([^/]+)/turns$", got)
+        if m:
+            return await self._handle_session_turns_get(request, m.group(1))
 
         m = re.match(r"^/api/sessions/([^/]+)/file-preview$", got)
         if m:
@@ -1408,6 +1504,68 @@ class GatewayHTTPHandler:
             return _http_error(404, "session not found")
         return _http_json_response(session_context_payload(session))
 
+    async def _handle_session_turns_get(self, request: WsRequest, key: str) -> Response:
+        """Summarise a page of saved turns for the prompt navigator."""
+        if not self.check_api_token(request):
+            return _http_error(401, "Unauthorized")
+        decoded_key = _decode_api_key(key)
+        if decoded_key is None:
+            return _http_error(400, "invalid session key")
+        if not _is_websocket_channel_session_key(decoded_key):
+            return _http_error(404, "session not found")
+        query = _parse_query(request.path)
+        if set(query) - {"limit", "before"} or any(
+            len(values) != 1 for values in query.values()
+        ):
+            return _http_error(400, "invalid turn index query")
+        limit_value = _query_first(query, "limit")
+        limit: int | None = None
+        if limit_value is not None:
+            try:
+                limit = int(limit_value)
+            except ValueError:
+                return _http_error(400, "invalid limit")
+            if limit <= 0:
+                return _http_error(400, "invalid limit")
+        before = _query_first(query, "before")
+        return await asyncio.to_thread(
+            self._session_turns_response, decoded_key, limit=limit, before=before,
+        )
+
+    def _session_turns_response(
+        self, key: str, *, limit: int | None, before: str | None,
+    ) -> Response:
+        from nanobot.webui.transcript import session_turn_index
+
+        sessions = self.session_manager
+        if sessions is None:
+            return _http_error(503, "session manager unavailable")
+        try:
+            # The projection runs off-thread. Read the source and labels under
+            # the same files lock so deletion cannot race the two steps.
+            with sessions.locked_session_files():
+                source = self._read_saved_history_source(key)
+                if isinstance(source, Response):
+                    return source
+                source_state = (
+                    source.state
+                    if isinstance(source, (SavedSourceMetadata, SourceSnapshot))
+                    else None
+                )
+                payload = session_turn_index(
+                    key, limit=limit, before=before, expected_source=source_state,
+                )
+                if payload is not None and source_state is not None:
+                    payload["source"] = _source_origin_payload(source_state)
+        except HistoryWindowError as exc:
+            return _http_error(exc.status_code, exc.detail)
+        except Exception:
+            self._log.exception("session turn index read failed")
+            return _http_error(503, "session_read_unavailable")
+        if payload is None:
+            return _http_error(404, "session not found")
+        return _http_json_response(payload)
+
     async def _handle_sessions_list(self, request: WsRequest) -> Response:
         if not self.check_api_token(request):
             return _http_error(401, "Unauthorized")
@@ -1424,7 +1582,6 @@ class GatewayHTTPHandler:
         from nanobot.session.webui_turns import websocket_turn_wall_started_at
 
         sessions = list_webui_sessions(self.session_manager)
-        handles = SessionHandleResolver(self.session_manager).list_all_by_key()
         cleaned: list[dict[str, Any]] = []
         default_scope: WorkspaceScope | None = None
         for s in sessions:
@@ -1453,11 +1610,155 @@ class GatewayHTTPHandler:
                 default_scope=default_scope,
             )
             row["workspace_scope"] = self.workspaces.scope_payload(scope)
-            handle = handles.get(key)
-            if handle is not None:
-                row["handle"] = handle.public_payload()
             cleaned.append(row)
         return {"sessions": cleaned}
+
+    def _handle_delegated_children_get(
+        self,
+        request: WsRequest,
+        key: str,
+    ) -> Response:
+        """Return durable child references for one WebSocket parent chat."""
+        return self._build_delegated_children_response(
+            request, key, self._live_stop_target(key)
+        )
+
+    def _live_stop_target(self, key: str) -> dict[str, object] | None:
+        """Resolve the live Stop target on the event loop that owns the run."""
+        decoded_key = _decode_api_key(key)
+        if decoded_key is None or self.stop_target_for_key is None:
+            return None
+        return self.stop_target_for_key(decoded_key)
+
+    def _build_delegated_children_response(
+        self,
+        request: WsRequest,
+        key: str,
+        stop_target: dict[str, object] | None,
+    ) -> Response:
+        if not self.check_api_token(request):
+            return _http_error(401, "Unauthorized")
+        decoded_key = _decode_api_key(key)
+        if decoded_key is None or not _is_websocket_channel_session_key(decoded_key):
+            return _http_error(404, "session not found")
+        if self.session_manager is None:
+            return _http_error(503, "session manager unavailable")
+        parent = self.session_manager.read_session_snapshot(decoded_key)
+        if parent is None:
+            return _http_error(404, "session not found")
+        try:
+            self.workspaces.scope_for_session_key(decoded_key)
+        except Exception:
+            self._log.exception("delegated child hydration scope projection failed")
+            return _http_error(503, "permission_state_unavailable")
+        query = _parse_query(request.path)
+        if set(query) - {"limit", "before"} or any(
+            len(values) != 1 for values in query.values()
+        ):
+            return _http_error(400, "unsupported delegated children query")
+        raw_limit = _query_first(query, "limit")
+        try:
+            limit = _child_page_limit(raw_limit, default=50)
+        except ValueError:
+            return _http_error(400, "invalid limit")
+        before = _query_first(query, "before")
+
+        try:
+            sessions = self.session_manager.list_sessions()
+        except Exception:
+            self._log.exception("delegated child hydration scan failed")
+            return _http_error(503, "session list unavailable")
+        root_source = _current_source_snapshot(self.session_manager, decoded_key)
+        root_binding = _session_lifetime_digest(
+            decoded_key,
+            parent.incarnation,
+            parent.generation,
+            root_source.state.store_identity if root_source is not None else "",
+        )
+        children: list[dict[str, Any]] = []
+        for info in sessions:
+            child_key = info.get("key")
+            if not isinstance(child_key, str) or not child_key.startswith("delegated:"):
+                continue
+            metadata = self.session_manager.read_session_metadata(child_key)
+            metadata_value = metadata.get("metadata") if isinstance(metadata, dict) else None
+            if not isinstance(metadata_value, dict):
+                continue
+            payload_value = cast(dict[str, Any], metadata_value).get("delegation_child")
+            if not isinstance(payload_value, dict):
+                continue
+            payload = cast(dict[str, Any], payload_value)
+            try:
+                ancestry = _load_child_ancestry(
+                    self.session_manager,
+                    child_key,
+                    payload,
+                )
+            except (ValueError, OSError):
+                continue
+            if ancestry.root_key != decoded_key:
+                continue
+            from nanobot.session.runtime_authority import read_runtime_session
+
+            runtime = read_runtime_session(self.session_manager, child_key)
+            child = _hydrated_child_payload(
+                child_key,
+                payload,
+                parent_key=ancestry.parent_key,
+                root_key=ancestry.root_key,
+                parent_source=ancestry.parent_state,
+                root_source=ancestry.root_state,
+                child_source=ancestry.child_state,
+                runtime_executable=(runtime.present and runtime.executable),
+            )
+            if child is not None:
+                children.append(child)
+        children.sort(
+            key=lambda item: (
+                _updated_at_sort_value(item.get("created_at")),
+                str(item.get("child_session_key") or ""),
+            ),
+            reverse=True,
+        )
+
+        start = 0
+        if before:
+            cursor = _decode_child_cursor(before, kind="delegated_children")
+            if cursor is None or cursor.get("root") != root_binding:
+                return _http_error(409, "delegated_children_cursor_stale")
+            anchor = cursor.get("anchor")
+            anchor_index = next(
+                (
+                    index
+                    for index, child in enumerate(children)
+                    if child.get("child_session_key") == anchor
+                ),
+                None,
+            )
+            if anchor_index is None:
+                return _http_error(409, "delegated_children_cursor_stale")
+            start = anchor_index + 1
+        page_children = children[start:start + limit]
+        has_more = start + len(page_children) < len(children)
+        next_cursor = (
+            _encode_child_cursor(
+                "delegated_children",
+                anchor=str(page_children[-1]["child_session_key"]),
+                root=root_binding,
+            )
+            if has_more and page_children else None
+        )
+        return _http_json_response({
+            "schemaVersion": WEBUI_TRANSCRIPT_SCHEMA_VERSION,
+            "parentSessionKey": decoded_key,
+            "stop_target": stop_target,
+            "children": page_children,
+            "page": {
+                "before_cursor": next_cursor,
+                "has_more_before": has_more,
+                "loaded_message_count": len(page_children),
+            },
+        })
 
     def _handle_webui_thread_get(
         self,
@@ -1473,30 +1774,166 @@ class GatewayHTTPHandler:
         decoded_key = _decode_api_key(key)
         if decoded_key is None:
             return _http_error(400, "invalid session key")
-        if not _is_websocket_channel_session_key(decoded_key):
+        query = _parse_query(request.path)
+        view = _query_first(query, "view")
+        if "view" in query and (len(query["view"]) != 1 or view not in {"history", "controls"}):
+            return _http_error(400, "invalid thread view")
+        is_child = decoded_key.startswith("delegated:")
+        if not (_is_websocket_channel_session_key(decoded_key) or is_child):
             return _http_error(404, "session not found")
+        if view == "controls" and (is_child or set(query) != {"view"}):
+            return _http_error(400, "invalid thread controls query")
+        child_limit = 160
+        before: str | None = None
+        child_payload: dict[str, Any] | None = None
+        child_ancestry: _ChildAncestry | None = None
+        if is_child:
+            if set(query) - {"limit", "direction", "before", "view"}:
+                return _http_error(400, "unsupported child history query")
+            if any(len(values) != 1 for values in query.values()):
+                return _http_error(400, "invalid child history query")
+            try:
+                child_limit = _child_page_limit(
+                    _query_first(query, "limit"),
+                    default=160,
+                )
+            except ValueError:
+                return _http_error(400, "invalid limit")
+            direction = _query_first(query, "direction")
+            if direction is not None and direction != "latest":
+                return _http_error(400, "invalid direction")
+            before = _query_first(query, "before")
+            child_metadata = (
+                self.session_manager.read_session_metadata(decoded_key)
+                if self.session_manager is not None else None
+            )
+            metadata_value = (
+                child_metadata.get("metadata")
+                if isinstance(child_metadata, dict) else None
+            )
+            metadata = (
+                cast(dict[str, Any], metadata_value)
+                if isinstance(metadata_value, dict) else None
+            )
+            payload_value = (
+                metadata.get("delegation_child") if metadata is not None else None
+            )
+            child_payload = (
+                cast(dict[str, Any], payload_value)
+                if isinstance(payload_value, dict) else None
+            )
+            if child_payload is None:
+                return _http_error(404, "session not found")
+            parent_key = child_payload.get("parent_key")
+            if (
+                not isinstance(parent_key, str)
+                or not parent_key
+                or self.session_manager is None
+            ):
+                return _http_error(404, "session not found")
+            try:
+                child_ancestry = _load_child_ancestry(
+                    self.session_manager,
+                    decoded_key,
+                    child_payload,
+                )
+            except (ValueError, OSError):
+                return _http_error(404, "session not found")
+            from nanobot.session.runtime_authority import read_runtime_session
+
+            runtime_state = read_runtime_session(self.session_manager, decoded_key)
+            # Keep malformed historical child data readable. A stale parent
+            # reference is different: the new parent must not acquire the old
+            # child's live route.
+            if (
+                runtime_state.present
+                and not runtime_state.executable
+                and runtime_state.issue == "stale_parent"
+            ):
+                return _http_error(404, "session not found")
+            scope_key = child_ancestry.root_key
+        else:
+            scope_key = decoded_key
+        snapshot: SourceSnapshot | None = None
+        saved_source: SavedSourceMetadata | None = None
+        source_state: SourceState | None = None
+        if not is_child:
+            if view == "history":
+                saved_or_snap = self._read_saved_history_source(decoded_key)
+                if isinstance(saved_or_snap, Response):
+                    return saved_or_snap
+                if isinstance(saved_or_snap, SavedSourceMetadata):
+                    saved_source = saved_or_snap
+                    source_state = saved_source.state
+                else:
+                    snapshot = saved_or_snap
+                    source_state = snapshot.state if isinstance(snapshot, SourceSnapshot) else None
+            else:
+                source = self._read_thread_source(decoded_key, require_saved_read=view is not None)
+                if isinstance(source, Response):
+                    return source
+                snapshot = source
+                source_state = snapshot.state if isinstance(snapshot, SourceSnapshot) else None
         try:
-            scope = self.workspaces.scope_for_session_key(decoded_key)
+            if view == "history":
+                # The saved folder resolves relative markdown paths only.
+                # Signing still requires the media reader's own authorization.
+                scope = self.workspaces.scope_for_session_key(
+                    scope_key,
+                    source_snapshot=snapshot,
+                    saved_source=saved_source,
+                    include_live_permissions=False,
+                )
+            else:
+                scope = self.workspaces.scope_for_session_key(scope_key, source_snapshot=snapshot)
         except Exception:
             self._log.exception("workspace thread scope projection failed")
             return _http_error(503, "permission_state_unavailable")
-        allow_folder_grants = self.workspaces.folder_grants_allowed_for_session(decoded_key)
+        if view == "controls":
+            return self._thread_with_controls(
+                request, decoded_key, {"view": "controls", "sessionKey": decoded_key},
+                snapshot=snapshot, scope=scope, connection=connection,
+                allow_remote_permissions=allow_remote_permissions, remote_owner=remote_owner,
+            )
+        allow_folder_grants = self.workspaces.folder_grants_allowed_for_session(scope_key)
+        if (
+            is_child
+            and child_payload is not None
+            and child_ancestry is not None
+            and self.session_manager is not None
+        ):
+            return _child_history_response(
+                self,
+                decoded_key,
+                child_payload,
+                child_ancestry,
+                limit=child_limit,
+                before=before,
+                scope=scope,
+                allow_folder_grants=allow_folder_grants,
+                include_workspace_scope=view != "history",
+            )
 
+        @cache
         def load_session_messages() -> list[dict[str, Any]] | None:
+            if snapshot is not None:
+                return snapshot.events
             if self.session_manager is None:
                 return None
+            if saved_source is not None:
+                loaded = self.session_manager.read_existing_canonical_source(decoded_key)
+                return loaded[1].events if loaded is not None else None
             session_data = self.session_manager.read_session_file(decoded_key)
             raw_messages = session_data.get("messages") if isinstance(session_data, dict) else None
-            if not isinstance(raw_messages, list):
-                return None
-            raw_session_messages = cast(list[Any], raw_messages)
-            return [
-                cast(dict[str, Any], raw_message)
-                for raw_message in raw_session_messages
-                if isinstance(raw_message, dict)
-            ]
+            if isinstance(raw_messages, list) and raw_messages:
+                raw_session_messages = cast(list[Any], raw_messages)
+                return [
+                    cast(dict[str, Any], raw_message)
+                    for raw_message in raw_session_messages
+                    if isinstance(raw_message, dict)
+                ]
+            return None
 
-        query = _parse_query(request.path)
         raw_limit = _query_first(query, "limit")
         limit: int | None = None
         if raw_limit is not None and raw_limit.strip():
@@ -1505,9 +1942,14 @@ class GatewayHTTPHandler:
             except ValueError:
                 return _http_error(400, "invalid limit")
         direction = _query_first(query, "direction")
-        if direction is not None and direction not in {"latest"}:
+        if direction is not None and direction not in {"latest", "before", "after", "around"}:
             return _http_error(400, "invalid direction")
         before = _query_first(query, "before")
+        after = _query_first(query, "after")
+        around = _query_first(query, "around")
+        prompt_id = _query_first(query, "prompt_id")
+        if sum(1 for val in (before, after, around or prompt_id) if val is not None) > 1:
+            return _http_error(400, "conflicting history window cursors")
         from nanobot.session.webui_turns import (
             websocket_turn_id,
             websocket_turn_transcript_persistence_failed,
@@ -1515,11 +1957,28 @@ class GatewayHTTPHandler:
         )
 
         chat_id = decoded_key.split(":", 1)[1]
-        active_turn_started_at = websocket_turn_wall_started_at(chat_id)
-        active_turn_id = websocket_turn_id(chat_id)
+        active_turn_started_at = None if is_child else websocket_turn_wall_started_at(chat_id)
+        active_turn_id = None if is_child else websocket_turn_id(chat_id)
         active_turn_transcript_persistence_failed = (
-            websocket_turn_transcript_persistence_failed(chat_id)
+            False if is_child else websocket_turn_transcript_persistence_failed(chat_id)
         )
+
+        canonical_events_loader: Callable[[Sequence[str]], Mapping[str, Mapping[str, Any]]] | None = None
+        sessions = self.session_manager
+        if source_state is not None and sessions is not None:
+            bound_state = source_state
+            bound_sessions = sessions
+
+            def _load_canonical_events(
+                event_ids: Sequence[str],
+            ) -> dict[str, dict[str, Any]]:
+                return bound_sessions.read_canonical_events_by_ids(
+                    decoded_key,
+                    list(event_ids),
+                    expected_source=bound_state,
+                )
+
+            canonical_events_loader = _load_canonical_events
 
         def build_thread(limit_value: int | None) -> dict[str, Any] | None:
             return build_webui_thread_response(
@@ -1536,6 +1995,7 @@ class GatewayHTTPHandler:
                     text,
                     workspace_path=scope.project_path,
                     allow_folder_grants=allow_folder_grants,
+                    publication=False,
                 ),
                 session_messages_loader=load_session_messages,
                 active_turn_started_at=active_turn_started_at,
@@ -1546,35 +2006,54 @@ class GatewayHTTPHandler:
                 limit=limit_value,
                 direction=direction,
                 before=before,
+                after=after,
+                around=around,
+                prompt_id=prompt_id,
+                expected_source=source_state,
+                canonical_events_loader=canonical_events_loader,
             )
 
-
-        data = build_thread(limit)
-        # Bound one response by showing fewer turns, never by trimming a turn:
-        # every client receives identical content for the turns it gets.
-        if data is not None and limit is not None:
-            effective_limit = limit
-            while (
-                len(json.dumps(data, ensure_ascii=False).encode("utf-8"))
-                > THREAD_PROJECTION_BUDGET_BYTES
-                and effective_limit > 1
-            ):
-                effective_limit = max(1, effective_limit // 2)
-                smaller_page = build_thread(effective_limit)
-                if smaller_page is None:
-                    break
-                data = smaller_page
+        try:
+            data: dict[str, Any] | None = build_thread(limit)
+            # Bound one response by showing fewer turns, never by trimming a turn:
+            # every client receives identical content for the turns it gets. The
+            # ceiling applies to the no-query compatibility path as well, so it is
+            # independent of a caller-supplied ``limit``.
+            if data is not None:
+                effective_limit = limit
+                while (
+                    len(json.dumps(data, ensure_ascii=False).encode("utf-8"))
+                    > THREAD_PROJECTION_BUDGET_BYTES
+                ):
+                    if effective_limit is None:
+                        effective_limit = max(1, len(data["messages"]) // 2)
+                    elif effective_limit > 1:
+                        effective_limit = max(1, effective_limit // 2)
+                    else:
+                        break
+                    smaller_page = build_thread(effective_limit)
+                    if smaller_page is None:
+                        break
+                    data = smaller_page
+        except HistoryWindowError as exc:
+            return _http_error(exc.status_code, exc.detail)
 
         if data is None:
-            metadata_payload = (
-                self.session_manager.read_session_metadata(decoded_key)
-                if self.session_manager is not None else None
-            )
-            metadata = (
-                metadata_payload.get("metadata")
-                if type(metadata_payload) is dict else None
-            )
-            if type(metadata) is not dict or cast(dict[str, object], metadata).get("webui") is not True:
+            if saved_source is not None:
+                is_webui = saved_source.webui
+            elif snapshot is not None:
+                is_webui = snapshot.header["metadata"].get("webui") is True
+            else:
+                metadata_payload = (
+                    self.session_manager.read_session_metadata(decoded_key)
+                    if self.session_manager is not None else None
+                )
+                metadata = metadata_payload.get("metadata") if metadata_payload is not None else None
+                is_webui = (
+                    type(metadata) is dict
+                    and cast(dict[str, object], metadata).get("webui") is True
+                )
+            if not is_webui:
                 return _http_error(404, "webui thread not found")
             data = {
                 "schemaVersion": WEBUI_TRANSCRIPT_SCHEMA_VERSION,
@@ -1584,14 +2063,141 @@ class GatewayHTTPHandler:
                 "has_pending_tool_calls": False,
                 "active_turn_id": active_turn_id,
             }
-            if limit is not None or direction is not None or before is not None:
+            if (
+                limit is not None
+                or direction is not None
+                or before is not None
+                or after is not None
+                or around is not None
+                or prompt_id is not None
+            ):
                 data["page"] = {
                     "has_more_before": False,
+                    "has_more_after": False,
                     "loaded_message_count": 0,
                     "total_known_message_count": 0,
                     "user_message_offset": 0,
                 }
+        if view == "history":
+            data["view"] = "history"
+            if source_state is not None:
+                data["source"] = _source_origin_payload(source_state)
+            return _http_json_response(
+                data,
+                accept_encoding=_combined_list_header(request.headers, "Accept-Encoding"),
+            )
+        return self._thread_with_controls(
+            request, decoded_key, data,
+            snapshot=snapshot, scope=scope, connection=connection,
+            allow_remote_permissions=allow_remote_permissions, remote_owner=remote_owner,
+        )
+
+    def _read_saved_history_source(
+        self, key: str,
+    ) -> SavedSourceMetadata | SourceSnapshot | Response | None:
+        """Prefer bounded browse metadata before falling back to full canonical validation."""
+        sessions = self.session_manager
+        if sessions is None:
+            return None
+        if sessions.has_managed_authority:
+            try:
+                saved = sessions.read_saved_source_metadata(key)
+            except Exception:
+                self._log.exception("saved source metadata browse failed")
+                return _http_error(503, "session_read_unavailable")
+            if saved is not None:
+                if not saved.webui:
+                    return _http_error(404, "session not found")
+                return saved
+        return self._read_thread_source(key, require_saved_read=True)
+
+    def _read_thread_source(
+        self, key: str, *, require_saved_read: bool,
+    ) -> SourceSnapshot | Response | None:
+        """Apply the same source check before projecting rows or prompt labels."""
+        sessions = self.session_manager
+        if sessions is None:
+            return None
+        try:
+            source = sessions.read_existing_canonical_source(key)
+            if source is not None:
+                snapshot = source[1]
+                if require_saved_read and snapshot.header["metadata"].get("webui") is not True:
+                    return _http_error(404, "session not found")
+                return snapshot
+            if not require_saved_read:
+                return None
+            managed = sessions.has_managed_authority
+            if self._legacy_thread_history_without_permission_source(key, allow_absent=not managed):
+                return None
+            # Display files can outlive a deleted source. They do not make a
+            # managed session readable again, even for short prompt summaries.
+            if managed and sessions.resolve_session_mode(key).state != "active":
+                return _http_error(404, "session not found")
+        except Exception:
+            self._log.exception("workspace thread source read failed")
+        return _http_error(503, "session_read_unavailable")
+
+    def _thread_with_controls(
+        self,
+        request: WsRequest,
+        decoded_key: str,
+        data: dict[str, Any],
+        *,
+        snapshot: SourceSnapshot | None,
+        scope: WorkspaceScope,
+        connection: Any,
+        allow_remote_permissions: bool,
+        remote_owner: bool,
+    ) -> Response:
+        """Read current control state, without using any display transcript facts."""
+        # Emit the key only for a session whose Stop target this gateway can
+        # derive, which is the same condition the loop uses. A session without a
+        # canonical source has no such authority, and an explicit null would tell
+        # the client that modern Stop exists and is empty, permanently disabling
+        # the legacy Stop path it still needs.
+        if snapshot is not None and self.stop_target_for_key is not None:
+            data["stop_target"] = self.stop_target_for_key(
+                decoded_key, source_snapshot=snapshot,
+            )
         data["workspace_scope"] = self.workspaces.scope_payload(scope)
+        next_scope_fn = getattr(self.workspaces, "next_scope_for_session_key", None)
+        next_scope = next_scope_fn(decoded_key) if callable(next_scope_fn) else None
+        if isinstance(next_scope, WorkspaceScope):
+            data["next_workspace_scope"] = self.workspaces.scope_payload(next_scope)
+        if self.session_manager is not None:
+            from nanobot.session.next_turn_preferences import NextTurnPreferences
+
+            read_prefs = getattr(
+                self.session_manager, "read_next_turn_preferences", None
+            )
+            prefs = read_prefs(decoded_key) if callable(read_prefs) else None
+            if isinstance(prefs, NextTurnPreferences) and prefs.values:
+                data["next_turn_preferences"] = prefs.payload()
+                if "model_preset" in prefs.values:
+                    data["next_model_preset"] = prefs.get("model_preset")
+                if "reasoning_effort" in prefs.values:
+                    data["next_reasoning_effort"] = prefs.get("reasoning_effort")
+            if (
+                data.get("view") == "controls"
+                and snapshot is not None
+                and isinstance(getattr(snapshot, "header", None), dict)
+            ):
+                from nanobot.session.model_selection import (
+                    model_preset_from_metadata,
+                    reasoning_effort_from_metadata,
+                )
+
+                header_meta = snapshot.header.get("metadata")
+                if isinstance(header_meta, dict):
+                    typed_meta = cast(dict[str, Any], header_meta)
+                    try:
+                        data["model_preset"] = model_preset_from_metadata(typed_meta)
+                    except ValueError:
+                        data["model_preset"] = None
+                    effort = reasoning_effort_from_metadata(typed_meta)
+                    if effort is not None:
+                        data["reasoning_effort"] = effort
         local_permission_projection = (
             connection is not None
             and _is_loopback_host(self.config.host)
@@ -1602,22 +2208,17 @@ class GatewayHTTPHandler:
             and self.workspace_access_recovery is not None
             and self.session_manager is not None
         ):
-            chat_id = decoded_key.split(":", 1)[1]
-            try:
-                backend = self.session_manager.source_backend(decoded_key)
-            except Exception:
-                self._log.exception("workspace permission source classification failed")
-                return _http_error(503, "permission_state_unavailable")
-            if backend is None:
+            if snapshot is None:
                 if not self._legacy_thread_history_without_permission_source(decoded_key):
                     return _http_error(503, "permission_state_unavailable")
                 data["workspace_access_request"] = None
             else:
                 try:
-                    request_state = self.workspace_access_recovery.get(chat_id)
-                    permissions = (
-                        self.workspace_access_recovery.workspace_permissions(
-                            chat_id,
+                    request_state, permissions, permission_reference = (
+                        self.workspace_access_recovery.thread_permission_context(
+                            decoded_key.split(":", 1)[1],
+                            snapshot,
+                            scope=scope,
                             controls_available=(
                                 self.workspace_controls_available(connection)
                                 if local_permission_projection
@@ -1628,9 +2229,8 @@ class GatewayHTTPHandler:
                     # Projection may discover a durable residual after restart;
                     # resolve the scope again so the Full/retiring label and
                     # its Restricted future-access clamp describe one state.
-                    scope = self.workspaces.scope_for_session_key(decoded_key)
-                    _permission_owner, permission_reference = (
-                        self.workspace_access_recovery.preview_permission_context(chat_id)
+                    scope = self.workspaces.scope_for_session_key(
+                        decoded_key, source_snapshot=snapshot,
                     )
                     data["workspace_permissions"] = permissions
                     data["workspace_scope"] = self.workspaces.scope_payload(
@@ -1647,7 +2247,9 @@ class GatewayHTTPHandler:
             accept_encoding=_combined_list_header(request.headers, "Accept-Encoding"),
         )
 
-    def _legacy_thread_history_without_permission_source(self, session_key: str) -> bool:
+    def _legacy_thread_history_without_permission_source(
+        self, session_key: str, *, allow_absent: bool = True,
+    ) -> bool:
         """Allow only absent or strictly parsed legacy history to omit V2 permissions."""
         sessions = self.session_manager
         if sessions is None:
@@ -1658,11 +2260,11 @@ class GatewayHTTPHandler:
             if has_managed_authority:
                 resolved = sessions.resolve_session_mode(session_key)
                 if resolved.state == "absent":
-                    return not path.exists()
+                    return allow_absent and not path.exists()
                 if resolved.state != "active" or resolved.mode != "legacy":
                     return False
             if not path.exists():
-                return not has_managed_authority
+                return allow_absent and not has_managed_authority
             with sessions.locked_session_files():
                 if not path.exists():
                     return False
@@ -1749,7 +2351,7 @@ class GatewayHTTPHandler:
                     permission_owner=permission_owner,
                     permission_reference=permission_reference,
                     restrict_to_root=None if full_preview_access else scope.project_path,
-                    image_url=lambda target: self.media.sign_or_stage_media_path(
+                    image_url=lambda target: self.media.sign_media_read(
                         target,
                         allow_folder_grants=full_preview_access,
                     ),
@@ -1782,12 +2384,13 @@ class GatewayHTTPHandler:
                 build_generated_asset_library_page,
                 get_webui_dir(),
                 media_root=get_media_dir(),
-                sign_path=lambda path: self.media.sign_or_stage_media_path(
+                sign_path=lambda path: self.media.sign_media_read(
                     path,
                     allow_folder_grants=False,
                 ),
                 cursor=raw_cursor,
                 limit=limit,
+                newest_first=_query_first(query, "order") == "newest",
             )
         except ValueError:
             return _http_error(400, "invalid cursor")
@@ -1835,12 +2438,13 @@ class GatewayHTTPHandler:
                 groups,
                 session_key=decoded_key,
                 media_root=get_media_dir(),
-                sign_path=lambda path: self.media.sign_or_stage_media_path(
+                sign_path=lambda path: self.media.sign_media_read(
                     path,
                     allow_folder_grants=False,
                 ),
                 cursor=cursor,
                 limit=limit,
+                newest_first=_query_first(query, "order") == "newest",
             )
         except Exception:
             self._log.exception("generated assets projection failed")
@@ -1886,6 +2490,8 @@ class GatewayHTTPHandler:
             return _http_json_response(
                 {
                     "deleted": False,
+                    "complete": False,
+                    "remaining": [],
                     "blocked_by_automations": True,
                     "automations": serialize_automation_jobs(
                         automation_jobs, cron_service=self.cron_service,
@@ -1963,9 +2569,13 @@ class GatewayHTTPHandler:
                     self.local_trigger_store.delete(job.id)
         draft_deleted = self.workspaces.discard_draft_scope(decoded_key)
         session_deleted = self.session_manager.delete_session(decoded_key)
-        transcript_deleted = delete_webui_thread(decoded_key)
+        transcript = delete_webui_transcript_result(decoded_key)
         return _http_json_response(
-            {"deleted": bool(draft_deleted or session_deleted or transcript_deleted)}
+            {
+                "deleted": bool(draft_deleted or session_deleted or transcript.deleted),
+                "complete": transcript.complete,
+                "remaining": list(transcript.remaining),
+            }
         )
 
     # -- Automation routes --------------------------------------------------
@@ -2319,23 +2929,41 @@ class GatewayHTTPHandler:
         connection: Any,
         request: WsRequest,
     ) -> Response:
+        if not getattr(request, _WEBUI_MUTATION_REQUEST_ATTR, False):
+            return _http_error(
+                405,
+                "desktop notifications require an authenticated WebSocket mutation",
+            )
+        if not self.check_api_token(request):
+            return _http_error(401, "Unauthorized")
+        if not _is_same_origin_request(
+            request.headers,
+            secure=bool(self.config.ssl_certfile.strip()),
+        ):
+            return _http_error(403, "cross_origin_denied")
         if not (
             _is_loopback_host(self.config.host)
             and _is_local_browser_request(connection, request.headers)
         ):
             return _http_error(403, "local_ui_required")
         query = _request_query(request)
-        title = (query.get("title") or ["nanobot"])[0].strip()[:120] or "nanobot"
+        title = (query.get("title") or ["Kohaku"])[0].strip()[:120] or "Kohaku"
         body = (query.get("body") or [""])[0].strip()[:500]
         if not body:
             return _http_error(400, "missing notification body")
         command = shutil.which("notify-send")
         if command is None:
             return _http_error(503, "desktop notifications unavailable")
+        notification_command = [command, "--app-name=Kohaku"]
+        if self.static_dist_path is not None:
+            icon_path = self.static_dist_path / "brand" / "nanobot_icon_192.png"
+            if icon_path.is_file():
+                notification_command.extend(["--icon", str(icon_path)])
+        notification_command.extend([title, body])
         try:
             completed = await asyncio.to_thread(
                 subprocess.run,
-                [command, "--app-name=nanobot", title, body],
+                notification_command,
                 capture_output=True,
                 check=False,
                 timeout=5,
@@ -2451,15 +3079,21 @@ class GatewayHTTPHandler:
             if permission_failure is not None:
                 return permission_failure
         try:
+            stage_started = time.perf_counter()
+            # The mutation parses and rewrites the session source under a
+            # store-wide lock. Keep it off the event loop so one switch does not
+            # stall every other chat, stream and turn admission.
             if path == "/api/workspaces/access/prepare-full":
-                result = self.workspaces.prepare_full(
+                result = await asyncio.to_thread(
+                    self.workspaces.prepare_full,
                     payload,
                     local_ui=local_ui,
                     owner_authorized=owner_authorized,
                     owner_installation_id=owner_installation_id,
                 )
             else:
-                result = self.workspaces.set_permission_mode(
+                result = await asyncio.to_thread(
+                    self.workspaces.set_permission_mode,
                     payload,
                     local_ui=local_ui,
                     owner_authorized=owner_authorized,
@@ -2470,6 +3104,7 @@ class GatewayHTTPHandler:
         except Exception:
             self._log.exception("workspace permission mutation failed")
             return _http_error(503, "permission_state_unavailable")
+        self._log_permission_stage(path, stage_started, payload, result)
 
         if "error" in result:
             await self.bus.publish_event(
@@ -3211,6 +3846,851 @@ def _positive_int(value: Any) -> int | None:
     if isinstance(value, bool) or not isinstance(value, int):
         return None
     return value if value > 0 else None
+
+
+def _updated_at_sort_value(value: object) -> float:
+    if isinstance(value, bool):
+        return 0.0
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str) and value:
+        try:
+            from datetime import datetime
+
+            return datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp()
+        except ValueError:
+            return 0.0
+    return 0.0
+
+
+@dataclass(frozen=True, slots=True)
+class _ChildAncestry:
+    parent_key: str
+    root_key: str
+    child_snapshot: SourceSnapshot | None
+    child_state: SourceState | None
+    parent_state: SourceState | None
+    root_state: SourceState | None
+
+
+def _child_page_limit(value: str | None, *, default: int) -> int:
+    if value is None or not value.strip():
+        return default
+    try:
+        requested = int(value)
+    except ValueError:
+        raise ValueError("invalid page limit") from None
+    if requested <= 0:
+        raise ValueError("invalid page limit")
+    return min(1000, requested)
+
+
+def _source_state_reference(value: object, *, key: str) -> SourceState | None:
+    if value is None:
+        return None
+    if not isinstance(value, Mapping):
+        raise ValueError("child source reference is malformed")
+    data = cast(Mapping[str, Any], value)
+    store_identity = data.get("store_identity")
+    session_key = data.get("session_key")
+    incarnation = data.get("incarnation")
+    generation = data.get("generation")
+    revision = data.get("revision", 0)
+    checkpoint_id = data.get("checkpoint_id")
+    checkpoint_fingerprint = data.get("checkpoint_fingerprint", "")
+    if (
+        not isinstance(store_identity, str)
+        or not store_identity
+        or session_key != key
+        or not isinstance(incarnation, str)
+        or not incarnation
+        or type(generation) is not int
+        or generation < 0
+        or type(revision) is not int
+        or revision < 0
+        or (checkpoint_id is not None and not isinstance(checkpoint_id, str))
+        or not isinstance(checkpoint_fingerprint, str)
+    ):
+        raise ValueError("child source reference is malformed")
+    return SourceState(
+        store_identity=store_identity,
+        session_key=key,
+        incarnation=incarnation,
+        revision=revision,
+        generation=generation,
+        checkpoint_id=checkpoint_id,
+        checkpoint_fingerprint=checkpoint_fingerprint,
+    )
+
+
+def _current_source_snapshot(
+    session_manager: SessionManager,
+    key: str,
+) -> SourceSnapshot | None:
+    backend = session_manager.source_backend(key)
+    if backend is None:
+        return None
+    try:
+        return backend.source.load_source_snapshot(key)
+    except Exception:
+        return None
+
+
+def _source_snapshot_matches(
+    snapshot: SourceSnapshot | None,
+    expected: SourceState | None,
+) -> bool:
+    return bool(snapshot is not None and expected is not None and snapshot.state.same_origin(expected))
+
+
+def _load_child_ancestry(
+    session_manager: SessionManager,
+    child_key: str,
+    payload: Mapping[str, Any],
+) -> _ChildAncestry:
+    """Validate one exact current parent chain and load its source snapshots once."""
+    snapshots: dict[str, SourceSnapshot | None] = {}
+
+    def snapshot_for(key: str) -> SourceSnapshot | None:
+        if key not in snapshots:
+            snapshots[key] = _current_source_snapshot(session_manager, key)
+        return snapshots[key]
+
+    child_ref = _source_state_reference(payload.get("source_state"), key=child_key)
+    child_snapshot: SourceSnapshot | None = None
+    if child_ref is None and snapshot_for(child_key) is not None:
+        raise ValueError("canonical child source reference is missing")
+    if child_ref is not None:
+        child_snapshot = snapshot_for(child_key)
+        if not _source_snapshot_matches(child_snapshot, child_ref):
+            raise ValueError("child source lifetime changed")
+
+    first_parent = payload.get("parent_key")
+    if not isinstance(first_parent, str) or not first_parent:
+        raise ValueError("child parent reference is missing")
+    parent_ref_for_child = _source_state_reference(
+        payload.get("parent_source_state"),
+        key=first_parent,
+    )
+    if session_manager.read_session_snapshot(first_parent) is None:
+        raise ValueError("child parent is missing")
+
+    visited: set[str] = set()
+    current_key = child_key
+    current_payload: Mapping[str, Any] = payload
+    current_ref = child_ref
+    root_state: SourceState | None = None
+    root_key: str | None = None
+    root_refs: list[SourceState] = []
+
+    while True:
+        if current_key in visited or len(visited) >= 16:
+            raise ValueError("child ancestry is cyclic or too deep")
+        visited.add(current_key)
+        parent_key = current_payload.get("parent_key")
+        if not isinstance(parent_key, str) or not parent_key:
+            raise ValueError("child parent reference is missing")
+        parent_session = session_manager.read_session_snapshot(parent_key)
+        if parent_session is None:
+            raise ValueError("child parent is missing")
+        recorded_incarnation = current_payload.get("parent_incarnation")
+        if (
+            not isinstance(recorded_incarnation, str)
+            or not recorded_incarnation
+            or recorded_incarnation != parent_session.incarnation
+        ):
+            raise ValueError("child parent lifetime changed")
+
+        parent_ref = _source_state_reference(
+            current_payload.get("parent_source_state"),
+            key=parent_key,
+        )
+        if parent_ref is not None:
+            parent_snapshot = snapshot_for(parent_key)
+            if not _source_snapshot_matches(parent_snapshot, parent_ref):
+                raise ValueError("child parent source lifetime changed")
+        elif current_ref is not None:
+            raise ValueError("canonical child has no parent source reference")
+
+        current_root_key = current_payload.get("root_key")
+        if current_root_key is not None and (
+            not isinstance(current_root_key, str) or not current_root_key
+        ):
+            raise ValueError("child root reference is malformed")
+        root_ref_raw = current_payload.get("root_source_state")
+        if root_ref_raw is not None:
+            if not isinstance(current_root_key, str):
+                raise ValueError("child root source has no root key")
+            root_ref = _source_state_reference(root_ref_raw, key=current_root_key)
+            if root_ref is None:
+                raise ValueError("child root source reference is malformed")
+            root_snapshot = snapshot_for(current_root_key)
+            if not _source_snapshot_matches(root_snapshot, root_ref):
+                raise ValueError("child root source lifetime changed")
+            root_refs.append(root_ref)
+
+        if parent_key.startswith("delegated:"):
+            parent_metadata = session_manager.read_session_metadata(parent_key)
+            metadata_value = (
+                parent_metadata.get("metadata")
+                if isinstance(parent_metadata, dict) else None
+            )
+            parent_metadata_dict = (
+                cast(dict[str, Any], metadata_value)
+                if isinstance(metadata_value, dict) else None
+            )
+            parent_payload_value = (
+                parent_metadata_dict.get("delegation_child")
+                if parent_metadata_dict is not None else None
+            )
+            if not isinstance(parent_payload_value, dict):
+                raise ValueError("child ancestry metadata is missing")
+            parent_payload = cast(dict[str, Any], parent_payload_value)
+            if parent_ref is not None:
+                ancestor_ref = _source_state_reference(
+                    parent_payload.get("source_state"),
+                    key=parent_key,
+                )
+                if ancestor_ref is not None and not ancestor_ref.same_origin(parent_ref):
+                    raise ValueError("child ancestry source reference conflicts")
+            current_key = parent_key
+            current_payload = parent_payload
+            current_ref = _source_state_reference(
+                parent_payload.get("source_state"),
+                key=parent_key,
+            )
+            if current_ref is not None:
+                parent_snapshot = snapshot_for(parent_key)
+                if not _source_snapshot_matches(parent_snapshot, current_ref):
+                    raise ValueError("child ancestor source lifetime changed")
+            continue
+
+        if not _is_websocket_channel_session_key(parent_key):
+            raise ValueError("child ancestry does not terminate at a WebSocket root")
+        root_key = parent_key
+        if current_root_key is not None and current_root_key != root_key:
+            raise ValueError("child root ancestry changed")
+        break
+
+    assert root_key is not None
+    if parent_ref_for_child is not None and first_parent == root_key:
+        root_refs.append(parent_ref_for_child)
+    if root_refs:
+        root_state = root_refs[0]
+        if any(not root_state.same_origin(item) for item in root_refs[1:]):
+            raise ValueError("child root source references conflict")
+    if child_ref is not None and (
+        parent_ref_for_child is None
+        or (root_key != first_parent and root_state is None)
+    ):
+        raise ValueError("canonical child ancestry is incomplete")
+    return _ChildAncestry(
+        parent_key=first_parent,
+        root_key=root_key,
+        child_snapshot=child_snapshot,
+        child_state=child_ref,
+        parent_state=parent_ref_for_child,
+        root_state=root_state,
+    )
+
+
+def _origin_digest(state: SourceState) -> str:
+    raw = "\0".join((
+        state.store_identity,
+        state.session_key,
+        state.incarnation,
+        str(state.generation),
+    ))
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:20]
+
+
+def _session_lifetime_digest(
+    key: str,
+    incarnation: str,
+    generation: int,
+    store_identity: str = "",
+) -> str:
+    raw = "\0".join((store_identity, key, incarnation, str(generation)))
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:20]
+
+
+def _encode_child_cursor(kind: str, *, anchor: str, **bindings: str) -> str:
+    payload = {"v": 1, "kind": kind, "anchor": anchor, **bindings}
+    encoded = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    return base64.urlsafe_b64encode(encoded).decode("ascii").rstrip("=")
+
+
+def _decode_child_cursor(value: str, *, kind: str) -> dict[str, object] | None:
+    if not value or len(value) > 2048:
+        return None
+    try:
+        padded = value + "=" * (-len(value) % 4)
+        decoded: object = json.loads(
+            base64.urlsafe_b64decode(padded.encode("ascii")).decode("utf-8")
+        )
+    except (ValueError, UnicodeDecodeError, json.JSONDecodeError):
+        return None
+    if not isinstance(decoded, dict):
+        return None
+    # JSON decoding returns a built-in dictionary. Keep values untrusted and
+    # validate each key before exposing a string-keyed internal view.
+    raw_fields = cast(dict[object, object], decoded)
+    fields: dict[str, object] = {}
+    for raw_key, raw_value in raw_fields.items():
+        if not isinstance(raw_key, str):
+            return None
+        fields[raw_key] = raw_value
+    version = fields.get("v")
+    cursor_kind = fields.get("kind")
+    anchor = fields.get("anchor")
+    if (
+        type(version) is not int
+        or version != 1
+        or not isinstance(cursor_kind, str)
+        or cursor_kind != kind
+        or not isinstance(anchor, str)
+        or not anchor
+    ):
+        return None
+    return fields
+
+
+def _hydrated_child_payload(
+    child_key: str,
+    payload: Mapping[str, Any],
+    *,
+    parent_key: str,
+    root_key: str,
+    parent_source: SourceState | None,
+    root_source: SourceState | None,
+    child_source: SourceState | None,
+    runtime_executable: bool,
+) -> dict[str, Any] | None:
+    child_id = payload.get("child_id")
+    profile = payload.get("profile")
+    state = payload.get("state")
+    generation = payload.get("runtime_generation", 0 if child_source is not None else None)
+    if (
+        not isinstance(child_id, str)
+        or not child_id
+        or not isinstance(profile, str)
+        or not profile
+        or not isinstance(state, str)
+        or not state
+        or (generation is None and child_source is not None)
+        or (generation is not None and (type(generation) is not int or generation < 0))
+    ):
+        return None
+    run_sequence_value: object = payload.get("run_sequence")
+    state_sequence_value: object = payload.get("state_sequence")
+    control_epoch_value: object = payload.get("control_epoch")
+    run_sequence = (
+        run_sequence_value
+        if type(run_sequence_value) is int and run_sequence_value >= 0
+        else 0
+    )
+    state_sequence = (
+        state_sequence_value
+        if type(state_sequence_value) is int and state_sequence_value >= 0
+        else 0
+    )
+    control_epoch = (
+        control_epoch_value
+        if type(control_epoch_value) is int and control_epoch_value >= 0
+        else 0
+    )
+    child: dict[str, Any] = {
+        "history_kind": "canonical" if child_source is not None else "summary",
+        "parent_session_key": parent_key,
+        "child_id": child_id,
+        "child_session_key": child_key,
+        "profile": profile,
+        "state": state,
+        "runtime_generation": generation,
+        "task_label": payload.get("task_label") if isinstance(payload.get("task_label"), str) else None,
+        "task_label_truncated": payload.get("task_label_truncated") is True,
+        "result_summary": payload.get("result_summary") if isinstance(payload.get("result_summary"), str) else None,
+        "result_summary_truncated": payload.get("result_summary_truncated") is True,
+        "outcome": payload.get("outcome") if isinstance(payload.get("outcome"), str) else None,
+        "parent_run_id": payload.get("attempt_id") if isinstance(payload.get("attempt_id"), str) else None,
+        "child_run_id": payload.get("current_run_id") if isinstance(payload.get("current_run_id"), str) else None,
+        "root_key": root_key,
+        "run_sequence": run_sequence,
+        "state_sequence": state_sequence,
+        "control_epoch": control_epoch,
+        "pending_approval_id": payload.get("pending_approval_id") if isinstance(payload.get("pending_approval_id"), str) else None,
+        "blocked_run_id": payload.get("blocked_run_id") if isinstance(payload.get("blocked_run_id"), str) else None,
+        "result_disposition": None,
+        "holds_capacity": payload.get("holds_capacity") if type(payload.get("holds_capacity")) is bool else None,
+    }
+    updated_at: object = payload.get("updated_at")
+    created_at: object = payload.get("created_at")
+    child["created_at"] = (
+        float(created_at)
+        if isinstance(created_at, (int, float)) and not isinstance(created_at, bool)
+        else 0.0
+    )
+    child["updated_at"] = (
+        float(updated_at)
+        if isinstance(updated_at, (int, float)) and not isinstance(updated_at, bool)
+        else None
+    )
+    child["owned_work"] = child["holds_capacity"] is True
+    if child_source is None:
+        for name in ("runtime_generation", "run_sequence", "state_sequence", "control_epoch"):
+            value = payload.get(name)
+            child[name] = value if type(value) is int and value >= 0 else None
+    child["can_stop"] = bool(
+        child_source is not None
+        and runtime_executable
+        and state in {"reserved", "active", "joining", "waiting_approval"}
+        and child["holds_capacity"] is not False
+    )
+    for name, source in (
+        ("parent", parent_source),
+        ("root", root_source),
+        ("child", child_source),
+    ):
+        child[f"{name}_store_identity"] = source.store_identity if source is not None else None
+        child[f"{name}_incarnation"] = source.incarnation if source is not None else None
+        child[f"{name}_generation"] = source.generation if source is not None else None
+    result = payload.get("background_result")
+    if isinstance(result, dict):
+        disposition = cast(dict[str, Any], result).get("state")
+        if isinstance(disposition, str) and disposition:
+            child["result_disposition"] = disposition
+    return child
+
+
+def _source_origin_payload(state: SourceState | None) -> dict[str, Any] | None:
+    if state is None:
+        return None
+    return {
+        "store_identity": state.store_identity,
+        "session_key": state.session_key,
+        "incarnation": state.incarnation,
+        "generation": state.generation,
+    }
+
+
+def _canonical_child_display_text(value: object) -> str:
+    """Project structured source content to readable text without Python reprs."""
+    from nanobot.utils.helpers import stringify_text_blocks
+
+    if isinstance(value, str):
+        return value
+    if isinstance(value, list):
+        text_blocks = stringify_text_blocks(cast(list[object], value))
+        if text_blocks is not None:
+            return text_blocks
+        parts: list[str] = []
+        for item in cast(list[object], value):
+            if isinstance(item, Mapping):
+                block = cast(Mapping[str, Any], item)
+                kind = block.get("type")
+                if kind in {"image", "image_url"}:
+                    parts.append("[image]")
+                    continue
+                if kind in {"input_audio", "audio", "audio_url"}:
+                    parts.append("[audio]")
+                    continue
+                text = next(
+                    (
+                        block.get(name)
+                        for name in ("text", "output_text", "transcript", "content")
+                        if isinstance(block.get(name), str)
+                    ),
+                    None,
+                )
+                if isinstance(text, str):
+                    parts.append(text)
+        return "\n".join(part for part in parts if part)
+    if isinstance(value, Mapping):
+        data = cast(Mapping[str, Any], value)
+        for name in ("text", "output_text", "transcript", "content"):
+            text = data.get(name)
+            if isinstance(text, str):
+                return text
+        try:
+            return json.dumps(value, ensure_ascii=False, sort_keys=True)
+        except (TypeError, ValueError):
+            return ""
+    return "" if value is None else str(value)
+
+
+def _canonical_child_tool_events(event: Mapping[str, Any]) -> list[dict[str, Any]]:
+    role = event.get("role")
+    if role == "assistant":
+        calls = event.get("tool_calls")
+        if not isinstance(calls, list):
+            return []
+        tool_events: list[dict[str, Any]] = []
+        for raw_call in cast(list[object], calls):
+            if not isinstance(raw_call, Mapping):
+                continue
+            call = cast(Mapping[str, Any], raw_call)
+            function = call.get("function")
+            if not isinstance(function, Mapping):
+                continue
+            function_data = cast(Mapping[str, Any], function)
+            call_id = call.get("id")
+            name = function_data.get("name")
+            if not isinstance(call_id, str) or not call_id or not isinstance(name, str) or not name:
+                continue
+            arguments = function_data.get("arguments")
+            if isinstance(arguments, str):
+                try:
+                    arguments = json.loads(arguments)
+                except (TypeError, ValueError):
+                    pass
+            tool_events.append({
+                "phase": "start",
+                "call_id": call_id,
+                "name": name,
+                "arguments": arguments,
+            })
+        return tool_events
+    if role == "tool":
+        call_id = event.get("tool_call_id")
+        name = event.get("name")
+        if not isinstance(call_id, str) or not call_id or not isinstance(name, str) or not name:
+            return []
+        status = event.get("_outcome_status")
+        phase = "end" if status in {None, "", "ok", "success"} else "error"
+        tool_event: dict[str, Any] = {
+            "phase": phase,
+            "call_id": call_id,
+            "name": name,
+            "result": event.get("content"),
+        }
+        if phase == "error":
+            tool_event["error"] = event.get("content")
+        return [tool_event]
+    return []
+
+
+def _child_history_response(
+    handler: GatewayHTTPHandler,
+    child_key: str,
+    payload: Mapping[str, Any],
+    ancestry: _ChildAncestry,
+    *,
+    limit: int,
+    before: str | None,
+    scope: WorkspaceScope,
+    allow_folder_grants: bool,
+    include_workspace_scope: bool,
+) -> Response:
+    snapshot = ancestry.child_snapshot
+    is_canonical = snapshot is not None
+    if is_canonical:
+        child_state = ancestry.child_state
+        parent_state = ancestry.parent_state
+        root_state = ancestry.root_state
+        if child_state is None or parent_state is None or root_state is None:
+            return _http_error(404, "session not found")
+        child_binding = _origin_digest(child_state)
+        parent_binding = _origin_digest(parent_state)
+        root_binding = _origin_digest(root_state)
+        visible_events = _canonical_child_visible_events(snapshot)
+        page_end = len(visible_events)
+        if before:
+            cursor = _decode_child_cursor(before, kind="child_history")
+            if cursor is None:
+                return _http_error(400, "invalid child history cursor")
+            if (
+                cursor.get("child") != child_binding
+                or cursor.get("parent") != parent_binding
+                or cursor.get("root") != root_binding
+            ):
+                return _http_error(409, "child_history_cursor_stale")
+            anchor_index = next(
+                (
+                    index
+                    for index, (_event_index, event) in enumerate(visible_events)
+                    if event.get("_event_id") == cursor["anchor"]
+                ),
+                None,
+            )
+            if anchor_index is None:
+                return _http_error(409, "child_history_cursor_stale")
+            page_end = anchor_index
+
+        effective_limit = limit
+        while True:
+            page_start = max(0, page_end - effective_limit)
+            selected = _canonical_child_rows(
+                handler,
+                visible_events[page_start:page_end],
+                scope=scope,
+                allow_folder_grants=allow_folder_grants,
+            )
+            has_more = page_start > 0
+            cursor_value = (
+                _encode_child_cursor(
+                    "child_history",
+                    anchor=str(selected[0]["id"]),
+                    child=child_binding,
+                    parent=parent_binding,
+                    root=root_binding,
+                )
+                if has_more and selected else None
+            )
+            data: dict[str, Any] = {
+                "schemaVersion": WEBUI_TRANSCRIPT_SCHEMA_VERSION,
+                "sessionKey": child_key,
+                "messages": selected,
+                "completed_turn_ids": [],
+                "has_pending_tool_calls": False,
+                "active_turn_id": None,
+                "read_only": True,
+                "history_kind": "canonical",
+                "parent_session_key": ancestry.parent_key,
+                "root_key": ancestry.root_key,
+                "source": _source_origin_payload(child_state),
+                "page": {
+                    "before_cursor": cursor_value,
+                    "has_more_before": has_more,
+                    "loaded_message_count": len(selected),
+                },
+            }
+            if include_workspace_scope:
+                data["workspace_scope"] = handler.workspaces.scope_payload(scope)
+            else:
+                data["view"] = "history"
+            response_size = len(json.dumps(data, ensure_ascii=False).encode("utf-8"))
+            if response_size <= THREAD_PROJECTION_BUDGET_BYTES:
+                return _http_json_response(data)
+            if effective_limit <= 1:
+                return _http_error(413, "child_history_record_too_large")
+            effective_limit = max(1, effective_limit // 2)
+
+    legacy_messages: list[dict[str, Any]] = []
+    raw_messages = payload.get("transcript")
+    if not isinstance(raw_messages, list) and handler.session_manager is not None:
+        session_data = handler.session_manager.read_session_file(child_key)
+        raw_messages = session_data.get("messages") if isinstance(session_data, dict) else None
+    if isinstance(raw_messages, list):
+        for index, raw in enumerate(cast(list[object], raw_messages)):
+            if not isinstance(raw, Mapping):
+                continue
+            message = cast(Mapping[str, Any], raw)
+            role = message.get("role")
+            if role not in {"user", "assistant"}:
+                continue
+            text = _canonical_child_display_text(message.get("content"))
+            row: dict[str, Any] = {
+                "id": f"delegated-summary-{index}",
+                "role": role,
+                "content": text,
+                **_child_timestamp_fields(message),
+            }
+            legacy_messages.append(row)
+    selected_summary = legacy_messages[-min(limit, 2):]
+    summary_data: dict[str, Any] = {
+        "schemaVersion": WEBUI_TRANSCRIPT_SCHEMA_VERSION,
+        "sessionKey": child_key,
+        "messages": selected_summary,
+        "completed_turn_ids": [],
+        "has_pending_tool_calls": False,
+        "active_turn_id": None,
+        "read_only": True,
+        "history_kind": "summary",
+        "parent_session_key": ancestry.parent_key,
+        "root_key": ancestry.root_key,
+        "source": None,
+        "page": {
+            "before_cursor": None,
+            "has_more_before": False,
+            "loaded_message_count": len(selected_summary),
+        },
+    }
+    if include_workspace_scope:
+        summary_data["workspace_scope"] = handler.workspaces.scope_payload(scope)
+    else:
+        summary_data["view"] = "history"
+    if len(json.dumps(summary_data, ensure_ascii=False).encode("utf-8")) > THREAD_PROJECTION_BUDGET_BYTES:
+        return _http_error(413, "child_history_record_too_large")
+    return _http_json_response(summary_data)
+
+
+def _child_timestamp_fields(event: Mapping[str, Any]) -> dict[str, object]:
+    """Expose persisted event time without manufacturing a history timestamp."""
+    milliseconds: object = event.get("created_at_ms")
+    if (
+        isinstance(milliseconds, (int, float))
+        and not isinstance(milliseconds, bool)
+        and 0 <= milliseconds < 10_000_000_000_000_000
+    ):
+        return {"createdAt": int(milliseconds), "timestampAvailable": True}
+    timestamp = event.get("timestamp")
+    if isinstance(timestamp, str):
+        from datetime import datetime
+
+        try:
+            converted = datetime.fromisoformat(timestamp.replace("Z", "+00:00")).timestamp() * 1000
+            return {"createdAt": int(max(0, converted)), "timestampAvailable": True}
+        except (ValueError, OverflowError, OSError):
+            pass
+    return {"createdAt": 0, "timestampAvailable": False}
+
+
+def _canonical_child_rows(
+    handler: GatewayHTTPHandler,
+    selected_events: list[tuple[int, dict[str, Any]]],
+    *,
+    scope: WorkspaceScope,
+    allow_folder_grants: bool,
+) -> list[dict[str, Any]]:
+    from nanobot.attachments.context import media_paths_for_message
+    from nanobot.runtime_context import public_history_message
+    from nanobot.session.history_visibility import is_hidden_history_message
+
+    rows: list[dict[str, Any]] = []
+    for _index, event in selected_events:
+        role = event.get("role")
+        if role not in {"user", "assistant", "tool"} or is_hidden_history_message(event):
+            continue
+        public = public_history_message(event)
+        content_value = public.get("content")
+        content = _canonical_child_display_text(content_value)
+        media_paths = media_paths_for_message(event)
+        media = handler.media.augment_transcript_media(
+            media_paths,
+            allow_folder_grants=allow_folder_grants,
+        ) if media_paths else []
+        if role == "assistant":
+            content = handler.media.rewrite_local_markdown_images(
+                content,
+                workspace_path=scope.project_path,
+                allow_folder_grants=allow_folder_grants,
+                publication=False,
+            )
+        event_id = event.get("_event_id")
+        if not isinstance(event_id, str) or not event_id:
+            raise ValueError("canonical child event has no stable identity")
+        row: dict[str, Any] = {
+            "id": event_id,
+            "role": role,
+            "content": content,
+            **_child_timestamp_fields(event),
+        }
+        run_id = event.get("_run_id")
+        if isinstance(run_id, str) and run_id:
+            row["turnId"] = run_id
+        if media:
+            row["media"] = media
+        tool_events = _canonical_child_tool_events(public)
+        if tool_events:
+            row["toolEvents"] = tool_events
+        if role == "tool":
+            row["kind"] = "trace"
+        rows.append(row)
+    return rows
+
+
+def _canonical_child_visible_events(
+    snapshot: SourceSnapshot,
+) -> list[tuple[int, dict[str, Any]]]:
+    from nanobot.session.history_visibility import is_hidden_history_message
+
+    return [
+        (index, event)
+        for index, event in enumerate(snapshot.events)
+        if event.get("role") in {"user", "assistant", "tool"}
+        and not is_hidden_history_message(event)
+    ]
+
+
+def _payload_source_state(payload: Mapping[str, Any], name: str) -> dict[str, Any] | None:
+    value = payload.get(name)
+    if not isinstance(value, dict):
+        return None
+    state = cast(dict[str, Any], value)
+    if not all(
+        isinstance(state.get(field), str) and state.get(field)
+        for field in ("store_identity", "session_key", "incarnation")
+    ) or type(state.get("generation")) is not int:
+        return None
+    return state
+
+
+def _source_state_is_current(
+    session_manager: SessionManager,
+    key: str,
+    expected: Mapping[str, Any],
+) -> bool:
+    backend = session_manager.source_backend(key)
+    if backend is None:
+        return False
+    try:
+        state = backend.source.load_source_snapshot(key).state
+    except Exception:
+        return False
+    return (
+        state.store_identity == expected.get("store_identity")
+        and state.session_key == expected.get("session_key")
+        and state.incarnation == expected.get("incarnation")
+        and state.generation == expected.get("generation")
+    )
+
+
+def load_canonical_child_messages(
+    session_manager: SessionManager,
+    child_key: str,
+    payload: Mapping[str, Any],
+) -> list[dict[str, Any]] | None:
+    """Read canonical child history, or return None for summary-only children."""
+    expected = _payload_source_state(payload, "source_state")
+    if expected is None:
+        return None
+    if not _source_state_is_current(session_manager, child_key, expected):
+        raise ValueError("child source lifetime changed")
+    backend = session_manager.source_backend(child_key)
+    if backend is None:
+        raise ValueError("child source is unavailable")
+    snapshot = backend.source.load_source_snapshot(child_key)
+    messages: list[dict[str, Any]] = []
+    for event in snapshot.events:
+        role = event.get("role")
+        content = event.get("content")
+        if role not in {"user", "assistant"} or not isinstance(content, str):
+            continue
+        messages.append({"role": role, "content": content})
+    return messages
+
+
+def resolve_child_root_key(
+    session_manager: SessionManager,
+    child_key: str,
+) -> str | None:
+    """Resolve a child key to its direct WebSocket root with incarnation checks."""
+    current = child_key
+    seen: set[str] = set()
+    while current.startswith("delegated:"):
+        if current in seen:
+            return None
+        seen.add(current)
+        child_metadata = session_manager.read_session_metadata(current)
+        metadata_value = child_metadata.get("metadata") if isinstance(child_metadata, dict) else None
+        metadata = cast(dict[str, Any], metadata_value) if isinstance(metadata_value, dict) else None
+        payload_value = metadata.get("delegation_child") if metadata is not None else None
+        payload = cast(dict[str, Any], payload_value) if isinstance(payload_value, dict) else None
+        if payload is None:
+            return None
+        parent_key = payload.get("parent_key")
+        if not isinstance(parent_key, str) or not parent_key:
+            return None
+        parent_snapshot = session_manager.read_session_snapshot(parent_key)
+        if parent_snapshot is None:
+            return None
+        recorded = payload.get("parent_incarnation")
+        if isinstance(recorded, str) and recorded and recorded != parent_snapshot.incarnation:
+            return None
+        current = parent_key
+    if not _is_websocket_channel_session_key(current):
+        return None
+    return current
 
 
 def _is_websocket_channel_session_key(key: str) -> bool:

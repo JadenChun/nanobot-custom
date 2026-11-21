@@ -8,8 +8,11 @@ Nanobot agent or gateway.
 from __future__ import annotations
 
 import argparse
+import os
 import signal
+import sys
 import threading
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -21,6 +24,17 @@ from nanobot.remote.pairing import PairingService
 from nanobot.remote.store import RemoteAccessStore
 
 
+def _default_serve_verifier(origin: str) -> bool:
+    from nanobot.remote.tailscale import tailscale_status
+
+    status = tailscale_status()
+    return bool(
+        status.get("connected")
+        and status.get("serve_mapped")
+        and status.get("origin") == origin
+    )
+
+
 class RemoteAccessOwner:
     def __init__(
         self,
@@ -28,8 +42,10 @@ class RemoteAccessOwner:
         socket_path: Path | str | None = None,
         *,
         listener_port: int | None = None,
+        serve_verifier: Callable[[str], bool] | None = None,
     ) -> None:
         self.store = RemoteAccessStore(state_dir)
+        self.serve_verifier = serve_verifier or _default_serve_verifier
         self.tokens = TokenService(self.store)
         self.pairing = PairingService(self.store, self.tokens)
         self.delegation = OwnerDelegationService(self.store, self.tokens)
@@ -39,15 +55,16 @@ class RemoteAccessOwner:
             pairing=self.pairing,
             tokens=self.tokens,
             delegation=self.delegation,
+            serve_verifier=self.serve_verifier,
         )
         self.listener_port = listener_port
         self.listener: RemoteHTTPListener | None = None
 
     def start(self) -> None:
         self.store.load_or_create()
-        # The owner client now exposes owner-only pairing. Existing chat-only
-        # records are not grandfathered; they must re-pair as owner devices.
-        self.store.revoke_legacy_chat_only_devices()
+        # Only the v2 device-key contract is supported. Revoke every legacy
+        # bearer record, including owner-scoped records, before serving.
+        self.store.revoke_legacy_bearer_devices()
         self.server.start()
         if self.listener_port is not None:
             self.listener = RemoteHTTPListener(
@@ -56,7 +73,11 @@ class RemoteAccessOwner:
                 host="127.0.0.1",
                 port=self.listener_port,
             )
-            self.listener.start()
+            try:
+                self.listener.start()
+            except BaseException:
+                self.stop()
+                raise
 
     def stop(self) -> None:
         if self.listener is not None:
@@ -81,6 +102,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--socket", type=Path, default=None)
     parser.add_argument("--ready-file", type=Path, default=None)
     parser.add_argument("--listener-port", type=int, default=None)
+    parser.add_argument("--parent-stdin", action="store_true", help=argparse.SUPPRESS)
     return parser.parse_args()
 
 
@@ -91,11 +113,6 @@ def main() -> int:
         args.socket,
         listener_port=args.listener_port,
     )
-    owner.start()
-    if args.ready_file:
-        args.ready_file.write_text(str(owner.socket_path) + "\n", encoding="utf-8")
-    print(f"REMOTE_OWNER_READY {owner.socket_path}", flush=True)
-
     stop_event = threading.Event()
 
     def _stop(_signum: int, _frame: object) -> None:
@@ -103,9 +120,23 @@ def main() -> int:
 
     signal.signal(signal.SIGTERM, _stop)
     signal.signal(signal.SIGINT, _stop)
+    if args.parent_stdin:
+        # EOF also stops the owner when the gateway exits without a clean shutdown.
+        def watch_parent() -> None:
+            try:
+                while os.read(sys.stdin.fileno(), 1):
+                    pass
+            finally:
+                stop_event.set()
+
+        threading.Thread(target=watch_parent, name="remote-owner-parent", daemon=True).start()
+
+    owner.start()
     try:
-        while not stop_event.wait(0.5):
-            pass
+        if args.ready_file:
+            args.ready_file.write_text(str(owner.socket_path) + "\n", encoding="utf-8")
+        print(f"REMOTE_OWNER_READY {owner.socket_path}", flush=True)
+        stop_event.wait()
     finally:
         owner.stop()
     return 0

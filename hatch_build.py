@@ -14,8 +14,7 @@ Behavior:
 - Skips when `NANOBOT_SKIP_WEBUI_BUILD=1` is set.
 - Reuses `nanobot/web/dist/` only when it is already fresh, unless
   `NANOBOT_FORCE_WEBUI_BUILD=1` is set.
-- Uses `bun` when available, otherwise falls back to `npm`. The chosen tool
-  performs `install` followed by `run build`.
+- Uses `bun install --frozen-lockfile` or `npm ci` before it runs the build.
 """
 
 from __future__ import annotations
@@ -58,7 +57,12 @@ class WebUIBuildHook(BuildHookInterface):
             )
             return
 
+        require_fresh = os.environ.get("NANOBOT_REQUIRE_FRESH_WEBUI") == "1"
         if os.environ.get("NANOBOT_SKIP_WEBUI_BUILD") == "1":
+            if require_fresh:
+                raise RuntimeError(
+                    "NANOBOT_REQUIRE_FRESH_WEBUI=1 forbids NANOBOT_SKIP_WEBUI_BUILD=1"
+                )
             self.app.display_info("[webui-build] skipped via NANOBOT_SKIP_WEBUI_BUILD=1")
             return
 
@@ -72,6 +76,8 @@ class WebUIBuildHook(BuildHookInterface):
         status = webui_build.inspect_webui_bundle(source_dir=webui_dir, dist_dir=dist_dir)
         force = os.environ.get("NANOBOT_FORCE_WEBUI_BUILD") == "1"
         if not status.needs_build and not force:
+            if require_fresh:
+                webui_build.require_fresh_webui_bundle(status)
             self.app.display_info(
                 f"[webui-build] reusing existing build at {dist_dir} "
                 "(already fresh; set NANOBOT_FORCE_WEBUI_BUILD=1 to rebuild)"
@@ -84,11 +90,14 @@ class WebUIBuildHook(BuildHookInterface):
             )
 
         try:
-            webui_build.build_webui_bundle(
+            built = webui_build.build_webui_bundle(
                 source_dir=webui_dir,
                 dist_dir=dist_dir,
+                frozen=True,
                 output=self.app.display_info,
             )
+            if require_fresh:
+                webui_build.require_fresh_webui_bundle(built)
         except webui_build.WebUIBuildError as exc:
             raise RuntimeError(
                 "[webui-build] "

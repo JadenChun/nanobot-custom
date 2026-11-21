@@ -22,10 +22,11 @@ def test_browser_actions_are_machine_classified() -> None:
     assert classify_crawler_action("open") == "read_navigation"
     assert classify_crawler_action("navigate") == "read_navigation"
     assert classify_crawler_action("follow_link") == "read_navigation"
-    assert classify_crawler_action("expand") == "read_navigation"
+    assert classify_crawler_action("expand") == "state_changing"
     assert classify_crawler_action("paginate") == "read_navigation"
     assert classify_crawler_action("click") == "state_changing"
     assert classify_crawler_action("unknown") == "state_changing"
+    assert "expand" not in SocialCrawlTool.parameters["properties"]["action"]["enum"]
 
 
 def _result(
@@ -287,6 +288,30 @@ async def test_click_action_is_rejected_at_worker_dispatch_before_browser_use() 
                 "op": "click",
                 "session_id": "session-1",
                 "selector": "button[aria-label=Replies]",
+                "wait_ms": 250,
+            }
+        )
+
+    worker._crawl_result.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_expand_action_is_rejected_at_worker_dispatch_before_browser_use() -> None:
+    worker = Crawl4AIWorker("worker.sock", {"threads.net"})
+    worker.sessions["session-1"] = BrowserSession(
+        url="https://www.threads.net/t/example", updated_at=0
+    )
+    worker._expire_sessions = AsyncMock()
+    worker._browser_context_alive = MagicMock(return_value=True)
+    worker._validate_public_dns = AsyncMock()
+    worker._crawl_result = AsyncMock()
+
+    with pytest.raises(WorkerRequestError, match="expand"):
+        await worker.dispatch(
+            {
+                "op": "expand",
+                "session_id": "session-1",
+                "selector": "div.show-more",
                 "wait_ms": 250,
             }
         )

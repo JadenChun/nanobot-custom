@@ -77,6 +77,7 @@ _REMOTE_ACCESS_LOCAL_ONLY_PATHS = frozenset({
     "/api/settings/remote-access/pairing/approve",
     "/api/settings/remote-access/pairing/deny",
     "/api/settings/remote-access/pairing/cancel",
+    "/api/settings/remote-access/pairing/renew",
     "/api/settings/remote-access/tailscale",
 })
 _query_first = contracts.query_first
@@ -144,6 +145,7 @@ _REMOTE_ROUTES = {
     "/api/settings/remote-access/pairing/approve": "pair-approve",
     "/api/settings/remote-access/pairing/deny": "pair-deny",
     "/api/settings/remote-access/pairing/cancel": "pair-cancel",
+    "/api/settings/remote-access/pairing/renew": "pair-renew",
 }
 
 _SYSTEM_ROUTES = {
@@ -202,6 +204,7 @@ _SETTINGS_MUTATION_PATHS = frozenset({
     "/api/settings/remote-access/pairing/approve",
     "/api/settings/remote-access/pairing/deny",
     "/api/settings/remote-access/pairing/cancel",
+    "/api/settings/remote-access/pairing/renew",
     "/api/settings/mcp-oauth/start",
     "/api/settings/mcp-oauth/complete",
     "/api/settings/mcp-oauth/cancel",
@@ -270,7 +273,7 @@ class WebUISettingsRouter:
         self._mcp_runtime_status = mcp_runtime_status
         self._mcp_reload = mcp_reload
         self._mcp_oauth_redirect_uri = mcp_oauth_redirect_uri
-        self._mcp_oauth = McpOAuthManager()
+        self._mcp_oauth = McpOAuthManager(data_dir=self.settings.config.path.parent)
         self._restart_sections: set[str] = set()
         self._models = model_domain.ModelSettingsHandler(settings, logger)
         self._capabilities = capability_domain.CapabilitySettingsHandler(

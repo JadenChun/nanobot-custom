@@ -11,6 +11,7 @@ from nanobot.agent.loop import AgentLoop, TurnContext, TurnKind, _TurnExecutionO
 from nanobot.agent.tools.context import RequestContext
 from nanobot.agent.tools.filesystem import ReadFileTool
 from nanobot.agent.turn import (
+    ApprovalDecision,
     DeliveryTarget,
     RunPolicyContext,
     RunStatus,
@@ -19,7 +20,6 @@ from nanobot.agent.turn import (
     TurnSource,
 )
 from nanobot.agent.turn import TurnContext as RunTurnContext
-from nanobot.attachments.models import AttachmentRecord
 from nanobot.bus.events import InboundMessage
 from nanobot.bus.queue import MessageBus
 from nanobot.config.schema import ChannelsConfig
@@ -228,17 +228,13 @@ async def test_attachment_record_survives_session_reload(tmp_path: Path, admitte
             "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+yF9kAAAAASUVORK5CYII="
         )
     )
-    record = AttachmentRecord(
-        id="att_fixture",
-        sha256="a" * 64,
-        mime="image/png",
-        bytes=image_path.stat().st_size,
-        name="photo.png",
-        source="mobile",
-        created_at=1_793_803_728.0,
-    )
-
     loop = await _make_loop(tmp_path, admitted_async)
+    from nanobot.attachments.store import AttachmentStore
+    from nanobot.config.paths import get_media_dir
+
+    media_root = get_media_dir()
+    store = AttachmentStore(media_root / "attachments", media_root=media_root)
+    record = store.commit(store.stage_path(image_path, source="mobile"))
     loop._run_agent_loop = AsyncMock(side_effect=RuntimeError("interrupt"))  # type: ignore[method-assign]
     msg = InboundMessage(
         channel="websocket",
@@ -581,13 +577,17 @@ async def test_canonical_approval_attachment_keeps_expansion_out_of_source_and_t
     doc_path.write_text("private document body", encoding="utf-8")
     key = "telegram:attachment-approval"
     summary = "private expanded approval instructions"
-    await loop.approval_admission.store(
+    pending = await loop.approval_admission.store(
         session_key=key, channel="telegram", chat_id="attachment-approval", summary=summary,
     )
     request = TurnRequest(
-        content="yes",
+        content="approval_decision",
+        session_key=key,
         source=TurnSource.GATEWAY,
         route=DeliveryTarget(channel="telegram", chat_id="attachment-approval"),
+        approval_decision=ApprovalDecision(
+            approval_id=pending.approval_id, decision="approve", session_key=key,
+        ),
         media=(str(doc_path),),
         trace_mode=TraceMode.SANITIZED,
     )
@@ -610,9 +610,9 @@ async def test_canonical_approval_attachment_keeps_expansion_out_of_source_and_t
     loop.sessions.invalidate(key)
     reloaded = loop.sessions.get_or_create(key)
     assert [event["role"] for event in reloaded.messages] == ["user", "assistant"]
-    assert reloaded.messages[0]["content"] == f"yes\n\n[Attachment: {doc_path.resolve()}]"
+    assert reloaded.messages[0]["content"] == f"approval_decision\n\n[Attachment: {doc_path.resolve()}]"
     assert "media" not in reloaded.messages[0]
     assert summary not in str(reloaded.messages)
     assert result.messages == [
-        {"role": "user", "content": "yes"}, {"role": "assistant", "content": "ok"},
+        {"role": "user", "content": "approval_decision"}, {"role": "assistant", "content": "ok"},
     ]

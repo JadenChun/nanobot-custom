@@ -1,4 +1,26 @@
-"""Durable per-session mode records for the guarded P5 runtime."""
+"""Durable per-session mode records for the guarded P5 runtime.
+
+Journal archive format
+----------------------
+The resolver writes one operation journal under ``.session-mode/journals/<operation_id>/``.
+Each journal is a chain of ``NNNN-<phase>.json`` records. The phases are ``prepared``,
+``target_installed``, ``mode_committed`` and ``complete``, and a reverted operation also
+writes ``aborted``.
+
+When the live journal count reaches the enumeration bound, the resolver moves terminal
+journals to ``.session-mode/retained-journals/<operation_id>/``. The append path and the
+read path both run this rollover, so an existing namespace above the bound stays
+acquirable. A move keeps every record and every operation id. A journal stays readable
+by id in either location. ``export_journal_archive`` writes one JSON archive that names
+each id, its location and its full records.
+
+Oversize source path
+--------------------
+A new publication above the serialized source bound is refused. An existing source
+above the read bound does not deny the namespace. ``list_modes`` omits that key, and
+``export_source`` copies its exact bytes to an operator destination with a named
+receipt. The copy is not truncated and the stored source is not deleted.
+"""
 
 from __future__ import annotations
 
@@ -34,14 +56,19 @@ from typing import (
 )
 
 from nanobot.runtime_context import public_history_message
+from nanobot.session import mode_storage, source_store
 from nanobot.session.history_visibility import is_hidden_history_message
 from nanobot.session.manager import JsonlSessionStore, Session, SessionStorageError
 from nanobot.session.mode_storage import (
     PinnedDirectoryPath,
+    PrivateFileVersion,
     SessionModeError,
+    SessionModeOversizeError,
     SessionModeStorage,
 )
 from nanobot.session.source_store import (
+    SavedSourceMetadata,
+    SavedSourceProof,
     SourceSessionStore,
     SourceValidationError,
     select_legacy_source_event_upgrader,
@@ -214,11 +241,16 @@ class _SourceInventory:
     key: str
     storage_key: str
     source_name: str
-    source_bytes: bytes
+    source_bytes: bytes | None
     source_digest: str
     source_size: int
     sidecar_name: str
     sidecar_bytes: bytes | None
+    saved_source: SavedSourceProof | None = None
+
+    @property
+    def readable(self) -> bool:
+        return self.source_bytes is not None
 
     @property
     def sidecar_digest(self) -> str | None:
@@ -248,6 +280,31 @@ class SessionExportFilePlan:
 class SessionExportPlan:
     destination: str
     files: tuple[SessionExportFilePlan, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class SourceExtractionReceipt:
+    """Named receipt for one operator extraction of an exact source entry."""
+
+    session_key: str
+    action: Literal["export", "quarantine"]
+    destination: Path
+    source_size: int
+    source_digest: str
+
+
+@dataclass(frozen=True, slots=True)
+class JournalArchiveReceipt:
+    """Named receipt for one complete live and retained journal archive."""
+
+    destination: Path
+    archive_digest: str
+    live: int
+    retained: int
+
+    @property
+    def count(self) -> int:
+        return self.live + self.retained
 
 
 class SessionExportTransaction:
@@ -478,6 +535,35 @@ def _digest(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
+def _write_private_entry(directory_fd: int, name: str, data: bytes) -> None:
+    """Write one new private file inside an already-pinned directory."""
+    descriptor = -1
+    try:
+        descriptor = os.open(
+            name,
+            os.O_WRONLY
+            | os.O_CREAT
+            | os.O_EXCL
+            | os.O_NOFOLLOW
+            | getattr(os, "O_CLOEXEC", 0),
+            0o600,
+            dir_fd=directory_fd,
+        )
+        os.fchmod(descriptor, 0o600)
+        view = memoryview(data)
+        while view:
+            written = os.write(descriptor, view)
+            if written <= 0:
+                raise OSError
+            view = view[written:]
+        os.fsync(descriptor)
+    except OSError:
+        raise _fail() from None
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+
+
 def _interruption_identity(
     source_identity: dict[str, object],
 ) -> str:
@@ -572,6 +658,10 @@ class SessionModeResolver:
         self.storage = SessionModeStorage(backend)
         self._closed = False
         self._guard_local = threading.local()
+        self._journal_epoch = 0
+        self._resolution_index: dict[
+            str, tuple[str | None, int, str, ResolvedSessionMode]
+        ] = {}
 
     def _reject_files_held(self) -> None:
         if self.backend.session_files_locked:
@@ -965,11 +1055,15 @@ class SessionModeResolver:
             raise SessionInterruptionRecoveryRefusedError(_MODE_ERROR)
         return archive
 
-    def _source_inventory(self) -> tuple[_SourceInventory, ...]:
+    def _source_inventory(self, *, only_key: str | None = None) -> tuple[_SourceInventory, ...]:
+        """Validate namespace layout, reading only the requested source pair for a point lookup."""
         if not self.backend.session_files_locked:
             raise _fail()
         names = self.storage.list_namespace()
-        allowed = {".workspace", ".session-files.lock", ".execution-locks", ".session-mode"}
+        allowed = {
+            ".workspace", ".session-files.lock", ".execution-locks", ".session-mode",
+            ".session-prefs", ".event-index",
+        }
         pairs: dict[str, dict[str, str]] = {}
         for name in names:
             if name in allowed:
@@ -998,18 +1092,53 @@ class SessionModeResolver:
             key = self.backend.decode_storage_key(storage_key)
             if key is None or self.backend.storage_key(key) != storage_key:
                 raise _fail()
-            source = self.storage.read(source_name, limit=67_108_864)
+            if only_key is not None and key != only_key:
+                continue
+            source: bytes | None
+            version: PrivateFileVersion | None = None
+            try:
+                source, version = self.storage.read_versioned(
+                    source_name, limit=source_store.MAX_SOURCE_SERIALIZED_BYTES
+                )
+            except SessionModeOversizeError:
+                # An existing entry above the read bound stays an operator finding.
+                # It must not deny listing, acquisition or an unrelated key.
+                source = None
+                source_digest, source_size = self.storage.read_digest(source_name)
+            else:
+                source_digest, source_size = _digest(source), len(source)
             sidecar_name = f"{storage_key}.checkpoint.json"
             sidecar = self.storage.read(sidecar_name) if "sidecar" in pair else None
+            if source is None:
+                result.append(
+                    _SourceInventory(
+                        key, storage_key, source_name, None, source_digest,
+                        source_size, sidecar_name, sidecar,
+                    )
+                )
+                continue
             metadata = self._read_header(key).get("metadata")
             if not isinstance(metadata, dict):
                 raise _fail()
             canonical = cast(dict[object, object], metadata).get("source_schema_version") == 1
+            saved_source: SavedSourceProof | None = None
             try:
                 if canonical:
                     if sidecar is not None:
                         raise _fail()
-                    validate_source_session_bytes(source, expected_key=key)
+                    header, events = validate_source_session_bytes(source, expected_key=key)
+                    if version is not None:
+                        end = source.find(b"\n")
+                        saved_source = SavedSourceProof(
+                            version,
+                            self.backend.source.describe_saved_source(
+                                header, event_count=len(events), expected_key=key,
+                            ),
+                            source_digest,
+                            header=deepcopy(header),
+                            event_count=len(events),
+                            body_offset=(end + 1) if end >= 0 else len(source),
+                        )
                 else:
                     session = self.backend.parse_legacy_bytes(source, expected_key=key)
                     if sidecar is not None:
@@ -1022,10 +1151,11 @@ class SessionModeResolver:
                     storage_key,
                     source_name,
                     source,
-                    _digest(source),
-                    len(source),
+                    source_digest,
+                    source_size,
                     sidecar_name,
                     sidecar,
+                    saved_source,
                 )
             )
         return tuple(result)
@@ -1034,13 +1164,21 @@ class SessionModeResolver:
         return tuple(item.source_name for item in self._source_inventory())
 
     def _inventory_for_key(self, key: str) -> _SourceInventory:
-        matches = [item for item in self._source_inventory() if item.key == key]
+        matches = self._source_inventory(only_key=key)
         if len(matches) != 1:
             raise _fail()
         return matches[0]
 
+    @staticmethod
+    def _require_source_bytes(item: _SourceInventory) -> bytes:
+        if item.source_bytes is None:
+            raise _fail("source exceeds the read bound; use the operator extraction path")
+        return item.source_bytes
+
     def _verify_pair_exact(self, item: _SourceInventory) -> None:
-        if self.storage.read(item.source_name, limit=67_108_864) != item.source_bytes:
+        if self.storage.read(
+            item.source_name, limit=source_store.MAX_SOURCE_SERIALIZED_BYTES
+        ) != self._require_source_bytes(item):
             raise _fail()
         if self.storage.exists(item.sidecar_name) != (item.sidecar_bytes is not None):
             raise _fail()
@@ -1049,16 +1187,16 @@ class SessionModeResolver:
 
     def _verify_canonical_output(self, key: str, output: bytes) -> None:
         if self.storage.exists(f"{self.backend.storage_key(key)}.checkpoint.json") or self.storage.read(
-            f"{self.backend.storage_key(key)}.jsonl", limit=67_108_864
+            f"{self.backend.storage_key(key)}.jsonl",
+            limit=source_store.MAX_SOURCE_SERIALIZED_BYTES,
         ) != output:
             raise _fail()
 
     def _read_header(self, key: str) -> dict[str, object]:
         try:
-            data = self.storage.read(
-                f"{self.backend.storage_key(key)}.jsonl", limit=67_108_864
+            first = self.storage.read_first_line(
+                f"{self.backend.storage_key(key)}.jsonl"
             )
-            first = data.splitlines()[0]
             value = json.loads(first, object_pairs_hook=_duplicates)
             if not isinstance(value, dict):
                 raise ValueError
@@ -1217,11 +1355,20 @@ class SessionModeResolver:
 
     def _journal_records(self, operation_id: str) -> list[dict[str, object]]:
         directory = f".session-mode/journals/{operation_id}"
-        entries = self.storage.list(directory, suffix=".json")
+        retained = f".session-mode/retained-journals/{operation_id}"
+        if self.storage.exists(directory):
+            base = directory
+            entries = self.storage.list(base, suffix=".json")
+        elif self.storage.exists(retained):
+            base = retained
+            entries = self.storage.list(base, suffix=".json")
+        else:
+            base = directory
+            entries = ()
         records: list[dict[str, object]] = []
         previous: str | None = None
         for sequence, name in enumerate(entries, 1):
-            value = _parse_json(self.storage.read(f"{directory}/{name}"))
+            value = _parse_json(self.storage.read(f"{base}/{name}"))
             if (
                 set(value) not in (_LEGACY_JOURNAL_FIELDS, _JOURNAL_FIELDS)
                 or name != f"{sequence:04d}-{value.get('phase')}.json"
@@ -1393,6 +1540,41 @@ class SessionModeResolver:
             raise _fail()
         return records
 
+    def _journal_operation_ids(self) -> tuple[str, ...]:
+        """List live journal ids, rolling terminal journals above the bound first."""
+        try:
+            return self.storage.list(".session-mode/journals")
+        except SessionModeError:
+            self._roll_completed_journals()
+            return self.storage.list(".session-mode/journals")
+
+    def _roll_completed_journals(self, *, headroom: int = 0) -> None:
+        """Archive terminal journals above the live enumeration bound.
+
+        The append path reserves one slot for the journal it is about to create;
+        the read/recovery path only needs the live set to be listable. A move
+        keeps the operation id and every record, so retained proof stays readable.
+        """
+        live = ".session-mode/journals"
+        retained = ".session-mode/retained-journals"
+        if not self.storage.exists(live):
+            return
+        maximum = max(
+            mode_storage.MODE_ENUM_LIMIT, mode_storage.MODE_JOURNAL_LIMIT
+        ) * 2
+        names = self.storage.list(live, maximum=maximum)
+        keep = min(mode_storage.MODE_ENUM_LIMIT, mode_storage.MODE_JOURNAL_LIMIT) - headroom
+        if len(names) <= keep:
+            return
+        for name in names:
+            journal = self._journal_records(name)
+            if journal[-1]["phase"] not in {"complete", "aborted"}:
+                continue
+            self.storage.rename(f"{live}/{name}", f"{retained}/{name}")
+            if len(self.storage.list(live, maximum=maximum)) <= keep:
+                return
+        raise _fail("session mode journal capacity exceeded")
+
     def _append_journal(
         self,
         operation_id: str,
@@ -1424,6 +1606,8 @@ class SessionModeResolver:
         archive_digest: str | None = None,
     ) -> None:
         directory = f".session-mode/journals/{operation_id}"
+        if not self.storage.exists(directory):
+            self._roll_completed_journals(headroom=1)
         existing = self._journal_records(operation_id) if self.storage.exists(directory) else []
         if existing:
             first = existing[0]
@@ -1495,6 +1679,7 @@ class SessionModeResolver:
             _canonical_json(record),
             replace=False,
         )
+        self._journal_epoch += 1
 
     def _record(
         self,
@@ -1572,11 +1757,17 @@ class SessionModeResolver:
 
     def _stage_source(self, operation_id: str, key: str, data: bytes) -> str:
         relative = f"staging/{operation_id}/canonical-source.jsonl"
-        self.storage.write(f".session-mode/{relative}", data, replace=False)
-        installed = self.storage.read(f".session-mode/{relative}")
-        validate_source_session_bytes(installed, expected_key=key)
-        if installed != data:
-            raise _fail()
+        from nanobot.attachments._media import configured_custody
+        from nanobot.attachments.store import AttachmentStore
+
+        header, events = validate_source_session_bytes(data, expected_key=key)
+        custody = configured_custody()
+        with AttachmentStore(custody.root / "attachments", media_root=custody.root).publication([header, *events]):
+            self.storage.write(f".session-mode/{relative}", data, replace=False)
+            installed = self.storage.read(f".session-mode/{relative}")
+            validate_source_session_bytes(installed, expected_key=key)
+            if installed != data:
+                raise _fail()
         return relative
 
     def _install_stage(self, relative: str, key: str) -> None:
@@ -1588,6 +1779,7 @@ class SessionModeResolver:
     def _validate_record(
         self, key: str, registry: dict[str, object],
         *, inventory: Mapping[str, _SourceInventory] | None = None,
+        for_browse: bool = False,
     ) -> dict[str, object] | None:
         name = self._record_name(key)
         sidecar_name = f"{self.backend.storage_key(key)}.checkpoint.json"
@@ -1669,7 +1861,30 @@ class SessionModeResolver:
         committed = [entry for entry in journal if entry["phase"] == "mode_committed"]
         if not committed or committed[-1].get("target_binding") != self._binding(record):
             raise _fail()
-        data = self.storage.read(f"{self.backend.storage_key(key)}.jsonl", limit=67_108_864)
+        source_name = f"{self.backend.storage_key(key)}.jsonl"
+        if for_browse:
+            if mode == "canonical":
+                proof = self.backend.saved_source_proof(key)
+                if (
+                    proof is None or self.storage.exists(sidecar_name)
+                    or self.storage.file_version(source_name) != proof.version
+                ):
+                    raise _fail("saved session source is unverified")
+                state = proof.metadata.state
+                if (
+                    state.session_key != key or state.incarnation != record["incarnation"]
+                    or state.generation != record["generation"]
+                    or state.revision < cast(int, record["transition_revision"])
+                    or (
+                        state.revision == record["transition_revision"]
+                        and proof.digest != record["transition_digest"]
+                    )
+                ):
+                    raise _fail("saved session source does not match its mode")
+            # This method's browse caller can consume only canonical proof.
+            # Execution, recovery and legacy readers still use the full check.
+            return record
+        data = self.storage.read(source_name, limit=67_108_864)
         header = self._read_header(key)
         metadata = header.get("metadata")
         if not isinstance(metadata, dict):
@@ -1687,10 +1902,11 @@ class SessionModeResolver:
             raise _fail()
         if revision == record["transition_revision"] and _digest(data) != record["transition_digest"]:
             raise _fail()
-        if inventory is None:
-            self._inventory_for_key(key)
-        elif key not in inventory:
+        item = self._inventory_for_key(key) if inventory is None else inventory.get(key)
+        if item is None:
             raise _fail()
+        if mode == "canonical" and item.saved_source is not None and item.source_bytes == data:
+            self.backend.remember_saved_source(key, item.saved_source)
         return record
 
     def require_export_stage(
@@ -1890,7 +2106,7 @@ class SessionModeResolver:
             raise _fail()
 
     def _reconcile_incomplete(self, key: str, registry: dict[str, object]) -> None:
-        for operation_id in self.storage.list(".session-mode/journals"):
+        for operation_id in self._journal_operation_ids():
             if not self._hex32(operation_id):
                 raise _fail()
             journal = self._journal_records(operation_id)
@@ -2178,8 +2394,14 @@ class SessionModeResolver:
                 output_digest=cast(str | None, last["output_digest"]), output_size=cast(int | None, last["output_size"]),
                 rollback_name=cast(str | None, last["rollback_name"]))
 
-    def _assert_no_incomplete(self, key: str, registry: dict[str, object]) -> None:
-        for operation_id in self.storage.list(".session-mode/journals"):
+    def _assert_no_incomplete(
+        self, key: str, registry: dict[str, object], *, read_only: bool = False,
+    ) -> None:
+        operations = (
+            self.storage.list(".session-mode/journals")
+            if read_only else self._journal_operation_ids()
+        )
+        for operation_id in operations:
             if not self._hex32(operation_id):
                 raise _fail()
             journal = self._journal_records(operation_id)
@@ -2249,17 +2471,128 @@ class SessionModeResolver:
         self._assert_no_incomplete(key, registry)
         record = self._validate_record(key, registry)
         if record is None:
-            return ResolvedSessionMode("absent", None, cast(str, registry["registry_id"]), 0, None, None)
-        state = cast(Literal["active", "deleted", "quarantined"], record["state"])
-        return ResolvedSessionMode(
-            state, cast(Mode | None, record["mode"]), cast(str, registry["registry_id"]),
-            cast(int, record["record_revision"]), cast(str, record["incarnation"]),
-            cast(int, record["generation"]),
+            resolved = ResolvedSessionMode(
+                "absent", None, cast(str, registry["registry_id"]), 0, None, None
+            )
+        else:
+            resolved = ResolvedSessionMode(
+                cast(Literal["active", "deleted", "quarantined"], record["state"]),
+                cast(Mode | None, record["mode"]), cast(str, registry["registry_id"]),
+                cast(int, record["record_revision"]), cast(str, record["incarnation"]),
+                cast(int, record["generation"]),
+            )
+        self._resolution_index[key] = (
+            self._record_digest_for_index(key),
+            self._journal_epoch,
+            cast(str, registry["registry_id"]),
+            resolved,
         )
+        return resolved
+
+    def _record_digest_for_index(self, key: str) -> str | None:
+        try:
+            return _digest(self.storage.read(self._record_name(key)))
+        except (FileNotFoundError, SessionModeError):
+            return None
+
+    @_locked_operation()
+    def resolve_for_metadata(self, key: str) -> ResolvedSessionMode:
+        """Resolve mode using verified file proof when available, avoiding body reads."""
+        self._require_open()
+        registry = self._witnesses()
+        if registry is None:
+            if self.storage.exists(f"{self.backend.storage_key(key)}.jsonl") or self.storage.exists(
+                f"{self.backend.storage_key(key)}.checkpoint.json"
+            ):
+                raise _fail("session namespace requires explicit offline bootstrap")
+            return ResolvedSessionMode("absent", None, None, 0, None, None)
+        self._assert_no_incomplete(key, registry)
+        record: dict[str, object] | None
+        if self.backend.saved_source_proof(key) is not None:
+            try:
+                record = self._validate_record(key, registry, for_browse=True)
+            except SessionModeError as exc:
+                if str(exc) != "saved session source is unverified":
+                    raise
+                record = self._validate_record(key, registry)
+            else:
+                if record is not None and record["state"] == "active" and record["mode"] != "canonical":
+                    record = self._validate_record(key, registry)
+        else:
+            record = self._validate_record(key, registry)
+        if record is None:
+            resolved = ResolvedSessionMode(
+                "absent", None, cast(str, registry["registry_id"]), 0, None, None
+            )
+        else:
+            resolved = ResolvedSessionMode(
+                cast(Literal["active", "deleted", "quarantined"], record["state"]),
+                cast(Mode | None, record["mode"]), cast(str, registry["registry_id"]),
+                cast(int, record["record_revision"]), cast(str, record["incarnation"]),
+                cast(int, record["generation"]),
+            )
+        self._resolution_index[key] = (
+            self._record_digest_for_index(key),
+            self._journal_epoch,
+            cast(str, registry["registry_id"]),
+            resolved,
+        )
+        return resolved
+
+    @_locked_operation()
+    def read_saved_source(self, key: str) -> SavedSourceMetadata | None:
+        """Return only an already-proven canonical version, with no repair or body read."""
+        self._require_open()
+        registry = self._witnesses()
+        if registry is None:
+            if self.storage.exists(f"{self.backend.storage_key(key)}.jsonl") or self.storage.exists(
+                f"{self.backend.storage_key(key)}.checkpoint.json"
+            ):
+                raise _fail("session namespace requires explicit offline bootstrap")
+            return None
+        self._assert_no_incomplete(key, registry, read_only=True)
+        record = self._validate_record(key, registry, for_browse=True)
+        if record is None or record["state"] != "active" or record["mode"] != "canonical":
+            return None
+        proof = self.backend.saved_source_proof(key)
+        assert proof is not None  # The same file lock is held across lookup and projection.
+        return deepcopy(proof.metadata)
+
+    @_locked_operation()
+    def cached_resolution(
+        self, key: str
+    ) -> tuple[bool, ResolvedSessionMode | None]:
+        """Return a proven resolution while its record and journal evidence hold.
+
+        Only a full ``resolve`` fills the process-local index. A record change, a
+        journal write, a registry change or a restart makes the caller resolve again.
+        """
+        self._require_open()
+        entry = self._resolution_index.get(key)
+        if entry is None:
+            return (False, None)
+        record_digest, epoch, registry_id, resolved = entry
+        if epoch != self._journal_epoch:
+            return (False, None)
+        registry = self._witnesses()
+        if registry is None or registry.get("registry_id") != registry_id:
+            return (False, None)
+        name = self._record_name(key)
+        if record_digest is None:
+            return (False, None) if self.storage.exists(name) else (True, resolved)
+        try:
+            if _digest(self.storage.read(name)) != record_digest:
+                return (False, None)
+        except (FileNotFoundError, SessionModeError):
+            return (False, None)
+        return (True, resolved)
 
     def recover(self, key: str) -> ResolvedSessionMode:
         """Explicit offline reconciliation; ordinary resolution is read-only."""
         self._reject_files_held()
+        # An existing namespace above the live journal bound must stay recoverable.
+        with self.backend.locked_session_files():
+            self._roll_completed_journals()
         hint = self._recovery_hint(key)
         with self._execution_guards(hint[0]), self.backend.locked_session_files():
             if self._recovery_hint(key) != hint:
@@ -2278,7 +2611,7 @@ class SessionModeResolver:
             return None
         incomplete: list[tuple[str, list[dict[str, object]]]] = []
         candidates: list[tuple[str, list[dict[str, object]]]] = []
-        for operation_id in self.storage.list(".session-mode/journals"):
+        for operation_id in self._journal_operation_ids():
             if not self._hex32(operation_id):
                 raise _fail()
             journal = self._journal_records(operation_id)
@@ -2535,6 +2868,7 @@ class SessionModeResolver:
         operation_id = secrets.token_hex(16)
         registry_id = cast(str, registry["registry_id"])
         session = Session(key)
+        self.backend.assign_initial_webui_handle(session)
         output, revision = self._render_canonical(session)
         staging_name = f"staging/{operation_id}/canonical-source.jsonl"
         record = self._record(key, registry_id=registry_id, operation_id=operation_id,
@@ -2634,7 +2968,7 @@ class SessionModeResolver:
                 active_match = True
 
         masters: list[tuple[str, dict[str, object]]] = []
-        for candidate in self.storage.list(".session-mode/journals"):
+        for candidate in self._journal_operation_ids():
             if not self._hex32(candidate):
                 raise _fail()
             journal = self._journal_records(candidate)
@@ -2717,7 +3051,7 @@ class SessionModeResolver:
 
         for item in items:
             key = item.key
-            data = item.source_bytes
+            data = self._require_source_bytes(item)
             header = self._read_header(key)
             metadata = header.get("metadata")
             if not isinstance(metadata, dict):
@@ -2966,7 +3300,7 @@ class SessionModeResolver:
             if owner is not None:
                 raise _fail()
             item = self._inventory_for_key(key)
-            original = item.source_bytes
+            original = self._require_source_bytes(item)
             session = self.backend.parse_legacy_bytes(original, expected_key=key)
             if item.sidecar_bytes is not None:
                 session = self.backend.overlay_managed_checkpoint_bytes(session, item.sidecar_bytes)
@@ -3003,6 +3337,8 @@ class SessionModeResolver:
                 "sidecar_digest": item.sidecar_digest, "sidecar_size": item.sidecar_size,
                 "sidecar_bytes": item.sidecar_text,
             }
+            if len(output) > source_store.MAX_SOURCE_SERIALIZED_BYTES:
+                raise SourceValidationError("source exceeds the maximum readable serialized size")
             self._append_journal(operation_id, phase="prepared", **common)
             if fault_after == "prepared":
                 raise RuntimeError("injected session-mode fault")
@@ -3089,6 +3425,9 @@ class SessionModeResolver:
             "input_digest": _digest(input_bytes), "input_size": len(input_bytes),
             "output_digest": _digest(plan.target_bytes), "output_size": len(plan.target_bytes),
         }
+        # Refuse a new oversize publication before any journal evidence exists.
+        if len(plan.target_bytes) > source_store.MAX_SOURCE_SERIALIZED_BYTES:
+            raise SourceValidationError("source exceeds the maximum readable serialized size")
         if archive is not None:
             common["archive_identity"] = archive_identity
             common["archive_digest"] = archive_digest
@@ -3156,7 +3495,7 @@ class SessionModeResolver:
         source_binding = self._binding(source_record_value)
         if source.mode == "canonical":
             header, source_events = validate_source_session_bytes(
-                source_item.source_bytes, expected_key=source_key
+                self._require_source_bytes(source_item), expected_key=source_key
             )
             if source_item.sidecar_bytes is not None:
                 raise _fail()
@@ -3172,7 +3511,7 @@ class SessionModeResolver:
             source_session = None
         else:
             source_session = self.backend.parse_legacy_bytes(
-                source_item.source_bytes, expected_key=source_key
+                self._require_source_bytes(source_item), expected_key=source_key
             )
             if source_item.sidecar_bytes is not None:
                 source_session = self.backend.overlay_managed_checkpoint_bytes(
@@ -3222,6 +3561,7 @@ class SessionModeResolver:
             metadata=metadata,
             last_consolidated=last_consolidated,
         )
+        self.backend.assign_initial_webui_handle(target_session)
         if header is not None:
             target_header = deepcopy(header)
             target_header.update({
@@ -3298,8 +3638,10 @@ class SessionModeResolver:
             raise RuntimeError("injected session-mode fault")
         if (
             self.storage.read(self._record_name(source_key)) != source_record_bytes
-            or self.storage.read(source_item.source_name, limit=67_108_864)
-            != source_item.source_bytes
+            or self.storage.read(
+                source_item.source_name,
+                limit=source_store.MAX_SOURCE_SERIALIZED_BYTES,
+            ) != self._require_source_bytes(source_item)
             or self.storage.exists(source_item.sidecar_name)
             != (source_item.sidecar_bytes is not None)
             or (
@@ -3335,6 +3677,7 @@ class SessionModeResolver:
             return []
         self._assert_no_incomplete("", registry)
         inventory = {item.key: item for item in self._source_inventory()}
+        oversize = {key for key, item in inventory.items() if not item.readable}
         results: list[ResolvedSessionMode] = []
         keys: set[str] = set()
         active_keys: set[str] = set()
@@ -3347,6 +3690,18 @@ class SessionModeResolver:
             ):
                 raise _fail()
             keys.add(key)
+            if key in oversize:
+                # An entry above the read bound stays an operator finding. It is
+                # not a usable mode and it must not deny the other keys.
+                retained_record = _parse_json(self.storage.read(self._record_name(key)))
+                if (
+                    retained_record.get("session_key") != key
+                    or retained_record.get("registry_id") != registry["registry_id"]
+                    or retained_record.get("state") != "active"
+                ):
+                    raise _fail()
+                active_keys.add(key)
+                continue
             record = self._validate_record(key, registry, inventory=inventory)
             if record is None:
                 raise _fail()
@@ -3360,6 +3715,195 @@ class SessionModeResolver:
         if set(inventory) != active_keys:
             raise _fail()
         return results
+
+    @_locked_operation(migration=True)
+    def export_source(
+        self, key: str, destination: Path, *, quarantine: bool = False
+    ) -> SourceExtractionReceipt:
+        """Copy one exact source entry to a new operator destination.
+
+        This is the supported extraction path for an existing entry above the
+        read bound. The copy is exact. The stored entry and its record stay
+        unchanged, because a move would remove the only live proof.
+        """
+        registry = self._registry()
+        self._assert_no_incomplete(key, registry)
+        storage_key = self.backend.storage_key(key)
+        source_name = f"{storage_key}.jsonl"
+        if not self.storage.exists(source_name):
+            raise _fail("session source is absent")
+        action: Literal["export", "quarantine"] = "quarantine" if quarantine else "export"
+        source_digest, source_size = self.storage.read_digest(source_name)
+        manifest: dict[str, object] = {
+            "schema_version": 1,
+            "classification": "oversize-source-quarantine" if quarantine else "oversize-source-export",
+            "action": action,
+            "session_key": key,
+            "storage_key": storage_key,
+            "source_file": "source.jsonl",
+            "source_size": source_size,
+            "source_digest": source_digest,
+            "record_file": f".session-mode/records/{storage_key}.json",
+            "read_bound": source_store.MAX_SOURCE_SERIALIZED_BYTES,
+        }
+        manifest_bytes = _canonical_json(manifest)
+        written: dict[str, tuple[str, int]] = {}
+
+        def write(stage_fd: int, stage_path: Path) -> None:
+            written["source.jsonl"] = self.storage.copy_out(
+                source_name, stage_path / "source.jsonl"
+            )
+            _write_private_entry(stage_fd, "manifest.json", manifest_bytes)
+            written["manifest.json"] = (_digest(manifest_bytes), len(manifest_bytes))
+
+        self._publish_operator_directory(Path(destination), write)
+        digest, size = written["source.jsonl"]
+        if size != source_size or digest != source_digest:
+            raise _fail("operator copy does not match the stored source")
+        if written["manifest.json"] != (_digest(manifest_bytes), len(manifest_bytes)):
+            raise _fail("operator manifest does not match the receipt")
+        return SourceExtractionReceipt(key, action, Path(destination), size, digest)
+
+    @_locked_operation(migration=True)
+    def export_journal_archive(self, destination: Path) -> JournalArchiveReceipt:
+        """Write one complete archive of live and retained journals.
+
+        The archive names every operation id, its location and its full records.
+        Rollover runs first, so a namespace above the bound is exportable.
+        """
+        registry = self._registry()
+        live = set(self._journal_operation_ids())
+        retained = set(self.storage.list(".session-mode/retained-journals"))
+        journals: list[dict[str, object]] = []
+        for operation_id in sorted(live | retained):
+            if not self._hex32(operation_id):
+                raise _fail()
+            records = self._journal_records(operation_id)
+            if not records or any(
+                entry["registry_id"] != registry["registry_id"] for entry in records
+            ):
+                raise _fail()
+            journals.append(
+                {
+                    "operation_id": operation_id,
+                    "location": "live" if operation_id in live else "retained",
+                    "records": records,
+                }
+            )
+        archive = {
+            "schema_version": 1,
+            "classification": "session-mode-journal-archive",
+            "registry_id": registry["registry_id"],
+            "live": len(live),
+            "retained": len(retained),
+            "count": len(journals),
+            "journals": journals,
+        }
+        data = _canonical_json(archive)
+        digest = _digest(data)
+
+        def write(stage_fd: int, stage_path: Path) -> None:
+            del stage_path
+            _write_private_entry(stage_fd, "journal-archive.json", data)
+
+        self._publish_operator_directory(Path(destination), write)
+        return JournalArchiveReceipt(Path(destination), digest, len(live), len(retained))
+
+    @_locked_operation()
+    def read_journal(self, operation_id: str) -> list[dict[str, object]]:
+        """Read one complete live or retained journal by operation id."""
+        registry = self._witnesses()
+        if registry is None or not self._hex32(operation_id):
+            raise _fail()
+        journal = self._journal_records(operation_id)
+        if not journal or any(
+            entry["registry_id"] != registry["registry_id"] for entry in journal
+        ):
+            raise _fail()
+        return journal
+
+    def _publish_operator_directory(
+        self, destination: Path, write: Callable[[int, Path], None]
+    ) -> None:
+        """Create one new absolute operator directory through a private stage."""
+        if (
+            not destination.is_absolute()
+            or destination.name in {"", ".", ".."}
+            or destination.exists()
+            or destination.is_symlink()
+        ):
+            raise _fail("operator destination must be an absolute new directory")
+        parent_pin = PinnedDirectoryPath(destination.parent)
+        stage_name = f".nanobot-operator-{secrets.token_hex(8)}"
+        stage_path = destination.parent / stage_name
+        published = False
+        stage_fd = -1
+        try:
+            try:
+                os.stat(destination.name, dir_fd=parent_pin.fd, follow_symlinks=False)
+            except FileNotFoundError:
+                pass
+            else:
+                raise _fail("operator destination already exists")
+            os.mkdir(stage_name, 0o700, dir_fd=parent_pin.fd)
+            stage_fd = os.open(
+                stage_name,
+                os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+                dir_fd=parent_pin.fd,
+            )
+            write(stage_fd, stage_path)
+            os.fsync(stage_fd)
+            os.fsync(parent_pin.fd)
+            _rename_directory_no_replace(parent_pin.fd, stage_name, destination.name)
+            os.fsync(parent_pin.fd)
+            published = True
+        except OSError:
+            raise _fail() from None
+        finally:
+            if not published:
+                for name in os.listdir(stage_fd) if stage_fd >= 0 else ():
+                    try:
+                        os.unlink(name, dir_fd=stage_fd)
+                    except OSError:
+                        pass
+            if stage_fd >= 0:
+                os.close(stage_fd)
+            if not published:
+                try:
+                    os.rmdir(stage_name, dir_fd=parent_pin.fd)
+                except OSError:
+                    pass
+            parent_pin.close()
+
+    @_locked_operation(migration=True)
+    def prepare_rollback(self) -> int:
+        """Restore current mode proofs to the previous reader's layout."""
+        self.list_modes()
+        live = ".session-mode/journals"
+        retained = ".session-mode/retained-journals"
+        live_ids = set(self.storage.list(live))
+        for operation_id in live_ids:
+            journal = self._journal_records(operation_id)
+            if journal[-1]["phase"] not in {"complete", "aborted"}:
+                raise _fail("recover pending session operations before rollback")
+
+        required: set[str] = set()
+        for name in self.storage.list(".session-mode/records", suffix=".json"):
+            record = _parse_json(self.storage.read(f".session-mode/records/{name}"))
+            required.add(cast(str, record["committed_operation_id"]))
+        missing = sorted(required - live_ids)
+        excess = max(0, len(live_ids) + len(missing) - mode_storage.MODE_ENUM_LIMIT)
+        movable = sorted(live_ids - required)[:excess]
+        if len(movable) != excess or any(
+            self.storage.exists(f"{retained}/{operation_id}") for operation_id in movable
+        ):
+            raise _fail("current proofs exceed the previous reader's journal bound")
+        for operation_id in movable:
+            self.storage.rename(f"{live}/{operation_id}", f"{retained}/{operation_id}")
+        for operation_id in missing:
+            self.storage.rename(f"{retained}/{operation_id}", f"{live}/{operation_id}")
+        self.list_modes()
+        return len(missing)
 
     @_locked_operation(execution=True)
     def begin_export(
@@ -3498,7 +4042,7 @@ class SessionModeResolver:
         old_bytes = self.storage.read(self._record_name(key))
         old = _parse_json(old_bytes)
         item = self._inventory_for_key(key)
-        data = item.source_bytes
+        data = self._require_source_bytes(item)
         from nanobot.session.legacy_h1 import require_legacy_h1_disposition
 
         require_legacy_h1_disposition(self._read_header(key)["metadata"])
@@ -3562,7 +4106,155 @@ class SessionModeResolver:
         if fault_after == "source_deleted":
             raise RuntimeError("injected session-mode fault")
         self._append_journal(operation_id, phase="complete", **common)
+        self.backend.forget_saved_source(key)
         return True
+
+
+    @classmethod
+    def inspect_retained_media_records(
+        cls, namespace: Path, workspace: Path, files: Mapping[str, bytes],
+    ) -> tuple[tuple[str, str | None, bytes], ...]:
+        """Validate retained owner formats without construction, repair or migration.
+
+        Maintenance holds migration/files locks already. This read view deliberately
+        bypasses JsonlSessionStore.__init__: it must not allocate identities, migrate
+        files, declare roots or create lock files during an inventory or preview.
+        All mode grammars still use their real owner parsers and pinned storage.
+        """
+        if not files:
+            return ()
+        backend = JsonlSessionStore.__new__(JsonlSessionStore)
+        backend.workspace, backend.sessions_dir, backend.sessions_root = workspace, namespace, namespace.parent
+        resolver = cls(backend)
+        retained: list[tuple[str, str | None, bytes]] = []
+        try:
+            registry = resolver._registry()
+            source_inventory: dict[str, _SourceInventory] = {}
+            for name in resolver.storage.list_namespace():
+                if not name.endswith(".jsonl"):
+                    continue
+                key = backend.decode_storage_key(Path(name).stem)
+                if key is None or backend.storage_key(key) != Path(name).stem:
+                    raise _fail()
+                raw = resolver.storage.read(name, limit=67_108_864)
+                validate_source_session_bytes(raw, expected_key=key)
+                source_inventory[key] = _SourceInventory(key, backend.storage_key(key), name,
+                    raw, _digest(raw), len(raw), f"{backend.storage_key(key)}.checkpoint.json", None)
+            journal_ids: set[str] = set()
+            journals: list[dict[str, object]] = []
+            allowed_top = {"registry.json", "records", "journals", "retained-journals", "staging", "rollback", "exports", "cron-interruptions"}
+            for name, raw in sorted(files.items()):
+                parts = Path(name).parts
+                if len(parts) < 2 or parts[0] != ".session-mode" or parts[1] not in allowed_top:
+                    raise _fail("unknown retained session-mode evidence")
+                if parts[1] == "registry.json" and len(parts) == 2:
+                    if _parse_json(raw) != registry:
+                        raise _fail()
+                    retained.append(("json", None, raw))
+                elif parts[1] == "records" and len(parts) == 3 and parts[-1].endswith(".json"):
+                    key = backend.decode_storage_key(Path(parts[-1]).stem)
+                    if key is None or backend.storage_key(key) != Path(parts[-1]).stem:
+                        raise _fail()
+                    record = resolver._validate_record(key, registry, inventory=source_inventory)
+                    if record is None or _parse_json(raw) != record:
+                        raise _fail()
+                    retained.append(("json", key, raw))
+                elif parts[1] in {"journals", "retained-journals"} and len(parts) == 4:
+                    if not resolver._hex32(parts[2]) or not parts[-1].endswith(".json"):
+                        raise _fail()
+                    if parts[2] not in journal_ids:
+                        journal_ids.add(parts[2])
+                        parsed = resolver._journal_records(parts[2])
+                        journals.extend(parsed)
+                    _parse_json(raw)
+                    retained.append(("json", None, raw))
+                elif parts[1] == "staging" and len(parts) == 4 and parts[-1] == "canonical-source.jsonl":
+                    if not resolver._hex32(parts[2]):
+                        raise _fail()
+                    header, _events = validate_source_session_bytes(raw)
+                    retained.append(("canonical", header["key"], raw))
+                elif parts[1] == "rollback" and len(parts) == 5 and parts[-1] == "legacy.jsonl":
+                    key = backend.decode_storage_key(parts[2])
+                    if key is None or backend.storage_key(key) != parts[2] or not resolver._hex32(parts[3]):
+                        raise _fail()
+                    backend.parse_legacy_bytes(raw, expected_key=key)
+                    retained.append(("legacy", key, raw))
+                elif parts[1] == "cron-interruptions" and len(parts) == 3 and parts[-1].endswith(".json"):
+                    archive, verified = resolver._read_interruption_archive(Path(parts[-1]).stem, _digest(raw))
+                    if verified != raw:
+                        raise _fail()
+                    retained.append(("json", None, _canonical_json(archive)))
+                elif parts[1] == "exports" and len(parts) == 4:
+                    if not resolver._hex32(parts[2]) or parts[-1] not in {"manifest.json", "canonical-source.jsonl", "compatibility-history.jsonl"}:
+                        raise _fail()
+                    # Qualified together below against the owner journal's exact
+                    # file size/digest/containment plan, not just their filenames.
+                else:
+                    raise _fail("unsupported retained session-mode record")
+            export_ids = ({Path(name).parts[2] for name in files if Path(name).parts[1] == "exports"}
+                          | {cast(str, row["operation_id"]) for row in journals if row["operation"] == "export"})
+            for operation_id in export_ids:
+                journal = next((row for row in journals if row["operation_id"] == operation_id and row["operation"] == "export"), None)
+                if journal is None or not isinstance(journal.get("target_binding"), dict):
+                    raise _fail()
+                binding = cast(dict[str, object], journal["target_binding"])
+                plans = binding.get("files")
+                if not isinstance(plans, list):
+                    raise _fail()
+                expected_names: set[str] = set()
+                for plan_value in cast(list[object], plans):
+                    if not isinstance(plan_value, dict):
+                        raise _fail()
+                    plan = cast(dict[str, object], plan_value)
+                    name = plan.get("name")
+                    if not isinstance(name, str) or name not in {"manifest.json", "canonical-source.jsonl", "compatibility-history.jsonl"}:
+                        raise _fail()
+                    expected_names.add(name)
+                    raw = files.get(f".session-mode/exports/{operation_id}/{name}")
+                    if raw is None or len(raw) != plan.get("size") or _digest(raw) != plan.get("digest"):
+                        raise _fail()
+                actual_names = {Path(name).name for name in files if name.startswith(f".session-mode/exports/{operation_id}/")}
+                if actual_names != expected_names or not {"manifest.json", "canonical-source.jsonl"} <= expected_names:
+                    raise _fail()
+                manifest = _parse_json(files[f".session-mode/exports/{operation_id}/manifest.json"])
+                required = {"schema_version", "classification", "session_key", "registry_id", "record_revision", "mode", "incarnation", "generation", "source_schema_version", "checkpoint_schema_version", "artifact_references", "artifact_blobs_portable", "source_file", "source_digest", "source_size", "compatibility_file", "compatibility_classification"}
+                source = files[f".session-mode/exports/{operation_id}/canonical-source.jsonl"]
+                key = manifest.get("session_key")
+                if (set(manifest) != required or type(manifest.get("schema_version")) is not int
+                        or manifest.get("schema_version") != 1
+                        or manifest.get("classification") != "canonical-lossless" or not isinstance(key, str)
+                        or manifest.get("source_file") != "canonical-source.jsonl"
+                        or manifest.get("source_digest") != _digest(source) or manifest.get("source_size") != len(source)
+                        or manifest.get("compatibility_file") != ("compatibility-history.jsonl" if "compatibility-history.jsonl" in expected_names else None)):
+                    raise _fail()
+                header, _events = validate_source_session_bytes(source, expected_key=key)
+                if (manifest["registry_id"] != journal["registry_id"] or manifest["mode"] != "canonical"
+                        or type(manifest["record_revision"]) is not int or manifest["record_revision"] < 0
+                        or manifest["incarnation"] != header["incarnation"]
+                        or type(manifest["generation"]) is not int or manifest["generation"] != header["generation"]
+                        or type(manifest["source_schema_version"]) is not int or manifest["source_schema_version"] != 1
+                        or (manifest["checkpoint_schema_version"] is not None and (
+                            type(manifest["checkpoint_schema_version"]) is not int
+                            or manifest["checkpoint_schema_version"] != 1))
+                        or manifest["artifact_blobs_portable"] is not False
+                        or not isinstance(manifest["artifact_references"], list)
+                        or any(not isinstance(value, str) for value in cast(list[object], manifest["artifact_references"]))
+                        or manifest["compatibility_classification"] != ("compatibility" if "compatibility-history.jsonl" in expected_names else None)):
+                    raise _fail()
+                retained.append(("canonical", key, source))
+                retained.append(("json", key, files[f".session-mode/exports/{operation_id}/manifest.json"]))
+                if "compatibility-history.jsonl" in expected_names:
+                    compatibility = files[f".session-mode/exports/{operation_id}/compatibility-history.jsonl"]
+                    backend.parse_legacy_bytes(compatibility, expected_key=key)
+                    retained.append(("legacy", key, compatibility))
+            return tuple(retained)
+        finally:
+            resolver.storage.close()
+
+def inspect_retained_media_records(
+    namespace: Path, workspace: Path, files: Mapping[str, bytes],
+) -> tuple[tuple[str, str | None, bytes], ...]:
+    return SessionModeResolver.inspect_retained_media_records(namespace, workspace, files)
 
 
 __all__ = [

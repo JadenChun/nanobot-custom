@@ -62,6 +62,8 @@ export interface RemotePairingPending {
   renewable?: boolean;
   transport?: "tailscale";
   scopes?: string[];
+  device_fingerprint?: string;
+  device_generation?: number;
   device?: {
     installation_id: string;
     label: string;

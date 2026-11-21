@@ -33,9 +33,10 @@ class _FaultError(RuntimeError):
 class _ObservedGeneration(credentials._LoginGeneration):
     def __init__(
         self, owner: object, value: str, trace: list[str],
-        *, stage: str | None = None, fault: _FaultError | None = None, missing_value: bool = False,
+        *, stage: str | None = None, fault: _FaultError | None = None,
+        missing_value: bool = False, sequence: int = 0,
     ) -> None:
-        super().__init__(owner, value)
+        super().__init__(owner, value, sequence)
         self.trace = trace
         self.stage = stage
         self.fault = fault

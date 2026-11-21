@@ -5,6 +5,7 @@ import gc
 import socket
 import subprocess
 import weakref
+from contextlib import contextmanager
 from copy import deepcopy
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
@@ -14,8 +15,9 @@ import pytest
 from nanobot.agent.loop import AgentLoop
 from nanobot.agent.memory import MemoryStore
 from nanobot.agent.tools.base import Tool
-from nanobot.agent.tools.registry import ToolRegistry
+from nanobot.agent.tools.registry import ManagedToolDispatchGuard, ToolRegistry
 from nanobot.bus.events import InboundMessage
+from nanobot.bus.outbound_events import ContextCompactionEvent, StopTargetEvent
 from nanobot.bus.runtime_events import TurnCompleted
 from nanobot.command.builtin import cmd_stop
 from nanobot.command.router import CommandContext
@@ -131,6 +133,84 @@ async def test_dream_owner_subsets_filter_exclusions_and_weak_lifetime(loop):
     assert len(store._dream_tool_bindings) == 1
 
 
+async def test_filtered_dream_dispatch_preserves_live_admission_after_issuer_collection(loop):
+    store = loop.context.memory
+
+    class LiveGuard(ManagedToolDispatchGuard):
+        def __init__(self):
+            super().__init__(None)
+            self.denied = False
+            self.admitted = 0
+
+        def error(self, name):
+            return "Dream test admission denied" if self.denied else None
+
+        @contextmanager
+        def admit(self, name):
+            self.admitted += 1
+            yield self.error(name)
+
+    guard = LiveGuard()
+
+    def issue_subset():
+        issued = store.build_dream_tools()
+        issued.set_dispatch_guard(guard)
+        derived = store.filter_dream_tools(
+            issued, frozenset({"write_file", "edit_file", "apply_patch"}), store.workspace,
+        )
+        assert derived is not None
+        return weakref.ref(issued), derived
+
+    reference, derived = issue_subset()
+    gc.collect()
+    assert reference() is None
+    assert len(store._dream_tool_bindings) == 1
+    assert store.owns_dream_tools(derived, store.workspace)
+    assert derived.tool_names == ["read_file"]
+    result = await derived.execute("read_file", {"path": str(store.memory_file)})
+    assert "PRIVATE_DREAM_MEMORY" in result
+    assert guard.admitted == 1
+    capture = derived.capture_request_tools()
+    try:
+        guard.denied = True
+        assert "admission denied" in await capture.execute("read_file", {"path": str(store.memory_file)})
+        assert guard.admitted == 1
+        guard.denied = False
+        assert "File unchanged since last read" in await capture.execute(
+            "read_file", {"path": str(store.memory_file)},
+        )
+        assert guard.admitted == 2
+        original = derived.get("read_file")
+        derived.unregister("read_file")
+        derived.register(original)
+        assert "refused" in await capture.execute("read_file", {"path": str(store.memory_file)})
+        assert guard.admitted == 2
+    finally:
+        capture.release()
+
+
+async def test_owned_dream_capture_retains_issuers_only_until_release(loop):
+    store = loop.context.memory
+
+    def capture_subset():
+        issued = store.build_dream_tools()
+        derived = store.filter_dream_tools(issued, frozenset({"write_file"}), store.workspace)
+        assert derived is not None
+        return weakref.ref(issued), weakref.ref(derived), derived.capture_request_tools()
+
+    issued, derived, capture = capture_subset()
+    gc.collect()
+    assert issued() is not None and derived() is not None
+    assert len(store._dream_tool_bindings) == 2
+    assert "PRIVATE_DREAM_MEMORY" in await capture.execute("read_file", {"path": str(store.memory_file)})
+    capture.release()
+    capture.release()
+    gc.collect()
+    assert issued() is None and derived() is None
+    assert len(store._dream_tool_bindings) == 0
+    assert "released" in await capture.execute("read_file", {"path": str(store.memory_file)})
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("kind", ["issued", "removed", "filtered", "empty", "ordinary", "foreign", "canonical", "absent", "deleted", "temporary", "ephemeral-temporary", "corrupt"])
 async def test_primary_memory_exception_requires_real_legacy_issued_dream(loop, kind):
@@ -232,6 +312,8 @@ async def test_queued_compact_settles_once_without_admitted_effects(loop, wait):
         assert (context.channel, context.chat_id, context.session_key) == ("websocket", "route", key)
         assert context.metadata == metadata
         assert completions[0].outcome == "completed"
+        target_event = loop.bus.outbound.get_nowait().event
+        assert isinstance(target_event, StopTargetEvent) and target_event.stop_target is None
         assert loop.bus.outbound_size == 0
         loop.provider.chat_with_retry.assert_not_awaited()
         assert not loop._pending_queues
@@ -307,9 +389,14 @@ async def test_cancellation_during_awaited_settlement_waits_and_preserves_cancel
 
     loop.bus.subscribe(subscriber, TurnCompleted)
     queued = loop._enqueue_bus_dispatch(message(), "websocket:test")
+    state = loop._compact_dispatches[queued]
     queued.cancel()
+    await asyncio.gather(queued, return_exceptions=True)
+    assert queued.done() and queued.cancelled()
+    assert loop._compact_dispatches.get(queued) is state
+    assert queued in loop._active_root_task_identity("websocket:test")
     stopper = asyncio.create_task(stop(loop))
-    await entered.wait()
+    await asyncio.wait_for(entered.wait(), timeout=2)
     stopper.cancel()
     await asyncio.sleep(0)
     assert not stopper.done()
@@ -326,6 +413,55 @@ async def test_cancellation_during_awaited_settlement_waits_and_preserves_cancel
         await stopper
     assert len(completions) == 1
     assert not loop._compact_dispatches and not loop._active_tasks
+
+
+@pytest.mark.asyncio
+async def test_done_compact_receipt_stop_never_claims_successor(loop):
+    key = "websocket:test"
+    entered, release = asyncio.Event(), asyncio.Event()
+    completed = []
+
+    async def subscriber(event):
+        entered.set()
+        await release.wait()
+        completed.append(event)
+
+    loop.bus.subscribe(subscriber, TurnCompleted)
+    async with loop._get_session_lock(key):
+        queued = loop._enqueue_bus_dispatch(message(), key)
+        state = loop._compact_dispatches[queued]
+        queued.cancel()
+        await asyncio.gather(queued, return_exceptions=True)
+        assert queued.done() and queued.cancelled()
+        assert loop._compact_dispatches.get(queued) is state
+        stopper = asyncio.create_task(stop(loop))
+        await asyncio.wait_for(entered.wait(), timeout=2)
+        completion = state.completion
+        assert completion is not None and not completion.done()
+        successor = loop._enqueue_bus_dispatch(message(), key)
+        successor_state = loop._compact_dispatches[successor]
+        await asyncio.sleep(0)
+        for _ in range(3):
+            stopper.cancel()
+            await asyncio.sleep(0)
+            assert not stopper.done()
+            assert state.completion is completion
+            assert not completion.cancelling() and not completion.done()
+            assert not successor.done() and not successor.cancelling()
+            assert loop._compact_dispatches.get(successor) is successor_state
+            assert successor_state.completion is None
+        release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(stopper, timeout=2)
+        assert len(completed) == 1
+        assert queued not in loop._compact_dispatches
+        assert loop._compact_dispatches.get(successor) is successor_state
+        assert not successor.done() and not successor.cancelling()
+        successor.cancel()
+        await asyncio.gather(successor, return_exceptions=True)
+        await loop._settle_queued_compact(successor, successor_state)
+    assert len(completed) == 2
+    assert not loop._compact_dispatches
 
 
 @pytest.mark.asyncio
@@ -441,7 +577,9 @@ async def test_shutdown_failure_still_settles_batch_and_joins_background_before_
             assert order == ["background-finally", "resources"]
             resources.assert_awaited_once()
             assert not loop._background_tasks and not loop._compact_dispatches and not loop._active_tasks
-            assert loop._closed and graph.state is RuntimeState.CLOSED
+            # Drained resources do not erase a failed mandatory close callback.
+            assert loop._closed and graph.state is RuntimeState.FAILED
+            assert graph._closers == [loop.aclose]
             assert graph._owner_loop is asyncio.get_running_loop()
             assert handle.mcp._closing and not handle.mcp.connected_server_names
             assert not handle.bus._pending
@@ -450,14 +588,20 @@ async def test_shutdown_failure_still_settles_batch_and_joins_background_before_
             with pytest.raises(RuntimeError) as repeated:
                 await loop.aclose()
             assert repeated.value is failure and loop._close_task is close_task
-            await graph.aclose()
+            with pytest.raises(ExceptionGroup) as retained:
+                await graph.aclose()
+            assert retained.value.exceptions == (failure,)
+            assert graph.state is RuntimeState.FAILED
+            assert graph._closers == [loop.aclose]
             resources.assert_awaited_once()
             assert len(attempts) == 2
         finally:
             # Red-run containment only: never leave the demonstrated orphan alive.
             background.cancel()
             await asyncio.gather(background, *tasks, return_exceptions=True)
-            await graph.aclose()
+            with pytest.raises(ExceptionGroup) as retained:
+                await graph.aclose()
+            assert retained.value.exceptions == (failure,)
             lease = await DurableSessionAuthority(
                 graph.preflight.workspace, sessions_root=graph.preflight.sessions_root,
             ).acquire()
@@ -492,6 +636,11 @@ async def test_claimed_compact_scope_remains_only_completion_publisher(loop, can
         await task
     assert len(completed) == 1
     events = [loop.bus.outbound.get_nowait().event for _ in range(loop.bus.outbound_size)]
-    assert [event.phase for event in events] == ["started", "cancelled" if cancel else "succeeded"]
-    assert events[0].compaction_id == events[1].compaction_id
+    targets = [event for event in events if isinstance(event, StopTargetEvent)]
+    compaction = [event for event in events if isinstance(event, ContextCompactionEvent)]
+    assert len(targets) == (2 if cancel else 1)
+    assert all(event.stop_target is None for event in targets)
+    assert len(events) == len(targets) + len(compaction)
+    assert [event.phase for event in compaction] == ["started", "cancelled" if cancel else "succeeded"]
+    assert compaction[0].compaction_id == compaction[1].compaction_id
     assert not loop._compact_dispatches and not loop._active_tasks

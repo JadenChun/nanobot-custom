@@ -10,7 +10,7 @@ from typing import Any
 from loguru import logger
 
 from nanobot.events import NO_EVENTS, EventSink
-from nanobot.providers.base import LLMResponse, LLMUsage, ToolCallRequest
+from nanobot.providers.base import ContextUsageSnapshot, LLMResponse, LLMUsage, ToolCallRequest
 
 
 @dataclass(slots=True)
@@ -27,6 +27,7 @@ class AgentHookContext:
     streamed_content: bool = False
     streamed_reasoning: bool = False
     stream_continues_current_message: bool = False
+    source_event_id: str | None = None
     final_content: str | None = None
     stop_reason: str | None = None
     error: str | None = None
@@ -46,6 +47,8 @@ class AgentRunHookContext:
     tool_events: list[dict[str, str]] = field(default_factory=list)
     had_injections: bool = False
     exception: BaseException | None = None
+    # Refreshed by the runner before on_finally, including exception/cancellation.
+    context_usage: ContextUsageSnapshot | None = None
 
 
 @dataclass(slots=True)
@@ -71,6 +74,14 @@ class AgentHook:
 
     def wants_streaming(self) -> bool:
         return False
+
+    def tool_progress_sink(self, tool_call: ToolCallRequest) -> Any:
+        """Return a live progress sink for one running tool call, if any.
+
+        A sink may emit ephemeral, non-persisted progress frames while the tool
+        runs. Hooks that do not stream live UI return ``None``.
+        """
+        return None
 
     async def before_run(self, context: AgentRunHookContext) -> None:
         pass
@@ -182,6 +193,21 @@ class CompositeHook(AgentHook):
                     type(exc).__name__,
                 )
         return wants_streaming
+
+    def tool_progress_sink(self, tool_call: ToolCallRequest) -> Any:
+        for h in self._hooks:
+            try:
+                sink = h.tool_progress_sink(tool_call)
+            except Exception as exc:
+                logger.error(
+                    "AgentHook.tool_progress_sink error in {} ({})",
+                    type(h).__name__,
+                    type(exc).__name__,
+                )
+                continue
+            if sink is not None:
+                return sink
+        return None
 
     async def _for_each_hook_safe(self, method_name: str, *args: Any, **kwargs: Any) -> None:
         for h in self._hooks:

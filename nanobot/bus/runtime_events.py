@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-from nanobot.bus.events import InboundMessage
+from nanobot.bus.events import CommittedUserInput, InboundMessage
 from nanobot.events import AgentEvent
-from nanobot.providers.base import LLMUsage
+from nanobot.providers.base import ContextUsageSnapshot, LLMUsage
+from nanobot.session.input_attempt import InputAttemptProof
 
 if TYPE_CHECKING:
     from nanobot.bus.queue import MessageBus
@@ -33,11 +35,29 @@ class SessionTurnStarted(AgentEvent):
 
 
 @dataclass(frozen=True)
+class UserInputCommitted(AgentEvent):
+    """This invocation's user input append returned successfully."""
+
+    context: RuntimeEventContext
+    input_attempt_proof: InputAttemptProof | None = None
+    joined: bool = False
+    input: CommittedUserInput | None = None
+
+
+@dataclass(frozen=True)
 class UserInputAccepted(AgentEvent):
     """User input was accepted for dispatch or injection into a session."""
 
     context: RuntimeEventContext
     content: str
+
+
+@dataclass(frozen=True)
+class InjectionCommitted(AgentEvent):
+    """Queued guidance was committed into the running turn it targeted."""
+
+    context: RuntimeEventContext
+    input: CommittedUserInput | None = None
 
 
 @dataclass(frozen=True)
@@ -71,6 +91,7 @@ class TurnCompleted(AgentEvent):
     failure_kind: str | None = None
     failure_error_kind: str | None = None
     failure_attempts: int | None = None
+    context_usage: ContextUsageSnapshot | None = None
 
 
 @dataclass(frozen=True)
@@ -111,6 +132,7 @@ class RuntimeEventPublisher:
         self._turn_runtime: dict[str, LLMRuntime] = {}
         self._turn_usage: dict[str, LLMUsage] = {}
         self._turn_round_usages: dict[str, tuple[LLMUsage, ...]] = {}
+        self._turn_context_usage: dict[str, ContextUsageSnapshot] = {}
 
     @staticmethod
     def _context(
@@ -136,6 +158,13 @@ class RuntimeEventPublisher:
         if latency_ms is not None:
             self._turn_latency_ms[session_key] = int(latency_ms)
 
+    def record_turn_context_usage(
+        self, session_key: str, snapshot: ContextUsageSnapshot | None,
+    ) -> None:
+        """None is no update; every present object replaces the one current slot."""
+        if snapshot is not None:
+            self._turn_context_usage[session_key] = snapshot
+
     def record_turn_usage(
         self,
         session_key: str,
@@ -159,6 +188,7 @@ class RuntimeEventPublisher:
         self._turn_runtime.pop(session_key, None)
         self._turn_usage.pop(session_key, None)
         self._turn_round_usages.pop(session_key, None)
+        self._turn_context_usage.pop(session_key, None)
 
     async def user_input_accepted(
         self,
@@ -190,6 +220,50 @@ class RuntimeEventPublisher:
                     session_key=session_key,
                     metadata=msg.metadata,
                 ),
+            )
+        )
+
+    async def user_input_committed(
+        self,
+        msg: InboundMessage,
+        session_key: str,
+        *,
+        input_attempt_proof: InputAttemptProof | None = None,
+        joined: bool = False,
+        original_input: CommittedUserInput | None = None,
+    ) -> None:
+        await self.bus.publish(
+            UserInputCommitted(
+                context=self._context(
+                    channel=msg.channel,
+                    chat_id=msg.chat_id,
+                    session_key=session_key,
+                    metadata=msg.metadata,
+                ),
+                input_attempt_proof=input_attempt_proof,
+                joined=joined,
+                input=original_input if not joined else None,
+            )
+        )
+
+    async def injection_committed(
+        self,
+        msg: InboundMessage,
+        session_key: str,
+        *,
+        metadata: dict[str, Any] | None = None,
+        original_input: CommittedUserInput | None = None,
+        publish: Callable[[InjectionCommitted], Awaitable[None]] | None = None,
+    ) -> None:
+        await (publish or self.bus.publish)(
+            InjectionCommitted(
+                context=self._context(
+                    channel=msg.channel,
+                    chat_id=msg.chat_id,
+                    session_key=session_key,
+                    metadata=metadata if metadata is not None else msg.metadata,
+                ),
+                input=original_input,
             )
         )
 
@@ -280,6 +354,7 @@ class RuntimeEventPublisher:
                 runtime=self._turn_runtime.pop(session_key, None),
                 usage=self._turn_usage.pop(session_key, None),
                 round_usages=self._turn_round_usages.pop(session_key, ()),
+                context_usage=self._turn_context_usage.pop(session_key, None),
                 outcome=outcome,
                 failure_kind=failure_kind,
                 failure_error_kind=failure_error_kind,

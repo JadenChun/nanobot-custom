@@ -58,13 +58,12 @@ def build_service_plan(
     *,
     python_executable: str | None = None,
     unit_dir: Path | None = None,
+    instance_root: Path | str | None = None,
 ) -> ServicePlan:
-    state_dir = Path(config.state_dir).expanduser() if config.state_dir else None
-    if state_dir is None:
-        from nanobot.config.paths import get_data_dir
+    from nanobot.remote.composition import owner_socket_path, remote_access_root
 
-        state_dir = get_data_dir() / "remote-access"
-    socket_path = Path(config.socket_path).expanduser() if config.socket_path else state_dir / "owner.sock"
+    state_dir = remote_access_root(config, instance_root=instance_root)
+    socket_path = owner_socket_path(config, instance_root=instance_root)
     digest = hashlib.sha256(str(socket_path).encode()).hexdigest()[:12]
     unit_name = f"{UNIT_PREFIX}{digest}.service"
     target_dir = unit_dir or (Path.home() / ".config" / "systemd" / "user")
@@ -100,47 +99,65 @@ class SystemdUserAdapter:
     def install(self, plan: ServicePlan, *, apply: bool = False) -> dict[str, object]:
         self._validate(plan)
         text = plan.unit_text()
+        commands = [
+            ["systemctl", "--user", "daemon-reload"],
+            ["systemctl", "--user", "enable", "--now", plan.unit_name],
+        ]
         result: dict[str, object] = {
             "unit": plan.unit_name,
             "path": str(plan.unit_path),
             "unit_text": text,
-            "commands": [
-                ["systemctl", "--user", "daemon-reload"],
-                ["systemctl", "--user", "enable", "--now", plan.unit_name],
-            ],
-            "applied": apply,
+            "commands": commands,
+            **_outcome(applied=False),
         }
         if not apply:
             return result
         plan.unit_path.parent.mkdir(parents=True, exist_ok=True)
         plan.unit_path.write_text(text, encoding="utf-8")
-        self._runner(["systemctl", "--user", "daemon-reload"])
-        self._runner(["systemctl", "--user", "enable", "--now", plan.unit_name])
+        for command in commands:
+            outcome = _run_step(self._runner, command)
+            result.update(outcome)
+            if outcome["failed_step"] is not None:
+                return result
+        result.update(_outcome(applied=True))
         return result
 
     def remove(self, plan: ServicePlan, *, apply: bool = False) -> dict[str, object]:
         self._validate(plan)
+        commands = [
+            ["systemctl", "--user", "disable", "--now", plan.unit_name],
+            ["systemctl", "--user", "daemon-reload"],
+        ]
         result: dict[str, object] = {
             "unit": plan.unit_name,
             "path": str(plan.unit_path),
-            "commands": [
-                ["systemctl", "--user", "disable", "--now", plan.unit_name],
-                ["systemctl", "--user", "daemon-reload"],
-            ],
-            "applied": apply,
+            "commands": commands,
+            **_outcome(applied=False),
         }
         if not apply:
             return result
-        self._runner(["systemctl", "--user", "disable", "--now", plan.unit_name])
+        outcome = _run_step(self._runner, commands[0])
+        result.update(outcome)
+        if outcome["failed_step"] is not None:
+            # The unit is still enabled. Keep the file so the operator can retry.
+            result["unit_preserved"] = True
+            return result
         if plan.unit_path.exists():
             plan.unit_path.unlink()
-        self._runner(["systemctl", "--user", "daemon-reload"])
+        outcome = _run_step(self._runner, commands[1])
+        result.update(outcome)
+        if outcome["failed_step"] is not None:
+            return result
+        result.update(_outcome(applied=True))
         return result
 
     def status(self, plan: ServicePlan) -> str:
         self._validate(plan)
         result = self._runner(["systemctl", "--user", "is-active", plan.unit_name])
-        return (result.stdout or "").strip() or "unknown"
+        output = (result.stdout or "").strip()
+        if output:
+            return output
+        return _STATUS_BY_RETURNCODE.get(result.returncode, "unknown")
 
     def _validate(self, plan: ServicePlan) -> None:
         if not plan.unit_name.startswith(UNIT_PREFIX) or not plan.unit_name.endswith(".service"):
@@ -149,6 +166,41 @@ class SystemdUserAdapter:
             raise SupervisionError("unit path does not match the owned unit name")
         if plan.socket_path.parent != plan.state_dir:
             raise SupervisionError("socket must remain inside the selected owner state directory")
+
+
+_STATUS_BY_RETURNCODE = {3: "inactive", 4: "not-found"}
+_STEP_NAMES = frozenset({"daemon-reload", "enable", "disable", "is-active"})
+
+
+def _step_name(command: list[str]) -> str:
+    for token in command:
+        if token in _STEP_NAMES:
+            return token
+    return command[-1]
+
+
+def _outcome(*, applied: bool) -> dict[str, object]:
+    return {
+        "applied": applied,
+        "failed_step": None,
+        "returncode": 0 if applied else None,
+        "stderr": "",
+    }
+
+
+def _run_step(
+    runner: Callable[[list[str]], subprocess.CompletedProcess[str]],
+    command: list[str],
+) -> dict[str, object]:
+    completed = runner(command)
+    failed = completed.returncode != 0
+    return {
+        "applied": False,
+        "failed_step": _step_name(command) if failed else None,
+        "returncode": completed.returncode,
+        "stderr": (completed.stderr or "").strip(),
+        "command": command if failed else None,
+    }
 
 
 def _quote(value: str) -> str:
@@ -189,7 +241,7 @@ def main() -> int:
     )
     adapter = SystemdUserAdapter()
     if args.command == "plan":
-        result: object = {
+        result: dict[str, object] = {
             "unit": plan.unit_name,
             "path": str(plan.unit_path),
             "unit_text": plan.unit_text(),
@@ -204,6 +256,8 @@ def main() -> int:
         print(json.dumps(result, indent=2, sort_keys=True))
     else:
         print(result)
+    if result.get("failed_step") is not None:
+        return 1
     return 0
 
 

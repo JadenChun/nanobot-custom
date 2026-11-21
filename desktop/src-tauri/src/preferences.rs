@@ -7,6 +7,7 @@ use std::{
 };
 
 use serde::{Deserialize, Serialize};
+#[cfg(any(target_os = "linux", test))]
 use sha2::{Digest, Sha256};
 
 const MAX_PREFERENCES_BYTES: u64 = 16 * 1024;
@@ -36,12 +37,87 @@ impl Preferences {
     }
 }
 
+#[derive(Clone, Debug, Serialize)]
+pub struct SetupDefaults {
+    pub config_path: String,
+    pub interpreter_path: Option<String>,
+}
+
+fn home_directory() -> Option<PathBuf> {
+    env::var_os("HOME").map(PathBuf::from).filter(|path| path.is_absolute())
+}
+
+fn config_under(home: &Path) -> PathBuf {
+    home.join(".nanobot").join("config.json")
+}
+
+fn is_executable_file(path: &Path) -> bool {
+    fs::metadata(path).is_ok_and(|meta| meta.is_file() && meta.mode() & 0o111 != 0)
+}
+
+fn resolve_release_python(root: &Path, selector: &str, relative_python: &str) -> Option<PathBuf> {
+    let release = fs::canonicalize(root.join(selector)).ok()?;
+    // Resolve the release, not its interpreter symlink: Python needs the
+    // venv's bin path to find its pyvenv.cfg.
+    let python = release.join(relative_python);
+    is_executable_file(&python).then_some(python)
+}
+
+fn setup_defaults_under(home: &Path) -> Option<SetupDefaults> {
+    let managed = home.join(".local/share/nanobot");
+    let release_root = home.join(".local/share/nanobot-release");
+    let interpreter_path = resolve_release_python(&managed, "desktop-current", "env/bin/python")
+        .or_else(|| resolve_release_python(&managed, "current", "env/bin/python"))
+        .or_else(|| resolve_release_python(&release_root, "desktop-current", "venv/bin/python"))
+        .or_else(|| resolve_release_python(&release_root, "current", "venv/bin/python"))
+        .or_else(|| {
+            let direct = release_root.join("venv/bin/python");
+            is_executable_file(&direct).then_some(direct)
+        })
+        .and_then(|path| path.into_os_string().into_string().ok());
+    Some(SetupDefaults {
+        config_path: config_under(home).into_os_string().into_string().ok()?,
+        interpreter_path,
+    })
+}
+
+fn bundled_interpreter_near_exe() -> Option<String> {
+    let exe = env::current_exe().ok()?;
+    let bin_dir = exe.parent()?;
+    let release_dir = bin_dir.parent()?;
+    for rel in ["venv/bin/python", "env/bin/python"] {
+        let candidate = release_dir.join(rel);
+        if is_executable_file(&candidate) {
+            return candidate.into_os_string().into_string().ok();
+        }
+    }
+    None
+}
+
+pub fn setup_defaults() -> Option<SetupDefaults> {
+    let mut defaults = setup_defaults_under(&home_directory()?)?;
+    if defaults.interpreter_path.is_none() {
+        defaults.interpreter_path = bundled_interpreter_near_exe();
+    }
+    Some(defaults)
+}
+
+pub fn missing_default_config(path: &Path) -> bool {
+    home_directory().is_some_and(|home| config_under(&home) == path)
+        && fs::symlink_metadata(path)
+            .is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound)
+}
+
 pub fn preference_path() -> Result<PathBuf, &'static str> {
     let base = if let Some(path) = env::var_os("XDG_CONFIG_HOME") {
         PathBuf::from(path)
     } else {
-        PathBuf::from(env::var_os("HOME").ok_or("preferences_unavailable")?)
-            .join(".config")
+        let home = PathBuf::from(env::var_os("HOME").ok_or("preferences_unavailable")?);
+        #[cfg(target_os = "linux")]
+        let path = home.join(".config");
+        #[cfg(target_os = "macos")]
+        let path = home.join("Library").join("Application Support");
+        path
     };
     if !base.is_absolute() {
         return Err("preferences_unavailable");
@@ -116,6 +192,7 @@ pub fn remove() -> Result<(), &'static str> {
     }
 }
 
+#[cfg(target_os = "linux")]
 pub fn profile_directory(value: &Preferences) -> Result<PathBuf, &'static str> {
     let base = if let Some(path) = env::var_os("XDG_DATA_HOME") {
         PathBuf::from(path)
@@ -188,6 +265,31 @@ pub fn lock_is_exclusive(file: &fs::File) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn setup_suggests_the_standard_config_and_prefers_the_desktop_install() {
+        let home = env::temp_dir().join(format!(
+            "nanobot-desktop-defaults-{}",
+            std::process::id()
+        ));
+        fs::create_dir(&home).unwrap();
+        let defaults = setup_defaults_under(&home).unwrap();
+        assert_eq!(Path::new(&defaults.config_path), home.join(".nanobot/config.json"));
+        assert!(!home.join(".nanobot").exists());
+        assert!(defaults.interpreter_path.is_none());
+        for selector in ["current", "desktop-current"] {
+            let python = home.join(".local/share/nanobot").join(selector).join("env/bin/python");
+            fs::create_dir_all(python.parent().unwrap()).unwrap();
+            fs::write(&python, []).unwrap();
+            fs::set_permissions(&python, fs::Permissions::from_mode(0o700)).unwrap();
+            let selected = setup_defaults_under(&home).unwrap().interpreter_path.unwrap();
+            assert_eq!(
+                Path::new(&selected),
+                fs::canonicalize(python.parent().unwrap()).unwrap().join("python")
+            );
+        }
+        fs::remove_dir_all(home).unwrap();
+    }
 
     #[test]
     fn selectors_must_be_absolute_and_preserve_null_workspace() {

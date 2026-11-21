@@ -54,10 +54,12 @@ function normalizeRounds(
 
 export function ComposerUsagePopover({
   context,
+  hasConfiguredModel = false,
   rounds,
   isHero = false,
 }: {
   context: ComposerContextUsage | null;
+  hasConfiguredModel?: boolean;
   rounds: readonly ComposerRoundUsage[];
   isHero?: boolean;
 }) {
@@ -69,7 +71,7 @@ export function ComposerUsagePopover({
     && context.contextTokens >= 0
     && Number.isFinite(context.contextWindowTokens)
     && (context.contextWindowTokens ?? 0) > 0;
-  if (!hasContext && normalizedRounds.length === 0) {
+  if (!hasContext && !hasConfiguredModel && normalizedRounds.length === 0) {
     return null;
   }
 
@@ -202,6 +204,11 @@ export function ComposerUsagePopover({
           <div className="px-4 pb-4 pt-3.5">
             {contextPercentage !== null ? (
               <>
+                <p className="mb-1 text-[11px] text-muted-foreground">
+                  {t("thread.composer.context.lastKnownRequest", {
+                    defaultValue: "Last known request",
+                  })}
+                </p>
                 <div className="flex items-baseline justify-between gap-3">
                   <div className="flex min-w-0 items-baseline gap-2">
                     <span className="shrink-0 text-[12px] font-medium text-foreground">
@@ -240,11 +247,20 @@ export function ComposerUsagePopover({
               </>
             ) : null}
 
+            {contextPercentage === null && hasConfiguredModel ? (
+              <p className="text-[11px] text-muted-foreground">
+                {t("thread.composer.context.usageUnavailable", {
+                  defaultValue: "Usage unavailable",
+                })}
+              </p>
+            ) : null}
+
             {normalizedRounds.length > 0 ? (
               <>
                 <div className={cn(
                   "flex items-baseline justify-between gap-3",
-                  contextPercentage === null ? "mt-0" : "mt-5",
+                  contextPercentage !== null && "mt-5",
+                  contextPercentage === null && hasConfiguredModel && "mt-3",
                 )}>
                   <span className="text-[12px] font-medium text-foreground">
                     {t("thread.composer.context.recentRounds", {

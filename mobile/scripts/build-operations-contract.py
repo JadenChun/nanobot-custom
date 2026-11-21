@@ -45,7 +45,7 @@ def main() -> int:
                     "path": api.get("path"),
                     "action": api.get("mutation_action"),
                     "ws_type": api.get("ws_type"),
-                    "scope": "owner",
+                    "scope": native.get("scope", "owner"),
                     "enabled": True,
                     "planned_task": None,
                     "replay": native.get("replay", "none"),

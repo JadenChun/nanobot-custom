@@ -6,6 +6,7 @@ import pytest
 from nanobot.agent.model_runtime import ModelRuntimeResolver
 from nanobot.config.schema import ModelPresetConfig
 from nanobot.providers.base import GenerationSettings
+from nanobot.providers.capabilities import ModelCapabilities
 from nanobot.providers.factory import ProviderSnapshot
 from nanobot.utils.llm_runtime import LLMRuntime, runtime_from_provider_snapshot
 
@@ -360,6 +361,66 @@ def test_resolver_mutates_only_its_default_selection() -> None:
     assert resolver.model_preset is None
     assert initial.model == "base-model"
     assert initial.context_window_tokens == 10_000
+
+
+class _RouteCapabilityProvider:
+    provider_name = "openai"
+
+    def __init__(self) -> None:
+        self.generation = GenerationSettings(temperature=0.1, max_tokens=1024)
+
+    def model_capabilities(
+        self,
+        model: str,
+        *,
+        context_window_tokens: int,
+        max_output_tokens: int | None,
+    ) -> ModelCapabilities:
+        return ModelCapabilities(
+            context_window_tokens=context_window_tokens,
+            max_output_tokens=1000 if model == "model-a" else 2000,
+            input_modalities=None,
+            output_modalities=frozenset({"text"}),
+            image_pricing=None,
+            capability_source="test",
+        )
+
+
+def test_resolver_recaptures_route_capabilities_on_identity_change() -> None:
+    provider = _RouteCapabilityProvider()
+    resolver = ModelRuntimeResolver(
+        LLMRuntime.capture(
+            provider,
+            "model-a",
+            context_window_tokens=4_000,
+            snapshot_signature=("model-a",),
+        )
+    )
+
+    first = resolver.admit()
+    assert first.model == "model-a"
+    assert first.resolved_capabilities.max_output_tokens == 1000
+    first_generation = first.capability_generation
+
+    resolver.select_model("model-b")
+    second = resolver.admit()
+
+    assert second.model == "model-b"
+    assert second.capability_generation > first_generation
+    assert second.resolved_capabilities.max_output_tokens == 2000
+
+    repeated = resolver.admit()
+    assert repeated.capability_generation == second.capability_generation
+
+    resolver.select_context_window(128_000)
+    third = resolver.admit()
+
+    assert third.context_window_tokens == 128_000
+    assert third.capability_generation > second.capability_generation
+    assert third.resolved_capabilities.context_window_tokens == 128_000
+
+    repeated_window = resolver.admit()
+    assert repeated_window.capability_generation == third.capability_generation
 
 
 def test_resolver_preserves_canonical_preset_name_for_case_insensitive_input() -> None:

@@ -16,6 +16,7 @@ from nanobot.webui.transcript import (
     append_fork_marker,
     delete_webui_transcript,
     fork_transcript_before_user_index,
+    write_managed_fork_transcript,
     write_session_messages_as_transcript,
 )
 
@@ -63,6 +64,8 @@ def create_webui_chat_fork(
     source_key = webui_session_key(source_chat_id)
     target_key = webui_session_key(new_id)
     try:
+        managed = session_manager.has_managed_authority is True
+        source = session_manager.read_existing_canonical_source(source_key) if managed else None
         forked = session_manager.fork_session_before_user_index(
             source_key,
             target_key,
@@ -71,14 +74,25 @@ def create_webui_chat_fork(
         if forked is None:
             return None
 
-        transcript_ok = fork_transcript_before_user_index(
-            source_key,
-            target_key,
-            before_user_index,
-        )
-        if not transcript_ok:
-            write_session_messages_as_transcript(target_key, forked.messages)
-        append_fork_marker(target_key)
+        if managed:
+            with session_manager.locked_session_files():
+                target = session_manager.read_saved_source_metadata(target_key)
+                if target is None or (
+                    target.state.incarnation, target.state.generation, target.state.revision
+                ) != (forked.incarnation, forked.generation, forked.revision):
+                    raise RuntimeError("fork source changed before display publication")
+                parent = source[1] if source is not None else None
+                if parent is not None:
+                    latest = session_manager.read_saved_source_metadata(source_key)
+                    if latest is None or latest.state != parent.state:
+                        parent = None
+                write_managed_fork_transcript(
+                    target.state, forked.messages, parent=parent, before_user_index=before_user_index,
+                )
+        else:
+            if not fork_transcript_before_user_index(source_key, target_key, before_user_index):
+                write_session_messages_as_transcript(target_key, forked.messages)
+            append_fork_marker(target_key)
 
         fork_title = clean_generated_title(title)
         if fork_title:

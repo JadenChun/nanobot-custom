@@ -39,7 +39,7 @@ from nanobot.cli.webui_support import (
 from nanobot.config.paths import get_default_sessions_root, is_default_workspace
 from nanobot.config.schema import Config
 from nanobot.gateway.runtime import GatewayInstance
-from nanobot.runtime_errors import RuntimeOwnedWorkError
+from nanobot.runtime_errors import has_owned_work_error
 from nanobot.security.network import is_loopback_host
 from nanobot.utils.helpers import sync_workspace_templates
 from nanobot.webui.build import BuildMode
@@ -179,15 +179,6 @@ def _gateway_failure_group(message: str, errors: Sequence[BaseException]) -> Bas
     return BaseExceptionGroup(message, list(errors))
 
 
-def _has_owned_work_error(error: BaseException) -> bool:
-    if isinstance(error, RuntimeOwnedWorkError):
-        return True
-    if isinstance(error, BaseExceptionGroup):
-        group = cast(BaseExceptionGroup[BaseException], error)
-        return any(_has_owned_work_error(item) for item in group.exceptions)
-    return False
-
-
 def _print_gateway_health_endpoint(host: str, port: int) -> None:
     console.print(
         f"[green]✓[/green] Health endpoint: {_gateway_health_url(host, port)}"
@@ -299,7 +290,7 @@ async def _close_gateway_runtime(
         await composition.aclose()
     except BaseException as exc:
         errors.append(exc)
-        if _has_owned_work_error(exc):
+        if has_owned_work_error(exc):
             try:
                 restore()
             except BaseException as restore_error:
@@ -415,6 +406,8 @@ def _run_gateway(
             webui_mcp_reload=gateway_mcp.reload,
             webui_skill_state_action=update_skill_state,
             webui_recovery_action=recovery.handle_action,
+            webui_child_control=agent.control_delegated_child,
+            webui_stop_target_for_key=agent.stop_target_for_key,
             config_path=Path(config_path),
         )
 
@@ -425,7 +418,9 @@ def _run_gateway(
         fallback_model_observer = build_webui_fallback_model_observer(bus)
 
         def observe_provider(snapshot: ProviderSnapshot) -> ProviderSnapshot:
-            snapshot.provider.set_llm_call_observer(record_llm_call)
+            snapshot.provider.set_llm_call_observer(
+                lambda call: record_llm_call(call, data_dir=config.runtime_data_dir)
+            )
             if isinstance(snapshot.provider, FallbackProvider):
                 snapshot.provider.set_fallback_model_observer(fallback_model_observer)
             return snapshot
@@ -532,7 +527,7 @@ def _run_gateway(
 
         def record_cleanup_error(error: BaseException) -> None:
             cleanup_errors.append(error)
-            if _has_owned_work_error(error):
+            if has_owned_work_error(error):
                 errors = ([primary_error] if primary_error is not None else []) + cleanup_errors
                 try:
                     restore()
@@ -675,7 +670,7 @@ def _run_gateway(
                     asyncio.create_task(monitor_clients()),
                 ])
                 if processes is not None:
-                    processes.start()
+                    await processes.astart()
                 if cron_gateway is not None:
                     tasks.append(asyncio.create_task(cron_gateway.run()))
                 if config.gateway.local_triggers:

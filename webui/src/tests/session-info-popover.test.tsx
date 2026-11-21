@@ -210,4 +210,33 @@ describe("SessionInfoPopover", () => {
       await pendingRequest;
     });
   });
+
+  it("stays open on outside click and toggles closed when clicking the trigger again", async () => {
+    const user = userEvent.setup();
+
+    render(
+      <div>
+        <button type="button">Outside target</button>
+        <SessionInfoPopover
+          sessionKey="websocket:chat-1"
+          token="tok"
+          title="Release work"
+        />
+      </div>,
+    );
+
+    const toggle = screen.getByRole("button", { name: "Session details" });
+    expect(toggle).toHaveAttribute("aria-pressed", "false");
+
+    await user.click(toggle);
+    expect(await screen.findByRole("dialog")).toBeInTheDocument();
+    expect(toggle).toHaveAttribute("aria-pressed", "true");
+
+    await user.click(screen.getByRole("button", { name: "Outside target" }));
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+
+    await user.click(toggle);
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(toggle).toHaveAttribute("aria-pressed", "false");
+  });
 });

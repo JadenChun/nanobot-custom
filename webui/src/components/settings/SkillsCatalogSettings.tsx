@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { TFunction } from "i18next";
 import {
   Check,
@@ -360,6 +360,19 @@ function SkillDetailSheet({
 }) {
   const { client, getToken } = useClient();
   const { t } = useTranslation();
+  const skillNameRef = useRef(skill?.name ?? null);
+  skillNameRef.current = skill?.name ?? null;
+  // The sheet is reused across selections, so the skill name alone cannot
+  // separate the first A selection from a later A view. Each open/selection
+  // change advances a request generation; a completion may write only when
+  // both the name and the generation it started under are still current.
+  const selectionKey = open && skill ? skill.name : null;
+  const selectionGenerationRef = useRef(0);
+  const selectionKeyRef = useRef(selectionKey);
+  if (selectionKeyRef.current !== selectionKey) {
+    selectionKeyRef.current = selectionKey;
+    selectionGenerationRef.current += 1;
+  }
   const [detail, setDetail] = useState<SkillDetail | null>(null);
   const [loading, setLoading] = useState(false);
   const [loadFailed, setLoadFailed] = useState(false);
@@ -375,6 +388,7 @@ function SkillDetailSheet({
     setDetail(null);
     setLoading(true);
     setLoadFailed(false);
+    setActionBusy(false);
     setActionError("");
     setDeleteOpen(false);
     setDescriptionExpanded(false);
@@ -410,48 +424,68 @@ function SkillDetailSheet({
   const descriptionExpandable = activeSkill.description.length > 240;
 
   const toggleEnabled = async () => {
+    const targetName = activeSkill.name;
+    const generation = selectionGenerationRef.current;
+    const isCurrent = () =>
+      skillNameRef.current === targetName
+      && selectionGenerationRef.current === generation;
     setActionBusy(true);
     setActionError("");
     const scope = getToken();
     try {
-      const payload = await updateSkillEnabled(client, activeSkill.name, !enabled);
+      const payload = await updateSkillEnabled(client, targetName, !enabled);
+      if (!isCurrent()) return;
       notifySkillsChanged(payload, scope);
-      const updated = payload.skills.find((item) => item.name === activeSkill.name);
+      const updated = payload.skills.find((item) => item.name === targetName);
       if (updated) {
         setDetail((current) => current ? { ...current, ...updated } : current);
       }
     } catch (reason) {
-      setActionError(
-        reason instanceof Error
-          ? reason.message
-          : t("settings.skills.updateFailed", {
-              defaultValue: "Could not update this skill.",
-            }),
-      );
+      if (isCurrent()) {
+        setActionError(
+          reason instanceof Error
+            ? reason.message
+            : t("settings.skills.updateFailed", {
+                defaultValue: "Could not update this skill.",
+              }),
+        );
+      }
     } finally {
-      setActionBusy(false);
+      if (isCurrent()) {
+        setActionBusy(false);
+      }
     }
   };
 
   const removeSkill = async () => {
+    const targetName = activeSkill.name;
+    const generation = selectionGenerationRef.current;
+    const isCurrent = () =>
+      skillNameRef.current === targetName
+      && selectionGenerationRef.current === generation;
     setDeleteOpen(false);
     setActionBusy(true);
     setActionError("");
     const scope = getToken();
     try {
-      const payload = await deleteSkill(client, activeSkill.name);
+      const payload = await deleteSkill(client, targetName);
+      if (!isCurrent()) return;
       notifySkillsChanged(payload, scope);
       onOpenChange(false);
     } catch (reason) {
-      setActionError(
-        reason instanceof Error
-          ? reason.message
-          : t("settings.skills.deleteFailed", {
-              defaultValue: "Could not delete this skill.",
-            }),
-      );
+      if (isCurrent()) {
+        setActionError(
+          reason instanceof Error
+            ? reason.message
+            : t("settings.skills.deleteFailed", {
+                defaultValue: "Could not delete this skill.",
+              }),
+        );
+      }
     } finally {
-      setActionBusy(false);
+      if (isCurrent()) {
+        setActionBusy(false);
+      }
     }
   };
 

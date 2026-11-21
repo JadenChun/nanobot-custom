@@ -558,17 +558,33 @@ def _clone_server(server: MCPServerConfig) -> MCPServerConfig:
     return MCPServerConfig.model_validate(server.model_dump(mode="json"))
 
 
-def _with_managed_stdio_cwd(name: str, cfg: MCPServerConfig) -> MCPServerConfig:
+def _managed_mcp_root(data_dir: Path | None = None) -> Path:
+    if data_dir is not None:
+        return ensure_dir(Path(data_dir) / "mcp")
+    return get_runtime_subdir("mcp")
+
+
+def _with_managed_stdio_cwd(
+    name: str,
+    cfg: MCPServerConfig,
+    *,
+    data_dir: Path | None = None,
+) -> MCPServerConfig:
     if cfg.command and (cfg.type in (None, "stdio")) and not cfg.cwd:
-        cfg.cwd = str(ensure_dir(get_runtime_subdir("mcp") / name))
+        cfg.cwd = str(ensure_dir(_managed_mcp_root(data_dir) / name))
     return cfg
 
 
-def _remove_managed_stdio_cwd(name: str, cfg: MCPServerConfig | None) -> bool:
+def _remove_managed_stdio_cwd(
+    name: str,
+    cfg: MCPServerConfig | None,
+    *,
+    data_dir: Path | None = None,
+) -> bool:
     if cfg is None or not cfg.cwd:
         return False
     cwd = Path(cfg.cwd).expanduser().resolve(strict=False)
-    managed = (get_runtime_subdir("mcp") / name).resolve(strict=False)
+    managed = (_managed_mcp_root(data_dir) / name).resolve(strict=False)
     if cwd != managed or not cwd.exists():
         return False
     if cwd.is_symlink() or cwd.is_file():
@@ -681,6 +697,8 @@ def _materialize_server(
     preset: McpPreset,
     query: QueryParams,
     existing: MCPServerConfig | None,
+    *,
+    data_dir: Path | None = None,
 ) -> MCPServerConfig:
     if preset.server is None or not preset.install_supported:
         raise McpPresetError(f"{preset.display_name} is not supported yet", status=409)
@@ -701,7 +719,7 @@ def _materialize_server(
             cfg.args = _with_arg_value(list(cfg.args), target_name, value)
         elif target_kind == "url_param":
             cfg.url = _url_with_param(cfg.url, target_name, value)
-    return _with_managed_stdio_cwd(preset.name, cfg)
+    return _with_managed_stdio_cwd(preset.name, cfg, data_dir=data_dir)
 
 
 def _command_available(command: str) -> bool:
@@ -723,12 +741,19 @@ def _config_available(cfg: MCPServerConfig | None) -> bool:
     return False
 
 
-def _status_for(preset: McpPreset, cfg: MCPServerConfig | None) -> str:
+def _status_for(
+    preset: McpPreset,
+    cfg: MCPServerConfig | None,
+    *,
+    data_dir: Path | None = None,
+) -> str:
     if cfg is None:
         return "not_installed" if preset.install_supported else "coming_soon"
     if any(field.required and not _field_configured(field, cfg) for field in preset.fields):
         return "missing_credentials"
-    if cfg.auth == "oauth" and not mcp_oauth_has_credentials(preset.name, cfg.url):
+    if cfg.auth == "oauth" and not mcp_oauth_has_credentials(
+        preset.name, cfg.url, data_dir=data_dir
+    ):
         return "authorization_required"
     if cfg.command and not _command_available(cfg.command):
         return "missing_dependency"
@@ -851,9 +876,14 @@ def _custom_manifest(name: str, cfg: MCPServerConfig) -> dict[str, Any]:
     )
 
 
-def _preset_payload(preset: McpPreset, configured_servers: dict[str, MCPServerConfig]) -> dict[str, Any]:
+def _preset_payload(
+    preset: McpPreset,
+    configured_servers: dict[str, MCPServerConfig],
+    *,
+    data_dir: Path | None = None,
+) -> dict[str, Any]:
     cfg = configured_servers.get(preset.name)
-    status = _status_for(preset, cfg)
+    status = _status_for(preset, cfg, data_dir=data_dir)
     configured = cfg is not None and status not in {"missing_credentials", "authorization_required"}
     logo_url = _favicon_url(preset.brand_domain)
     return {
@@ -886,11 +916,14 @@ def _custom_payload(
     cfg: MCPServerConfig,
     *,
     tool_names: list[str] | None = None,
+    data_dir: Path | None = None,
 ) -> dict[str, Any]:
     transport = cfg.type
     if not transport:
         transport = "stdio" if cfg.command else ("sse" if cfg.url.rstrip("/").endswith("/sse") else "streamableHttp")
-    if cfg.auth == "oauth" and not mcp_oauth_has_credentials(name, cfg.url):
+    if cfg.auth == "oauth" and not mcp_oauth_has_credentials(
+        name, cfg.url, data_dir=data_dir
+    ):
         status = "authorization_required"
     else:
         status = "missing_dependency" if cfg.command and not _command_available(cfg.command) else "configured"
@@ -953,14 +986,20 @@ def mcp_presets_payload(
     config_path: Path | None = None,
 ) -> dict[str, Any]:
     config = load_config(config_path) if config_path is not None else load_config()
+    data_dir = config.runtime_data_dir
     known = _known_preset_names()
     preset_rows = [
-        _preset_payload(preset, config.tools.mcp_servers)
+        _preset_payload(preset, config.tools.mcp_servers, data_dir=data_dir)
         | ({"tool_names": tool_preview.get(preset.name, [])} if tool_preview and preset.name in tool_preview else {})
         for preset in MCP_PRESETS
     ]
     custom_rows = [
-        _custom_payload(name, cfg, tool_names=(tool_preview or {}).get(name))
+        _custom_payload(
+            name,
+            cfg,
+            tool_names=(tool_preview or {}).get(name),
+            data_dir=data_dir,
+        )
         for name, cfg in sorted(config.tools.mcp_servers.items())
         if name not in known
     ]
@@ -1133,7 +1172,7 @@ async def mcp_presets_test_action(
     if cfg is None:
         raise McpPresetError(f"{display_name} is not enabled", status=404)
 
-    status = _status_for(preset, cfg) if preset is not None else (
+    status = _status_for(preset, cfg, data_dir=config.runtime_data_dir) if preset is not None else (
         "missing_dependency" if cfg.command and not _command_available(cfg.command) else "configured"
     )
     if status == "missing_credentials":
@@ -1163,7 +1202,11 @@ async def mcp_presets_test_action(
     inspection_cfg = cfg.model_copy(update={"enabled_tools": ["*"]})
     try:
         stacks = await asyncio.wait_for(
-            connect_mcp_servers({name: inspection_cfg}, registry),
+            connect_mcp_servers(
+                {name: inspection_cfg},
+                registry,
+                data_dir=config.runtime_data_dir,
+            ),
             timeout=_test_timeout(cfg),
         )
         tool_prefix = f"mcp_{name}_"
@@ -1467,7 +1510,7 @@ def custom_mcp_action(
         config.tools.mcp_servers[name] = cfg
         save_config(config, config_path)
         if delete_credentials:
-            delete_mcp_oauth_credentials(name)
+            delete_mcp_oauth_credentials(name, data_dir=config.runtime_data_dir)
         payload = mcp_presets_payload(
             last_action=_server_action_message(action, name),
             config_path=config_path,
@@ -1485,7 +1528,7 @@ def custom_mcp_action(
         config.tools.mcp_servers.update(servers)
         save_config(config, config_path)
         for name in delete_credentials:
-            delete_mcp_oauth_credentials(name)
+            delete_mcp_oauth_credentials(name, data_dir=config.runtime_data_dir)
         payload = mcp_presets_payload(
             last_action={
                 "ok": True,
@@ -1527,7 +1570,7 @@ def ensure_mcp_oauth_server(
         preset = _preset_by_name(name)
         if preset.server is None or preset.server.auth != "oauth":
             raise McpPresetError("MCP server does not support browser authorization", status=409)
-        cfg = _materialize_server(preset, query, None)
+        cfg = _materialize_server(preset, query, None, data_dir=config.runtime_data_dir)
         config.tools.mcp_servers[name] = cfg
         save_config(config, config_path)
     if cfg.auth != "oauth" or cfg.type not in {"sse", "streamableHttp"} or not cfg.url:
@@ -1552,7 +1595,9 @@ def mcp_presets_action(
     if action == "enable":
         if preset is None:
             raise McpPresetError("unknown MCP preset", status=404)
-        config.tools.mcp_servers[preset.name] = _materialize_server(preset, query, existing)
+        config.tools.mcp_servers[preset.name] = _materialize_server(
+            preset, query, existing, data_dir=config.runtime_data_dir
+        )
         save_config(config, config_path)
         payload = mcp_presets_payload(
             last_action=_action_message(action, preset),
@@ -1569,12 +1614,14 @@ def mcp_presets_action(
         if name in config.tools.mcp_servers:
             existing_cfg = config.tools.mcp_servers[name]
             try:
-                removed_runtime_files = _remove_managed_stdio_cwd(name, existing_cfg)
+                removed_runtime_files = _remove_managed_stdio_cwd(
+                    name, existing_cfg, data_dir=config.runtime_data_dir
+                )
             except OSError as exc:
                 cleanup_error = str(exc)
             del config.tools.mcp_servers[name]
             save_config(config, config_path)
-            delete_mcp_oauth_credentials(name)
+            delete_mcp_oauth_credentials(name, data_dir=config.runtime_data_dir)
         last_action = (
             _action_message(action, preset)
             if preset is not None

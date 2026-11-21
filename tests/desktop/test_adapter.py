@@ -13,6 +13,7 @@ from typing import Any, Callable
 import pytest
 
 from nanobot.desktop.adapter import DesktopAdapter, DesktopError
+from nanobot.gateway.darwin_desktop_process import darwin_desktop_available
 
 
 def _prepared_config(
@@ -70,6 +71,43 @@ def test_hello_requires_an_explicit_existing_config_without_fallback(tmp_path: P
     assert error.value.code == "config_unavailable"
 
 
+def test_first_run_seeds_an_authenticated_default_once(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(Path, "home", classmethod(lambda _cls: tmp_path))
+    adapter = DesktopAdapter()
+    path = tmp_path / ".nanobot" / "config.json"
+    with pytest.raises(DesktopError, match="config_unavailable"):
+        adapter.handle("hello", {"config_path": str(path), "workspace": None})
+    assert not path.exists()  # hello must remain read-only
+
+    assert adapter.handle("prepare_default_config", {}) == {"config_path": str(path)}
+    before = path.read_bytes()
+    data = json.loads(before)
+    websocket = data["channels"]["websocket"]
+    assert data["gateway"]["host"] == websocket["host"] == "127.0.0.1"
+    assert websocket["enabled"] and websocket["websocketRequiresToken"]
+    assert len(websocket["tokenIssueSecret"]) >= 32
+    assert "providers" not in data
+    if os.name != "nt":
+        assert path.stat().st_mode & 0o777 == 0o600
+
+    adapter.handle("prepare_default_config", {})
+    assert path.read_bytes() == before
+    assert list(path.parent.iterdir()) == [path]
+
+
+def test_first_run_does_not_replace_even_an_invalid_existing_config(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(Path, "home", classmethod(lambda _cls: tmp_path))
+    path = tmp_path / ".nanobot" / "config.json"
+    path.parent.mkdir()
+    path.write_text("not valid JSON", encoding="utf-8")
+
+    adapter = DesktopAdapter()
+    assert adapter.handle("prepare_default_config", {}) == {"config_path": str(path)}
+    assert path.read_text(encoding="utf-8") == "not valid JSON"
+
+
 def test_hello_is_read_only_and_does_not_return_credentials(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
     config_path = tmp_path / "profile" / "config.json"
@@ -84,7 +122,10 @@ def test_hello_is_read_only_and_does_not_return_credentials(tmp_path: Path) -> N
     rendered = json.dumps(result)
 
     assert result["protocol_version"] == 1
-    assert result["capabilities"] == ["managed-gateway-v1"]
+    expected = ["managed-gateway-v1"]
+    if darwin_desktop_available():
+        expected.append("darwin-identity-stop-v1")
+    assert result["capabilities"] == expected
     assert result["config_path"] == str(config_path.resolve())
     assert result["workspace"] == str(workspace.resolve())
     assert "desktop-provider-sentinel" not in rendered
@@ -101,6 +142,7 @@ def test_desktop_start_reports_unsupported_platform_without_launching(
 ) -> None:
     config_path = tmp_path / "profile" / "config.json"
     _prepared_config(config_path, tmp_path / "workspace")
+    monkeypatch.setattr("nanobot.gateway.runtime.darwin_desktop_available", lambda: False)
     adapter = DesktopAdapter()
     try:
         adapter.handle("hello", {"config_path": str(config_path), "workspace": None})
@@ -128,8 +170,8 @@ def test_desktop_start_reports_unsupported_platform_without_launching(
 
 
 @pytest.mark.skipif(
-    sys.platform != "linux",
-    reason="requires Linux PID birth identity and pidfd lifecycle",
+    sys.platform != "linux" and not darwin_desktop_available(),
+    reason="requires an instance-bound Linux or macOS process handle",
 )
 def test_desktop_start_returns_handle_without_waiting_for_readiness(
     tmp_path: Path,

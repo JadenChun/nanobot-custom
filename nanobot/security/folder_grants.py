@@ -399,14 +399,47 @@ class FolderGrantStore:
         instance_root: Path | None = None,
         sessions_root: Path | None = None,
         path: Path | None = None,
+        config_path: Path | None = None,
     ) -> None:
         self.agent_home = agent_home.expanduser().resolve(strict=False)
-        self.path = path or (get_webui_dir() / "folder-grants.json")
+        instance = (
+            instance_root.expanduser().resolve(strict=False)
+            if instance_root is not None
+            else get_webui_dir().parent.expanduser().resolve(strict=False)
+        )
+        self.instance_root = instance
+        self.path = (
+            path
+            if path is not None
+            else (
+                instance / "webui" / "folder-grants.json"
+                if instance_root is not None
+                else get_webui_dir() / "folder-grants.json"
+            )
+        )
         self.lock_path = self.path.with_name("folder-grants.lock")
         self.activation_path = self.path.with_name(".folder-grants-active")
-        instance = (instance_root or get_webui_dir().parent).expanduser().resolve(strict=False)
-        sessions = (sessions_root or get_default_sessions_root()).expanduser().resolve(strict=False)
-        config_path = get_config_path().expanduser().resolve(strict=False)
+        if path is None:
+            # The legacy default ensured this directory through get_webui_dir().
+            self.path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        sessions = (
+            sessions_root.expanduser().resolve(strict=False)
+            if sessions_root is not None
+            else (
+                instance / "sessions"
+                if instance_root is not None
+                else get_default_sessions_root()
+            )
+        )
+        source_config = (
+            config_path.expanduser().resolve(strict=False)
+            if config_path is not None
+            else (
+                instance / "config.json"
+                if instance_root is not None
+                else get_config_path().expanduser().resolve(strict=False)
+            )
+        )
         webui_root = self.path.parent.expanduser().resolve(strict=False)
         from nanobot.context_repo.catalog import RepositoryCatalog
 
@@ -421,7 +454,7 @@ class FolderGrantStore:
                     instance / "credentials",
                     catalog_root,
                     webui_root,
-                    config_path,
+                    source_config,
                 )
             )
         )
@@ -437,15 +470,54 @@ class FolderGrantStore:
         *,
         sessions_root: Path | None = None,
         path: Path | None = None,
+        instance_root: Path | None = None,
+        config_path: Path | None = None,
     ) -> Self:
-        """Return the shared instance authority using agent-home identity."""
+        """Return the shared instance authority using agent-home identity.
+
+        An explicit ``instance_root`` (or ``config_path``) scopes the authority
+        file, session defaults, and private-root mask to that gateway instance.
+        Callers that pass neither keep the process-global legacy default.
+        """
         resolved_home = workspace.expanduser().resolve(strict=False)
-        sessions = (sessions_root or get_default_sessions_root()).expanduser().resolve(strict=False)
-        authority_path = path or (get_webui_dir() / "folder-grants.json")
+        resolved_instance = (
+            instance_root.expanduser().resolve(strict=False)
+            if instance_root is not None
+            else (
+                config_path.expanduser().resolve(strict=False).parent
+                if config_path is not None
+                else None
+            )
+        )
+        resolved_config = (
+            config_path.expanduser().resolve(strict=False)
+            if config_path is not None
+            else None
+        )
+        sessions = (
+            sessions_root.expanduser().resolve(strict=False)
+            if sessions_root is not None
+            else (
+                resolved_instance / "sessions"
+                if resolved_instance is not None
+                else get_default_sessions_root()
+            )
+        )
+        authority_path = (
+            path
+            if path is not None
+            else (
+                resolved_instance / "webui" / "folder-grants.json"
+                if resolved_instance is not None
+                else get_webui_dir() / "folder-grants.json"
+            )
+        )
         key = (
             str(authority_path.expanduser().resolve(strict=False)),
             str(resolved_home),
             str(sessions),
+            str(resolved_instance or ""),
+            str(resolved_config or ""),
         )
         with _SHARED_STORES_LOCK:
             existing = _SHARED_STORES.get(key)
@@ -456,7 +528,9 @@ class FolderGrantStore:
             store = cls(
                 agent_home=resolved_home,
                 sessions_root=sessions,
-                path=authority_path,
+                path=path,
+                instance_root=resolved_instance,
+                config_path=resolved_config,
             )
             _SHARED_STORES[key] = store
             return store
@@ -772,5 +846,5 @@ def _unique_paths(paths: tuple[Path, ...]) -> list[Path]:
     return list(dict.fromkeys(path.expanduser().resolve(strict=False) for path in paths))
 
 
-_SHARED_STORES: dict[tuple[str, str, str], FolderGrantStore] = {}
+_SHARED_STORES: dict[tuple[str, str, str, str, str], FolderGrantStore] = {}
 _SHARED_STORES_LOCK = threading.RLock()

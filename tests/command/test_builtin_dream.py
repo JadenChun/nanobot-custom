@@ -17,7 +17,7 @@ from nanobot.command.builtin import (
 )
 from nanobot.command.router import CommandContext
 from nanobot.session.manager import SessionManager
-from nanobot.utils.gitstore import CommitInfo
+from nanobot.utils.gitstore import CommitInfo, GitStore, GitStoreError
 
 
 class _FakeStore:
@@ -33,6 +33,7 @@ class _FakeStore:
         self._dream_prompt_result = dream_prompt_result
         self._content_diff = content_diff
         self.compact_history_called = False
+        self._dream_operation: str | None = None
 
     def get_last_dream_cursor(self) -> int:
         return self._last_dream_cursor
@@ -40,8 +41,31 @@ class _FakeStore:
     def build_dream_prompt(self):
         return self._dream_prompt_result
 
-    def build_dream_tools(self):
+    def build_dream_tools(self, *, operation_id: str | None = None):
         return None
+
+    def reconcile_dream_operation(self) -> None:
+        return None
+
+    def reserve_dream_run(self, cursor_before: int, cursor_after: int) -> str:
+        if not self.git.is_initialized() or cursor_after <= cursor_before:
+            raise RuntimeError("Dream requires initialized versioning")
+        self._dream_operation = "dream-test-operation"
+        return self._dream_operation
+
+    def finish_dream_run(
+        self,
+        operation_id: str,
+        *,
+        completed: bool,
+        commit_message: str,
+    ) -> str | None:
+        if operation_id != self._dream_operation:
+            raise RuntimeError("Dream operation changed")
+        if completed:
+            self._last_dream_cursor = 42
+        self._dream_operation = None
+        return self.git.auto_commit(commit_message)
 
     def set_last_dream_cursor(self, value: int) -> None:
         self._last_dream_cursor = value
@@ -162,7 +186,7 @@ async def test_dream_no_history_explains_how_to_create_input(tmp_path) -> None:
 @pytest.mark.asyncio
 async def test_dream_internal_run_silences_progress(tmp_path) -> None:
     msg = InboundMessage(channel="feishu", sender_id="u1", chat_id="chat1", content="/dream")
-    store = _FakeStore(_FakeGit(initialized=False), dream_prompt_result=("dream prompt", 123))
+    store = _FakeStore(_FakeGit(initialized=True), dream_prompt_result=("dream prompt", 123))
     bus = _FakeBus()
     calls = []
 
@@ -325,7 +349,7 @@ async def test_dream_noop_batch_unlocks_following_history(tmp_path) -> None:
     await cmd_dream(ctx)
     await asyncio.sleep(0)
 
-    assert len(processed_prompts) == 1
+    assert len(processed_prompts) == 1, bus.outbound
     assert "entry-20" in processed_prompts[0]
     assert "entry-21" not in processed_prompts[0]
     assert store.get_last_dream_cursor() == 20
@@ -338,14 +362,104 @@ async def test_dream_noop_batch_unlocks_following_history(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_dream_non_git_falls_back_to_completion_gate(tmp_path) -> None:
-    """Non-git workspaces use the same normal-completion gate."""
+async def test_dream_without_versioning_refuses_before_tool_dispatch(tmp_path) -> None:
+    """Dream cannot admit file edits when its workspace cannot version them."""
     ctx, store = _build_runnable_dream(
         tmp_path, initialized=False, content_diff="", stop_reason="completed",
     )
     await cmd_dream(ctx)
     await asyncio.sleep(0)
-    assert store._last_dream_cursor == 42  # advanced via completion fallback
+    assert store._last_dream_cursor == 5
+    assert not store._dream_operation
+    assert "versioning is available" in ctx.loop.bus.outbound[0].content
+
+
+def _build_real_dream_context(tmp_path, process_direct):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    store = MemoryStore(workspace, sessions_root=tmp_path / "runtime-memory")
+    store.write_soul("soul before")
+    store.write_user("user before")
+    store.write_memory("memory before")
+    store.append_history("history to consolidate")
+    assert store.git.init()
+    msg = InboundMessage(channel="cli", sender_id="u1", chat_id="direct", content="/dream")
+    bus = _FakeBus()
+    loop = SimpleNamespace(
+        bus=bus,
+        context=SimpleNamespace(memory=store, timezone="UTC"),
+        sessions=_make_sessions(tmp_path),
+        process_direct=process_direct,
+        dream_runtime=lambda: None,
+    )
+    ctx = CommandContext(msg=msg, session=None, key=msg.session_key, raw="/dream", args="", loop=loop)
+    return ctx, store, bus
+
+
+@pytest.mark.asyncio
+async def test_dream_production_memory_store_path_commits_skill_and_cursor(tmp_path) -> None:
+    async def process_direct(prompt, *args, **kwargs):
+        result = await kwargs["tools"].execute(
+            "write_file",
+            {
+                "path": "skills/demo/SKILL.md",
+                "content": "---\nname: demo\n---\n\nCreated by the offline adapter.\n",
+            },
+        )
+        assert "Successfully wrote" in str(result)
+        return OutboundMessage(
+            channel="cli", chat_id="direct", content="done", metadata={"_stop_reason": "completed"},
+        )
+
+    ctx, store, bus = _build_real_dream_context(tmp_path, process_direct)
+    await cmd_dream(ctx)
+    await asyncio.sleep(0)
+
+    skill = store.workspace / "skills" / "demo" / "SKILL.md"
+    assert skill.read_text(encoding="utf-8").startswith("---\nname: demo")
+    assert store.get_last_dream_cursor() == 1
+    assert store.git.log()[0].message.startswith("dream: manual run")
+    assert store.git.dream_operation_status() is None
+    assert store.build_dream_prompt() is None
+    assert "Dream completed" in bus.outbound[0].content
+    assert "commit" in bus.outbound[0].content
+
+
+@pytest.mark.asyncio
+async def test_dream_persistence_error_publishes_safe_terminal_and_keeps_fence(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    async def process_direct(prompt, *args, **kwargs):
+        await kwargs["tools"].execute(
+            "write_file",
+            {
+                "path": "skills/private/SKILL.md",
+                "content": "private bytes must never appear in the operation record",
+            },
+        )
+        return OutboundMessage(
+            channel="cli", chat_id="direct", content="done", metadata={"_stop_reason": "completed"},
+        )
+
+    ctx, store, bus = _build_real_dream_context(tmp_path, process_direct)
+
+    def fail_commit(self, message):
+        if message.startswith("dream:"):
+            raise GitStoreError("private storage detail")
+        raise AssertionError("only run settlement should commit")
+
+    monkeypatch.setattr(GitStore, "auto_commit", fail_commit)
+    await cmd_dream(ctx)
+    await asyncio.sleep(0)
+
+    terminal = bus.outbound[0].content
+    assert "could not be safely settled" in terminal
+    assert "private storage detail" not in terminal
+    marker = (store.workspace / ".git" / "nanobot-dream-operation.json").read_bytes()
+    assert b"private bytes must never appear" not in marker
+    with pytest.raises(GitStoreError):
+        store.build_dream_prompt()
 
 
 @pytest.mark.asyncio

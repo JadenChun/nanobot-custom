@@ -9,6 +9,7 @@ import time
 from collections.abc import Awaitable, Callable
 from contextlib import suppress
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 from urllib.parse import SplitResult, parse_qs, urlsplit, urlunsplit
 
@@ -100,9 +101,10 @@ def prepare_mcp_oauth_redirect_uri(redirect_uri: str) -> tuple[str, bool]:
 class McpOAuthManager:
     """Own short-lived browser flows while the gateway process is running."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, data_dir: Path | None = None) -> None:
         self._flows: dict[str, _McpOAuthFlow] = {}
         self._states: dict[str, str] = {}
+        self._data_dir = Path(data_dir) if data_dir is not None else None
 
     async def start(
         self,
@@ -290,11 +292,19 @@ class McpOAuthManager:
     async def _connect(self, flow: _McpOAuthFlow, handlers: MCPOAuthHandlers) -> bool:
         connections: dict[str, MCPConnection] = {}
         try:
-            connections = await connect_mcp_servers(
-                {flow.name: flow.cfg},
-                ToolRegistry(),
-                oauth_handlers={flow.name: handlers},
-            )
+            if self._data_dir is None:
+                connections = await connect_mcp_servers(
+                    {flow.name: flow.cfg},
+                    ToolRegistry(),
+                    oauth_handlers={flow.name: handlers},
+                )
+            else:
+                connections = await connect_mcp_servers(
+                    {flow.name: flow.cfg},
+                    ToolRegistry(),
+                    oauth_handlers={flow.name: handlers},
+                    data_dir=self._data_dir,
+                )
             succeeded = flow.name in connections
             if not succeeded and flow.error is None:
                 flow.error = "Could not complete the MCP OAuth connection."

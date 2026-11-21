@@ -384,16 +384,24 @@ def agent(
             nonlocal runtime
             runtime = await composition.acquire()
             acquired_runtime = runtime
-            _prepare_acquired_runtime()
-            cli_terminal._init_prompt_session()
-            _model, _preset_tag = _model_display(runtime_config)
-            _icon = runtime_config.agents.defaults.bot_icon or __logo__
-            console.print(
-                f"{_icon} Interactive mode [bold blue]({_model})[/bold blue]{_preset_tag} "
-                "— type [bold]exit[/bold] or [bold]Ctrl+C[/bold] to quit\n"
-            )
-            await runtime.mcp.connect()
-            bus_task = asyncio.create_task(runtime.agent.run())
+            # Setup after a successful acquire can still fail.  Wrap it now so a
+            # prompt, logging, or MCP setup error closes the graph in reverse
+            # order instead of escaping with the runtime still held.
+            try:
+                _prepare_acquired_runtime()
+                cli_terminal._init_prompt_session()
+                _model, _preset_tag = _model_display(runtime_config)
+                _icon = runtime_config.agents.defaults.bot_icon or __logo__
+                console.print(
+                    f"{_icon} Interactive mode [bold blue]({_model})[/bold blue]{_preset_tag} "
+                    "— type [bold]exit[/bold] or [bold]Ctrl+C[/bold] to quit\n"
+                )
+                await runtime.mcp.connect()
+                bus_task = asyncio.create_task(runtime.agent.run())
+            except BaseException:
+                cli_terminal._restore_terminal()
+                await _close_runtime()
+                raise
             turn_done = asyncio.Event()
             turn_done.set()
             turn_response: list[Any] = []

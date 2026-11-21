@@ -1047,6 +1047,10 @@ async def test_base_channel_reads_current_transcription_config_each_call(
     monkeypatch.setattr("nanobot.config.loader._current_config_path", config_path)
 
     channel = _FakePlugin({"enabled": True, "allowFrom": ["*"]}, MessageBus())
+    monkeypatch.setattr(
+        "nanobot.audio.transcription.measure_audio_duration",
+        AsyncMock(return_value=1.0),
+    )
 
     calls: list[dict[str, object]] = []
 

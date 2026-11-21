@@ -28,7 +28,7 @@ declare global {
   }
 }
 
-const DEFAULT_NOTIFICATION_TITLE = "nanobot";
+const DEFAULT_NOTIFICATION_TITLE = "Kohaku";
 const DEFAULT_NOTIFICATION_ICON = "/brand/nanobot_icon_192.png";
 const DESKTOP_HIDE_EVENT = "nanobot:desktop-hide";
 const DESKTOP_SHOW_EVENT = "nanobot:desktop-show";
@@ -143,25 +143,42 @@ function showViaServiceWorker(
   });
 }
 
+function isDesktopTaskConclusion(event: TaskNotificationEvent): boolean {
+  if (event.kind === "recovery") return event.status === "failed";
+  return event.outcome === undefined || event.outcome === "completed" || event.outcome === "failed";
+}
+
 export function showTaskNotification({
-  body,
-  tag,
-  title = DEFAULT_NOTIFICATION_TITLE,
+  event,
+  t,
+  requestMutation,
 }: {
-  body: string;
-  tag?: string;
-  title?: string;
+  event: TaskNotificationEvent;
+  t: TFunction;
+  /** Authenticated WebSocket mutation control; the desktop side effect needs it. */
+  requestMutation?: (
+    action: string,
+    payload: Record<string, unknown>,
+  ) => Promise<unknown>;
 }): void {
   // The desktop shell dispatches ``nanobot:desktop-hide`` before hiding the
   // window. Suppress even the browser Notification fallback in that state:
   // activating a stale notification must not pull the hidden window back.
   if (!desktopWindowOpen) return;
-  if (isDesktopShell()) {
+  const desktop = isDesktopShell();
+  if (desktop && !isDesktopTaskConclusion(event)) return;
+  const body = buildTaskNotificationBody(event, t);
+  const title = DEFAULT_NOTIFICATION_TITLE;
+  const tag = `nanobot-turn-${event.chatId}`;
+  if (desktop) {
     if (!clientWindowIsOpen()) return;
-    const query = new URLSearchParams({ title, body });
-    if (tag) query.set("tag", tag);
-    void fetch(`/api/desktop/notify?${query.toString()}`, {
-      credentials: "same-origin",
+    // The desktop notifier is an authenticated local mutation. Without the
+    // control there is no unauthenticated fallback request.
+    if (!requestMutation) return;
+    void requestMutation("desktop.notify", {
+      title,
+      body,
+      tag,
     }).catch(() => {
       // Desktop notifications are best-effort and must not affect chat.
     });

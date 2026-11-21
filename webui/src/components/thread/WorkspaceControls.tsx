@@ -1,16 +1,16 @@
-import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from "react";
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import { Check, ChevronDown, Folder, Loader2, Monitor, ShieldCheck } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import { Button } from "@/components/ui/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -93,11 +93,15 @@ export function WorkspaceProjectPicker({
   isHero = false,
   connected = false,
   disabled,
+  ownerKey = null,
   scope,
   defaultScope,
   controls,
   workspaces = null,
   error,
+  nextTurnScope = null,
+  nextTurnPending = false,
+  turnActive = false,
   onPickFolder,
   onRefreshWorkspaces = async () => {},
   onChange,
@@ -110,11 +114,18 @@ export function WorkspaceProjectPicker({
   isHero?: boolean;
   connected?: boolean;
   disabled?: boolean;
+  ownerKey?: string | null;
   scope: WorkspaceScopePayload | null;
   defaultScope: WorkspaceScopePayload | null;
   controls: WorkspacesPayload["controls"] | null;
   workspaces?: WorkspacesPayload | null;
   error?: string | null;
+  /** Detached choice for the next turn; the active turn keeps ``scope``. */
+  nextTurnScope?: WorkspaceScopePayload | null;
+  /** A next-turn acknowledgement is still in flight. */
+  nextTurnPending?: boolean;
+  /** A turn is running; the picker still edits the next-turn choice. */
+  turnActive?: boolean;
   onPickFolder?: () => Promise<string | null>;
   onRefreshWorkspaces?: () => Promise<void>;
   onChange?: (scope: WorkspaceScopePayload) => void;
@@ -125,6 +136,7 @@ export function WorkspaceProjectPicker({
   const [pathDraft, setPathDraft] = useState("");
   const [pathError, setPathError] = useState<string | null>(null);
   const [pickingFolder, setPickingFolder] = useState(false);
+  const pendingBrowseRef = useRef<{ cancelled: boolean } | null>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const pathInputRef = useRef<HTMLInputElement>(null);
   const pathErrorId = useId();
@@ -135,10 +147,24 @@ export function WorkspaceProjectPicker({
     ? ""
     : activeScope?.project_name || projectNameFromPath(activeScope?.project_path ?? "");
   const currentPath = activeScope?.project_path ?? defaultScope?.project_path ?? "";
+  // While a turn runs the picker edits the *next* turn instead of the admitted
+  // one, so its own selection is the readable label.
+  const pendingNextScope = nextTurnScope && (
+    !activeScope
+    || !sameWorkspacePath(nextTurnScope.project_path, activeScope.project_path)
+    || nextTurnScope.access_mode !== activeScope.access_mode
+  )
+    ? nextTurnScope
+    : null;
+  const nextFolderName = pendingNextScope
+    ? pendingNextScope.project_name || projectNameFromPath(pendingNextScope.project_path)
+    : "";
+  const showNextTurnSelection = turnActive && pendingNextScope !== null;
   const visible = !!defaultScope
     && !!onChange;
   const canChangeFocus = controls?.can_change_project !== false;
   const pickFolder = getRuntimeHost().pickFolder ?? onPickFolder;
+  const browseEligible = visible && !disabled && canChangeFocus && !!pickFolder;
   const canManage = controls?.can_manage_folders === true || controls?.can_manage_catalog === true;
 
   useEffect(() => {
@@ -192,24 +218,75 @@ export function WorkspaceProjectPicker({
     [defaultScope, onChange, scope, t, workspaces?.managed_access],
   );
 
+  const currentApplyProjectPathRef = useRef(applyProjectPath);
+  useLayoutEffect(() => {
+    currentApplyProjectPathRef.current = applyProjectPath;
+  }, [applyProjectPath]);
+
+  const revokePendingBrowse = useCallback((mounted: boolean) => {
+    const pending = pendingBrowseRef.current;
+    if (!pending) return;
+    pending.cancelled = true;
+    pendingBrowseRef.current = null;
+    if (mounted) setPickingFolder(false);
+  }, []);
+
+  const committedBrowseLifetimeRef = useRef({
+    ownerKey,
+    projectPath: currentPath,
+    accessMode: activeScope?.access_mode,
+    turnActive,
+  });
+  useLayoutEffect(() => {
+    const previous = committedBrowseLifetimeRef.current;
+    const focusChanged = previous.accessMode !== activeScope?.access_mode
+      || (previous.projectPath !== currentPath
+        && !sameWorkspacePath(previous.projectPath, currentPath));
+    // A browse that spans a run boundary is ambiguous: its picker owner is no
+    // longer the admitted turn. Discard it rather than applying a stale path.
+    const turnBoundaryChanged = previous.turnActive !== turnActive;
+    const lifetimeChanged = previous.ownerKey !== ownerKey || focusChanged
+      || turnBoundaryChanged || !browseEligible;
+    committedBrowseLifetimeRef.current = {
+      ownerKey,
+      projectPath: currentPath,
+      accessMode: activeScope?.access_mode,
+      turnActive,
+    };
+    if (lifetimeChanged) {
+      const hadPendingBrowse = pendingBrowseRef.current !== null;
+      revokePendingBrowse(true);
+      if (hadPendingBrowse && turnBoundaryChanged) setOpen(false);
+    }
+  }, [activeScope?.access_mode, browseEligible, currentPath, ownerKey, revokePendingBrowse, turnActive]);
+
+  useLayoutEffect(() => () => revokePendingBrowse(false), [revokePendingBrowse]);
+
   const browseForFolder = useCallback(async () => {
     if (!pickFolder || disabled) return;
+    const pending = { cancelled: false };
+    pendingBrowseRef.current = pending;
     setPickingFolder(true);
     setPathError(null);
     try {
       const picked = await pickFolder();
+      if (pending.cancelled || pendingBrowseRef.current !== pending) return;
       if (picked) {
         setPathDraft(picked);
-        applyProjectPath(picked);
+        currentApplyProjectPathRef.current(picked);
       }
     } catch (reason) {
+      if (pending.cancelled || pendingBrowseRef.current !== pending) return;
       setPathError(reason instanceof Error
         ? reason.message
         : t("workspace.dialog.browseFailed", { defaultValue: "Folder picker unavailable. Paste a path instead." }));
     } finally {
-      setPickingFolder(false);
+      if (pendingBrowseRef.current === pending) {
+        pendingBrowseRef.current = null;
+        setPickingFolder(false);
+      }
     }
-  }, [applyProjectPath, disabled, pickFolder, t]);
+  }, [disabled, pickFolder, t]);
 
   if (!visible || !defaultScope || !onChange) return null;
 
@@ -219,6 +296,17 @@ export function WorkspaceProjectPicker({
         folder: folderName,
         defaultValue: `Working in: ${folderName}`,
       });
+  const triggerAccessibleLabel = showNextTurnSelection
+    ? t("workspace.picker.nextTurn", {
+        folder: nextFolderName,
+        defaultValue: `Next turn: ${nextFolderName}`,
+      })
+    : pathAccessibleLabel;
+  const triggerTitle = showNextTurnSelection
+    ? t("workspace.picker.nextTurnHint", {
+        defaultValue: "The running turn keeps its folder. This choice applies to the next turn.",
+      })
+    : isAgentHome ? pathAccessibleLabel : currentPath;
   const effectiveAccess = activeScope?.effective_access;
   const currentAccess = effectiveAccess
     ? effectiveAccessLabel(effectiveAccess, t)
@@ -246,8 +334,8 @@ export function WorkspaceProjectPicker({
               ref={triggerRef}
               type="button"
               disabled={disabled || pickingFolder || !canChangeFocus}
-              aria-label={pathAccessibleLabel}
-              title={isAgentHome ? pathAccessibleLabel : currentPath}
+              aria-label={triggerAccessibleLabel}
+              title={triggerTitle}
               className={cn(
                 "transition-colors disabled:pointer-events-none disabled:opacity-55",
                 line
@@ -280,32 +368,34 @@ export function WorkspaceProjectPicker({
                       ),
               )}
             >
-              {pickingFolder
+              {pickingFolder || nextTurnPending
                 ? <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" aria-hidden />
                 : <Folder className={cn("shrink-0", !line && compact ? "h-4 w-4" : "h-3.5 w-3.5")} aria-hidden />}
               {line ? (
-                folderName ? (
+                (showNextTurnSelection ? nextFolderName : folderName) ? (
                   <span className="thread-composer-project-label min-w-0 truncate">
-                    {folderName}
+                    {showNextTurnSelection ? nextFolderName : folderName}
                   </span>
                 ) : null
               ) : inline ? (
-                folderName ? (
+                (showNextTurnSelection ? nextFolderName : folderName) ? (
                   <span className="thread-composer-project-label min-w-0 truncate">
-                    {folderName}
+                    {showNextTurnSelection ? nextFolderName : folderName}
                   </span>
                 ) : null
               ) : (
                 <span className={cn("thread-composer-project-label min-w-0 truncate", compact && !folderName && "sr-only")}>
-                  {compact && folderName ? folderName : pathAccessibleLabel}
+                  {showNextTurnSelection
+                    ? nextFolderName
+                    : compact && folderName ? folderName : pathAccessibleLabel}
                 </span>
               )}
               {line ? (
-                folderName
+                (showNextTurnSelection ? nextFolderName : folderName)
                   ? <ChevronDown className="h-3 w-3 shrink-0 text-muted-foreground/45" aria-hidden />
                   : null
               ) : inline ? (
-                folderName
+                (showNextTurnSelection ? nextFolderName : folderName)
                   ? <ChevronDown className="ml-1.5 h-3 w-3 shrink-0" aria-hidden />
                   : null
               ) : !compact ? (
@@ -334,6 +424,21 @@ export function WorkspaceProjectPicker({
                   <p className="break-all text-[12px] font-medium" title={currentPath}>{currentPath}</p>
                   <p className="text-[11px] text-muted-foreground">{currentAccess}</p>
                 </div>
+                {showNextTurnSelection && pendingNextScope ? (
+                  <div className="space-y-1 rounded-control border border-primary/30 bg-primary/[0.06] px-3 py-2.5">
+                    <p className="text-[11px] font-semibold uppercase tracking-wide text-primary">
+                      {t("workspace.picker.nextTurnLabel", { defaultValue: "Next turn" })}
+                    </p>
+                    <p className="break-all text-[12px] font-medium" title={pendingNextScope.project_path}>
+                      {pendingNextScope.project_path}
+                    </p>
+                    {nextTurnPending ? (
+                      <p role="status" className="text-[11px] text-muted-foreground">
+                        {t("workspace.picker.nextTurnPending", { defaultValue: "Saving the next folder…" })}
+                      </p>
+                    ) : null}
+                  </div>
+                ) : null}
 
                 <button
                   type="button"
@@ -444,9 +549,13 @@ export function WorkspaceProjectPicker({
                   {pathError ?? error}
                 </p>
               ) : null}
-              {disabled ? (
+              {!line && !disabled ? (
                 <p className="text-[11px] text-muted-foreground">
-                  {t("workspace.picker.busy", { defaultValue: "A response is running. Folder changes are available when it finishes." })}
+                  {turnActive
+                    ? t("workspace.picker.nextTurnHint", {
+                        defaultValue: "The running turn keeps its folder. This choice applies to the next turn.",
+                      })
+                    : t("workspace.picker.chooseProject", { defaultValue: "Choose project folder" })}
                 </p>
               ) : null}
               {!canChangeFocus && !disabled ? (
@@ -474,9 +583,11 @@ export function WorkspaceProjectPicker({
             {currentAccess}
           </span>
         ) : null}
-        {!line && !inline && disabled ? (
+        {!line && !inline && !disabled && showNextTurnSelection ? (
           <span className={cn("text-[10.5px] text-muted-foreground", compact && "sr-only")}>
-            {t("workspace.picker.busy", { defaultValue: "A response is running. Folder changes are available when it finishes." })}
+            {t("workspace.picker.nextTurnHint", {
+              defaultValue: "The running turn keeps its folder. This choice applies to the next turn.",
+            })}
           </span>
         ) : null}
         {!line && !inline && !canChangeFocus && !disabled ? (
@@ -671,7 +782,7 @@ export function WorkspacePermissionV2Control({
   const { t } = useTranslation();
   const mobile = isMobileRuntimeActive();
   const reasonId = useId();
-  const [confirmFull, setConfirmFull] = useState(false);
+  const [optimisticMode, setOptimisticMode] = useState<WorkspaceAccessMode | null>(null);
   const [pending, setPending] = useState(false);
   const [actionFailed, setActionFailed] = useState(false);
   const unavailableReason = permissions?.full_access_unavailable_reason;
@@ -687,18 +798,18 @@ export function WorkspacePermissionV2Control({
     && !error
     && !disabled;
   const fullAvailable = persistentChat ? canEnableFull : canRequestDraftFull;
-  const isFull = permissions?.mode === "full";
-  const isRetiring = isFull && permissions?.state === "retiring";
+  const isRetiring = permissions?.mode === "full" && permissions?.state === "retiring";
   const isRestrictedRetiring = enabled
     && permissions?.mode === "restricted"
     && permissions.state === "retiring";
   const draftRestricted = enabled && !permissions && !persistentChat && !loading && !error;
   const unavailable = !enabled || (!permissions && !draftRestricted) || error;
+  const isFull = !unavailable && !isRetiring
+    ? (optimisticMode ?? permissions?.mode) === "full"
+    : permissions?.mode === "full";
   const busy = loading || pending || disabled;
   const label = unavailable
     ? t("workspace.permissionV2.unavailable", { defaultValue: "Access unavailable" })
-    : draftRestricted
-      ? t("thread.composer.workspace.default", { defaultValue: "Sandbox" })
     : isRetiring
       ? t("workspace.permissionV2.fullEnding", { defaultValue: "Full access is ending" })
       : isRestrictedRetiring
@@ -720,7 +831,7 @@ export function WorkspacePermissionV2Control({
         defaultValue: unavailableReason === "configured_sandbox"
           ? "Full access is unavailable while command confinement is configured."
           : unavailableReason === "supervisor_unavailable"
-            ? "Full access is unavailable because Nanobot cannot supervise commands safely."
+            ? "Full access is unavailable because Kohaku cannot supervise commands safely."
             : unavailableReason === "session_required"
               ? "Send a message to create this chat before enabling Full access."
               : "Full access is unavailable with the current local controls.",
@@ -730,7 +841,7 @@ export function WorkspacePermissionV2Control({
       : null;
   const restrictedRetirementMessage = permissions?.retirement?.unknown_processes
     ? t("workspace.permissionV2.restrictedEndingUnknown", {
-        defaultValue: "Nanobot cannot confirm whether earlier commands have finished. New work remains Sandbox; Full access stays unavailable.",
+        defaultValue: "Kohaku cannot confirm whether earlier commands have finished. New work remains Sandbox; Full access stays unavailable.",
       })
     : permissions?.retirement?.active_processes || permissions?.retirement?.active_turn
       ? t("workspace.permissionV2.restrictedEndingActive", {
@@ -744,7 +855,7 @@ export function WorkspacePermissionV2Control({
             defaultValue: "Previous access is still ending. New work remains Sandbox; Full access stays unavailable.",
           });
   const retirementMessage = permissions?.retirement?.unknown_processes
-    ? t("workspace.permissionV2.retiringUnknown", { defaultValue: "Nanobot cannot yet confirm whether earlier commands have finished. Access changes are pending." })
+    ? t("workspace.permissionV2.retiringUnknown", { defaultValue: "Kohaku cannot yet confirm whether earlier commands have finished. Access changes are pending." })
     : permissions?.retirement?.active_processes || permissions?.retirement?.active_turn
       ? t("workspace.permissionV2.retiringActive", { defaultValue: "A command is still running with the previous access. Wait for it to finish or stop it, then retry." })
       : t("workspace.permissionV2.retiringFinished", { defaultValue: "Earlier work has finished. Retry to confirm Sandbox access." });
@@ -759,6 +870,7 @@ export function WorkspacePermissionV2Control({
     .join(". ");
   const changeMode = async (mode: WorkspaceAccessMode) => {
     if (!permissions || !onModeChange || busy) return;
+    setOptimisticMode(mode);
     setPending(true);
     setActionFailed(false);
     try {
@@ -766,8 +878,28 @@ export function WorkspacePermissionV2Control({
     } catch {
       setActionFailed(true);
     } finally {
+      setOptimisticMode(null);
       setPending(false);
     }
+  };
+
+  const selectFullAccess = () => {
+    if (!fullAvailable || busy) return;
+    if (!persistentChat) {
+      if (onRequestFullAccess) {
+        setOptimisticMode("full");
+        setPending(true);
+        setActionFailed(false);
+        void Promise.resolve(onRequestFullAccess())
+          .catch(() => setActionFailed(true))
+          .finally(() => {
+            setOptimisticMode(null);
+            setPending(false);
+          });
+      }
+      return;
+    }
+    void changeMode("full");
   };
 
   return (
@@ -870,7 +1002,7 @@ export function WorkspacePermissionV2Control({
                 selected={false}
                 disabled={!fullAvailable || busy}
                 warning
-                onSelect={() => setConfirmFull(true)}
+                onSelect={selectFullAccess}
               />
               {isRestrictedRetiring ? (
                 <div role="status" className="space-y-1 rounded-control bg-muted/35 px-3 py-2">
@@ -896,50 +1028,6 @@ export function WorkspacePermissionV2Control({
           {t("workspace.permissionV2.sessionRequired", { defaultValue: "Send a message to create this chat before enabling Full access." })}
         </span>
       ) : null}
-      <Dialog open={confirmFull} onOpenChange={setConfirmFull}>
-        <DialogContent className="w-[min(calc(100vw-2rem),32rem)]">
-          <DialogHeader className="text-left">
-            <DialogTitle>{t("workspace.permissionV2.confirmTitle", { defaultValue: "Enable Full access?" })}</DialogTitle>
-            <DialogDescription>
-              {t("workspace.permissionV2.confirmDescription", { defaultValue: "Nanobot can read and change files and run commands beyond the selected folder under your OS account permissions. Working in is the current directory and context. New chats start in Sandbox mode." })}
-            </DialogDescription>
-          </DialogHeader>
-          {!persistentChat && !draftFullAccess ? (
-            <p className="rounded-control bg-muted/35 px-3 py-2 text-[11.5px] text-muted-foreground">
-              {t("workspace.permissionV2.sessionRequired", { defaultValue: "Send a message to create this chat before enabling Full access." })}
-            </p>
-          ) : null}
-          {!canEnableFull && reasonCopy && persistentChat ? (
-            <p role="status" className="rounded-control bg-muted/35 px-3 py-2 text-[11.5px] text-muted-foreground">{reasonCopy}</p>
-          ) : null}
-          <DialogFooter className="flex-row justify-end gap-2 sm:justify-end">
-            <Button type="button" variant="ghost" disabled={busy} onClick={() => setConfirmFull(false)} className="rounded-control">
-              {t("common.cancel", { defaultValue: "Cancel" })}
-            </Button>
-            <Button
-              type="button"
-              disabled={!fullAvailable || busy}
-              onClick={() => {
-                setConfirmFull(false);
-                if (!persistentChat) {
-                  if (onRequestFullAccess) {
-                    setPending(true);
-                    setActionFailed(false);
-                    void Promise.resolve(onRequestFullAccess())
-                      .catch(() => setActionFailed(true))
-                      .finally(() => setPending(false));
-                  }
-                  return;
-                }
-                void changeMode("full");
-              }}
-              className="rounded-control"
-            >
-              {t("workspace.permissionV2.enableFull", { defaultValue: "Enable Full access" })}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }

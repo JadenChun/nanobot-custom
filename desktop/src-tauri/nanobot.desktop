@@ -4,6 +4,6 @@ Comment={{comment}}
 Exec={{exec}}
 StartupWMClass=nanobot-desktop
 Icon={{icon}}
-Name={{name}}
+Name=Kohaku
 Terminal=false
 Type=Application

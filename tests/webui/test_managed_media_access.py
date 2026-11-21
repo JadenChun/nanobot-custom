@@ -70,7 +70,7 @@ def test_replay_markdown_media_remains_readable_after_write_grant_revocation(tmp
     )
 
     assert "/api/media/" in hidden
-    assert len(list(media_root.iterdir())) == 2
+    assert len([path for path in media_root.iterdir() if path.is_file()]) == 2
 
 
 def test_managed_media_rejects_private_symlink_and_temporary_external_source(
@@ -91,7 +91,7 @@ def test_managed_media_rejects_private_symlink_and_temporary_external_source(
     external_image.write_bytes(b"temporary fixture image")
 
     assert gateway.sign_or_stage_media_path(external_image, allow_folder_grants=False) is not None
-    assert len(list(media_root.iterdir())) == 1
+    assert len([path for path in media_root.iterdir() if path.is_file()]) == 1
 
 
 def test_legacy_media_staging_keeps_existing_behavior(tmp_path: Path) -> None:
@@ -103,7 +103,7 @@ def test_legacy_media_staging_keeps_existing_behavior(tmp_path: Path) -> None:
 
     assert signed is not None
     assert signed["url"].startswith("/api/media/")
-    assert len(list(media_root.iterdir())) == 1
+    assert len([path for path in media_root.iterdir() if path.is_file()]) == 1
 
 
 def test_markdown_media_rewrites_folder_granted_external_image(tmp_path: Path) -> None:
@@ -120,7 +120,7 @@ def test_markdown_media_rewrites_folder_granted_external_image(tmp_path: Path) -
 
     assert "/api/media/" in rewritten
     assert str(image) not in rewritten
-    assert len(list(media_root.iterdir())) == 1
+    assert len([path for path in media_root.iterdir() if path.is_file()]) == 1
 
 
 def test_markdown_media_keeps_external_path_without_grants(tmp_path: Path) -> None:

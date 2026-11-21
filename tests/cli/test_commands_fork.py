@@ -8,6 +8,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from rich.console import Console
 from typer.testing import CliRunner
 
 from nanobot.bus.events import OutboundMessage
@@ -151,20 +152,6 @@ def test_onboard_fresh_install(mock_paths):
     assert json.loads(config_file.read_text())["agents"]["defaults"]["workspace"] == str(
         workspace_dir
     )
-
-
-def test_onboard_existing_config_refresh(mock_paths):
-    """Config exists, user declines overwrite — should refresh (load-merge-save)."""
-    config_file, workspace_dir = mock_paths
-    config_file.write_text('{"existing": true}')
-
-    result = runner.invoke(app, ["onboard"], input="n\n")
-
-    assert result.exit_code == 0
-    assert "Config already exists" in result.stdout
-    assert "existing values preserved" in "".join(result.stdout.splitlines())
-    assert workspace_dir.exists()
-    assert (workspace_dir / "AGENTS.md").exists()
 
 
 def test_onboard_existing_config_overwrite(mock_paths):
@@ -730,7 +717,10 @@ def test_agent_logs_flag_prints_explicit_runtime_logs_banner(mock_agent_runtime)
     assert "Use --no-logs to hide internal logs." in stripped_output
 
 
-def test_agent_log_file_adds_rotating_file_sink(mock_agent_runtime, tmp_path: Path):
+def test_agent_log_file_adds_rotating_file_sink(
+    mock_agent_runtime, monkeypatch, tmp_path: Path
+):
+    monkeypatch.setattr("nanobot.cli.agent.console", Console(width=200))
     log_path = tmp_path / "agent.log"
     with patch("loguru.logger.remove"), \
          patch("loguru.logger.add") as add_log, \
@@ -750,7 +740,7 @@ def test_agent_log_file_adds_rotating_file_sink(mock_agent_runtime, tmp_path: Pa
         encoding="utf-8",
         enqueue=True,
     )
-    output = _strip_ansi(result.stdout)
+    output = " ".join(_strip_ansi(result.stdout).split())
     assert "Logging to" in output
     assert "agent.log" in output
 

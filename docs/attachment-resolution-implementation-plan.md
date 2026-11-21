@@ -15,8 +15,8 @@ Related design: [attachment resolution architecture](attachment-resolution-archi
 | W3 channels | Implemented centrally: every adapter path under the media root is copied through `AttachmentIngress` into the canonical store during `_restore_turn` |
 | W4 upload-first server | Implemented: WS `attachment` frame returns IDs; `message.media:[{id}]` binds IDs with installation/session checks |
 | W4 WebUI client | Implemented for all attachments: upload-first with inline fallback when the upload frame fails |
-| W5 transcript records | Implemented: new user events persist records and omit `media`; replay/UI derive paths from records; `attachments migrate` rewrites legacy events |
-| W6 retention | Implemented: reference hash scan, `prune_unreferenced`, `nanobot attachments prune`, and `nanobot attachments migrate` |
+| W5 transcript records | New user events persist records; replay/UI derive paths from records. First-release attachment migration is retired |
+| W6 retention | Store-owned complete declared inventory, OS publication fence, exact durable publication pins, generation-bound deletion retries, and `nanobot attachments prune` |
 | Native large upload | Bounded chunked WS transport supports 24 MiB; resumable streaming remains an optional enhancement |
 | Media-path removal | Applied on staging: no session JSONL contains `media`; new user events are records-only; `media_paths_for_message` no longer reads legacy `media`. `InboundMessage`/`TurnRequest` store only `attachments`; `media` is a constructor argument and compatibility property backed by a transient private compatibility field, never persisted canonical data |
 | Channel markers | Successful path and basename markers are stripped during canonical adoption; `AttachmentContext` owns the model projection |
@@ -34,13 +34,9 @@ The sections below remain the design and sequencing reference.
 - `bunx tsc -p tsconfig.build.json --noEmit`: clean.
 - `ruff check` over the attachment service, agent context/loop, API, WebUI,
   remote composition, CLI, and new tests: clean.
-- `nanobot attachments --help` registers `prune` and `migrate`.
-- Live staging migration: gateway stopped, `attachments migrate --yes` migrated
-  **1 event in 1 file**; a follow-up dry run reports **no legacy media events**.
-  The original file is retained under
-  `~/.nanobot-staging/attachment-migration-backups/`; the rewritten session is
-  mode 0600 and the gateway health endpoint returned
-  `{"status":"ok","process":"alive","ready":true,"websocket":"running"}`.
+- The historical attachment migration verification is superseded by the selected
+  first-release contract. Only `prune` is registered; migration now refuses
+  without filesystem mutation.
 - Live staging `attachments prune --dry-run` reports **no unreferenced blobs**.
 - WebSocket tests cover inline upload, upload-by-ID binding, dedupe, channel
   adoption, and temporary-chat cleanup with content-addressed storage.
@@ -112,7 +108,7 @@ End-state contracts:
   under `<media_root>/attachments/<sha256[:2]>/<sha256><ext>`.
 - **One record type.** `AttachmentRecord` is persisted in the transcript:
   `id`, `sha256`, `mime`, `bytes`, `name`, `source`, `created_at`.
-  A migration-only `storage_key` is removed at the W6 gate.
+  Retained `storage_key` remains readable by conservative reference inventory.
 - **One ingress.** WebUI, mobile, HTTP API, and every chat channel call
   `AttachmentIngress`; none writes a canonical media file directly.
 - **One context formatter.** `AttachmentContext` is the only code that emits
@@ -121,7 +117,7 @@ End-state contracts:
 - **One projection.** `AttachmentProjection` maps records to signed WebUI URLs;
   clients never receive filesystem paths.
 - **Transcripts store records, not paths.** New user events carry
-  `attachments: [record]`; the `media` path list is removed after migration.
+  `attachments: [record]`; retained path compatibility does not require a migration.
 - **Clients are host-neutral.** Official desktop and mobile clients use
   upload-first IDs. Inline `data_url` remains only as an external/API and legacy
   client compatibility input.
@@ -168,7 +164,7 @@ is sequenced when a channel is enabled or prioritized.
 | W3 API and channels | API and all inbound channels use W1/W2 | W1, W2 |
 | W4 Upload-first | server-issued attachment IDs; desktop/mobile upload paths | W1 |
 | W5 Transcript records | sessions persist records; projection signs URLs | W1, W2 |
-| W6 Lifecycle | manifests, retention/GC, legacy migration, removal gates | W3–W5 |
+| W6 Lifecycle | declared inventory, publication custody, retention/GC, retry gates | W3–W5 |
 
 ## 5. W1 — canonical attachment service
 
@@ -185,7 +181,7 @@ Create `nanobot/attachments/`:
 | `binder.py` | stage/bind admission and rollback |
 | `context.py` | one model-reference formatter |
 | `projection.py` | record -> signed media URL adapter |
-| `lifecycle.py` | manifests, retention, migration helpers |
+| `lifecycle.py` | complete-evidence retention and explicit migration refusal |
 | `__init__.py` | public exports |
 
 Proposed records:
@@ -540,69 +536,72 @@ New user events:
   and add the record-backed fields alongside it; remove the compatibility field
   at the W6 gate.
 
-### 9.3 Legacy migration
+### 9.3 First-release migration retirement
 
-- On session read, events with `media` and no `attachments` get transient legacy
-  records; on the next save, records are persisted.
-- A maintenance command (`nanobot attachments migrate`) processes all sessions
-  with dry-run, per-session atomic rewrite, backup, and a resumable journal.
-- Missing legacy files get an unavailable record; no path is invented.
-- After migration, `media` fields and legacy readers are removed.
+- No attachment migration is advertised or registered.
+- The compatibility callable refuses before any read/write side effects.
+- Preview, refused migration and declined confirmation must preserve whole-tree
+  paths, file types, modes and content hashes, including absent storage roots.
 
 ### 9.4 Acceptance
 
 - New transcripts contain records, not paths.
 - Replay, fork, and search work with records.
 - UI displays correct names/MIME/size from records.
-- Legacy sessions migrate idempotently.
+- Unsupported historical reference coverage refuses destructive maintenance.
 - Missing files produce typed unavailable behavior.
 
 ## 10. W6 — lifecycle, retention, and removal
 
-### 10.1 Manifests
+### 10.1 Declared reference inventory
 
-- Per-session manifest:
-  `sessions/<workspace_id>/<storage_key>.attachments.jsonl`.
-- Appended on commit; rebuildable from transcript events.
-- Temporary chats have temporary manifests purged on discard/disconnect.
+Actual source, display, memory and temporary-chat owners durably declare their
+roots in the shared store. Maintenance reads exact canonical and retained
+session-mode bytes, physical display segments and manifests, generated indices,
+memory journals, pending publications and deletion retries without repairing them.
+Unsupported custom session backends durably mark reference coverage incomplete;
+an earlier healthy JSONL declaration cannot certify their retained references.
+Generated helpers declare their actual selected `save_dir`; custom output
+sidecars use the same validated format and retain their `source_images` inputs.
+Linux/macOS provide the qualified media filesystem capabilities. Unsupported
+hosts preserve plain text/session startup, skip media declarations, and return
+typed unavailability for managed publication and destructive maintenance.
 
-### 10.2 Retention
+### 10.2 Retention and publication
 
-- Global content-addressed store; blobs shared across sessions.
-- GC scans all live manifests under a store lock.
-- Delete a blob only when no manifest references its hash, no active turn holds
-  a lease, and it is older than a grace period.
-- Delete abandoned staging files by TTL.
-- Missing/corrupt manifest: rebuild from transcript or skip deletion.
-- Optional quota per session/store; report bytes.
-- Temporary-chat cleanup removes its manifest; the shared blob survives if
-  another session still references it.
+- Memory-recovery and namespace-allocation locks precede all namespace file locks,
+  then the OS media fence. Maintenance retains them through inventory and deletion.
+- Every committed, adopted or generated publication keeps an independent durable
+  pin until the actual successful canonical/display writer transfers that exact
+  publication identity. Expiry, restart and uncertain failures retain custody.
+- Historical managed-media signing is pure. Outbound markdown keeps its exact
+  rewrite publication references in retained display metadata while preserving
+  the original text.
+- One live store-owned fence and fresh complete evidence gate every destructive
+  retention, orphan, quota and temporary-cleanup branch. Caller sets or Boolean
+  completeness flags cannot grant authority.
+- Missing, malformed, unsupported or budget-exhausted evidence preserves all
+  assets and reports refusal reasons and any unmet or unverified quota.
+- A durable intent binds blob and sidecar generations before unlink. Fresh retry
+  protects replacements and new references without treating its own intent as
+  an independent permanent pin.
+- Temporary cleanup consumes only its exact custody; other references and pins
+  preserve shared bytes. Complete supported evidence reclaims exclusive orphans.
 
-### 10.3 Removal gates
+### 10.3 First-release retirement
 
-Remove legacy code only after:
-
-- all sessions pass the migration command, including legacy `storage_key`
-  canonicalization;
-- all official clients send upload IDs;
-- an old-client compatibility window has elapsed;
-- projection and replay use records only.
-
-Then remove:
-
-- `media` fields and path lists;
-- `storage_key` and legacy path readers;
-- `webui/attachment_ingress.py` shim;
-- direct `save_base64_data_url` callers;
-- channel successful image markers;
-- `reference_non_image_attachments` / `content_with_media_breadcrumbs` wrappers.
+There is no attachment migration command or historical backfill requirement.
+The compatibility callable refuses without filesystem writes. Retained legacy
+representations remain explicit inventory inputs or cause an incomplete-coverage
+refusal. Future removal of compatibility readers requires a separate contract.
 
 ### 10.4 Acceptance
 
-- Deleting a session does not delete a blob another session references.
-- Temporary chat cleanup purges its records.
-- Abandoned staging files are removed.
-- Legacy fields are gone after the removal gate.
+- Complete supported inventory reclaims an orphan and its sidecar and satisfies
+  generated-media quota when unprotected bytes are available.
+- Corruption and races preserve bytes across every deletion branch.
+- Successful publication releases only its own pin; incomplete publication keeps it.
+- Preview, retired migration and declined confirmation preserve the whole tree.
 
 ## 11. Test matrix
 
@@ -614,7 +613,7 @@ Then remove:
 | WebUI/mobile | same envelope -> same record; upload -> message -> model path |
 | API | data URL, multipart, 10 MB limit, hash parity |
 | Channels | per-channel acquisition + shared storage; no successful markers |
-| Transcript | records persisted; fork/replay; legacy migration; missing file |
+| Transcript | records persisted; fork/replay; retained legacy evidence; missing file |
 | Projection | signed URL, name/MIME/bytes, no path leakage |
 | Lifecycle | session delete, shared blob retention, temporary chat purge, staging TTL |
 | Security | cross-session ID, revoked installation, path traversal, managed folder denial |
@@ -625,8 +624,8 @@ Then remove:
 1. W1 + W2 behind internal wiring; no protocol change.
 2. W3 API first, then channels as enabled.
 3. W4 server accepts IDs; official clients switch with inline fallback.
-4. W5 dual-read/dual-write transcripts; then migration.
-5. W6 GC and removal after migration evidence.
+4. W5 records and conservative retained-reference inventory.
+5. W6 GC only under complete declared evidence and the live storage fence.
 
 Rollback:
 
@@ -634,15 +633,12 @@ Rollback:
 - W3: revert per-channel changes independently.
 - W4: clients fall back to inline data URLs; server keeps both.
 - W5: stop writing records; readers still accept paths.
-- W6: GC and removal only after backups and migration verification.
+- W6: incomplete or unsupported reference coverage refuses all deletion.
 
 ## 13. Open decisions
 
-1. **Manifest storage:** per-session JSONL + scan (recommended, matches session
-   storage) or a SQLite refcount index.
-2. **Legacy migration:** lazy records only, or a required one-time canonical
-   copy/rewrite. Recommended: lazy records for correctness, maintenance command
-   for canonicalization before removal.
+1. **Inventory storage:** selected storage-owned declarations and exact owner parsers.
+2. **Legacy migration:** retired for this first release; no backfill command.
 3. **Native upload:** chunked broker methods vs loopback upload proxy. Recommend
    chunked broker methods for explicit bounds and progress.
 4. **Dedupe:** global store (recommended) with reference-aware GC.
@@ -661,5 +657,5 @@ Rollback:
 - Official clients use upload-first IDs; inline remains only for external/legacy
   compatibility.
 - Retention is reference-aware and temporary chats purge cleanly.
-- Legacy migration is complete and the temporary shims/fields are removed.
+- Attachment migration is absent; unsupported retained evidence refuses destruction.
 - The full test matrix passes, including the mobile physical-device upload path.

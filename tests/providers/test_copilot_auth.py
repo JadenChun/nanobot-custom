@@ -29,8 +29,12 @@ def test_imports_the_original_nanobot_default_without_changing_its_file(
 ) -> None:
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.delenv("OAUTH_CLI_KIT_TOKEN_PATH", raising=False)
+    # Only the default instance owns the shared legacy location.
+    from nanobot.config import loader
+
+    loader.set_config_path(tmp_path / ".nanobot" / "config.json")
     legacy = tmp_path / ".nanobot" / "copilot_auth.json"
-    legacy.parent.mkdir()
+    legacy.parent.mkdir(parents=True, exist_ok=True)
     legacy.write_text(json.dumps({field: "legacy-github-token"}), encoding="utf-8")
     original = legacy.read_bytes()
     token = copilot_auth.get_copilot_authority().get_cached_or_import()
@@ -57,18 +61,14 @@ def test_authority_path_rejects_final_symlink_without_touching_target(
     target = tmp_path / "target.json"
     target.write_text("sentinel", encoding="utf-8")
     before = target.read_bytes()
-    link = (
-        tmp_path / "copilot-link.json"
-        if use_override
-        else tmp_path / ".nanobot" / "auth" / "github-copilot.json"
-    )
-    link.parent.mkdir(parents=True, exist_ok=True)
-    link.symlink_to(target)
     if use_override:
+        link = tmp_path / "copilot-link.json"
         monkeypatch.setenv("NANOBOT_COPILOT_AUTH_PATH", str(link))
     else:
         monkeypatch.delenv("NANOBOT_COPILOT_AUTH_PATH", raising=False)
-        monkeypatch.setenv("HOME", str(tmp_path))
+        link = copilot_auth._auth_path()
+    link.parent.mkdir(parents=True, exist_ok=True)
+    link.symlink_to(target)
 
     with pytest.raises(copilot_auth.CredentialError, match="invalid credential store"):
         copilot_auth.get_copilot_authority()

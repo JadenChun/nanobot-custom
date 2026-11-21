@@ -28,6 +28,11 @@ from filelock import FileLock
 from filelock import Timeout as FileLockTimeout
 
 from nanobot.config.paths import get_data_dir
+from nanobot.gateway.darwin_desktop_process import (
+    DarwinProcessWatch,
+    darwin_desktop_available,
+    darwin_gateway_matches,
+)
 from nanobot.process_runtime import (
     ManagedProcessRuntime,
     ProcessResult,
@@ -62,8 +67,14 @@ def _is_valid_desktop_port(value: object) -> bool:
     return type(value) is int and 1 <= value <= 65535
 
 
-def _gateway_health_ready(host: str, port: int, *, timeout_s: float = 0.4) -> bool:
-    """Read readiness from the management listener without using proxy settings."""
+def gateway_health_ready(host: str, port: int, *, timeout_s: float = 0.4) -> bool:
+    """Read readiness from the management listener without using proxy settings.
+
+    This is the single readiness contract used by the gateway status path and the
+    CLI. Only a 200 response whose JSON body is an object with ``status == "ok"``
+    and ``ready`` not false is ready. A non-object or malformed body, a non-200
+    status, a connection error and a timeout all return ``False``.
+    """
     connect_host = "127.0.0.1" if host in {"", "0.0.0.0"} else "::1" if host == "::" else host
     connection = http.client.HTTPConnection(connect_host, port, timeout=timeout_s)
     try:
@@ -87,6 +98,10 @@ def _gateway_health_ready(host: str, port: int, *, timeout_s: float = 0.4) -> bo
         payload.get("status") == "ok"
         and payload.get("ready") is not False
     )
+
+
+# Existing call sites and tests address the private name. Keep one implementation.
+_gateway_health_ready = gateway_health_ready
 
 
 def _default_config_path() -> Path:
@@ -339,7 +354,7 @@ class GatewayRuntime(ManagedProcessRuntime[ProcessStartOptions]):
         """Atomically adopt or start a persistent gateway for the desktop adapter."""
         if not options.desktop_managed or not options.config_path:
             raise GatewayDesktopLifecycleError("config_unavailable")
-        if self.platform_name != "Linux":
+        if not self._desktop_lifecycle_available():
             return self._desktop_admission_failure("gateway_platform_unsupported")
         if not self._desktop_selected_ports_valid(options):
             return self._desktop_admission_failure("gateway_selector_conflict")
@@ -581,10 +596,11 @@ class GatewayRuntime(ManagedProcessRuntime[ProcessStartOptions]):
         lock_timeout_s: float = 1.0,
     ) -> RuntimeResult:
         """Gracefully stop only the captured gateway and wait for its actual exit."""
-        if self.platform_name != "Linux":
+        if not self._desktop_lifecycle_available():
             return self._desktop_failure("gateway_platform_unsupported")
         deadline = time.monotonic() + max(timeout_s, 0.0)
         pidfd: int | None = None
+        darwin_watch: DarwinProcessWatch | None = None
         try:
             payload = self._decode_desktop_handle(handle, options)
             with self._desktop_lock(self._transition_lock(), lock_timeout_s):
@@ -620,7 +636,10 @@ class GatewayRuntime(ManagedProcessRuntime[ProcessStartOptions]):
                     if not self._desktop_identity_compatible(identity) and not identity.starting:
                         return self._desktop_failure("gateway_identity_unavailable")
                     try:
-                        pidfd = self._open_pidfd(identity.pid)
+                        if self.platform_name == "Darwin":
+                            darwin_watch = DarwinProcessWatch.capture(identity.pid)
+                        else:
+                            pidfd = self._open_pidfd(identity.pid)
                     except ProcessLookupError:
                         if self._is_pid_running(identity.pid):
                             return self._desktop_failure("gateway_identity_conflict")
@@ -631,13 +650,21 @@ class GatewayRuntime(ManagedProcessRuntime[ProcessStartOptions]):
                     if not self._verify_desktop_signal_target(identity, options):
                         return self._desktop_failure("gateway_identity_conflict")
                     try:
-                        self._pidfd_send_signal(pidfd, signal.SIGTERM)
+                        if darwin_watch is not None:
+                            darwin_watch.terminate()
+                        else:
+                            assert pidfd is not None
+                            self._pidfd_send_signal(pidfd, signal.SIGTERM)
                     except OSError:
                         return self._desktop_failure("gateway_signal_failed")
 
-                if not self._wait_for_pidfd_exit(
-                    pidfd, max(deadline - time.monotonic(), 0.0),
-                ):
+                remaining = max(deadline - time.monotonic(), 0.0)
+                if darwin_watch is not None:
+                    exited = darwin_watch.wait_for_exit(remaining)
+                else:
+                    assert pidfd is not None
+                    exited = self._wait_for_pidfd_exit(pidfd, remaining)
+                if not exited:
                     return self._desktop_failure("gateway_stop_timeout")
 
                 with self._desktop_lock(self._lifecycle_lock(), lock_timeout_s):
@@ -662,6 +689,13 @@ class GatewayRuntime(ManagedProcessRuntime[ProcessStartOptions]):
         finally:
             if pidfd is not None:
                 os.close(pidfd)
+            if darwin_watch is not None:
+                darwin_watch.close()
+
+    def _desktop_lifecycle_available(self) -> bool:
+        return self.platform_name == "Linux" or (
+            self.platform_name == "Darwin" and darwin_desktop_available()
+        )
 
     @staticmethod
     @contextmanager
@@ -866,6 +900,8 @@ class GatewayRuntime(ManagedProcessRuntime[ProcessStartOptions]):
     def _verify_desktop_process(self, pid: int, expected_command: list[str]) -> bool:
         if not self._is_pid_running(pid):
             return False
+        if self.platform_name == "Darwin" and darwin_desktop_available():
+            return darwin_gateway_matches(pid, expected_command, self.python_executable)
         if self.platform_name != "Linux":
             return False
         proc = Path(f"/proc/{pid}")

@@ -24,13 +24,15 @@
             await localNotifications.schedule({
               notifications: [{
                 id: Math.floor(Date.now() % 2147483647),
-                title: options.title || "nanobot",
+                title: options.title || "Kohaku",
                 body: options.body || "",
                 // This is an immediate notification, not a scheduled alarm.
                 // Without this, Capacitor asks for exact-alarm access on
                 // Android 12+, which blocks delivery when the app is in the
                 // background and can leave the promise pending forever.
-                isExactNotification: false
+                isExactNotification: false,
+                smallIcon: "ic_stat_nanobot",
+                largeIcon: "ic_nanobot_notification"
               }]
             });
           } catch (_) {
@@ -180,7 +182,7 @@
     var title = textElement("h1", "mobile-pairing-title", "Connect this phone");
     title.id = "mobile-pairing-title";
     card.appendChild(title);
-    var copy = textElement("p", "mobile-pairing-copy", "Pair with the Nanobot desktop app.");
+    var copy = textElement("p", "mobile-pairing-copy", "Pair with the Kohaku desktop app.");
     card.appendChild(copy);
 
     var statusList = textElement("div", "mobile-pairing-status-list");
@@ -320,6 +322,7 @@
     var identityPromise = null;
     var generation = 0;
     var state = "idle";
+    var cancellationPending = false;
 
     function hostLabel(origin) {
       try {
@@ -388,7 +391,7 @@
       ui.panel.dataset.state = next;
       ui.login.hidden = next !== "login";
       ui.retry.hidden = next !== "error" && next !== "login";
-      ui.cancel.hidden = next === "idle";
+      ui.cancel.hidden = next === "idle" || next === "accepting" || next === "cancelling";
       ui.cancel.textContent = next === "waiting" ? "Cancel" : "Use a different link";
       ui.form.hidden = next !== "idle";
       ui.linkDetails.hidden = next !== "idle";
@@ -396,7 +399,7 @@
       ui.manual.hidden = next !== "idle";
       if (next === "idle") {
         ui.title.textContent = "Connect this phone";
-        ui.copy.textContent = "Pair with the Nanobot desktop app.";
+        ui.copy.textContent = "Pair with the Kohaku desktop app.";
         ui.form.reset();
         ui.manualOrigin.value = "";
         ui.manualCode.value = "";
@@ -453,8 +456,11 @@
         var result = await plugin.pairPoll({ pairingId: pairingId });
         if (stopped || run !== generation || state !== "waiting") return;
         if (result && result.status === "approved") {
+          setState("accepting");
+          await plugin.pairAccept({ pairingId: pairingId });
+          if (stopped || run !== generation || state !== "accepting") return;
           setPill(ui.node, "Connected", "is-ok");
-          ui.status.textContent = "Paired. Loading Nanobot...";
+          ui.status.textContent = "Paired. Kohaku is loading…";
           finish();
           return;
         }
@@ -463,7 +469,7 @@
         ui.status.classList.remove("is-error");
         pollTimer = setTimeout(function () { void poll(pairingId, run); }, 2000);
       } catch (error) {
-        if (stopped || run !== generation || state !== "waiting") return;
+        if (stopped || run !== generation || (state !== "waiting" && state !== "accepting")) return;
         var message = String(error && error.message ? error.message : error);
         if (message.indexOf("tailnet login required") >= 0 || message.indexOf("needs_login") >= 0) {
           needLogin(run);
@@ -478,6 +484,13 @@
           } else {
             fail("Pairing setup expired. Create a new pairing code on the desktop.");
           }
+          return;
+        }
+        if (
+          /HTTP (403|404|410)\b/.test(message) &&
+          /device_revoked|pairing_rejected|pairing_not_found|pairing_consumed/.test(message)
+        ) {
+          await discardStalePairing();
           return;
         }
         fail(message);
@@ -608,7 +621,7 @@
     function watchForLink() {
       if (pairingLinkTimer) return;
       pairingLinkTimer = setInterval(async function () {
-        if (stopped || state !== "idle") return;
+        if (stopped || state === "waiting" || state === "accepting" || state === "cancelling") return;
         try {
           var link = await plugin.pendingPairingLink();
           if (!link || !link.origin) return;
@@ -675,6 +688,10 @@
         return false;
       }
       if (stopped || run !== generation || state !== "idle") return false;
+      if (pending && pending.cancellationPending === true) {
+        void cancelPairing();
+        return true;
+      }
       if (!pending || pending.pending !== true || !pending.pairingId) return false;
       pendingSetup = {
         kind: "link",
@@ -691,7 +708,9 @@
     }
 
     function retryPending() {
-      if (pendingSetup) {
+      if (cancellationPending) {
+        void cancelPairing();
+      } else if (pendingSetup) {
         var run = ++generation;
         stopTimers();
         setState("waiting");
@@ -703,21 +722,76 @@
         void beginCode(lastManual.origin, lastManual.code);
       } else {
         setState("idle");
-        watchForLink();
+        void restorePendingPairing(generation).then(function (restored) {
+          if (!restored && state === "idle") watchForLink();
+        });
       }
     }
 
     ui.retry.addEventListener("click", retryPending);
 
-    ui.cancel.addEventListener("click", function () {
-      generation += 1;
-      stopTimers();
+    function finishCancellation() {
+      cancellationPending = false;
       lastLink = null;
       lastManual = null;
       pendingSetup = null;
       setState("idle");
       watchForLink();
-    });
+    }
+
+    async function discardStalePairing() {
+      try {
+        if (typeof plugin.logout === "function") {
+          await plugin.logout({ serverReachable: true });
+        }
+      } catch (_) {}
+      if (stopped) return;
+      finishCancellation();
+    }
+
+    async function cancelPairing() {
+      if (stopped || state === "accepting" || state === "cancelling") return;
+      var run = ++generation;
+      cancellationPending = true;
+      stopTimers();
+      setState("cancelling");
+      ui.status.textContent = "Cancelling pairing...";
+      try {
+        if (typeof plugin.pairCancel !== "function") {
+          throw new Error("native pairing cancellation is unavailable");
+        }
+        await plugin.pairCancel();
+        if (stopped || run !== generation) return;
+        finishCancellation();
+      } catch (error) {
+        if (stopped || run !== generation) return;
+        var message = String(error && error.message ? error.message : error);
+        if (message.indexOf("tailnet login required") >= 0) {
+          needLogin(run);
+          return;
+        }
+        // The owner already dropped this attempt, or the local challenge has no
+        // collector proof left to cancel remotely. Clear the local record and
+        // return to the pairing page instead of trapping the phone on Retry.
+        if (
+          /^HTTP 4\d\d\b/.test(message) ||
+          message.indexOf("pairing challenge is") >= 0 ||
+          message.indexOf("pairing secret is") >= 0 ||
+          message.indexOf("pairing id is") >= 0 ||
+          message.indexOf("no pending pairing challenge") >= 0
+        ) {
+          try {
+            await plugin.logout({ serverReachable: true });
+          } catch (_) {}
+          if (stopped || run !== generation) return;
+          finishCancellation();
+          return;
+        }
+        fail("Pairing cancellation failed: " + message);
+      }
+    }
+
+    ui.cancel.addEventListener("click", cancelPairing);
 
     setState("idle");
     void (async function () {
@@ -770,6 +844,16 @@
           setPill(ui.node, "Connects when pairing");
         }
       }
+      var startupLink = null;
+      try {
+        startupLink = await plugin.pendingPairingLink();
+      } catch (_) {
+        startupLink = null;
+      }
+      if (startupLink && startupLink.origin) {
+        await begin(startupLink);
+        return;
+      }
       if (!(await restorePendingPairing(startupGeneration))) {
         watchForLink();
       }
@@ -789,73 +873,153 @@
         var status = await plugin.status();
         if (status && status.state === "ready") return;
         if (status && status.state === "needs_login") throw new Error("tailnet login required");
-        if (status && status.state === "error") throw new Error("native transport failed");
+        if (status && status.state === "error") {
+          throw new Error("native transport failed" + (status.message ? ": " + status.message : ""));
+        }
         await new Promise(function (resolve) { setTimeout(resolve, 500); });
       }
       throw new Error("native transport readiness timeout");
     }
 
+    var activeHandshakeProbe = null;
+
     function probeHandshake() {
-      return new Promise(async function (resolve) {
-        var requestId = 0;
-        var done = false;
-        var unsubscribe = null;
-        var timer = setTimeout(function () { finish({ error: "timeout" }); }, 8000);
-        function finish(result) {
-          if (done) return;
-          done = true;
-          clearTimeout(timer);
-          if (unsubscribe) unsubscribe();
-          resolve(result);
+      if (activeHandshakeProbe) return activeHandshakeProbe.promise;
+      var probe = {
+        id: 0,
+        done: false,
+        launchSettled: false,
+        cancelRequested: false,
+        unsubscribe: null,
+        early: new Map(),
+        promise: null,
+        resolve: null,
+        timer: null
+      };
+      activeHandshakeProbe = probe;
+      probe.promise = new Promise(function (resolve) { probe.resolve = resolve; });
+
+      var maxEarlyEvents = 64;
+      function releaseIfSettled() {
+        if (probe.done && probe.launchSettled && activeHandshakeProbe === probe) {
+          activeHandshakeProbe = null;
         }
+      }
+      function clearEarly() {
+        probe.early.clear();
+      }
+      function cancel(id) {
+        if (!id || probe.cancelRequested) return;
+        probe.cancelRequested = true;
         try {
-          unsubscribe = await transport.onEvent(function (event) {
-            if (requestId === 0 || event.request_id !== requestId) return;
-            if (event.type === "http_response") {
-              finish({ status: event.status, body: event.body_base64 });
-            } else if (event.type === "http_error") {
-              finish({ error: event.code });
-            }
-          });
-          requestId = await transport.http({
+          void Promise.resolve(transport.cancel(id)).catch(function () {});
+        } catch (_) {}
+      }
+      function unsubscribe() {
+        if (!probe.unsubscribe) return;
+        var remove = probe.unsubscribe;
+        probe.unsubscribe = null;
+        try { remove(); } catch (_) {}
+      }
+      function finish(result, terminal) {
+        if (probe.done) return;
+        probe.done = true;
+        clearTimeout(probe.timer);
+        unsubscribe();
+        clearEarly();
+        if (!terminal && probe.id) cancel(probe.id);
+        probe.resolve(result);
+        releaseIfSettled();
+      }
+      function terminalResult(event) {
+        return event.type === "http_response"
+          ? { status: typeof event.status === "number" && Number.isFinite(event.status) ? event.status : 0 }
+          : { error: String(event.code || "native_request_failed").slice(0, 128) };
+      }
+      function handleEvent(event) {
+        if (probe.done || (event.type !== "http_response" && event.type !== "http_error")) return;
+        if (typeof event.request_id !== "number" || !Number.isSafeInteger(event.request_id) || event.request_id <= 0) return;
+        if (probe.id) {
+          if (event.request_id !== probe.id) return;
+          finish(terminalResult(event), true);
+          return;
+        }
+        if (probe.early.has(event.request_id)) return;
+        if (probe.early.size >= maxEarlyEvents) {
+          finish({ error: "handshake completion queue is full" }, false);
+          return;
+        }
+        probe.early.set(event.request_id, terminalResult(event));
+      }
+
+      probe.timer = setTimeout(function () { finish({ error: "timeout" }, false); }, 8000);
+      void (async function () {
+        try {
+          var remove = await transport.onEvent(handleEvent);
+          if (probe.done) {
+            try { remove(); } catch (_) {}
+            probe.launchSettled = true;
+            releaseIfSettled();
+            return;
+          }
+          probe.unsubscribe = remove;
+          var id = await transport.http({
             operation: "mobile_handshake",
             method: "GET",
             path: "/mobile/v1/handshake"
           });
+          probe.launchSettled = true;
+          if (typeof id !== "number" || !Number.isSafeInteger(id) || id <= 0) {
+            finish({ error: "handshake request was not admitted" }, false);
+            releaseIfSettled();
+            return;
+          }
+          probe.id = id;
+          if (probe.done) {
+            cancel(id);
+            releaseIfSettled();
+            return;
+          }
+          var early = probe.early.get(id);
+          clearEarly();
+          if (early) finish(early, true);
+          releaseIfSettled();
         } catch (error) {
-          finish({ error: String(error && error.message ? error.message : error) });
+          probe.launchSettled = true;
+          finish({ error: String(error && error.message ? error.message : error) }, false);
+          releaseIfSettled();
         }
-      });
+      })();
+      return probe.promise;
+    }
+
+    function refreshNeedsPairing(message) {
+      if (message === "pairing was revoked" || message === "pairing upgrade required") return true;
+      return /^HTTP (400|401|403|410)\b/.test(message);
     }
 
     async function requireValidAccess() {
       var probe = await probeHandshake();
       if (probe.error) return "unreachable";
       if (probe.status !== 401) return probe.status === 200 ? "ok" : "unreachable";
-      var refreshed = false;
+      var needsPairing = false;
       try {
-        refreshed = await plugin.refresh();
+        await plugin.refresh();
       } catch (error) {
         var message = String(error && error.message ? error.message : error);
-        if (
-          message.indexOf("pairing was revoked") < 0 &&
-          message.indexOf("no refresh credential") < 0
-        ) {
-          return "unreachable";
-        }
+        if (message === "pairing was revoked" || message === "pairing upgrade required") return "revoked";
+        if (!refreshNeedsPairing(message)) return "unreachable";
+        needsPairing = true;
       }
-      if (refreshed) {
-        probe = await probeHandshake();
-        if (probe.error) return "unreachable";
-        if (probe.status !== 401) return probe.status === 200 ? "ok" : "unreachable";
-      }
+      probe = await probeHandshake();
+      if (probe.status === 200) return "ok";
+      return needsPairing ? "repair" : "unreachable";
+    }
+
+    async function discardInvalidPairing() {
       try {
         await plugin.logout({ serverReachable: true });
-      } catch (_) {
-        /* The next launch still starts from the stored pairing state. */
-      }
-      window.location.reload();
-      return "revoked";
+      } catch (_) {}
     }
 
     function presentReauth(link, initialMessage) {
@@ -867,7 +1031,7 @@
       panel.appendChild(card);
       var title = textElement("h1", "mobile-pairing-title", "Reconnect this phone");
       card.appendChild(title);
-      card.appendChild(textElement("p", "mobile-pairing-copy", "Your Nanobot pairing is saved. This phone can't reach the desktop over Tailscale right now."));
+      card.appendChild(textElement("p", "mobile-pairing-copy", "Your Kohaku pairing is saved. This phone can't reach the desktop over Tailscale right now."));
       var status = textElement("p", "mobile-pairing-status", initialMessage || "Tailscale sign-in is required.");
       status.setAttribute("aria-live", "polite");
       card.appendChild(status);
@@ -896,8 +1060,13 @@
         status.textContent = "Connecting to the server...";
         void connectTarget(link).then(function () {
           return requireValidAccess();
-        }).then(function (access) {
+        }).then(async function (access) {
           if (access === "revoked") return;
+          if (access === "repair") {
+            await discardInvalidPairing();
+            presentPairing();
+            return;
+          }
           if (access === "unreachable") {
             status.textContent = "Still can't reach this desktop. Check Tailscale and retry.";
             status.classList.add("is-error");
@@ -920,6 +1089,11 @@
         await connectTarget(target);
         var access = await requireValidAccess();
         if (access === "revoked") return;
+        if (access === "repair") {
+          await discardInvalidPairing();
+          presentPairing();
+          return;
+        }
         if (access === "unreachable") {
           presentReauth(target, "Can't reach this desktop right now. Check Tailscale and retry.");
           return;

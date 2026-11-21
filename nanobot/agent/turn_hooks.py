@@ -38,6 +38,7 @@ class AgentTurnHookSpec:
     ephemeral: bool = False
     run_extra_hooks_for_ephemeral: bool = False
     attributes: dict[str, Any] | None = None
+    context_usage_hook: AgentHook | None = None
 
 
 def build_agent_turn_hook(spec: AgentTurnHookSpec) -> AgentHook:
@@ -48,8 +49,12 @@ def build_agent_turn_hook(spec: AgentTurnHookSpec) -> AgentHook:
         session_key=spec.session_key,
         tool_hint_max_length=spec.tool_hint_max_length,
     )
+    hook_chain: list[AgentHook] = []
+    if spec.context_usage_hook is not None:
+        hook_chain.append(spec.context_usage_hook)
+    hook_chain.append(progress_hook)
     if spec.ephemeral and not spec.run_extra_hooks_for_ephemeral:
-        return progress_hook
+        return CompositeHook(hook_chain) if len(hook_chain) > 1 else progress_hook
 
     turn_context = AgentTurnHookContext(
         events=spec.events,
@@ -62,7 +67,6 @@ def build_agent_turn_hook(spec: AgentTurnHookSpec) -> AgentHook:
         attributes=dict(spec.attributes or {}),
         ephemeral=spec.ephemeral,
     )
-    hook_chain: list[AgentHook] = [progress_hook]
 
     for factory in spec.registered_hook_factories:
         try:

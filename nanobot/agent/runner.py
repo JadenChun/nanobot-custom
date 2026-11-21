@@ -9,6 +9,7 @@ import os
 import time
 import uuid
 from collections.abc import Awaitable, Callable, Iterable, Sequence
+from contextlib import ExitStack
 from copy import deepcopy
 from dataclasses import dataclass, field, replace
 from pathlib import Path
@@ -31,7 +32,7 @@ from nanobot.agent.hook import AgentHook, AgentHookContext, AgentRunHookContext
 from nanobot.agent.policy import ToolPolicy
 from nanobot.agent.tools.base import ToolDenialKind
 from nanobot.agent.tools.execution import KnownToolResult, ToolResultCallback, execute_tool_calls
-from nanobot.agent.tools.registry import ToolRegistry
+from nanobot.agent.tools.registry import CapturedToolBindings, ToolRegistry
 from nanobot.agent.turn import ToolOutcome, TurnContext
 from nanobot.events import NO_EVENTS, EventSink
 from nanobot.llm_usage.context import (
@@ -41,6 +42,7 @@ from nanobot.llm_usage.context import (
     source_from_session_key,
 )
 from nanobot.providers.base import (
+    ContextUsageSnapshot,
     LLMProvider,
     LLMResponse,
     LLMUsage,
@@ -88,7 +90,12 @@ from nanobot.utils.runtime import (
 
 if TYPE_CHECKING:
     from nanobot.agent.tools.filesystem import ReadFileTool
-    from nanobot.session.artifact_grants import ArtifactGrantSet, ArtifactHandoffReceipt
+    from nanobot.session.artifact_grants import (
+        ArtifactGrantSet,
+        ArtifactHandoffCollector,
+        ArtifactHandoffReceipt,
+        CanonicalChildArtifactInput,
+    )
     from nanobot.session.artifact_reader import ArtifactReader
     from nanobot.session.source_request import SourceTranscript
 
@@ -100,6 +107,13 @@ class RecordedResponse:
     response: LLMResponse
     source_event_id: str | None
     local_usage_anchor_eligible: bool = False
+    tools: CapturedToolBindings | None = field(default=None, repr=False, compare=False)
+    context_usage_epoch: int | None = None
+    context_window_tokens: int | None = None
+
+    def release(self) -> None:
+        if self.tools is not None:
+            self.tools.release()
 
 
 ContinuationCallback = Callable[[], str | None]
@@ -130,6 +144,20 @@ _TOOL_ERROR_RECOVERY_NOTE = (
     "Fix the arguments or choose a different approach. Do not repeat the same call "
     "unchanged. If the error is a permission or policy denial, do not try to bypass it."
 )
+# A successful call that returns the same result is invisible to the error
+# recovery above: nothing failed, but nothing advanced either. These notes make
+# that state explicit before the loop is broken.
+_NO_PROGRESS_NOTE = (
+    "The last tool call returned the same result as the previous attempt. This "
+    "call is not making progress. Change the approach, gather different evidence, "
+    "or tell the user what is blocking you. Do not repeat it unchanged."
+)
+_NO_PROGRESS_STOP_NOTE = (
+    "Stopped: the same tool call returned the same result repeatedly without "
+    "progress."
+)
+_MAX_NO_PROGRESS_REPEATS = 3
+_MAX_NO_PROGRESS_LIMIT = 5
 _MAX_EMPTY_RETRIES = 2
 _MAX_LENGTH_RECOVERIES = 3
 _MAX_INJECTIONS_PER_TURN = 3
@@ -172,6 +200,30 @@ def _tool_error_signature(
         return None
     return json.dumps(
         {"error": str(terminal.content or ""), "calls": error_calls},
+        sort_keys=True,
+        default=str,
+    )
+
+
+def _no_progress_signature(
+    tool_calls: Sequence[ToolCallRequest],
+    results: Sequence[object],
+) -> str | None:
+    """Return a signature for a batch whose calls and results are both unchanged.
+
+    Unlike :func:`_tool_error_signature`, this covers *successful* calls. A call
+    that keeps returning identical output advances nothing even though no error
+    is raised, which is how a turn can spin indefinitely while looking healthy.
+    ``None`` means the batch carried no calls, so it cannot be a repeat.
+    """
+    if not tool_calls:
+        return None
+    calls = [
+        {"name": tool_call.name, "arguments": tool_call.arguments}
+        for tool_call in tool_calls
+    ]
+    return json.dumps(
+        {"calls": calls, "results": [str(result) for result in results]},
         sort_keys=True,
         default=str,
     )
@@ -258,6 +310,9 @@ class AgentRunSpec:
     events: EventSink = NO_EVENTS
     tool_result_callback: ToolResultCallback | None = None
     source_writer: SourceTurnWriter | None = None
+    request_boundary_validator: Callable[[], bool] | None = None
+    followup_request_acknowledged: Callable[[tuple[str, ...]], None] | None = None
+    pending_followup_acknowledgments: list[str] = field(default_factory=list, repr=False)
     source_transcript: SourceTranscript | None = None
     source_initial_eligible_ids: frozenset[str] = frozenset()
     source_isolated: bool = False
@@ -272,7 +327,10 @@ class AgentRunSpec:
     artifact_reader_factory: Callable[
         [SourceTurnWriter, bool, ReadFileTool], ArtifactReader | None
     ] | None = field(default=None, repr=False)
-    artifact_handoff_collector: object | None = field(default=None, repr=False)
+    artifact_handoff_collector: ArtifactHandoffCollector | None = field(default=None, repr=False)
+    canonical_child_artifact_input: CanonicalChildArtifactInput | None = field(
+        default=None, repr=False,
+    )
     allow_pre_dispatch_recovery: bool = False
 
 
@@ -303,6 +361,7 @@ class AgentRunResult:
     # it implicitly.
     provider_state_settlement: ProviderStateSettlement | None = field(default=None, repr=False)
     artifact_handoff_receipt: ArtifactHandoffReceipt | None = field(default=None, repr=False)
+    context_usage: ContextUsageSnapshot | None = None
 
 
 class AgentRunner:
@@ -417,6 +476,8 @@ class AgentRunner:
                     binding = spec.source_writer.validate_injection_binding(item)
                     injections.append(dict(binding.message))
                     source_event_ids.append(binding.event_id)
+                    if binding.followup_id is not None:
+                        spec.pending_followup_acknowledgments.append(binding.followup_id)
                 else:
                     injections.append(item)
                     source_event_ids.append(None)
@@ -523,7 +584,13 @@ class AgentRunner:
                 items = await callback(limit=_MAX_INJECTIONS_PER_TURN)
             else:
                 items = await callback()
-        except Exception:
+        except Exception as exc:
+            if spec.source_writer is not None and (
+                spec.source_writer.failed or isinstance(exc, SourceValidationError)
+            ):
+                # A mandatory source write or binding failed. The owning turn
+                # must stop; this is not an optional legacy callback failure.
+                raise
             logger.exception("injection_callback failed")
             return []
         if not items:
@@ -582,7 +649,82 @@ class AgentRunner:
                 raise ValueError("Execution ownership requires durable tool-result recording")
             # Never inherit an invocation-bound reader from a parent registry.
             artifact_reader_factory = spec.artifact_reader_factory or self.artifact_reader_factory
-            if artifact_reader_factory is not None or 'read_artifact' in spec.tools.tool_names:
+            canonical_input = spec.canonical_child_artifact_input
+            if canonical_input is not None:
+                from nanobot.agent.tools.artifact import ReadArtifactTool
+                from nanobot.agent.tools.artifact_handoff import ArtifactHandoffTool
+                from nanobot.agent.tools.filesystem import ReadFileTool
+                from nanobot.session.artifact import ArtifactValidationError
+                from nanobot.session.artifact_grants import (
+                    ArtifactDirectChildBinding,
+                    ArtifactGrantSet,
+                    ArtifactHandoffCollector,
+                    CanonicalChildArtifactInput,
+                )
+                from nanobot.session.artifact_reader import ArtifactReader
+
+                if (
+                    type(canonical_input) is not CanonicalChildArtifactInput
+                    or spec.source_writer is None
+                    or spec.source_writer.parent_stream_id is not None
+                    or spec.source_isolated
+                    or spec.artifact_grants is not None
+                    or not spec.artifact_read_allowed
+                    or artifact_reader_factory is None
+                ):
+                    raise ArtifactValidationError(
+                        'Canonical child artifact input is not admitted for this turn'
+                    )
+                if spec.turn_context is not None:
+                    spec.turn_context.artifact_reader = None
+                    spec.turn_context.artifact_grants = None
+                    spec.turn_context.artifact_handoff_notices.clear()
+
+                tools = spec.tools.filtered([
+                    name for name in spec.tools.tool_names
+                    if name not in {'read_artifact', 'handoff_artifact'}
+                ])
+                read_file = tools.get('read_file')
+                if type(read_file) is not ReadFileTool:
+                    raise ArtifactValidationError(
+                        'Canonical child artifact input requires admitted file read access'
+                    )
+                binding = ArtifactDirectChildBinding.capture(
+                    canonical_input.admission,
+                    canonical_input.parent_reader,
+                    spec.source_writer,
+                )
+                grants = ArtifactGrantSet.issue_downward(
+                    canonical_input.parent_reader,
+                    spec.source_writer,
+                    list(canonical_input.references),
+                    child_binding=binding,
+                )
+                child_artifact_grants = grants
+                reader = artifact_reader_factory(spec.source_writer, True, read_file)
+                if (
+                    type(reader) is not ArtifactReader
+                    or reader.writer is not spec.source_writer
+                    or reader.mode != 'isolated_stream'
+                    or reader.read_file is not read_file
+                ):
+                    raise ArtifactValidationError(
+                        'Canonical child artifact reader does not match admitted invocation'
+                    )
+                reader = replace(reader, grants=grants)
+                collector = ArtifactHandoffCollector(reader, child_binding=binding)
+                tools.register(ReadArtifactTool(reader))
+                tools.register(ArtifactHandoffTool(collector))
+                if spec.turn_context is not None:
+                    spec.turn_context.artifact_reader = reader
+                    spec.turn_context.artifact_grants = grants
+                spec = replace(
+                    spec,
+                    tools=tools,
+                    artifact_grants=grants,
+                    artifact_handoff_collector=collector,
+                )
+            elif artifact_reader_factory is not None or 'read_artifact' in spec.tools.tool_names:
                 from nanobot.agent.tools.artifact import ReadArtifactTool
                 from nanobot.agent.tools.filesystem import ReadFileTool
 
@@ -630,6 +772,7 @@ class AgentRunner:
                 child_artifact_grants.close()
             raise
 
+        request_state: ModelRequestState | None = None
         try:
             request_state = self._make_request_state(spec, messages, compaction)
             if request_state.source is not None:
@@ -677,6 +820,7 @@ class AgentRunner:
         finally:
             try:
                 context.messages = deepcopy(messages)
+                context.context_usage = request_state.context_usage if request_state is not None else None
                 if context.exception is None:
                     await hook.on_finally(context)
                 else:
@@ -770,6 +914,17 @@ class AgentRunner:
         messages: list[dict[str, Any]],
         request_state: ModelRequestState,
     ) -> AgentRunResult:
+        with ExitStack() as response_owners:
+            return await self._run_core_owned(spec, hook, messages, request_state, response_owners)
+
+    async def _run_core_owned(
+        self,
+        spec: AgentRunSpec,
+        hook: AgentHook,
+        messages: list[dict[str, Any]],
+        request_state: ModelRequestState,
+        response_owners: ExitStack,
+    ) -> AgentRunResult:
         final_content: str | None = None
         tools_used: list[str] = []
         usage: LLMUsage | None = None
@@ -788,6 +943,12 @@ class AgentRunner:
         pre_dispatch_denial_recovery_attempted = False
         tool_error_recoveries = 0
         tool_error_signatures: set[str] = set()
+        # A successful call that returns identical output is a no-op cycle, not
+        # an error. Track the run length of identical batches so the turn can
+        # name the stall and then stop instead of spinning.
+        no_progress_signature: str | None = None
+        no_progress_repeats = 0
+        no_progress_noted = False
         # Segments from one uninterrupted length-recovery chain. Tool work or
         # injected user input starts a new logical answer and clears the chain.
         length_recovery_parts: list[str] = []
@@ -799,6 +960,22 @@ class AgentRunner:
         governance_config = request_state.config
 
         for iteration in range(spec.max_iterations):
+            # The previous response's results/source have settled before this
+            # next sampling boundary. Exceptions/terminal exits use the stack.
+            response_owners.close()
+            if (
+                spec.request_boundary_validator is not None
+                and not spec.request_boundary_validator()
+            ):
+                raise SourceValidationError(
+                    "Canonical child authority changed before the model request"
+                )
+            # A continuation starts a new attempt. A prior attempt's terminal
+            # disposition must not leak into this attempt's public result.
+            stop_reason = "completed"
+            error = None
+            failure_error_kind = None
+            policy_metadata = {}
             context = AgentHookContext(
                 iteration=iteration,
                 messages=messages,
@@ -819,7 +996,16 @@ class AgentRunner:
                 request_state=request_state,
                 transcript=messages,
             )
+            acknowledged = tuple(dict.fromkeys(spec.pending_followup_acknowledgments))
+            spec.pending_followup_acknowledgments.clear()
+            if acknowledged and spec.followup_request_acknowledged is not None:
+                try:
+                    spec.followup_request_acknowledged(acknowledged)
+                except Exception:
+                    logger.exception("follow-up request acknowledgment failed")
+            response_owners.callback(recorded_response.release)
             response = recorded_response.response
+            context.source_event_id = recorded_response.source_event_id
             assert request_state.messages is not None
             messages_for_model = request_state.messages
             if request_state.compaction is not None:
@@ -881,6 +1067,12 @@ class AgentRunner:
 
                 result_ids: dict[int, str] = {}
                 source_writer = spec.source_writer
+                tool_intent_bindings = (
+                    source_writer.bind_tool_intents(recorded_response.source_event_id)
+                    if source_writer is not None
+                    and recorded_response.source_event_id is not None
+                    else None
+                )
 
                 async def record_result(value: KnownToolResult) -> None:
                     assert source_writer is not None
@@ -893,7 +1085,11 @@ class AgentRunner:
                             ArtifactHandoffCollector,
                         )
 
-                        if isinstance(collector, ArtifactHandoffCollector):
+                        if value.name == 'handoff_artifact':
+                            if not isinstance(collector, ArtifactHandoffCollector):
+                                raise SourceValidationError(
+                                    'Artifact handoff has no local child collector'
+                                )
                             collector.record(value.handoff_receipt, event_id)
                         elif spec.turn_context is not None and isinstance(
                             spec.turn_context.artifact_grants, ArtifactGrantSet
@@ -906,21 +1102,33 @@ class AgentRunner:
                         else:
                             raise SourceValidationError('Artifact handoff has no parent grant authority')
 
-                results, new_events = await execute_tool_calls(
-                    spec.tools,
-                    response.tool_calls,
-                    concurrent=spec.concurrent_tools,
-                    external_lookup_counts=external_lookup_counts,
-                    workspace_violation_counts=workspace_violation_counts,
-                    hook=hook,
-                    context=context,
-                    tool_policy=spec.tool_policy,
-                    messages=messages,
-                    turn_context=spec.turn_context,
-                    fail_on_tool_error=spec.fail_on_tool_error,
-                    tool_result_callback=(record_result if source_writer is not None
-                                          else spec.tool_result_callback),
+                assert recorded_response.tools is not None
+                turn_context = spec.turn_context
+                previous_bindings = (
+                    turn_context.active_tool_bindings if turn_context is not None else None
                 )
+                if turn_context is not None:
+                    turn_context.active_tool_bindings = recorded_response.tools
+                try:
+                    results, new_events = await execute_tool_calls(
+                        recorded_response.tools,
+                        response.tool_calls,
+                        concurrent=spec.concurrent_tools,
+                        external_lookup_counts=external_lookup_counts,
+                        workspace_violation_counts=workspace_violation_counts,
+                        hook=hook,
+                        context=context,
+                        tool_policy=spec.tool_policy,
+                        messages=messages,
+                        turn_context=turn_context,
+                        fail_on_tool_error=spec.fail_on_tool_error,
+                        tool_result_callback=(record_result if source_writer is not None
+                                              else spec.tool_result_callback),
+                        tool_intent_bindings=tool_intent_bindings,
+                    )
+                finally:
+                    if turn_context is not None:
+                        turn_context.active_tool_bindings = previous_bindings
                 # Failing cancellation cleanup can surface as an ordinary tool
                 # error. Honour cancellation before starting recovery or another model call.
                 task = asyncio.current_task()
@@ -1000,6 +1208,16 @@ class AgentRunner:
                     and not (spec.session_key or "").startswith("dream:")
                 )
                 results = [r.content if isinstance(r, ToolOutcome) else r for r in results]
+                # Detect a successful batch that changed nothing. This runs on
+                # every batch, not only on failures, because a no-op cycle
+                # raises no error while still making no progress.
+                batch_signature = _no_progress_signature(response.tool_calls, results)
+                if batch_signature is not None and batch_signature == no_progress_signature:
+                    no_progress_repeats += 1
+                else:
+                    no_progress_signature = batch_signature
+                    no_progress_repeats = 0
+                    no_progress_noted = False
                 public_events = [
                     {key: value for key, value in event.items() if not key.startswith("_")}
                     for event in new_events
@@ -1109,6 +1327,43 @@ class AgentRunner:
                         _internal_recovery_message(_TOOL_ERROR_RECOVERY_NOTE),
                         request_state.source,
                     )
+                if terminal is None and no_progress_repeats >= _MAX_NO_PROGRESS_REPEATS:
+                    if no_progress_repeats >= _MAX_NO_PROGRESS_LIMIT:
+                        # Name the stall as its own outcome instead of letting
+                        # the turn spin to max_iterations.
+                        stop_reason = "repeated_no_progress"
+                        final_content = _NO_PROGRESS_STOP_NOTE
+                        logger.warning(
+                            "Stopping turn: identical tool result repeated {} times",
+                            no_progress_repeats,
+                        )
+                        context.stop_reason = stop_reason
+                        context.final_content = final_content
+                        placeholder = build_assistant_message(final_content)
+                        entry = (
+                            spec.source_writer.append_message(placeholder)
+                            if spec.source_writer is not None else None
+                        )
+                        if request_state.source is None:
+                            self._append_final_message(messages, final_content)
+                        else:
+                            self._append_bound_message(
+                                messages, placeholder, request_state.source,
+                                entry['_event_id'] if entry is not None else None,
+                            )
+                        await hook.after_iteration(context)
+                        break
+                    if not no_progress_noted:
+                        no_progress_noted = True
+                        logger.info(
+                            "Tool batch repeated without progress ({}x)",
+                            no_progress_repeats,
+                        )
+                        self._append_bound_message(
+                            messages,
+                            _internal_recovery_message(_NO_PROGRESS_NOTE),
+                            request_state.source,
+                        )
                 if terminal is not None:
                     unknown_rejection = (
                         spec.fail_on_tool_error
@@ -1251,13 +1506,23 @@ class AgentRunner:
                 response.provider_state = None
 
             clean = hook.finalize_content(context, response.content)
+            delivered_reply = None
             if (
                 response.finish_reason
                 not in {"error", "length", "refusal", "content_filter"}
                 and is_blank_text(clean)
             ):
+                if spec.turn_context is not None and not had_injections:
+                    delivery = spec.turn_context.delivery
+                    target = delivery.primary or delivery.target
+                    if target is not None:
+                        delivered_reply = next((
+                            message for message in reversed(delivery.sent_messages)
+                            if message.media and (message.channel, message.chat_id)
+                            == (target.channel, target.chat_id)
+                        ), None)
                 empty_content_retries += 1
-                if empty_content_retries < _MAX_EMPTY_RETRIES:
+                if delivered_reply is None and empty_content_retries < _MAX_EMPTY_RETRIES:
                     logger.warning(
                         "Empty response on turn {} for {} ({}/{}); retrying",
                         iteration,
@@ -1270,10 +1535,9 @@ class AgentRunner:
                     await hook.after_iteration(context)
                     continue
                 logger.warning(
-                    "Empty response on turn {} for {} after {} retries; attempting finalization",
+                    "Empty response on turn {} for {}. Requesting final text without tools.",
                     iteration,
                     spec.session_key or "default",
-                    empty_content_retries,
                 )
                 if hook.wants_streaming():
                     await hook.on_stream_end(context, resuming=False)
@@ -1299,7 +1563,7 @@ class AgentRunner:
                 original_content = response.content
                 clean = hook.finalize_content(context, response.content)
 
-            if response.finish_reason == "length":
+            if response.finish_reason == "length" and delivered_reply is None:
                 if len(length_recovery_parts) < _MAX_LENGTH_RECOVERIES:
                     length_recovery_parts.append(
                         _restore_outer_whitespace(clean or "", original_content)
@@ -1413,6 +1677,14 @@ class AgentRunner:
                 failure_error_kind = LLMProvider.public_error_kind(response)
                 break
             if is_blank_text(clean):
+                if delivered_reply is not None and response.finish_reason not in {
+                    "refusal", "content_filter",
+                }:
+                    final_content = delivered_reply.content
+                    context.final_content = final_content
+                    context.stop_reason = stop_reason = "completed"
+                    await hook.after_iteration(context)
+                    break
                 final_content = EMPTY_FINAL_RESPONSE_MESSAGE
                 stop_reason = "empty_final_response"
                 error = final_content
@@ -1526,9 +1798,14 @@ class AgentRunner:
             from nanobot.session.artifact_grants import ArtifactHandoffCollector
 
             collector = spec.artifact_handoff_collector
-            if not isinstance(collector, ArtifactHandoffCollector):
+            if not isinstance(cast(object, collector), ArtifactHandoffCollector):
                 raise SourceValidationError('Invalid artifact handoff collector')
-            artifact_handoff_receipt = collector.finalize(stop_reason=stop_reason)
+            if spec.canonical_child_artifact_input is not None:
+                artifact_handoff_receipt = collector.prepare_after_completion(
+                    stop_reason=stop_reason
+                )
+            else:
+                artifact_handoff_receipt = collector.finalize(stop_reason=stop_reason)
 
         return AgentRunResult(
             final_content=final_content,
@@ -1555,6 +1832,7 @@ class AgentRunner:
                 else None
             ),
             provider_compaction_applied=request_state.provider_compaction_applied,
+            context_usage=request_state.context_usage,
         )
 
     @staticmethod
@@ -1621,7 +1899,9 @@ class AgentRunner:
     def _record_and_settle(self, spec: AgentRunSpec, state: ModelRequestState,
                            ticket: SourceRequestTicket | None, response: LLMResponse,
                            *, malformed: bool = False, no_tools: bool = False,
-                           record_source_response: bool = True) -> RecordedResponse:
+                           record_source_response: bool = True,
+                           context_usage_receipt: tuple[int | None, int | None] | None = None,
+                           ) -> RecordedResponse:
         try:
             source_event_id = (
                 self._record_source_response(spec, response)
@@ -1659,7 +1939,60 @@ class AgentRunner:
             and response.error_kind is None
             and response_has_usable_output
         )
-        return RecordedResponse(response, source_event_id, anchor_eligible)
+        epoch, window = context_usage_receipt if context_usage_receipt is not None else (
+            state.prepared_context_usage_epoch, state.prepared_context_window_tokens,
+        )
+        return RecordedResponse(
+            response, source_event_id, anchor_eligible,
+            context_usage_epoch=epoch,
+            context_window_tokens=window,
+        )
+
+    def _reprepare_route_after_change(
+        self,
+        request_state: ModelRequestState,
+        messages: list[dict[str, Any]],
+        provider_context: ProviderCallContext,
+        exc: ProviderRouteChanged,
+    ) -> tuple[list[dict[str, Any]], ProviderCallContext, LLMResponse | None]:
+        """Reprepare one logical request for the route dispatch selected."""
+        actual_index = (
+            exc.actual_fallback_index
+            if isinstance(exc.actual_fallback_index, int)
+            else 0
+        )
+        next_context = replace(
+            provider_context,
+            selected_route=None,
+            route_candidate_index=max(
+                provider_context.route_candidate_index,
+                actual_index,
+            ),
+            route_consumed_through=max(
+                provider_context.route_consumed_through,
+                exc.consumed_through,
+            ),
+        )
+        try:
+            prepared, next_context = self.context_governor.reprepare_route(
+                request_state,
+                messages,
+                tool_definitions=request_state.tool_definitions,
+                stream=request_state.prepared_stream,
+                tool_choice=request_state.prepared_tool_choice,
+                provider_context=next_context,
+            )
+        except Exception as reprepare_error:
+            return messages, next_context, LLMResponse(
+                content=(
+                    "Error: provider request could not be prepared for the "
+                    f"fallback route: {reprepare_error}"
+                ),
+                finish_reason="error",
+                error_kind="invalid_request",
+                error_should_retry=False,
+            )
+        return prepared, next_context, None
 
     async def _request_model(
         self,
@@ -1672,15 +2005,44 @@ class AgentRunner:
         malformed_retry: bool = False,
         source_view: SourceTranscript | None = None,
         transcript: list[dict[str, Any]] | None,
+        _captured_tools: CapturedToolBindings | None = None,
+    ) -> tuple[RecordedResponse, LLMUsage]:
+        # This synchronous capture precedes context preparation and every
+        # provider await. Transfer only after mandatory source settlement.
+        bindings = (spec.tools.capture_request_tools()
+                    if _captured_tools is None else _captured_tools)
+        try:
+            recorded, usage = await self._request_model_owned(
+                spec, messages, hook, context, request_state=request_state,
+                malformed_retry=malformed_retry, source_view=source_view,
+                transcript=transcript, bindings=bindings,
+            )
+            return replace(recorded, tools=bindings), usage
+        except BaseException:
+            bindings.release()
+            raise
+
+    async def _request_model_owned(
+        self,
+        spec: AgentRunSpec,
+        messages: list[dict[str, Any]],
+        hook: AgentHook,
+        context: AgentHookContext,
+        *,
+        request_state: ModelRequestState,
+        malformed_retry: bool = False,
+        source_view: SourceTranscript | None = None,
+        transcript: list[dict[str, Any]] | None,
+        bindings: CapturedToolBindings,
     ) -> tuple[RecordedResponse, LLMUsage]:
         source_view = self._source_view(request_state, messages, source_view)
         timeout_s = self._resolve_llm_timeout_s(spec)
-        tool_definitions = spec.tools.get_definitions()
+        tool_definitions = bindings.get_definitions()
         wants_streaming = hook.wants_streaming()
         messages, provider_context = await self.context_governor.prepare_request(
             request_state,
             messages,
-            tool_definitions=tool_definitions,
+            tool_definitions=deepcopy(tool_definitions),
             transcript=transcript,
             source_view=source_view,
             stream=wants_streaming,
@@ -1802,8 +2164,11 @@ class AgentRunner:
         while True:
             attempt_emitted_content = False
             attempt_emitted_reasoning = False
+            context_usage_receipt = (
+                request_state.prepared_context_usage_epoch, request_state.prepared_context_window_tokens,
+            )
             ticket = request_state.source.issue(source_view) if request_state.source is not None and source_view is not None else None
-            kwargs = self._build_request_kwargs(spec, messages, tools=tool_definitions)
+            kwargs = self._build_request_kwargs(spec, messages, tools=deepcopy(tool_definitions))
             if wants_streaming:
                 coro = spec.runtime.provider.chat_stream_with_retry(
                     **kwargs,
@@ -1898,7 +2263,7 @@ class AgentRunner:
                     recovery_failure_reason,
                 )
                 break
-            except ProviderRouteChanged:
+            except ProviderRouteChanged as exc:
                 if ticket is not None and request_state.source is not None:
                     request_state.source.discard(ticket)
                     ticket = None
@@ -1919,7 +2284,15 @@ class AgentRunner:
                     )
                     break
                 route_reprepared = True
-                provider_context = replace(provider_context, selected_route=None)
+                messages, provider_context, route_error = self._reprepare_route_after_change(
+                    request_state, messages, provider_context, exc,
+                )
+                if route_error is not None:
+                    response = route_error
+                    break
+                source_view = self._source_view(
+                    request_state, messages, request_state.source_view,
+                )
                 continue
             except ProviderRequestRejected as exc:
                 if ticket is not None and request_state.source is not None:
@@ -1945,7 +2318,10 @@ class AgentRunner:
                 raise
             break
         dropped, all_dropped, original_finish_reason = self._drop_malformed_tool_calls(response)
-        recorded = self._record_and_settle(spec, request_state, ticket, response, malformed=dropped > 0)
+        recorded = self._record_and_settle(
+            spec, request_state, ticket, response, malformed=dropped > 0,
+            context_usage_receipt=context_usage_receipt,
+        )
         _pause_generation()
         await _close_native_reasoning()
         if first_output_at is not None:
@@ -2005,6 +2381,7 @@ class AgentRunner:
                 malformed_retry=True,
                 source_view=retry_view,
                 transcript=None,
+                _captured_tools=bindings,
             )
             return retry_response, round_usage + retry_usage
         if (
@@ -2293,6 +2670,9 @@ class AgentRunner:
         recovery_failure_reason: str | None = None
         ticket: SourceRequestTicket | None = None
         while True:
+            context_usage_receipt = (
+                request_state.prepared_context_usage_epoch, request_state.prepared_context_window_tokens,
+            )
             ticket = request_state.source.issue(source_view) if request_state.source is not None and source_view is not None else None
             kwargs = self._build_request_kwargs(spec, messages, tools=None)
             if tool_choice_none:
@@ -2360,7 +2740,7 @@ class AgentRunner:
                     recovery_failure_reason,
                 )
                 break
-            except ProviderRouteChanged:
+            except ProviderRouteChanged as exc:
                 if ticket is not None and request_state.source is not None:
                     request_state.source.discard(ticket)
                     ticket = None
@@ -2381,7 +2761,15 @@ class AgentRunner:
                     )
                     break
                 route_reprepared = True
-                provider_context = replace(provider_context, selected_route=None)
+                messages, provider_context, route_error = self._reprepare_route_after_change(
+                    request_state, messages, provider_context, exc,
+                )
+                if route_error is not None:
+                    response = route_error
+                    break
+                source_view = self._source_view(
+                    request_state, messages, request_state.source_view,
+                )
                 continue
             except ProviderRequestRejected as exc:
                 if ticket is not None and request_state.source is not None:
@@ -2424,6 +2812,7 @@ class AgentRunner:
             response,
             no_tools=True,
             record_source_response=record_source_response,
+            context_usage_receipt=context_usage_receipt,
         )
         await self.context_governor.summarize_provider_compaction(
             request_state,
@@ -2508,6 +2897,25 @@ class AgentRunner:
             response,
             tool_definitions=state.tool_definitions,
         )
+        if (
+            recorded_response is not None
+            and recorded_response.response is response
+            and recorded_response.context_usage_epoch == state.context_usage_epoch
+            and state.usage.context_tokens is not None
+        ):
+            window_tokens = (
+                recorded_response.context_window_tokens
+                if recorded_response.context_window_tokens is not None
+                else (
+                    response.context_window_tokens
+                    if type(response.context_window_tokens) is int
+                    and response.context_window_tokens > 0
+                    else None
+                )
+            )
+            state.context_usage = ContextUsageSnapshot(
+                state.usage.context_tokens, window_tokens,
+            )
         from nanobot.providers.openai_compat_provider import OpenAICompatProvider
 
         reported = response.usage

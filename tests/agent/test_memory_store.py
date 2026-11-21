@@ -1,12 +1,18 @@
 """Tests for the restructured MemoryStore — pure file I/O layer."""
 
+import asyncio
 import json
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
+from threading import Barrier, Event, get_ident
 
 import pytest
 
+import nanobot.utils.gitstore as gitstore_module
 from nanobot.agent.memory import _HISTORY_ENTRY_HARD_CAP, MemoryStore
+from nanobot.agent.tools.filesystem_effect import FilesystemEffectAttempt
+from nanobot.utils.gitstore import GitStore, GitStoreError
 
 
 @pytest.fixture
@@ -342,6 +348,246 @@ class TestDreamCursor:
         assert restore_sha is not None
         assert store.read_memory() == "before"
         assert store.get_last_dream_cursor() == 1
+
+
+def _versioned_dream_store(tmp_path: Path, name: str = "workspace") -> MemoryStore:
+    workspace = tmp_path / name
+    workspace.mkdir()
+    store = MemoryStore(workspace, sessions_root=tmp_path / f"{name}-sessions")
+    store.write_soul("soul before")
+    store.write_user("user before")
+    store.write_memory("memory before")
+    store.append_history("batch input")
+    assert store.git.init()
+    return store
+
+
+def test_pending_dream_operation_fences_a_fresh_store(tmp_path: Path) -> None:
+    store = _versioned_dream_store(tmp_path)
+    store.reserve_dream_run(0, 1)
+    fresh = MemoryStore(store.workspace, sessions_root=tmp_path / "workspace-sessions")
+
+    with pytest.raises(GitStoreError, match="unresolved"):
+        fresh.build_dream_prompt()
+    assert fresh.get_last_dream_cursor() == 0
+
+
+def test_completed_noop_run_commits_cursor_and_unlocks_batch(tmp_path: Path) -> None:
+    store = _versioned_dream_store(tmp_path)
+    operation_id = store.reserve_dream_run(0, 1)
+
+    sha = store.finish_dream_run(
+        operation_id,
+        completed=True,
+        commit_message="dream: manual run",
+    )
+
+    assert sha is not None
+    assert store.get_last_dream_cursor() == 1
+    assert store.git.log()[0].sha == sha
+    assert store.git.dream_operation_status() is None
+    assert store.build_dream_prompt() is None
+
+
+def test_incomplete_run_commits_partial_files_with_old_cursor(tmp_path: Path) -> None:
+    store = _versioned_dream_store(tmp_path)
+    operation_id = store.reserve_dream_run(0, 1)
+    store.write_soul("partial soul edit")
+
+    sha = store.finish_dream_run(
+        operation_id,
+        completed=False,
+        commit_message="dream: incomplete run",
+    )
+
+    assert sha is not None
+    assert store.get_last_dream_cursor() == 0
+    assert store.git.dream_operation_status() is None
+    result = store.build_dream_prompt()
+    assert result is not None
+    assert result[1] == 1
+
+
+def test_failed_run_commit_stays_pending_and_fresh_store_reconciles(tmp_path: Path, monkeypatch) -> None:
+    store = _versioned_dream_store(tmp_path)
+    operation_id = store.reserve_dream_run(0, 1)
+    original = GitStore.auto_commit
+
+    def fail_before_commit(self, message):
+        if message.startswith("dream:"):
+            raise GitStoreError("injected commit failure")
+        return original(self, message)
+
+    monkeypatch.setattr(GitStore, "auto_commit", fail_before_commit)
+    with pytest.raises(GitStoreError):
+        store.finish_dream_run(
+            operation_id,
+            completed=True,
+            commit_message="dream: manual run",
+        )
+    assert store.get_last_dream_cursor() == 1
+    assert store.git.dream_operation_status() is not None
+
+    monkeypatch.setattr(GitStore, "auto_commit", original)
+    fresh = MemoryStore(store.workspace, sessions_root=tmp_path / "workspace-sessions")
+    assert fresh.build_dream_prompt() is None
+    assert fresh.git.log()[0].message == "dream: manual run"
+    assert fresh.git.dream_operation_status() is None
+
+
+def test_commit_acknowledgement_loss_returns_proved_dream_commit(tmp_path: Path, monkeypatch) -> None:
+    store = _versioned_dream_store(tmp_path)
+    operation_id = store.reserve_dream_run(0, 1)
+    original = GitStore.auto_commit
+
+    def commit_then_raise(self, message):
+        result = original(self, message)
+        if message.startswith("dream:"):
+            raise GitStoreError("injected lost acknowledgement")
+        return result
+
+    monkeypatch.setattr(GitStore, "auto_commit", commit_then_raise)
+    sha = store.finish_dream_run(
+        operation_id,
+        completed=True,
+        commit_message="dream: manual run",
+    )
+
+    assert sha is not None
+    assert store.git.log()[0].sha == sha
+    assert store.git.dream_operation_status() is None
+
+
+def test_same_workspace_run_reservations_serialize_across_instances(tmp_path: Path) -> None:
+    first = _versioned_dream_store(tmp_path)
+    second = MemoryStore(first.workspace, sessions_root=tmp_path / "workspace-sessions")
+    barrier = Barrier(2)
+
+    def reserve(store: MemoryStore) -> str:
+        barrier.wait(timeout=5)
+        return store.reserve_dream_run(0, 1)
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        futures = [pool.submit(reserve, store) for store in (first, second)]
+        outcomes: list[str | GitStoreError] = []
+        for future in futures:
+            try:
+                outcomes.append(future.result(timeout=10))
+            except GitStoreError as exc:
+                outcomes.append(exc)
+
+    assert sum(isinstance(outcome, str) for outcome in outcomes) == 1
+    assert sum(isinstance(outcome, GitStoreError) for outcome in outcomes) == 1
+    independent = _versioned_dream_store(tmp_path, name="independent")
+    assert independent.reserve_dream_run(0, 1)
+
+
+@pytest.mark.asyncio
+async def test_restore_fences_an_already_issued_dream_tool_registry(tmp_path: Path) -> None:
+    store = _versioned_dream_store(tmp_path)
+    store.write_soul("dream version")
+    store.set_last_dream_cursor(1)
+    dream_sha = store.git.auto_commit("dream: changed memory")
+    assert dream_sha is not None
+
+    operation_id = store.reserve_dream_run(1, 2)
+    tools = store.build_dream_tools(operation_id=operation_id)
+    restored = store.git.revert(dream_sha, message_prefix="dream:")
+
+    result = await tools.execute(
+        "write_file",
+        {"path": "skills/stale/SKILL.md", "content": "must not be written"},
+    )
+    assert "no longer current" in str(result)
+    assert not (store.workspace / "skills" / "stale" / "SKILL.md").exists()
+    assert restored is not None
+    assert store.git.log()[0].message.startswith("revert: undo")
+
+
+@pytest.mark.asyncio
+async def test_issued_dream_write_serializes_with_restore_across_owners(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    store = _versioned_dream_store(tmp_path)
+    store.write_soul("dream version")
+    store.set_last_dream_cursor(1)
+    dream_sha = store.git.auto_commit("dream: changed memory")
+    assert dream_sha is not None
+
+    restorer = MemoryStore(store.workspace, sessions_root=tmp_path / "restore-sessions")
+    operation_id = store.reserve_dream_run(1, 2)
+    tools = store.build_dream_tools(operation_id=operation_id)
+    target = store.workspace / "skills" / "stale" / "SKILL.md"
+    entered_mutation = Event()
+    release_mutation = Event()
+    restore_requested_lock = Event()
+    restore_thread_id: int | None = None
+    original_enter = FilesystemEffectAttempt.enter
+
+    def pause_before_mutation(cls, operation, path, intended):
+        if operation == "write_file" and path == target:
+            entered_mutation.set()
+            if not release_mutation.wait(timeout=5):
+                raise TimeoutError("Dream write barrier was not released")
+        return original_enter(operation, path, intended)
+
+    original_workspace_lock = gitstore_module.dream_workspace_lock
+
+    def observe_restore_lock(workspace: Path):
+        if get_ident() == restore_thread_id:
+            restore_requested_lock.set()
+        return original_workspace_lock(workspace)
+
+    monkeypatch.setattr(FilesystemEffectAttempt, "enter", classmethod(pause_before_mutation))
+    monkeypatch.setattr(gitstore_module, "dream_workspace_lock", observe_restore_lock)
+
+    def issue_write() -> object:
+        return asyncio.run(
+            tools.execute(
+                "write_file",
+                {"path": "skills/stale/SKILL.md", "content": "stale Dream write"},
+            )
+        )
+
+    def restore() -> str | None:
+        nonlocal restore_thread_id
+        restore_thread_id = get_ident()
+        return restorer.git.revert(dream_sha, message_prefix="dream:")
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        writer = pool.submit(issue_write)
+        try:
+            assert entered_mutation.wait(timeout=5)
+            restore_future = pool.submit(restore)
+            assert restore_requested_lock.wait(timeout=5)
+            assert not restore_future.done()
+        finally:
+            release_mutation.set()
+        write_result = writer.result(timeout=10)
+        restored = restore_future.result(timeout=10)
+
+    assert "Successfully wrote" in str(write_result)
+    assert restored is not None
+    assert not target.exists()
+    assert restorer.get_last_dream_cursor() == 0
+    assert restorer.git.dream_operation_status() is None
+    prompt = restorer.build_dream_prompt()
+    assert prompt is not None and prompt[1] == 1
+    with pytest.raises(GitStoreError, match="ownership is no longer current"):
+        store.finish_dream_run(
+            operation_id,
+            completed=True,
+            commit_message="dream: stale run completion",
+        )
+
+    stale_result = await tools.execute(
+        "write_file",
+        {"path": "skills/late/SKILL.md", "content": "must be refused"},
+    )
+    assert "no longer current" in str(stale_result)
+    assert not (store.workspace / "skills" / "late" / "SKILL.md").exists()
+    assert restorer.get_last_dream_cursor() == 0
 
 
 class TestLegacyHistoryMigration:

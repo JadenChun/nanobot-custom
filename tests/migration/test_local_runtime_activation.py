@@ -223,10 +223,18 @@ async def test_stop_discards_saved_followup_before_cancelling_owner(
         assert SOURCE_PENDING_FOLLOWUPS_METADATA_KEY in backend.source.load_source_snapshot(
             "websocket:stop-followup",
         ).header["metadata"]
+        discard_calls = []
+        original_discard = SourceSessionStore.discard_pending_followups
         if discard_fails:
-            def fail_discard(*args, **kwargs):
+            def fail_discard(self, *args, **kwargs):
+                discard_calls.append((self, args, kwargs))
                 raise OSError("stop journal unavailable")
             monkeypatch.setattr(SourceSessionStore, "discard_pending_followups", fail_discard)
+        else:
+            def observe_discard(self, *args, **kwargs):
+                discard_calls.append((self, args, kwargs))
+                return original_discard(self, *args, **kwargs)
+            monkeypatch.setattr(SourceSessionStore, "discard_pending_followups", observe_discard)
         await handle.bus.publish_inbound(InboundMessage(
             channel="websocket", sender_id="webui", chat_id="stop-followup", content="/stop",
         ))
@@ -236,11 +244,13 @@ async def test_stop_discards_saved_followup_before_cancelling_owner(
                 break
         if discard_fails:
             assert reply.content == "Could not complete the stop request. Please retry."
+            assert len(discard_calls) == 1, "Stop failed before attempting durable follow-up discard"
             assert not provider.first_cancelled.is_set() and not run_task.done()
             assert SOURCE_PENDING_FOLLOWUPS_METADATA_KEY in backend.source.load_source_snapshot(
                 "websocket:stop-followup",
             ).header["metadata"]
             return
+        assert len(discard_calls) == 1
         assert provider.first_cancelled.is_set() and not run_task.done()
         snapshot = backend.source.load_source_snapshot("websocket:stop-followup")
         assert SOURCE_PENDING_FOLLOWUPS_METADATA_KEY not in snapshot.header["metadata"]

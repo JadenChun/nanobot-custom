@@ -85,6 +85,11 @@ export function useSettingsController({
   const [hostEngineApplying, setHostEngineApplying] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [activeSection, setActiveSection] = useState<SettingsSectionKey>(initialSection);
+  const [syncedInitialSection, setSyncedInitialSection] = useState<SettingsSectionKey>(initialSection);
+  if (initialSection !== syncedInitialSection) {
+    setSyncedInitialSection(initialSection);
+    setActiveSection(initialSection);
+  }
   const [pendingRestartSections, setPendingRestartSections] = useState<PendingRestartSections>(
     EMPTY_PENDING_RESTART_SECTIONS,
   );
@@ -130,10 +135,6 @@ export function useSettingsController({
     setNanobotFeaturesError,
   } = systemState;
   const featureCatalog = nanobotFeatures?.features ?? [];
-
-  useEffect(() => {
-    setActiveSection(initialSection);
-  }, [initialSection]);
 
   const selectSection = useCallback(
     (section: SettingsSectionKey) => {

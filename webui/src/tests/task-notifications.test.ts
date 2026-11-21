@@ -3,6 +3,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { buildTaskNotificationBody, showTaskNotification } from "@/lib/task-notifications";
 
+const t = ((key: string, options?: { defaultValue?: string }) => {
+  if (key === "errors.modelRequestFailed.body") return "model failed";
+  return options?.defaultValue ?? key;
+}) as unknown as TFunction;
+
+const completed = { kind: "turn_end", chatId: "chat", outcome: "completed" } as const;
+
 describe("desktop task notifications", () => {
   beforeEach(() => {
     (window as unknown as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
@@ -17,24 +24,34 @@ describe("desktop task notifications", () => {
 
   it("does not notify while the desktop shell is hidden", () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue({} as Response);
+    const mutate = vi.fn().mockResolvedValue({ ok: true });
 
     window.dispatchEvent(new Event("nanobot:desktop-hide"));
-    showTaskNotification({ body: "hidden window" });
-    expect(fetchSpy).not.toHaveBeenCalled();
+    showTaskNotification({ event: completed, t, requestMutation: mutate });
+    expect(mutate).not.toHaveBeenCalled();
 
     window.dispatchEvent(new Event("nanobot:desktop-show"));
-    showTaskNotification({ body: "visible window" });
-    expect(fetchSpy).toHaveBeenCalledTimes(1);
-    expect(fetchSpy.mock.calls[0]?.[0]).toContain("/api/desktop/notify");
+    showTaskNotification({ event: completed, t, requestMutation: mutate });
+    expect(mutate).toHaveBeenCalledTimes(1);
+    expect(mutate).toHaveBeenCalledWith("desktop.notify", {
+      title: "Kohaku",
+      body: "Task completed",
+      tag: "nanobot-turn-chat",
+    });
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("sends no unauthenticated request without the mutation control", () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue({} as Response);
+
+    window.dispatchEvent(new Event("nanobot:desktop-show"));
+    showTaskNotification({ event: completed, t });
+
+    expect(fetchSpy).not.toHaveBeenCalled();
   });
 });
 
 describe("task notification copy", () => {
-  const t = ((key: string, options?: { defaultValue?: string }) => {
-    if (key === "errors.modelRequestFailed.body") return "model failed";
-    return options?.defaultValue ?? key;
-  }) as unknown as TFunction;
-
   it("uses completion copy for a successful turn", () => {
     expect(buildTaskNotificationBody({
       kind: "turn_end",

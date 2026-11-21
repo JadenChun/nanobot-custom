@@ -54,7 +54,15 @@ def test_candidate_ci_trigger_preserves_native_matrix_and_strict_policy() -> Non
     ]
     assert workflow["jobs"]["windows_process"]["runs-on"] == "windows-latest"
     steps = workflow["jobs"]["test"]["steps"]
-    assert any(step.get("run") == "uv run --no-sync basedpyright" for step in steps)
+    assert any(
+        "basedpyright" in step.get("run", "")
+        and "--outputjson" in step.get("run", "")
+        for step in steps
+    )
+    assert any(
+        "check_type_regressions.py" in step.get("run", "")
+        for step in steps
+    )
     assert any(step.get("run") == "uv sync --all-extras --dev" for step in steps)
     assert any(step.get("run") == "uv run --no-sync python -m scripts.install_channel_dependencies --all-channels" for step in steps)
     assert all(job["runs-on"] in {"ubuntu-latest", "windows-latest", "${{ matrix.os }}"}

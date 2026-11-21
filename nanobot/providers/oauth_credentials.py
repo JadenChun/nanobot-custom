@@ -3,6 +3,12 @@
 This module deliberately has no default path and performs no network work. The
 injected importer must return Codex refresh credentials or a Copilot GitHub
 token; cached Copilot bearer tokens and endpoint data are not accepted.
+
+A :class:`CredentialOwner` names the one gateway instance that owns a provider
+credential and its account-dependent caches. Callers that select an instance
+pass its owner explicitly. The injected importer stays a read-only legacy
+source. Automatic import is limited to the unscoped legacy entry point in the
+default instance.
 """
 
 from __future__ import annotations
@@ -14,6 +20,7 @@ import os
 import re
 import secrets
 import stat
+import threading
 import time
 from collections.abc import Callable, Mapping
 from contextlib import contextmanager
@@ -46,6 +53,52 @@ _GENERATION_PATTERN = re.compile(r"^[0-9a-f]{32}$")
 _REQUIRED_JSON_KEYS = frozenset({"access", "refresh", "expires_at_ms"})
 _OPTIONAL_JSON_KEYS = frozenset({"account_id"})
 _ENVELOPE_KEYS = frozenset({"version", "flavor", "generation", "token"})
+_AUTH_DIRNAME = "auth"
+_LEGACY_INSTANCE_DIRNAME = ".nanobot"
+
+
+@dataclass(frozen=True, slots=True)
+class CredentialOwner:
+    """The one gateway instance that owns provider OAuth credentials and caches."""
+
+    data_root: Path
+
+    def __post_init__(self) -> None:
+        root = Path(self.data_root).expanduser()
+        if not root.is_absolute():
+            raise ValueError("absolute credential owner root required")
+        object.__setattr__(self, "data_root", root.resolve(strict=False))
+
+    @classmethod
+    def from_config_path(cls, config_path: str | Path) -> CredentialOwner:
+        """Return the owner of the instance that selects this config file."""
+        return cls(Path(config_path).expanduser().resolve(strict=False).parent)
+
+    @classmethod
+    def from_data_root(cls, data_root: str | Path) -> CredentialOwner:
+        return cls(Path(data_root).expanduser())
+
+    @classmethod
+    def process_default(cls) -> CredentialOwner:
+        """Return the owner selected by the current process instance."""
+        from nanobot.config.paths import get_data_dir
+
+        return cls(get_data_dir())
+
+    def credential_path(self, filename: str) -> Path:
+        """Return this owner's credential file for one provider profile name."""
+        if not filename or Path(filename).name != filename:
+            raise ValueError("credential filename required")
+        return self.data_root / _AUTH_DIRNAME / filename
+
+    def owns_legacy_location(self) -> bool:
+        """Return whether this owner already holds the shared legacy location."""
+        home = Path(os.environ.get("HOME", str(Path.home()))).expanduser()
+        return self.data_root == (home / _LEGACY_INSTANCE_DIRNAME).resolve(strict=False)
+
+    def identity(self) -> str:
+        """Return the stable, non-secret identity used in account cache keys."""
+        return str(self.data_root)
 
 
 class CredentialError(RuntimeError):
@@ -553,15 +606,41 @@ def resolve_credential_store_paths(canonical_path: str | Path) -> CredentialStor
     )
 
 
-class _LoginGeneration:
-    __slots__ = ("__owner", "__value")
+_login_sequence_lock = threading.Lock()
+_login_sequence = 0
 
-    def __init__(self, owner: object, value: str) -> None:
+
+def _next_login_sequence() -> int:
+    global _login_sequence
+    with _login_sequence_lock:
+        _login_sequence += 1
+        return _login_sequence
+
+
+class _LoginGeneration:
+    __slots__ = ("__owner", "__value", "__sequence")
+
+    def __init__(self, owner: object, value: str, sequence: int) -> None:
         self.__owner = owner
         self.__value = value
+        self.__sequence = sequence
+
+    @property
+    def sequence(self) -> int:
+        """Return the process-local issue order of this login attempt."""
+        return self.__sequence
 
     def _value_for(self, owner: object) -> str | None:
         return self.__value if self.__owner is owner else None
+
+    def current_value(
+        self,
+        observe_owner: Callable[[], object],
+        intent_generation: str | None,
+    ) -> str | None:
+        """Return this generation's durable value when it is still the current intent."""
+        value = self._value_for(observe_owner())
+        return value if value is not None and value == intent_generation else None
 
     def require_current_intent(
         self, observe_owner: Callable[[], object], state: _StoreState | None,
@@ -763,6 +842,7 @@ class OAuthCredentialCoordinator:
         importer: Importer | None = None,
         *,
         clock_ms: Callable[[], int] | None = None,
+        auto_import: bool = True,
     ) -> None:
         if not isinstance(flavor, CredentialFlavor):
             try:
@@ -774,6 +854,7 @@ class OAuthCredentialCoordinator:
             _protect_windows_path(self.paths.canonical.parent)
         self.flavor = flavor
         self._importer = importer
+        self._auto_import = auto_import
         self._clock_ms = clock_ms or (lambda: time.time_ns() // 1_000_000)
         self._generation_owner = object()
 
@@ -1284,7 +1365,7 @@ class OAuthCredentialCoordinator:
                 if view is not None:
                     self._check_expiry(view.token)
                     return view
-                if self._importer is None:
+                if self._importer is None or not self._auto_import:
                     return None
                 token = self._imported_token()
                 if token is None:
@@ -1310,7 +1391,7 @@ class OAuthCredentialCoordinator:
                 if state is not None and state.logged_out:
                     raise CredentialError(_NEEDS_REFRESH_ERROR)
                 if view is None:
-                    token = self._imported_token()
+                    token = self._imported_token() if self._auto_import else None
                     if token is None:
                         raise CredentialError(_NEEDS_REFRESH_ERROR)
                     view = self._publish(directory_fd, state, token)
@@ -1348,7 +1429,7 @@ class OAuthCredentialCoordinator:
                 if state is not None and state.logged_out:
                     raise CredentialError(_NEEDS_REFRESH_ERROR)
                 if view is None:
-                    token = self._imported_token()
+                    token = self._imported_token() if self._auto_import else None
                     if token is None:
                         raise CredentialError(_NEEDS_REFRESH_ERROR)
                     view = self._publish(directory_fd, state, token)
@@ -1439,7 +1520,45 @@ class OAuthCredentialCoordinator:
                         intent_generation=generation,
                     ),
                 )
-                return _LoginGeneration(self._generation_owner, generation)
+                return _LoginGeneration(
+                    self._generation_owner,
+                    generation,
+                    _next_login_sequence(),
+                )
+        except _InvalidStoreError:
+            raise CredentialError(_INVALID_ERROR) from None
+        except _UnavailableError:
+            raise CredentialError(_UNAVAILABLE_ERROR) from None
+
+    def revoke_intent(self, generation: _LoginGeneration) -> bool:
+        """Clear publication authority for this generation only.
+
+        A newer login or a logout has already replaced the durable intent, so
+        this call is a no-op in that case.
+        """
+        try:
+            with self._locked() as directory_fd:
+                state, _view = self._read_consistent(directory_fd)
+                if state is None:
+                    return False
+                if (
+                    generation.current_value(
+                        lambda: self._generation_owner,
+                        state.intent_generation,
+                    )
+                    is None
+                ):
+                    return False
+                self._write_state(
+                    directory_fd,
+                    _StoreState(
+                        state.active_generation,
+                        state.logged_out,
+                        intent_generation=None,
+                        publication=state.publication,
+                    ),
+                )
+                return True
         except _InvalidStoreError:
             raise CredentialError(_INVALID_ERROR) from None
         except _UnavailableError:

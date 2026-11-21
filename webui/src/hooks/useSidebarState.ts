@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { useClient } from "@/providers/ClientProvider";
-import { normalizeWorkbenchState } from "@/components/workbench/workbench-model";
 import { fetchSidebarState } from "@/lib/api";
 import type { ChatSummary, SidebarStatePayload } from "@/lib/types";
 
@@ -14,7 +13,6 @@ const DEFAULT_SIDEBAR_STATE: SidebarStatePayload = {
   project_name_overrides: {},
   tags_by_key: {},
   collapsed_groups: {},
-  workbench: { version: 1, tabs: {} },
   view: {
     density: "comfortable",
     show_previews: false,
@@ -95,7 +93,6 @@ function normalizeSidebarState(raw: unknown): SidebarStatePayload {
     project_name_overrides: stringMap(value.project_name_overrides),
     tags_by_key: tagsMap(value.tags_by_key),
     collapsed_groups: boolMap(value.collapsed_groups),
-    workbench: normalizeWorkbenchState(value.workbench),
     view: {
       density,
       show_previews: Boolean(view.show_previews),
@@ -140,6 +137,8 @@ export function useSidebarState(
 ): {
   state: SidebarStatePayload;
   loading: boolean;
+  /** Optimistic local save status; a failed save stays visible until retry/readback. */
+  saveState: "saved" | "pending" | "failed";
   update: (
     updater: (state: SidebarStatePayload) => SidebarStatePayload,
   ) => Promise<void>;
@@ -149,10 +148,14 @@ export function useSidebarState(
   const stateRef = useRef(DEFAULT_SIDEBAR_STATE);
   const connectionOpenRef = useRef(client.status === "open");
   const pendingPersistenceRef = useRef<SidebarStatePayload | null>(null);
+  const pendingSaveRequestIdRef = useRef<string | null>(null);
+  const pendingSavePayloadRef = useRef<SidebarStatePayload | null>(null);
+  const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const persistenceInFlightRef = useRef(false);
   const flushPersistenceRef = useRef<() => void>(() => {});
   const [state, setState] = useState<SidebarStatePayload>(DEFAULT_SIDEBAR_STATE);
   const [loading, setLoading] = useState(true);
+  const [saveState, setSaveState] = useState<"saved" | "pending" | "failed">("saved");
   tokenRef.current = token;
   stateRef.current = state;
 
@@ -188,20 +191,45 @@ export function useSidebarState(
     const next = pendingPersistenceRef.current;
     pendingPersistenceRef.current = null;
     persistenceInFlightRef.current = true;
-    void client.setSidebarState(next)
+    setSaveState("pending");
+    // Reuse the failed request ID only for a byte-identical retry. The owner
+    // binds an ID to the first payload digest and refuses a different payload
+    // with that ID, so a changed edit must use a fresh identity.
+    const requestId =
+      pendingSaveRequestIdRef.current !== null
+      && pendingSavePayloadRef.current !== null
+      && sameState(next, pendingSavePayloadRef.current)
+        ? pendingSaveRequestIdRef.current
+        : crypto.randomUUID();
+    pendingSaveRequestIdRef.current = requestId;
+    pendingSavePayloadRef.current = next;
+    void client.setSidebarState(next, requestId)
       .then((saved) => {
         persistenceInFlightRef.current = false;
+        pendingSaveRequestIdRef.current = null;
+        pendingSavePayloadRef.current = null;
         if (pendingPersistenceRef.current === null) {
           const canonical = normalizeSidebarState(saved);
           stateRef.current = canonical;
           setState(canonical);
         }
+        setSaveState(pendingPersistenceRef.current === null ? "saved" : "pending");
         flushPersistenceRef.current();
       })
       .catch(() => {
         persistenceInFlightRef.current = false;
+        setSaveState("failed");
         if (pendingPersistenceRef.current === null) {
+          // Keep the optimistic state visible and retry the same logical save
+          // once. The stable request ID lets the owner replay a committed
+          // effect instead of applying it twice.
           pendingPersistenceRef.current = next;
+        }
+        if (retryTimerRef.current === null) {
+          retryTimerRef.current = setTimeout(() => {
+            retryTimerRef.current = null;
+            flushPersistenceRef.current();
+          }, 1_500);
         }
       });
   }, [client]);
@@ -216,6 +244,13 @@ export function useSidebarState(
     connectionOpenRef.current = status === "open";
     if (status === "open") flushPersistence();
   }), [client, flushPersistence]);
+
+  useEffect(() => () => {
+    if (retryTimerRef.current !== null) {
+      clearTimeout(retryTimerRef.current);
+      retryTimerRef.current = null;
+    }
+  }, []);
 
   useEffect(() => client.onSidebarStateUpdate((incoming) => {
     if (
@@ -248,5 +283,5 @@ export function useSidebarState(
     void update(() => pruned);
   }, [loading, pruned, sessionsLoaded, state, update]);
 
-  return { state, loading, update };
+  return { state, loading, saveState, update };
 }

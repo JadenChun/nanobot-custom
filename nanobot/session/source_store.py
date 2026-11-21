@@ -21,6 +21,14 @@ from typing import TYPE_CHECKING, Any, Generator, Protocol, cast
 
 from loguru import logger
 
+from nanobot.security.workspace_access import WORKSPACE_SCOPE_METADATA_KEY
+from nanobot.session.canonical_event_index import (
+    delete_event_index,
+    update_event_index_header,
+)
+from nanobot.session.canonical_event_index import (
+    read_canonical_events_by_ids as _read_canonical_events_by_ids,
+)
 from nanobot.session.context_checkpoint import validate_context_checkpoint
 from nanobot.session.idle_compaction import (
     LAST_USER_ACTIVITY_AT_KEY,
@@ -32,6 +40,20 @@ from nanobot.session.idle_compaction import (
     checkpoint_candidate_fingerprint,
     read_user_activity,
     validate_idle_capture,
+)
+from nanobot.session.input_attempt import (
+    InputAttempt,
+    InputAttemptConflictError,
+    InputAttemptSource,
+    find_input_attempt,
+    fingerprint,
+)
+from nanobot.session.next_turn_preferences import (
+    NextTurnPreferences,
+    consume_preferences,
+    read_preferences,
+    remove_preferences,
+    update_preferences,
 )
 from nanobot.session.pending_followups import (
     PendingFollowupRecord,
@@ -59,6 +81,8 @@ from nanobot.workspace_access_recovery import (
     parse_workspace_scope_metadata,
 )
 
+MAX_SOURCE_SERIALIZED_BYTES = 67_108_864
+
 if TYPE_CHECKING:
     from nanobot.session.artifact import ArtifactDescriptor
     from nanobot.session.artifact_reader import ArtifactReader
@@ -71,6 +95,7 @@ if TYPE_CHECKING:
         IdlePolicyBinding,
     )
     from nanobot.session.manager import JsonlSessionStore, Session
+    from nanobot.session.mode_storage import PrivateFileVersion
     from nanobot.session.source_discovery import SourceDiscoveryCursor, SourceDiscoveryLimits
     from nanobot.session.source_root import SourceRootAuthority
 
@@ -114,6 +139,39 @@ class SourceState:
     generation: int
     checkpoint_id: str | None
     checkpoint_fingerprint: str
+
+    def same_origin(self, other: SourceState) -> bool:
+        """Revisions/checkpoints advance within one source lifetime."""
+        return (self.store_identity, self.session_key, self.incarnation, self.generation) == (
+            other.store_identity, other.session_key, other.incarnation, other.generation,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class SavedSourceMetadata:
+    """Detached browse facts. These neither authorize execution nor contain events."""
+
+    state: SourceState
+    webui: bool
+    workspace_scope: object
+    workspace_scope_present: bool
+
+
+@dataclass(frozen=True, slots=True)
+class SavedSourceProof:
+    version: PrivateFileVersion
+    metadata: SavedSourceMetadata
+    digest: str | None = None
+    header: dict[str, Any] | None = None
+    event_count: int = 0
+    body_offset: int = 0
+
+
+class SourceOriginMismatchError(RuntimeError):
+    """Delayed work no longer targets its original canonical source."""
+
+    def __init__(self) -> None:
+        super().__init__("The original session source is no longer available")
 
 
 @dataclass(frozen=True)
@@ -218,18 +276,12 @@ def _object_pairs(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
     return result
 
 
-def _validate_source_records(
-    records: list[object],
+def _validate_source_header(
+    header: dict[str, Any],
     *,
     expected_key: str | None,
     require_source: bool,
-) -> tuple[dict[str, Any], list[dict[str, Any]]]:
-    """Validate decoded JSONL records through the canonical source grammar."""
-    if not records or not isinstance(records[0], dict):
-        raise SourceValidationError("Invalid source header")
-    canonical_events(records)
-    # Canonical JSON validation above rejects non-string keys recursively.
-    header = cast(dict[str, Any], records[0])
+) -> bool:
     key = header.get("key")
     if (
         header.get("_type") != "metadata"
@@ -267,6 +319,29 @@ def _validate_source_records(
             datetime.fromisoformat(header[name])
         elif require_source:
             raise SourceValidationError("Missing source timestamp")
+    return source
+
+
+def _validate_archive_boundary(header: dict[str, Any], event_count: int) -> None:
+    for name in ("last_archived", "last_consolidated"):
+        if name in header and _counter(header[name]) > event_count:
+            raise SourceValidationError("Invalid source archive boundary")
+
+
+def _validate_source_records(
+    records: list[object],
+    *,
+    expected_key: str | None,
+    require_source: bool,
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    """Validate decoded JSONL records through the canonical source grammar."""
+    if not records or not isinstance(records[0], dict):
+        raise SourceValidationError("Invalid source header")
+    canonical_events(records)
+    # Canonical JSON validation above rejects non-string keys recursively.
+    header = cast(dict[str, Any], records[0])
+    source = _validate_source_header(header, expected_key=expected_key, require_source=require_source)
+    schema = header["metadata"].get("source_schema_version")
     events: list[dict[str, Any]] = []
     for raw_record in records[1:]:
         if not isinstance(raw_record, dict):
@@ -281,9 +356,7 @@ def _validate_source_records(
         ):
             raise SourceValidationError("Invalid source event")
         events.append(record)
-    for name in ("last_archived", "last_consolidated"):
-        if name in header and _counter(header[name]) > len(events):
-            raise SourceValidationError("Invalid source archive boundary")
+    _validate_archive_boundary(header, len(events))
     if source:
         validate_event_ids(events)
         validate_execution_links(events)
@@ -322,9 +395,11 @@ def validate_source_session_bytes(
         text = data.decode("utf-8")
         if text.encode("utf-8") != data:
             raise SourceValidationError("Invalid source encoding")
+        # The writer delimits records with LF. Other Unicode line separators
+        # are legal message content and must not split a JSON record.
         records = [
             json.loads(line, object_pairs_hook=_object_pairs)
-            for line in text.splitlines()
+            for line in text.split("\n")
             if line.strip()
         ]
         header, events = _validate_source_records(
@@ -363,6 +438,7 @@ def _upgrade_events(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
         # Legacy metadata cannot retroactively authenticate a producing read.
         event.pop("_source_origin", None)
         event.pop("_artifact_read", None)
+        event.pop("_input_attempt", None)
         if "_event_id" not in event:
             event["_event_id"] = uuid.uuid4().hex
         if "tool_calls" in event:
@@ -479,6 +555,10 @@ class SourceSessionStore:
         """Observe exact backend identity only; this does not admit an operation."""
         return backend is self._backend
 
+    def shares_store_with(self, other: SourceSessionStore) -> bool:
+        """Observe one exact backend behind two validated store bindings."""
+        return type(other) is SourceSessionStore and other._backend is self._backend
+
     def select_artifact_location_metadata(self) -> ArtifactSourceLocation:
         """Retain this backend selection while observing only its live location values."""
         return _ArtifactSourceLocation(self._backend)
@@ -528,6 +608,19 @@ class SourceSessionStore:
 
     def _state(self, header: dict[str, Any]) -> SourceState:
         return _state(header, self._store_identity)
+
+    def describe_saved_source(
+        self, header: dict[str, Any], *, event_count: int, expected_key: str,
+    ) -> SavedSourceMetadata:
+        """Project only the validated header facts needed by saved-history readers."""
+        _validate_source_header(header, expected_key=expected_key, require_source=True)
+        _validate_archive_boundary(header, event_count)
+        metadata = header["metadata"]
+        return SavedSourceMetadata(
+            self._state(header), metadata.get("webui") is True,
+            deepcopy(cast(object, metadata.get(WORKSPACE_SCOPE_METADATA_KEY))),
+            WORKSPACE_SCOPE_METADATA_KEY in metadata,
+        )
 
     def _read_unlocked(
         self,
@@ -1207,7 +1300,12 @@ class SourceSessionStore:
         records = [header, *events]
         canonical_events(records)
         result = self._snapshot(header, events)
-        text = _source_bytes(header, events).decode("utf-8")
+        raw = _source_bytes(header, events)
+        if len(raw) > MAX_SOURCE_SERIALIZED_BYTES:
+            raise SourceValidationError(
+                "source exceeds the maximum readable serialized size"
+            )
+        text = raw.decode("utf-8")
         return PreparedSourcePersistence(result, text, lambda: header["key"])
 
     def _write(
@@ -1302,10 +1400,28 @@ class SourceSessionStore:
         with execution_transaction(self._backend, key, owner):
             header, committed = self._current_unlocked(key, expected)
             merged = merge_source_events(committed, events)
+            # Validate the entire batch inside the atomic file/CAS transaction.
+            for event in events:
+                if "_input_attempt" not in event:
+                    continue
+                attempt = InputAttempt.parse_evidence(event["_input_attempt"])
+                content = event.get("content")
+                if (event.get("role") != "user" or attempt.source != InputAttemptSource.from_state(expected)
+                        or not isinstance(content, str) or fingerprint(content) != attempt.fingerprint):
+                    raise InputAttemptConflictError("Input attempt source or payload changed")
+                prior = find_input_attempt(merged, attempt)
+                if prior is not None and (
+                    prior.event_id != event.get("_event_id") or prior.run_id != event.get("_run_id")
+                ):
+                    raise InputAttemptConflictError("Input attempt already committed")
             if merged == committed:
                 return self._snapshot(header, committed)
             if any(event.get("role") == "user" for event in events):
                 _invalidate_workspace_access_request(header["metadata"])
+            # The result and its recovery fence are one atomic source replacement.
+            # A matching call/result link does not settle an unresolved effect.
+            if any("_filesystem_effects" in event for event in events) and validate_execution_links(merged):
+                header["metadata"]["execution_recovery_required"] = True
             header["revision"] += 1
             header["updated_at"] = datetime.now().isoformat()
             return self._write(header, merged)
@@ -1313,6 +1429,11 @@ class SourceSessionStore:
     def invalidate_workspace_access_request(self, key: str) -> bool:
         """Consume any pending decision when canonical user input is accepted."""
         with self._backend.locked_session_files():
+            header_state = self.read_source_header_state(key)
+            if header_state is not None:
+                _, check_header = header_state
+                if not _invalidate_workspace_access_request(deepcopy(check_header["metadata"])):
+                    return False
             header, events = self._read_unlocked(key)
             self._check(header, self._state(header))
             if not _invalidate_workspace_access_request(header["metadata"]):
@@ -1462,6 +1583,8 @@ class SourceSessionStore:
             raise SourceValidationError("Invalid reset timestamp")
         header = deepcopy(snapshot.header)
         events = deepcopy(replacement_events)
+        for event in events:
+            event.pop("_input_attempt", None)
         header["revision"] = snapshot.state.revision + 1
         header["generation"] = snapshot.state.generation + 1
         header["last_archived"] = header["last_consolidated"] = 0
@@ -1511,7 +1634,8 @@ class SourceSessionStore:
             planned_snapshot = self._snapshot(planned_header, planned_events)
             if (
                 planned_snapshot.state != plan.target_state
-                or planned_events != replacement_events
+                or planned_events != [{key: value for key, value in event.items()
+                                      if key != "_input_attempt"} for event in replacement_events]
                 or planned_header.get("updated_at") != plan.updated_at
             ):
                 raise SourceValidationError("Invalid reset plan")
@@ -1564,6 +1688,7 @@ class SourceSessionStore:
         if self._snapshot(target_header, target_events).state != frozen.target_state:
             raise SourceValidationError("Invalid reset plan")
         result = self._write(target_header, target_events)
+        remove_preferences(self._backend, key)
         if owner is not None:
             from nanobot.session.execution_owner import ExecutionOwner
 
@@ -1752,14 +1877,24 @@ class SourceSessionStore:
             and event.get("role") == "user"
             and event.get("content") == record.content
             and event.get("media", []) == list(record.media)
+            and event.get("_child_followup") == (
+                record.child_followup.to_dict() if record.child_followup is not None else None
+            )
+            and event.get("_background_result") == (
+                record.background_result.to_dict()
+                if record.background_result is not None
+                else None
+            )
         )
 
     def discard_pending_followups(
         self,
         key: str,
         owner: ExecutionOwner,
+        *,
+        expected_records: tuple[PendingFollowupRecord, ...] | None = None,
     ) -> tuple[str, ...]:
-        """Explicitly discard pending rows before `/stop` releases the owner."""
+        """Discard all rows or exact observed rows before the owner is released."""
         from nanobot.session.execution_owner import execution_transaction
 
         with execution_transaction(self._backend, key, owner):
@@ -1767,13 +1902,172 @@ class SourceSessionStore:
             records = parse_pending_followup_records(
                 header["metadata"].get(SOURCE_PENDING_FOLLOWUPS_METADATA_KEY, [])
             )
-            if not records:
+            if expected_records is None:
+                selected_ids = {record.identifier for record in records}
+            else:
+                expected_by_id = {record.identifier: record for record in expected_records}
+                if len(expected_by_id) != len(expected_records):
+                    raise SourceValidationError("Duplicate pending follow-up discard identity")
+                stored_by_id = {record.identifier: record for record in records}
+                if any(stored_by_id.get(identifier) != expected
+                       for identifier, expected in expected_by_id.items()):
+                    raise SourceValidationError("Pending follow-up changed before discard")
+                selected_ids = set(expected_by_id)
+            discarded = tuple(
+                record.identifier for record in records if record.identifier in selected_ids
+            )
+            if not discarded:
                 return ()
-            del header["metadata"][SOURCE_PENDING_FOLLOWUPS_METADATA_KEY]
+            remaining = [record for record in records if record.identifier not in selected_ids]
+            if remaining:
+                header["metadata"][SOURCE_PENDING_FOLLOWUPS_METADATA_KEY] = [
+                    record.to_dict() for record in remaining
+                ]
+            else:
+                del header["metadata"][SOURCE_PENDING_FOLLOWUPS_METADATA_KEY]
             header["revision"] += 1
             header["updated_at"] = datetime.now().isoformat()
             self._write(header, events)
-            return tuple(record.identifier for record in records)
+            return discarded
+
+    def read_source_header_state(
+        self, key: str,
+    ) -> tuple[SourceState, dict[str, Any]] | None:
+        """Read validated canonical state and header without scanning settled events."""
+        from nanobot.session.mode_storage import private_file_version
+
+        with self._backend.locked_session_files():
+            path = self._backend.get_session_path(key)
+            proof = self._backend.saved_source_proof(key)
+            if (
+                proof is not None
+                and proof.header is not None
+                and not self._backend.get_runtime_checkpoint_path(key).exists()
+            ):
+                try:
+                    current_version = private_file_version(path.lstat())
+                except FileNotFoundError:
+                    return None
+                if current_version is not None and current_version == proof.version:
+                    return proof.metadata.state, deepcopy(proof.header)
+            try:
+                snapshot = self.load_source_snapshot(key)
+            except FileNotFoundError:
+                return None
+            return snapshot.state, deepcopy(snapshot.header)
+
+    def _try_update_metadata_header_unlocked(
+        self,
+        key: str,
+        updates: dict[str, Any],
+        *,
+        removals: tuple[str, ...] = (),
+    ) -> SourceSnapshot | None:
+        """Update canonical header metadata in O(1) when proof of the file is current."""
+        from nanobot.session.manager import SessionStorageError
+        from nanobot.session.mode_storage import MODE_JSON_LIMIT, private_file_version
+
+        if (
+            type(self) is not SourceSessionStore
+            or "_write" in self.__dict__
+            or "_write_text_atomic" in self._backend.__dict__
+        ):
+            return None
+        proof = self._backend.saved_source_proof(key)
+        if (
+            proof is None
+            or proof.header is None
+            or proof.body_offset <= 0
+            or self._backend.get_runtime_checkpoint_path(key).exists()
+        ):
+            return None
+        path = self._backend.get_session_path(key)
+        flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
+        try:
+            src_fd = os.open(path, flags)
+        except OSError:
+            return None
+        try:
+            current_version = private_file_version(os.fstat(src_fd))
+            if current_version is None or current_version != proof.version:
+                return None
+            header = deepcopy(proof.header)
+            self._check(header, self._state(header))
+            accepted = accepted_metadata_updates(updates, source=True)
+            metadata = header["metadata"]
+            previous_scope = metadata.get("workspace_scope")
+            scope_removed = "workspace_scope" in removals and "workspace_scope" in metadata
+            scope_changed = (
+                "workspace_scope" in accepted
+                and accepted["workspace_scope"] != previous_scope
+            ) or scope_removed
+            metadata.update(accepted)
+            reserved = set(DURABLE_METADATA_KEYS) | set(LEGACY_RECOVERY_KEYS)
+            for name in removals:
+                if name not in reserved:
+                    metadata.pop(name, None)
+            if scope_changed:
+                _invalidate_workspace_access_request(metadata)
+            header["revision"] += 1
+            _validate_source_header(header, expected_key=key, require_source=True)
+            _validate_archive_boundary(header, proof.event_count)
+            canonical_events([header])
+            try:
+                header_line = (
+                    json.dumps(header, ensure_ascii=False, allow_nan=False) + "\n"
+                ).encode("utf-8")
+            except (TypeError, ValueError, UnicodeError):
+                raise SessionStorageError() from None
+            body_size = proof.version.size - proof.body_offset
+            if body_size < 0 or len(header_line) + body_size > MAX_SOURCE_SERIALIZED_BYTES:
+                raise SourceValidationError(
+                    "source exceeds the maximum readable serialized size"
+                )
+            installed = self._backend.replace_header_atomic(
+                path,
+                header_line,
+                src_fd=src_fd,
+                expected_version=proof.version,
+                body_offset=proof.body_offset,
+            )
+        finally:
+            os.close(src_fd)
+        state = self._state(header)
+        if installed is None or len(header_line) - 1 > MODE_JSON_LIMIT:
+            self._backend.forget_saved_source(key)
+        else:
+            try:
+                saved_meta = self.describe_saved_source(
+                    header, event_count=proof.event_count, expected_key=key,
+                )
+            except ValueError:
+                self._backend.forget_saved_source(key)
+            else:
+                self._backend.remember_saved_source(
+                    key,
+                    SavedSourceProof(
+                        installed,
+                        saved_meta,
+                        header=deepcopy(header),
+                        event_count=proof.event_count,
+                        body_offset=len(header_line),
+                    ),
+                )
+                update_event_index_header(
+                    self._backend,
+                    key,
+                    state=state,
+                    old_version=proof.version,
+                    new_version=installed,
+                    new_body_offset=len(header_line),
+                )
+        raw_checkpoint = header["metadata"].get("context_checkpoint")
+        checkpoint: dict[str, Any] | None = (
+            deepcopy(cast(dict[str, Any], raw_checkpoint))
+            if isinstance(raw_checkpoint, dict)
+            else None
+        )
+        return SourceSnapshot(state, deepcopy(header), [], checkpoint)
 
     def update_metadata(
         self,
@@ -1785,6 +2079,9 @@ class SourceSessionStore:
         if isinstance(removals, (str, bytes)) or any(not isinstance(cast(object, name), str) for name in removals):
             raise SourceValidationError("Invalid metadata removals")
         with self._backend.locked_session_files():
+            fast = self._try_update_metadata_header_unlocked(key, updates, removals=removals)
+            if fast is not None:
+                return fast
             header, events = self._read_unlocked(key)
             self._check(header, self._state(header))
             accepted = accepted_metadata_updates(updates, source=True)
@@ -1804,6 +2101,48 @@ class SourceSessionStore:
                 _invalidate_workspace_access_request(metadata)
             header["revision"] += 1
             return self._write(header, events)
+
+    def read_canonical_events_by_ids(
+        self,
+        key: str,
+        event_ids: list[str] | tuple[str, ...],
+        *,
+        expected_source: SourceState,
+    ) -> dict[str, dict[str, Any]]:
+        """Bounded ``os.pread`` lookup of specific canonical events; 0 full-body loads."""
+        with self._backend.locked_session_files():
+            return _read_canonical_events_by_ids(
+                self._backend,
+                key,
+                event_ids,
+                expected_source=expected_source,
+            )
+
+    def read_next_turn_preferences(self, key: str) -> NextTurnPreferences | None:
+        """Bounded read of the next-turn record; no event or body access."""
+        with self._backend.locked_session_files():
+            return read_preferences(self._backend, key)
+
+    def update_next_turn_preferences(
+        self,
+        key: str,
+        updates: dict[str, Any],
+        *,
+        removals: tuple[str, ...] = (),
+        expected_revision: int | None = None,
+    ) -> NextTurnPreferences | None:
+        """Atomic, fsynced O(1) write; never rewrites header, events or revision."""
+        with self._backend.locked_session_files():
+            return update_preferences(
+                self._backend, key, updates, removals=removals,
+                expected_revision=expected_revision,
+            )
+
+    def consume_next_turn_preferences(
+        self, key: str, consumed: dict[str, Any],
+    ) -> NextTurnPreferences | None:
+        with self._backend.locked_session_files():
+            return consume_preferences(self._backend, key, consumed)
 
     def advance_consolidated(self, key: str, expected: SourceState, end_offset: int, *, owner: ExecutionOwner | None = None) -> SourceSnapshot:
         from nanobot.session.execution_owner import execution_transaction
@@ -1827,10 +2166,14 @@ class SourceSessionStore:
 
     def _delete_unlocked(self, key: str, expected: SourceState, *, owner: ExecutionOwner | None = None) -> None:
         from nanobot.session.legacy_h1 import require_legacy_h1_disposition
+        from nanobot.session.next_turn_preferences import preference_path
 
         header, _events = self._current_unlocked(key, expected)
         require_legacy_h1_disposition(header["metadata"])
+        pref = preference_path(self._backend, key)
         self._backend.get_session_path(key).unlink()
         from nanobot.session.manager import JsonlSessionStore
 
         JsonlSessionStore.settle_source_deletion(owner, lambda: self._backend)
+        pref.unlink(missing_ok=True)
+        delete_event_index(self._backend, key)

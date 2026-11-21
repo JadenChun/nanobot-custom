@@ -7,9 +7,10 @@ import math
 import re
 import secrets
 from dataclasses import dataclass
-from typing import Any, TypedDict, cast
+from typing import TYPE_CHECKING, Any, TypedDict, cast
 
-from nanobot.session.manager import SessionManager
+if TYPE_CHECKING:
+    from nanobot.session.manager import SessionManager
 
 SESSION_HANDLE_METADATA_KEY = "session_handle"
 
@@ -90,6 +91,19 @@ def session_handle_for_name(session_key: str, name: str) -> SessionHandle:
     )
 
 
+def stored_session_handle_name(metadata: object) -> str | None:
+    """Read only a usable name from persisted metadata or its sidebar projection."""
+    if not isinstance(metadata, dict):
+        return None
+    name = cast(dict[object, object], metadata).get(SESSION_HANDLE_METADATA_KEY)
+    if not isinstance(name, str):
+        return None
+    try:
+        return normalize_session_handle(name)
+    except ValueError:
+        return None
+
+
 def _clean_session_key(value: str) -> str:
     key = value.strip()
     if not key or len(key) > _MAX_SESSION_KEY_CHARS:
@@ -128,7 +142,7 @@ def _candidate_indexes(syllable_count: int):
         yield (start + offset * step) % size
 
 
-def _allocate_name(used: set[str]) -> str:
+def allocate_session_handle_name(used: set[str]) -> str:
     for syllable_count in _SYLLABLE_COUNTS:
         for index in _candidate_indexes(syllable_count):
             parts = _name_parts_at(syllable_count, index)
@@ -172,11 +186,7 @@ class SessionHandleResolver:
                     if isinstance(raw_metadata, dict)
                     else {}
                 )
-                raw_name = metadata.get(SESSION_HANDLE_METADATA_KEY)
-                try:
-                    name = normalize_session_handle(raw_name) if isinstance(raw_name, str) else ""
-                except ValueError:
-                    name = ""
+                name = stored_session_handle_name(metadata)
                 if not name or name in used:
                     pending.append(raw_key)
                     continue
@@ -184,7 +194,7 @@ class SessionHandleResolver:
                 used.add(name)
 
             for key in pending:
-                name = _allocate_name(used)
+                name = allocate_session_handle_name(used)
                 if not self._sessions.update_session_metadata(
                     key,
                     {SESSION_HANDLE_METADATA_KEY: name},

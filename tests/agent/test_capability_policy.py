@@ -5,11 +5,13 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from nanobot.agent.capabilities import role_capabilities
 from nanobot.agent.delegation import ForegroundAgentManager
 from nanobot.agent.policy import DelegatedReadOnlyPolicy, RiskyActionPolicy
 from nanobot.agent.tools.agent_browser import AgentBrowserTool
 from nanobot.agent.tools.agent_device import AgentDeviceTool
 from nanobot.agent.tools.filesystem import SearchFilesTool
+from nanobot.agent.tools.registry import ToolRegistry
 from nanobot.agent.tools.social_crawl import SocialCrawlTool
 from nanobot.agent.turn import RunStatus, ToolOutcome, TurnRequest
 from nanobot.context_repo import ResourceAccessPolicy
@@ -58,10 +60,45 @@ def test_role_tool_profiles_are_exact_and_worker_has_no_shell(tmp_path) -> None:
         "list_dir",
         "write_file",
         "edit_file",
+        "explore",
     }
     assert all("exec" not in manager._tools_for_role(role).tool_names for role in (
         "planner", "reviewer", "explorer", "crawler"
     ))
+
+
+def test_child_role_tools_stay_narrowed_except_role_owned_tools(tmp_path) -> None:
+    manager = ForegroundAgentManager(provider=_provider(), workspace=tmp_path)
+
+    assert role_capabilities("crawler").owned_tools == frozenset({"social_crawl"})
+    assert all(
+        not role_capabilities(role).owned_tools
+        for role in ("planner", "reviewer", "explorer", "worker")
+    )
+
+    planner_tools = manager._tools_for_role("planner")
+    read_file = planner_tools.get("read_file")
+    assert read_file is not None
+    parent = ToolRegistry()
+    parent.register(read_file)
+    scoped, _borrowed = manager._scope_child_tools(
+        parent.capture_request_tools(),
+        planner_tools,
+        allowed_names={"read_file", "web_search"},
+        owned_names=role_capabilities("planner").owned_tools,
+        read_only_mcp_names=(),
+    )
+    assert set(scoped.tool_names) == {"read_file"}
+
+    crawler_tools = manager._tools_for_role("crawler")
+    scoped, _borrowed = manager._scope_child_tools(
+        ToolRegistry().capture_request_tools(),
+        crawler_tools,
+        allowed_names={"social_crawl"},
+        owned_names=role_capabilities("crawler").owned_tools,
+        read_only_mcp_names=(),
+    )
+    assert set(scoped.tool_names) == {"social_crawl"}
 
 
 @pytest.mark.asyncio
@@ -177,6 +214,38 @@ async def test_main_policy_requires_approval_for_browser_device_screenshots() ->
 
 
 @pytest.mark.asyncio
+async def test_approval_effect_binding_requires_new_decision_for_different_effect(tmp_path) -> None:
+    policy = RiskyActionPolicy(workspace=tmp_path)
+    first = ToolCallRequest(id="first", name="exec", arguments={"command": "rm -rf old"})
+
+    decision = await policy.evaluate(messages=[], tool_calls=[first])
+    assert decision.stop_reason == "approval_required"
+    assert decision.metadata["effect_id"]
+    assert decision.metadata["approval_id"]
+
+    from nanobot.agent.turn import ApprovalDecision, TurnContext
+    from nanobot.agent.turn_admission import ApprovalAdmission
+
+    admission = ApprovalAdmission()
+    pending = await admission.store(
+        session_key="cli:approval", channel="cli", chat_id="approval", summary="delete old",
+        effect_id=decision.metadata["effect_id"], run_id="blocked",
+    )
+    context = TurnContext(run_id="resume", session_key="cli:approval")
+    snapshot = await admission.snapshot_decision("cli:approval", ApprovalDecision(
+        approval_id=pending.approval_id, decision="approve"))
+    assert await admission.consume(snapshot, context=context) == "affirmative"
+    approved = RiskyActionPolicy(workspace=tmp_path, effect_authority=context.policy.effect_authority)
+    same = await approved.evaluate(messages=[], tool_calls=[first])
+    assert same.action == "allow"
+
+    second = ToolCallRequest(id="second", name="exec", arguments={"command": "rm -rf other"})
+    different = await approved.evaluate(messages=[], tool_calls=[second])
+    assert different.stop_reason == "approval_required"
+    assert different.metadata["approval_id"] != decision.metadata["approval_id"]
+
+
+@pytest.mark.asyncio
 async def test_delegated_unsafe_browser_call_is_blocked_before_tool_execution() -> None:
     provider = _provider()
     provider.chat_with_retry.return_value = LLMResponse(
@@ -277,10 +346,10 @@ def test_main_policy_requires_run_wide_approval_for_device_mutations(tmp_path) -
 def test_browser_device_are_sequential_and_crawler_schema_has_no_click() -> None:
     assert AgentBrowserTool().supports_parallel_calls is False
     assert AgentDeviceTool().supports_parallel_calls is False
-    assert "click" not in SocialCrawlTool.parameters["properties"]["action"]["enum"]
-    assert {"follow_link", "expand", "paginate"} <= set(
-        SocialCrawlTool.parameters["properties"]["action"]["enum"]
-    )
+    enum = SocialCrawlTool.parameters["properties"]["action"]["enum"]
+    assert "click" not in enum
+    assert "expand" not in enum
+    assert {"follow_link", "paginate"} <= set(enum)
 
 
 @pytest.mark.asyncio

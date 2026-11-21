@@ -37,7 +37,11 @@ class NativeNetworkM14DataInstrumentedTest {
         token: String?,
         body: JSONObject? = null,
     ): Pair<Int, JSONObject> {
-        val request = JSONObject().put("operation", operation).put("method", method).put("path", path)
+        val request = JSONObject()
+            .put("operation", operation)
+            .put("method", method)
+            .put("path", path)
+            .put("native", true)
         val headers = JSONObject()
         if (token != null) headers.put("Authorization", "Bearer $token")
         if (headers.length() > 0) request.put("headers", headers)

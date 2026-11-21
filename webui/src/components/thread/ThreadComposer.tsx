@@ -7,6 +7,7 @@ import {
   useState,
   type CSSProperties,
   type KeyboardEvent as ReactKeyboardEvent,
+  type ReactElement,
   type Ref,
 } from "react";
 
@@ -78,6 +79,7 @@ import { useThreadComposerChromeHidden } from "@/components/thread/composerChrom
 import {
   ModelPresetBadge,
   type ModelPresetOption,
+  type ModelReasoningControl,
 } from "@/components/thread/ModelPresetBadge";
 import {
   ComposerUsagePopover,
@@ -93,6 +95,17 @@ import {
   type AttachmentKind,
   type RestoredReadyImage,
 } from "@/hooks/useAttachedImages";
+import {
+  clearComposerDraftsForSession,
+  draftIncarnationReplaced,
+  draftScopeId,
+  loadComposerDraft,
+  NEW_CHAT_DRAFT_KEY,
+  saveComposerDraft,
+  updateComposerDraftSelection,
+  type DraftAttachment,
+  type DraftScope,
+} from "@/lib/composer-drafts";
 import { useClipboardAndDrop } from "@/hooks/useClipboardAndDrop";
 import { useLogoFallback } from "@/hooks/useLogoFallback";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
@@ -101,6 +114,10 @@ import type {
   SendOptions,
   SubmittedTurn,
 } from "@/hooks/useNanobotStream";
+import type {
+  QueuedAttemptBinding,
+  QueuedAttemptOutcome,
+} from "@/lib/nanobot-client";
 import { useVoiceRecorder, type VoiceRecorderErrorKey } from "@/hooks/useVoiceRecorder";
 import { getMobileRuntime } from "@/lib/mobile-runtime";
 import type {
@@ -149,14 +166,6 @@ function formatBytes(n: number): string {
 
 function utf8Bytes(value: string): number {
   return new TextEncoder().encode(value).byteLength;
-}
-
-function isSubmittedTurn(value: unknown): value is SubmittedTurn {
-  return (
-    typeof value === "object"
-    && value !== null
-    && typeof (value as { turnId?: unknown }).turnId === "string"
-  );
 }
 
 function isVoiceShortcutDown(event: KeyboardEvent): boolean {
@@ -213,18 +222,34 @@ interface ThreadComposerProps {
     images?: SendAttachment[],
     options?: SendOptions,
   ) => SubmittedTurn | null | boolean | void | Promise<boolean | void>;
+  onJoinQueuedAttempt?: (
+    binding: QueuedAttemptBinding,
+  ) => Promise<QueuedAttemptOutcome> | null;
+  onConsumeQueuedAttempt?: (binding: QueuedAttemptBinding) => boolean;
   /** A queued send lost its admission and should return to the waiting stack. */
-  admissionRejectedTurn?: { turnId: string } | null;
+  admissionRejectedTurn?: { turnId: string; reason?: string } | null;
   onAdmissionRejectedPromptRestored?: (turnId: string) => void;
   disabled?: boolean;
+  /** The editor and live controls stay usable while a new turn cannot start. */
+  newTurnBlocked?: boolean;
+  steerDisabled?: boolean;
   placeholder?: string;
   inputAriaLabel?: string;
   isStreaming?: boolean;
+  /** The stream owner just observed a natural completion for the selected chat. */
+  queueCompletionTurnId?: string | null;
+  /** Connectivity and admission uncertainty consume, rather than defer, a drain. */
+  automaticQueueSendBlocked?: boolean;
+  /** A server-owned root/child snapshot permits Stop after the root reply. */
+  stopAvailable?: boolean;
+  stopDisabled?: boolean;
+  stopPending?: boolean;
   modelLabel?: string | null;
   modelDetail?: string | null;
   modelPreset?: string | null;
   modelPresets?: ModelPresetOption[];
   onModelPresetChange?: (name: string) => void;
+  modelReasoning?: ModelReasoningControl;
   modelProvider?: string | null;
   modelProviderLabel?: string | null;
   modelNeedsSetup?: boolean;
@@ -232,6 +257,7 @@ interface ThreadComposerProps {
   onModelBadgeClick?: () => void;
   onManageModels?: () => void;
   contextUsage?: ComposerContextUsage | null;
+  hasConfiguredModel?: boolean;
   recentRoundUsage?: readonly ComposerRoundUsage[];
   variant?: "thread" | "hero";
   slashCommands?: SlashCommand[];
@@ -251,6 +277,19 @@ interface ThreadComposerProps {
   workspaces?: WorkspacesPayload | null;
   onRefreshWorkspaces?: () => Promise<void>;
   workspaceScopeDisabled?: boolean;
+  /** Detached working-folder choice for the next turn while one is running. */
+  nextWorkspaceScope?: WorkspaceScopePayload | null;
+  /** A next-turn setting change is awaiting its acknowledgement. */
+  nextTurnSettingsPending?: boolean;
+  /** A next-turn setting change was refused; the previous choice still applies. */
+  nextTurnSettingsError?: string | null;
+  /**
+   * Settle any in-flight next-turn setting before a queued row is admitted.
+   * Rejects when the choice was refused so the row stays ready to retry.
+   */
+  onBeforeNewTurnSend?: () => Promise<void>;
+  /** UNKNOWN input disposition blocks persistent-chat access mutations, not known live controls. */
+  workspaceAccessModeUnknownBlocked?: boolean;
   workspaceError?: string | null;
   onPickWorkspaceFolder?: () => Promise<string | null>;
   onWorkspaceScopeChange?: (scope: WorkspaceScopePayload) => void;
@@ -264,6 +303,14 @@ interface ThreadComposerProps {
   initialDraft?: string | null;
   onInitialDraftConsumed?: () => void;
   pendingQueueKey?: string | null;
+  /** Can identify an editor on a validated route before it has a send owner. */
+  draftKey?: string | null;
+  /** Authenticated gateway/client namespace for device-local drafts. */
+  draftNamespace?: string;
+  /** Session incarnation; a replaced session never inherits an older draft. */
+  draftIncarnation?: string | null;
+  /** Access revoked: discard the draft and never re-save it. */
+  draftRevoked?: boolean;
   transcriptionProvider?: string | null;
   ingressLimits?: WebUIIngressLimits | null;
   quotedContext?: string | null;
@@ -346,10 +393,22 @@ interface SlashPaletteLayout {
 interface QueuedPrompt {
   id: string;
   text: string;
+  submission: QueuedPromptSubmission;
   images?: QueuedPromptImage[];
   quotedContext?: string;
   sessionMentions?: SessionMention[];
 }
+
+type QueuedPromptSubmission =
+  | { version: 1; state: "ready" }
+  | { version: 1; state: "submitted"; binding: QueuedAttemptBinding }
+  | {
+      version: 1;
+      state: "not_admitted";
+      binding: QueuedAttemptBinding;
+      reason: string;
+    }
+  | { version: 1; state: "unknown" };
 
 interface QueuedPromptImage {
   dataUrl: string;
@@ -496,11 +555,50 @@ function normalizeQueuedSessionMentions(value: unknown): SessionMention[] {
   }).slice(0, SESSION_MENTIONS_LIMIT);
 }
 
+function normalizeQueuedAttemptBinding(value: unknown, promptId: string): QueuedAttemptBinding | null {
+  if (!value || typeof value !== "object") return null;
+  const binding = value as Partial<QueuedAttemptBinding>;
+  if (
+    (binding.queueKey !== null && typeof binding.queueKey !== "string")
+    || binding.promptId !== promptId
+    || typeof binding.turnId !== "string"
+    || !binding.turnId.trim()
+  ) return null;
+  return {
+    queueKey: binding.queueKey,
+    promptId,
+    turnId: binding.turnId,
+  };
+}
+
+function normalizeQueuedPromptSubmission(value: unknown, promptId: string): QueuedPromptSubmission {
+  if (!value || typeof value !== "object") return { version: 1, state: "unknown" };
+  const candidate = value as {
+    version?: unknown;
+    state?: unknown;
+    binding?: unknown;
+    reason?: unknown;
+  };
+  if (candidate.version !== 1) return { version: 1, state: "unknown" };
+  if (candidate.state === "ready") return { version: 1, state: "ready" };
+  if (candidate.state === "unknown") return { version: 1, state: "unknown" };
+  if (candidate.state !== "submitted" && candidate.state !== "not_admitted") {
+    return { version: 1, state: "unknown" };
+  }
+  const binding = normalizeQueuedAttemptBinding(candidate.binding, promptId);
+  if (!binding) return { version: 1, state: "unknown" };
+  if (candidate.state === "submitted") return { version: 1, state: "submitted", binding };
+  const reason = typeof candidate.reason === "string" ? candidate.reason.trim().slice(0, 512) : "";
+  return reason
+    ? { version: 1, state: "not_admitted", binding, reason }
+    : { version: 1, state: "unknown" };
+}
+
 function normalizeQueuedPrompt(item: unknown, index: number): QueuedPrompt | null {
   if (!item || typeof item !== "object") return null;
   const record = item as Partial<QueuedPrompt>;
   if (typeof record.text !== "string") return null;
-  const text = record.text.trim().slice(0, QUEUED_PROMPT_MAX_CHARS);
+  const text = record.text.trim();
   const images = Array.isArray(record.images)
     ? record.images.flatMap((image) => {
         if (!image || typeof image !== "object") return [];
@@ -533,6 +631,7 @@ function normalizeQueuedPrompt(item: unknown, index: number): QueuedPrompt | nul
   return {
     id,
     text,
+    submission: normalizeQueuedPromptSubmission(record.submission, id),
     ...(images.length > 0 ? { images } : {}),
     ...(quotedContext ? { quotedContext } : {}),
     ...(sessionMentions.length > 0 ? { sessionMentions } : {}),
@@ -547,36 +646,43 @@ function readQueuedPrompts(storageKey: string): QueuedPrompt[] {
     if (!Array.isArray(parsed)) return [];
     return parsed
       .map((item, index) => normalizeQueuedPrompt(item, index))
-      .filter((item): item is QueuedPrompt => item != null)
-      .slice(0, QUEUED_PROMPTS_LIMIT);
+      .filter((item): item is QueuedPrompt => item != null);
   } catch {
     return [];
   }
 }
 
-function storeQueuedPrompts(storageKey: string, prompts: QueuedPrompt[]): void {
-  if (typeof window === "undefined") return;
+function storeQueuedPrompts(storageKey: string, prompts: QueuedPrompt[]): boolean {
+  if (typeof window === "undefined" || prompts.length > QUEUED_PROMPTS_LIMIT) return false;
   try {
     if (prompts.length === 0) {
       window.localStorage.removeItem(storageKey);
-      return;
+      return window.localStorage.getItem(storageKey) === null;
     }
-    window.localStorage.setItem(
-      storageKey,
-      JSON.stringify(
-        prompts.slice(0, QUEUED_PROMPTS_LIMIT).map((prompt) => ({
-          id: prompt.id,
-          text: prompt.text.slice(0, QUEUED_PROMPT_MAX_CHARS),
-          ...(prompt.images?.length ? { images: prompt.images.slice(0, MAX_ATTACHMENTS_PER_MESSAGE) } : {}),
-          ...(prompt.quotedContext ? { quotedContext: prompt.quotedContext } : {}),
-          ...(prompt.sessionMentions?.length
-            ? { sessionMentions: prompt.sessionMentions.slice(0, SESSION_MENTIONS_LIMIT) }
-            : {}),
-        })),
-      ),
-    );
+    const serialized = JSON.stringify(prompts.map((prompt) => ({
+      id: prompt.id,
+      text: prompt.text,
+      ...(prompt.images?.length ? { images: prompt.images.slice(0, MAX_ATTACHMENTS_PER_MESSAGE) } : {}),
+      ...(prompt.quotedContext ? { quotedContext: prompt.quotedContext } : {}),
+      ...(prompt.sessionMentions?.length
+        ? { sessionMentions: prompt.sessionMentions.slice(0, SESSION_MENTIONS_LIMIT) }
+        : {}),
+      submission: prompt.submission,
+    })));
+    window.localStorage.setItem(storageKey, serialized);
+    const stored = window.localStorage.getItem(storageKey);
+    if (stored !== serialized) return false;
+    const parsed: unknown = JSON.parse(stored);
+    if (!Array.isArray(parsed) || parsed.length !== prompts.length) return false;
+    return parsed.every((item, index) => {
+      if (!item || typeof item !== "object") return false;
+      const candidate = item as { id?: unknown; submission?: unknown };
+      const expected = prompts[index];
+      return candidate.id === expected?.id
+        && JSON.stringify(candidate.submission) === JSON.stringify(expected.submission);
+    });
   } catch {
-    // localStorage persistence is a convenience; the in-memory queue still works.
+    return false;
   }
 }
 
@@ -928,17 +1034,27 @@ function GoalStateStrip({
 
 export function ThreadComposer({
   onSend,
+  onJoinQueuedAttempt,
+  onConsumeQueuedAttempt,
   admissionRejectedTurn = null,
   onAdmissionRejectedPromptRestored,
   disabled,
+  newTurnBlocked = false,
+  steerDisabled = false,
   placeholder,
   inputAriaLabel,
   isStreaming = false,
+  queueCompletionTurnId = null,
+  automaticQueueSendBlocked = false,
+  stopAvailable = false,
+  stopDisabled = false,
+  stopPending = false,
   modelLabel = null,
   modelDetail = null,
   modelPreset = null,
   modelPresets = [],
   onModelPresetChange,
+  modelReasoning,
   modelProvider = null,
   modelProviderLabel = null,
   modelNeedsSetup = false,
@@ -946,6 +1062,7 @@ export function ThreadComposer({
   onModelBadgeClick,
   onManageModels,
   contextUsage = null,
+  hasConfiguredModel = false,
   recentRoundUsage = [],
   variant = "thread",
   slashCommands = [],
@@ -964,6 +1081,11 @@ export function ThreadComposer({
   workspaces = null,
   onRefreshWorkspaces,
   workspaceScopeDisabled = false,
+  nextWorkspaceScope = null,
+  nextTurnSettingsPending = false,
+  nextTurnSettingsError = null,
+  onBeforeNewTurnSend,
+  workspaceAccessModeUnknownBlocked = false,
   workspaceError = null,
   onPickWorkspaceFolder,
   onWorkspaceScopeChange,
@@ -977,6 +1099,10 @@ export function ThreadComposer({
   initialDraft = null,
   onInitialDraftConsumed,
   pendingQueueKey = null,
+  draftKey = pendingQueueKey,
+  draftNamespace = "",
+  draftIncarnation = null,
+  draftRevoked = false,
   transcriptionProvider = null,
   ingressLimits = null,
   quotedContext = null,
@@ -984,7 +1110,10 @@ export function ThreadComposer({
   onQuotedContextChange,
 }: ThreadComposerProps) {
   const { t } = useTranslation();
-  const mobileComposer = isMobileRuntimeActive();
+  const hasStopAction = isStreaming || stopAvailable;
+  const mobileRuntimeActive = isMobileRuntimeActive();
+  const isNarrowViewport = useMediaQuery("(max-width: 639px)");
+  const mobileComposer = mobileRuntimeActive || isNarrowViewport;
   const composerChromeHidden = useThreadComposerChromeHidden();
   const [value, setValue] = useState("");
   const [selectedSessionMentions, setSelectedSessionMentions] = useState<SessionMention[]>([]);
@@ -995,6 +1124,8 @@ export function ThreadComposer({
   } | null>(null);
   const [inlineError, setInlineError] = useState<string | null>(null);
   const [sendPending, setSendPending] = useState(false);
+  const pendingSendRef = useRef<symbol | null>(null);
+  const draftViewVersionRef = useRef(0);
   const [modelSetupAttentionRequest, setModelSetupAttentionRequest] = useState(0);
   const interactionDisabled = !!disabled || sendPending;
   const [voiceErrorFading, setVoiceErrorFading] = useState(false);
@@ -1005,21 +1136,36 @@ export function ThreadComposer({
   const [cursorPosition, setCursorPosition] = useState(0);
   const [recentSlashCommands, setRecentSlashCommands] = useState<string[]>(() => readSlashRecents());
   const [queuedPrompts, setQueuedPrompts] = useState<QueuedPrompt[]>([]);
+  const [queuedEdit, setQueuedEdit] = useState<{ id: string; text: string } | null>(null);
+  const queuedPromptsRef = useRef<QueuedPrompt[]>([]);
+  const [awaitingConfirmationPromptIds, setAwaitingConfirmationPromptIds] = useState<Set<string>>(
+    () => new Set(),
+  );
   const hasTouchPrimaryPointer = useMediaQuery("(hover: none) and (pointer: coarse)");
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const formRef = useRef<HTMLFormElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const chipRefs = useRef(new Map<string, HTMLButtonElement>());
   const queuedPromptCounterRef = useRef(0);
-  // Only the prompt queued by the immediately preceding Enter can use the second-Enter shortcut.
-  const secondEnterPromptIdRef = useRef<string | null>(null);
   const draggedQueuedPromptIdRef = useRef<string | null>(null);
-  const queuedSendSnapshotsRef = useRef(new Map<string, QueuedPrompt>());
   const heldQueuedPromptIdsRef = useRef(new Set<string>());
-  const previousPendingQueueKeyRef = useRef(pendingQueueKey);
-  const wasStreamingRef = useRef(isStreaming);
-  const skipNextQueuedFlushRef = useRef(false);
-  const skipQueuedPromptPersistRef = useRef(false);
+  const awaitingConfirmationPromptIdsRef = useRef(new Set<string>());
+  const queuedSubmissionInProgressRef = useRef(new Set<string>());
+  const queuedAttemptJoinKeysRef = useRef(new Set<string>());
+  const queueViewGenerationRef = useRef(0);
+  const currentPendingQueueKeyRef = useRef(pendingQueueKey);
+  currentPendingQueueKeyRef.current = pendingQueueKey;
+  const previousDraftKeyRef = useRef<string | null | undefined>(undefined);
+  const draftAppliedRef = useRef(false);
+  const draftLiveRef = useRef<{
+    value: string;
+    mentions: SessionMention[];
+    attachments: DraftAttachment[];
+    quote: string | null;
+  }>({ value: "", mentions: [], attachments: [], quote: null });
+  const [reattachNames, setReattachNames] = useState<string[]>([]);
+  const reattachNamesRef = useRef<string[]>([]);
+  const handledQueueCompletionRef = useRef(queueCompletionTurnId);
   const voiceShortcutDownRef = useRef(false);
   const voiceErrorFadeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isHero = variant === "hero";
@@ -1028,47 +1174,147 @@ export function ThreadComposer({
     () => queuedPromptsStorageKey(pendingQueueKey),
     [pendingQueueKey],
   );
+  const setPromptAwaitingConfirmation = useCallback((
+    promptId: string,
+    queueKey: string | null,
+    awaiting: boolean,
+  ) => {
+    if (currentPendingQueueKeyRef.current !== queueKey) return;
+    if (awaiting) awaitingConfirmationPromptIdsRef.current.add(promptId);
+    else awaitingConfirmationPromptIdsRef.current.delete(promptId);
+    setAwaitingConfirmationPromptIds((current) => {
+      if (current.has(promptId) === awaiting) return current;
+      const next = new Set(current);
+      if (awaiting) next.add(promptId);
+      else next.delete(promptId);
+      return next;
+    });
+  }, []);
+
+  const commitQueuedPrompts = useCallback((next: QueuedPrompt[]): boolean => {
+    if (next === queuedPromptsRef.current) return true;
+    if (queuedPromptStorageKey && !storeQueuedPrompts(queuedPromptStorageKey, next)) {
+      setInlineError(t("thread.composer.queuePersistenceError", {
+        defaultValue: "Queued messages could not be saved safely. Try again before sending.",
+      }));
+      return false;
+    }
+    queuedPromptsRef.current = next;
+    setQueuedPrompts(next);
+    return true;
+  }, [queuedPromptStorageKey, t]);
+
+  const applyQueuedAttemptOutcome = useCallback((
+    binding: QueuedAttemptBinding,
+    outcome: QueuedAttemptOutcome,
+  ) => {
+    if (currentPendingQueueKeyRef.current !== binding.queueKey) return;
+    const current = queuedPromptsRef.current;
+    const promptIndex = current.findIndex((prompt) => (
+      prompt.id === binding.promptId
+      && prompt.submission.state === "submitted"
+      && prompt.submission.binding.queueKey === binding.queueKey
+      && prompt.submission.binding.promptId === binding.promptId
+      && prompt.submission.binding.turnId === binding.turnId
+    ));
+    if (promptIndex < 0) return;
+    const prompt = current[promptIndex];
+    if (!prompt) return;
+    const next = outcome.kind === "admitted"
+      ? current.filter((item) => item.id !== binding.promptId)
+      : current.map((item, index) => index === promptIndex
+          ? {
+              ...item,
+              submission: {
+                version: 1 as const,
+                state: "not_admitted" as const,
+                binding,
+                reason: outcome.reason,
+              },
+            }
+          : item);
+    if (!commitQueuedPrompts(next)) return;
+    setPromptAwaitingConfirmation(prompt.id, binding.queueKey, false);
+    heldQueuedPromptIdsRef.current.delete(prompt.id);
+    onConsumeQueuedAttempt?.(binding);
+    if (outcome.kind === "not_admitted") {
+      onAdmissionRejectedPromptRestored?.(binding.turnId);
+    }
+  }, [
+    commitQueuedPrompts,
+    onAdmissionRejectedPromptRestored,
+    onConsumeQueuedAttempt,
+    setPromptAwaitingConfirmation,
+  ]);
+
+  const observeQueuedAttempt = useCallback((binding: QueuedAttemptBinding) => {
+    if (!onJoinQueuedAttempt) return;
+    const joinKey = JSON.stringify(binding);
+    if (queuedAttemptJoinKeysRef.current.has(joinKey)) return;
+    const joined = onJoinQueuedAttempt(binding);
+    if (!joined) return;
+    queuedAttemptJoinKeysRef.current.add(joinKey);
+    const generation = queueViewGenerationRef.current;
+    void joined.then((outcome) => {
+      if (queueViewGenerationRef.current !== generation) return;
+      applyQueuedAttemptOutcome(binding, outcome);
+    }).catch(() => {
+      // Lost observation remains held; only an exact owner outcome can unlock it.
+    });
+  }, [applyQueuedAttemptOutcome, onJoinQueuedAttempt]);
+
+  useEffect(() => {
+    const generation = ++queueViewGenerationRef.current;
+    heldQueuedPromptIdsRef.current.clear();
+    awaitingConfirmationPromptIdsRef.current.clear();
+    queuedSubmissionInProgressRef.current.clear();
+    queuedAttemptJoinKeysRef.current.clear();
+    const restored = queuedPromptStorageKey ? readQueuedPrompts(queuedPromptStorageKey) : [];
+    queuedPromptsRef.current = restored;
+    setQueuedPrompts(restored);
+    const awaiting = new Set<string>();
+    for (const prompt of restored) {
+      if (prompt.submission.state === "submitted" || prompt.submission.state === "unknown") {
+        awaiting.add(prompt.id);
+        heldQueuedPromptIdsRef.current.add(prompt.id);
+      }
+    }
+    awaitingConfirmationPromptIdsRef.current = awaiting;
+    setAwaitingConfirmationPromptIds(awaiting);
+    return () => {
+      if (queueViewGenerationRef.current === generation) queueViewGenerationRef.current += 1;
+    };
+  }, [pendingQueueKey, queuedPromptStorageKey]);
+
+  useEffect(() => {
+    for (const prompt of queuedPrompts) {
+      if (prompt.submission.state === "submitted") {
+        observeQueuedAttempt(prompt.submission.binding);
+      }
+    }
+  }, [observeQueuedAttempt, queuedPrompts]);
+
+  useEffect(() => {
+    const rejectedTurnId = admissionRejectedTurn?.turnId;
+    const reason = admissionRejectedTurn?.reason?.trim();
+    if (!rejectedTurnId || !reason) return;
+    const prompt = queuedPromptsRef.current.find((item) => (
+      item.submission.state === "submitted"
+      && item.submission.binding.turnId === rejectedTurnId
+    ));
+    if (!prompt || prompt.submission.state !== "submitted") return;
+    applyQueuedAttemptOutcome(prompt.submission.binding, { kind: "not_admitted", reason });
+  }, [admissionRejectedTurn?.reason, admissionRejectedTurn?.turnId, applyQueuedAttemptOutcome]);
+
   const projectPickerAvailable =
     !!workspaceDefaultScope
     && !!onWorkspaceScopeChange;
   const showWorkspacePicker = projectPickerAvailable && !workspaceControlsHidden;
 
-  useEffect(() => {
-    secondEnterPromptIdRef.current = null;
-    skipQueuedPromptPersistRef.current = true;
-    heldQueuedPromptIdsRef.current.clear();
-    queuedSendSnapshotsRef.current.clear();
-    setQueuedPrompts(queuedPromptStorageKey ? readQueuedPrompts(queuedPromptStorageKey) : []);
-  }, [pendingQueueKey, queuedPromptStorageKey]);
-
-  useEffect(() => {
-    if (!queuedPromptStorageKey) return;
-    if (skipQueuedPromptPersistRef.current) {
-      skipQueuedPromptPersistRef.current = false;
-      return;
-    }
-    storeQueuedPrompts(queuedPromptStorageKey, queuedPrompts);
-  }, [queuedPromptStorageKey, queuedPrompts]);
-
-  useEffect(() => {
-    const rejectedTurnId = admissionRejectedTurn?.turnId;
-    if (!rejectedTurnId) return;
-    const prompt = queuedSendSnapshotsRef.current.get(rejectedTurnId);
-    if (!prompt) return;
-    queuedSendSnapshotsRef.current.delete(rejectedTurnId);
-    // A busy target or replaced steering turn cannot accept this prompt yet.
-    // Keep its full settings in the waiting stack and only retry on an
-    // explicit user action, never on the next idle transition.
-    heldQueuedPromptIdsRef.current.add(prompt.id);
-    setQueuedPrompts((items) => (
-      items.some((item) => item.id === prompt.id) ? items : [...items, prompt]
-    ));
-    onAdmissionRejectedPromptRestored?.(rejectedTurnId);
-  }, [admissionRejectedTurn?.turnId, onAdmissionRejectedPromptRestored]);
-
-  const resolvedPlaceholder = isStreaming
-    ? t("thread.composer.placeholderStreaming")
-    : placeholder ?? t("thread.composer.placeholderThread");
+  // The transcript's activity fold owns the "still working" signal. The
+  // composer keeps its normal placeholder and shows the stop control instead,
+  // so one state is never announced twice.
+  const resolvedPlaceholder = placeholder ?? t("thread.composer.placeholderThread");
 
   const maxAttachments = ingressLimits?.attachments.max_count
     ?? MAX_ATTACHMENTS_PER_MESSAGE;
@@ -1106,7 +1352,6 @@ export function ThreadComposer({
   const addFiles = useCallback(
     (files: File[]) => {
       if (interactionDisabled || files.length === 0) return;
-      secondEnterPromptIdRef.current = null;
       const { rejected } = enqueue(files);
       if (rejected.length > 0) {
         setInlineError(formatRejection(rejected[0].reason));
@@ -1120,9 +1365,10 @@ export function ThreadComposer({
   const mobileTransport = getMobileRuntime()?.transport;
   const pickCamera = useCallback(async () => {
     if (!mobileTransport?.pickCamera) return;
+    const draftViewVersion = draftViewVersionRef.current;
     try {
       const picked = await mobileTransport.pickCamera();
-      if (!picked) return;
+      if (!picked || draftViewVersionRef.current !== draftViewVersion) return;
       const binary = atob(picked.dataBase64);
       const bytes = new Uint8Array(binary.length);
       for (let index = 0; index < binary.length; index += 1) {
@@ -1130,7 +1376,9 @@ export function ThreadComposer({
       }
       addFiles([new File([bytes], picked.name, { type: picked.mediaType })]);
     } catch (error) {
-      setInlineError(error instanceof Error ? error.message : "Camera capture failed");
+      if (draftViewVersionRef.current === draftViewVersion) {
+        setInlineError(error instanceof Error ? error.message : "Camera capture failed");
+      }
     }
   }, [addFiles, mobileTransport]);
 
@@ -1143,15 +1391,32 @@ export function ThreadComposer({
     onDrop,
   } = useClipboardAndDrop(addFiles);
 
+  const autoFocusScopeRef = useRef<string | null>(null);
+  const autoFocusKey = `${draftNamespace}\u0000${draftKey ?? NEW_CHAT_DRAFT_KEY}`;
   useEffect(() => {
     if (interactionDisabled || hasTouchPrimaryPointer || (workspaceError && showWorkspacePicker)) {
       return;
     }
+    if (autoFocusScopeRef.current === autoFocusKey) return;
+    autoFocusScopeRef.current = autoFocusKey;
+    const existingDraft = loadComposerDraft({
+      namespace: draftNamespace,
+      key: draftKey ?? NEW_CHAT_DRAFT_KEY,
+      incarnation: draftIncarnation,
+      persist: false,
+    });
+    if (existingDraft && !existingDraft.focused) return;
     const el = textareaRef.current;
     if (!el) return;
-    const id = requestAnimationFrame(() => el.focus());
+    const id = requestAnimationFrame(() => {
+      const active = document.activeElement;
+      if (active && active !== document.body && active !== document.documentElement && active !== el) {
+        return;
+      }
+      el.focus();
+    });
     return () => cancelAnimationFrame(id);
-  }, [hasTouchPrimaryPointer, interactionDisabled, showWorkspacePicker, workspaceError]);
+  }, [autoFocusKey, draftIncarnation, draftKey, draftNamespace, hasTouchPrimaryPointer, interactionDisabled, showWorkspacePicker, workspaceError]);
 
   useEffect(() => {
     if (!focusRequest || interactionDisabled) return;
@@ -1175,6 +1440,7 @@ export function ThreadComposer({
   const hasComposerContent = value.trim().length > 0 || readyImages.length > 0;
   const canSend =
     !interactionDisabled
+    && !newTurnBlocked
     && !workspaceFullRetiring
     && !modelNeedsSetup
     && !encoding
@@ -1214,14 +1480,14 @@ export function ThreadComposer({
   }, [cursorPosition, interactionDisabled, slashMenuDismissed, value]);
 
   const visibleSlashCommands = useMemo(() => {
-    if (!(isStreaming && onStop)) return slashCommands;
+    if (!(hasStopAction && onStop)) return slashCommands;
     const stopCommand = slashCommands.find((command) => command.command === "/stop");
     if (!stopCommand) return slashCommands;
     return [
       stopCommand,
       ...slashCommands.filter((command) => command.command !== "/stop"),
     ];
-  }, [isStreaming, onStop, slashCommands]);
+  }, [hasStopAction, onStop, slashCommands]);
 
   const filteredSlashCommands = useMemo<SlashPaletteCommand[]>(() => {
     if (skillQuery !== null) {
@@ -1269,7 +1535,7 @@ export function ThreadComposer({
           slashQuery === ""
           && (
             command.command === "/restart"
-            || (command.command === "/stop" && !(isStreaming && onStop))
+            || (command.command === "/stop" && !(hasStopAction && onStop))
           )
         ) {
           return false;
@@ -1305,7 +1571,7 @@ export function ThreadComposer({
           detail = goalState?.active
             ? t("thread.composer.slash.details.goalActive")
             : t("thread.composer.slash.details.goalReady");
-        } else if (command.command === "/stop" && isStreaming) {
+        } else if (command.command === "/stop" && hasStopAction) {
           detail = t("thread.composer.slash.details.stopRunning");
         } else if (command.command === "/history") {
           detail = t("thread.composer.slash.details.history");
@@ -1318,7 +1584,7 @@ export function ThreadComposer({
         };
       })
       .sort((a, b) => {
-        if (isStreaming) {
+        if (hasStopAction) {
           if (a.command === "/stop") return -1;
           if (b.command === "/stop") return 1;
         }
@@ -1335,7 +1601,7 @@ export function ThreadComposer({
 
     return withDetails
       .slice(0, 8);
-  }, [goalState?.active, isStreaming, modelLabel, recentSlashCommands, skills, skillQuery, slashQuery, t, visibleSlashCommands]);
+  }, [goalState?.active, hasStopAction, modelLabel, recentSlashCommands, skills, skillQuery, slashQuery, t, visibleSlashCommands]);
 
   const showSlashMenu = filteredSlashCommands.length > 0;
   const cliAppMention = useMemo<CliAppMentionQuery | null>(() => {
@@ -1579,25 +1845,163 @@ export function ThreadComposer({
     });
   }, []);
 
-  // Runs before paint so switching sessions never flashes stale draft text.
+  const draftScope = useMemo<DraftScope>(() => ({
+    namespace: draftNamespace,
+    key: draftKey ?? NEW_CHAT_DRAFT_KEY,
+    incarnation: draftIncarnation,
+    persist: !!draftKey && !!pendingQueueKey,
+  }), [draftIncarnation, draftKey, draftNamespace, pendingQueueKey]);
+  const draftScopeRef = useRef(draftScope);
+  draftScopeRef.current = draftScope;
+  const knownIncarnationRef = useRef<string | null>(null);
+  const draftRevokedRef = useRef(draftRevoked);
+  draftRevokedRef.current = draftRevoked;
+  const draftScopeId_ = draftScopeId(draftScope);
+  const previousDraftScopeRef = useRef<DraftScope | null>(null);
+  draftLiveRef.current = {
+    value,
+    mentions: selectedSessionMentions,
+    attachments: readyImages.map((img) => ({
+      dataUrl: img.dataUrl,
+      name: img.file.name,
+      kind: img.kind,
+    })),
+    quote: normalizedQuotedContext,
+  };
+
+  // Runs before paint so switching sessions never flashes stale draft text:
+  // the leaving chat's draft (with caret/focus) is saved, the entering
+  // chat's draft is restored.
   useLayoutEffect(() => {
-    if (previousPendingQueueKeyRef.current === pendingQueueKey) return;
-    previousPendingQueueKeyRef.current = pendingQueueKey;
-    secondEnterPromptIdRef.current = null;
-    setValue("");
-    setSelectedSessionMentions([]);
+    const previousScope = previousDraftScopeRef.current;
+    const first = previousScope === null;
+    if (!first && draftScopeId(previousScope) === draftScopeId_) {
+      previousDraftScopeRef.current = draftScope;
+      return;
+    }
+    const el = textareaRef.current;
+    if (previousScope && !draftRevokedRef.current) {
+      const live = draftLiveRef.current;
+      saveComposerDraft(previousScope, {
+        text: live.value,
+        quotedContext: live.quote,
+        mentions: live.mentions,
+        attachments: live.attachments,
+        reattachNames: reattachNamesRef.current,
+        selection: el ? { start: el.selectionStart, end: el.selectionEnd } : null,
+        focused: !!el && document.activeElement === el,
+      });
+    }
+    previousDraftScopeRef.current = draftScope;
+    previousDraftKeyRef.current = draftKey;
+    draftAppliedRef.current = true;
+    const draft = loadComposerDraft(draftScope);
+    knownIncarnationRef.current = draftScope.incarnation ?? draft?.incarnation ?? null;
+    if (first && !draft) return;
+    const restored = draft?.text ?? "";
+    setQueuedEdit(null);
+    setValue(restored);
+    setSelectedSessionMentions(normalizeQueuedSessionMentions(draft?.mentions ?? []));
     setInlineError(null);
     setSlashMenuDismissed(false);
     setCliAppMenuDismissed(false);
-    setCursorPosition(0);
+    const caret = draft?.selection
+      ? {
+        start: Math.min(draft.selection.start, restored.length),
+        end: Math.min(draft.selection.end, restored.length),
+      }
+      : { start: restored.length, end: restored.length };
+    setCursorPosition(caret.end);
     clear();
+    if (draft?.attachments.length) restoreReadyImages(draft.attachments);
+    reattachNamesRef.current = draft?.reattachNames ?? [];
+    setReattachNames(reattachNamesRef.current);
+    onQuotedContextChange?.(draft?.quotedContext ?? null);
+    const scopeId = draftScopeId_;
     requestAnimationFrame(() => {
-      const el = textareaRef.current;
-      if (!el) return;
-      el.style.height = "auto";
-      el.style.height = `${Math.min(el.scrollHeight, 260)}px`;
+      const target = textareaRef.current;
+      if (!target || draftScopeId(draftScopeRef.current) !== scopeId) return;
+      target.style.height = "auto";
+      target.style.height = `${Math.min(target.scrollHeight, 260)}px`;
+      if (!draft) return;
+      try { target.setSelectionRange(caret.start, caret.end); } catch { /* detached */ }
+      // Restore focus only where the user left it, and never pop a soft keyboard.
+      if (draft.focused && !hasTouchPrimaryPointer && document.activeElement !== target) {
+        target.focus({ preventScroll: true });
+      }
     });
-  }, [clear, pendingQueueKey]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draftScope, draftScopeId_]);
+
+  // A different incarnation of the same session key is a replacement/reset:
+  // the draft and attachment references belong to the old one.
+  useEffect(() => {
+    if (!draftIncarnation) return;
+    const known = knownIncarnationRef.current;
+    const replaced =
+      (!!known && known !== draftIncarnation)
+      || draftIncarnationReplaced(draftScopeRef.current, draftIncarnation);
+    knownIncarnationRef.current = draftIncarnation;
+    if (!replaced) return;
+    clearComposerDraftsForSession(draftScopeRef.current.namespace, draftScopeRef.current.key);
+    reattachNamesRef.current = [];
+    setReattachNames([]);
+    setValue("");
+    setSelectedSessionMentions([]);
+    clear();
+    onQuotedContextChange?.(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draftIncarnation]);
+
+  useEffect(() => {
+    if (!draftRevoked) return;
+    clearComposerDraftsForSession(draftScopeRef.current.namespace, draftScopeRef.current.key);
+    reattachNamesRef.current = [];
+    setReattachNames([]);
+    setValue("");
+    setSelectedSessionMentions([]);
+    clear();
+    onQuotedContextChange?.(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draftRevoked]);
+
+  // Persist the live draft (memory immediately, localStorage when persistent)
+  // for the state that belongs to the active scope. Skip the pass in which a
+  // switch just applied but state still belongs to the previous chat.
+  useEffect(() => {
+    if (draftAppliedRef.current) {
+      draftAppliedRef.current = false;
+      return;
+    }
+    if (draftRevokedRef.current) return;
+    const live = draftLiveRef.current;
+    const el = textareaRef.current;
+    saveComposerDraft(draftScopeRef.current, {
+      text: live.value,
+      quotedContext: live.quote,
+      mentions: live.mentions,
+      attachments: live.attachments,
+      reattachNames,
+      selection: el ? { start: el.selectionStart, end: el.selectionEnd } : null,
+      focused: !!el && document.activeElement === el,
+    });
+  }, [
+    draftIncarnation,
+    draftScopeId_,
+    normalizedQuotedContext,
+    readyImages,
+    reattachNames,
+    selectedSessionMentions,
+    value,
+  ]);
+  useLayoutEffect(() => {
+    setSendPending(false);
+    return () => {
+      pendingSendRef.current = null;
+      draftViewVersionRef.current += 1;
+      voiceShortcutDownRef.current = false;
+    };
+  }, [draftKey]);
 
   useLayoutEffect(() => {
     if (!initialDraft) return;
@@ -1615,7 +2019,6 @@ export function ThreadComposer({
   const appendTranscription = useCallback((text: string) => {
     const transcript = text.trim();
     if (!transcript) return;
-    secondEnterPromptIdRef.current = null;
     setValue((current) => {
       if (!current.trim()) return transcript;
       const separator = /[\s\n]$/.test(current) ? "" : " ";
@@ -1639,7 +2042,9 @@ export function ThreadComposer({
   const setVoiceError = useCallback((key: VoiceRecorderErrorKey) => {
     clearVoiceErrorTimers();
     setVoiceErrorFading(false);
-    setInlineError(t(`thread.composer.voiceErrors.${key}`));
+    const isNative = mobileRuntimeActive || typeof window.__TAURI_INTERNALS__ !== "undefined";
+    const messageKey = key === "permission" && isNative ? "nativePermission" : key;
+    setInlineError(t(`thread.composer.voiceErrors.${messageKey}`));
     voiceErrorFadeTimerRef.current = setTimeout(() => {
       setVoiceErrorFading(true);
       voiceErrorFadeTimerRef.current = setTimeout(() => {
@@ -1648,9 +2053,10 @@ export function ThreadComposer({
         voiceErrorFadeTimerRef.current = null;
       }, VOICE_ERROR_FADE_MS);
     }, VOICE_ERROR_VISIBLE_MS);
-  }, [clearVoiceErrorTimers, t]);
+  }, [clearVoiceErrorTimers, mobileRuntimeActive, t]);
   const voiceRecorder = useVoiceRecorder({
     disabled: interactionDisabled,
+    draftKey,
     onClearError: clearInlineError,
     onError: setVoiceError,
     onTranscript: appendTranscription,
@@ -1658,7 +2064,7 @@ export function ThreadComposer({
     wantsWav: transcriptionProvider === "xiaomi_mimo",
   });
 
-  useEffect(() => () => clearVoiceErrorTimers(), [clearVoiceErrorTimers]);
+  useEffect(() => () => clearVoiceErrorTimers(), [clearVoiceErrorTimers, draftKey]);
 
   useEffect(() => {
     if (!onTranscribeAudio) return;
@@ -1666,7 +2072,6 @@ export function ThreadComposer({
     function onKeyDown(event: KeyboardEvent): void {
       if (!isVoiceShortcutDown(event) || event.repeat || voiceShortcutDownRef.current) return;
       event.preventDefault();
-      secondEnterPromptIdRef.current = null;
       voiceShortcutDownRef.current = true;
       voiceRecorder.beginShortcutHold();
     }
@@ -1694,10 +2099,17 @@ export function ThreadComposer({
     };
   }, [onTranscribeAudio, voiceRecorder.beginShortcutHold, voiceRecorder.endShortcutHold]);
 
+  const handleStop = useCallback(() => {
+    if (disabled || stopDisabled || stopPending || !onStop) return false;
+    handledQueueCompletionRef.current = queueCompletionTurnId;
+    onStop();
+    return true;
+  }, [disabled, onStop, queueCompletionTurnId, stopDisabled, stopPending]);
+
   const chooseSlashCommand = useCallback(
     (command: SlashPaletteCommand) => {
-      if (command.command === "/stop" && isStreaming && onStop) {
-        onStop();
+      if (command.command === "/stop" && hasStopAction && onStop) {
+        if (!handleStop()) return;
         setValue("");
         setSlashMenuDismissed(true);
         setCliAppMenuDismissed(false);
@@ -1734,7 +2146,7 @@ export function ThreadComposer({
       setInlineError(null);
       resizeTextarea();
     },
-    [isStreaming, onStop, recentSlashCommands, resizeTextarea, skillQuery, value],
+    [handleStop, hasStopAction, onStop, recentSlashCommands, resizeTextarea, skillQuery, value],
   );
 
   const insertMentionCandidate = useCallback(
@@ -1873,19 +2285,17 @@ export function ThreadComposer({
     const queuedImages = readyImagesToQueuedImages(readyImages);
     queuedPromptCounterRef.current += 1;
     const id = `queued-prompt-${Date.now()}-${queuedPromptCounterRef.current}`;
-    secondEnterPromptIdRef.current = id;
-    setQueuedPrompts((items) => [
-      ...items,
-      {
-        id,
-        text,
-        ...(queuedImages.length > 0 ? { images: queuedImages } : {}),
-        ...(normalizedQuotedContext ? { quotedContext: normalizedQuotedContext } : {}),
-        ...(activeSessionMentions.length > 0
-          ? { sessionMentions: activeSessionMentions }
-          : {}),
-      },
-    ]);
+    const prompt: QueuedPrompt = {
+      id,
+      text,
+      submission: { version: 1, state: "ready" },
+      ...(queuedImages.length > 0 ? { images: queuedImages } : {}),
+      ...(normalizedQuotedContext ? { quotedContext: normalizedQuotedContext } : {}),
+      ...(activeSessionMentions.length > 0
+        ? { sessionMentions: activeSessionMentions }
+        : {}),
+    };
+    if (!commitQueuedPrompts([...queuedPromptsRef.current, prompt])) return;
     clear();
     clearComposerText();
     onQuotedContextChange?.(null);
@@ -1894,6 +2304,7 @@ export function ThreadComposer({
     canQueueGuidance,
     clear,
     clearComposerText,
+    commitQueuedPrompts,
     maxTextBytes,
     normalizedQuotedContext,
     onQuotedContextChange,
@@ -1903,25 +2314,43 @@ export function ThreadComposer({
   ]);
 
   const removeQueuedPrompt = useCallback((id: string) => {
-    secondEnterPromptIdRef.current = null;
+    const current = queuedPromptsRef.current;
+    const prompt = current.find((item) => item.id === id);
+    if (!prompt || prompt.submission.state === "submitted" || prompt.submission.state === "unknown") {
+      return;
+    }
+    if (!commitQueuedPrompts(current.filter((item) => item.id !== id))) return;
     heldQueuedPromptIdsRef.current.delete(id);
-    setQueuedPrompts((items) => items.filter((item) => item.id !== id));
     requestAnimationFrame(() => textareaRef.current?.focus());
-  }, []);
+  }, [commitQueuedPrompts]);
 
   const editQueuedPrompt = useCallback((prompt: QueuedPrompt) => {
-    secondEnterPromptIdRef.current = null;
+    const current = queuedPromptsRef.current;
+    const livePrompt = current.find((item) => item.id === prompt.id);
+    if (
+      !livePrompt
+      || livePrompt.submission.state === "submitted"
+      || livePrompt.submission.state === "unknown"
+      || disabled
+    ) return;
+    // With a separate draft, edit only this row in place. Moving the draft
+    // into the queue would silently make it eligible for automatic sending.
+    if (value || images.length > 0 || normalizedQuotedContext || sendPending) {
+      setQueuedEdit({ id: livePrompt.id, text: livePrompt.text });
+      return;
+    }
+    setQueuedEdit(null);
+    if (!commitQueuedPrompts(current.filter((item) => item.id !== prompt.id))) return;
     heldQueuedPromptIdsRef.current.delete(prompt.id);
-    setQueuedPrompts((items) => items.filter((item) => item.id !== prompt.id));
-    setValue(prompt.text);
-    setSelectedSessionMentions(prompt.sessionMentions ?? []);
+    setValue(livePrompt.text);
+    setSelectedSessionMentions(livePrompt.sessionMentions ?? []);
     setInlineError(null);
     setSlashMenuDismissed(false);
     setCliAppMenuDismissed(false);
     setCursorPosition(prompt.text.length);
-    onQuotedContextChange?.(prompt.quotedContext ?? null);
-    if (prompt.images?.length) {
-      restoreReadyImages(prompt.images as RestoredReadyImage[]);
+    onQuotedContextChange?.(livePrompt.quotedContext ?? null);
+    if (livePrompt.images?.length) {
+      restoreReadyImages(livePrompt.images as RestoredReadyImage[]);
     } else {
       clear();
     }
@@ -1930,139 +2359,188 @@ export function ThreadComposer({
       const el = textareaRef.current;
       if (!el) return;
       el.focus();
-      el.setSelectionRange(prompt.text.length, prompt.text.length);
+      el.setSelectionRange(livePrompt.text.length, livePrompt.text.length);
     });
-  }, [clear, onQuotedContextChange, resizeTextarea, restoreReadyImages]);
+  }, [clear, commitQueuedPrompts, disabled, images.length, normalizedQuotedContext,
+    onQuotedContextChange, resizeTextarea, restoreReadyImages, sendPending, value]);
+
+  const saveQueuedEdit = useCallback(() => {
+    if (!queuedEdit || disabled) return;
+    const current = queuedPromptsRef.current;
+    const prompt = current.find((item) => item.id === queuedEdit.id);
+    if (!prompt || (prompt.submission.state !== "ready" && prompt.submission.state !== "not_admitted")) return;
+    const text = queuedEdit.text.trim();
+    if (!text && !prompt.images?.length) return;
+    if (utf8Bytes(formatQuotedUserMessage(text, prompt.quotedContext)) > maxTextBytes) {
+      setInlineError(textTooLargeMessage());
+      return;
+    }
+    if (commitQueuedPrompts(current.map((item) => item === prompt ? { ...item, text } : item))) {
+      setInlineError(null);
+      setQueuedEdit(null);
+    }
+  }, [commitQueuedPrompts, disabled, maxTextBytes, queuedEdit, textTooLargeMessage]);
 
   const moveQueuedPrompt = useCallback((dragId: string, targetId: string) => {
     if (dragId === targetId) return;
-    secondEnterPromptIdRef.current = null;
-    setQueuedPrompts((items) => {
-      const from = items.findIndex((item) => item.id === dragId);
-      const to = items.findIndex((item) => item.id === targetId);
-      if (from === -1 || to === -1) return items;
-      const next = [...items];
-      const [moved] = next.splice(from, 1);
-      next.splice(to, 0, moved);
-      return next;
-    });
-  }, []);
+    const current = queuedPromptsRef.current;
+    const dragPrompt = current.find((item) => item.id === dragId);
+    const targetPrompt = current.find((item) => item.id === targetId);
+    if (!dragPrompt || !targetPrompt) return;
+    if (dragPrompt.submission.state === "submitted" || dragPrompt.submission.state === "unknown") return;
+    if (targetPrompt.submission.state === "submitted" || targetPrompt.submission.state === "unknown") return;
+    const from = current.findIndex((item) => item.id === dragId);
+    const to = current.findIndex((item) => item.id === targetId);
+    if (from < 0 || to < 0) return;
+    const next = [...current];
+    const [moved] = next.splice(from, 1);
+    if (!moved) return;
+    next.splice(to, 0, moved);
+    commitQueuedPrompts(next);
+  }, [commitQueuedPrompts]);
 
-  const rememberQueuedSend = useCallback((submitted: SubmittedTurn, prompt: QueuedPrompt) => {
-    const snapshots = queuedSendSnapshotsRef.current;
-    snapshots.set(submitted.turnId, prompt);
-    while (snapshots.size > 5) {
-      const oldest = snapshots.keys().next().value;
-      if (oldest === undefined) break;
-      snapshots.delete(oldest);
-    }
-  }, []);
+  const prepareQueuedPrompt = useCallback((promptId: string): {
+    prompt: QueuedPrompt;
+    binding: QueuedAttemptBinding;
+  } | null => {
+    const queueKey = currentPendingQueueKeyRef.current;
+    const current = queuedPromptsRef.current;
+    const prompt = current.find((item) => item.id === promptId);
+    if (
+      !prompt
+      || (prompt.submission.state !== "ready" && prompt.submission.state !== "not_admitted")
+    ) return null;
+    const binding: QueuedAttemptBinding = {
+      queueKey,
+      promptId: prompt.id,
+      turnId: crypto.randomUUID(),
+    };
+    const next = current.map((item) => item.id === prompt.id
+      ? {
+          ...item,
+          submission: { version: 1 as const, state: "submitted" as const, binding },
+        }
+      : item);
+    if (!commitQueuedPrompts(next)) return null;
+    const protectedPrompt = next.find((item) => item.id === prompt.id);
+    if (!protectedPrompt) return null;
+    heldQueuedPromptIdsRef.current.add(prompt.id);
+    setPromptAwaitingConfirmation(prompt.id, queueKey, true);
+    return { prompt: protectedPrompt, binding };
+  }, [commitQueuedPrompts, setPromptAwaitingConfirmation]);
 
+  const queuedActionDisabled = interactionDisabled || workspaceFullRetiring
+    || (isStreaming ? steerDisabled || stopPending : modelNeedsSetup || newTurnBlocked);
   const sendQueuedPrompt = useCallback(
     (prompt: QueuedPrompt) => {
-      if (workspaceFullRetiring) return;
-      secondEnterPromptIdRef.current = null;
-      heldQueuedPromptIdsRef.current.delete(prompt.id);
-      const text = prompt.text.trim();
-      const queuedImages = queuedImagesToSendImages(prompt.images);
+      if (
+        queuedActionDisabled
+        || prompt.id === queuedEdit?.id
+        || queuedSubmissionInProgressRef.current.has(prompt.id)
+      ) return;
+      queuedSubmissionInProgressRef.current.add(prompt.id);
+      requestAnimationFrame(() => queuedSubmissionInProgressRef.current.delete(prompt.id));
+      const prepared = prepareQueuedPrompt(prompt.id);
+      if (!prepared) return;
+      const { prompt: protectedPrompt, binding } = prepared;
+      const text = protectedPrompt.text.trim();
+      const queuedImages = queuedImagesToSendImages(protectedPrompt.images);
       if (text || queuedImages?.length) {
-        const options: SendOptions | undefined = (
-          prompt.quotedContext
-          || prompt.sessionMentions?.length
-          || isStreaming
-        )
-          ? {
-              ...(prompt.quotedContext ? { quotedContext: prompt.quotedContext } : {}),
-              ...(prompt.sessionMentions?.length
-                ? { sessionMentions: prompt.sessionMentions }
-                : {}),
-              ...(isStreaming ? { continueActiveTurn: true } : {}),
-            }
-          : undefined;
-        const submitted = onSend(text, queuedImages, options);
-        if (submitted === false || submitted === null) {
-          heldQueuedPromptIdsRef.current.add(prompt.id);
-        } else {
-          setQueuedPrompts((items) => items.filter((item) => item.id !== prompt.id));
-          if (isSubmittedTurn(submitted)) rememberQueuedSend(submitted, prompt);
+        const options: SendOptions = {
+          ...(protectedPrompt.quotedContext
+            ? { quotedContext: protectedPrompt.quotedContext }
+            : {}),
+          ...(protectedPrompt.sessionMentions?.length
+            ? { sessionMentions: protectedPrompt.sessionMentions }
+            : {}),
+          ...(isStreaming ? { continueActiveTurn: true } : {}),
+          queuedAttempt: binding,
+        };
+        try {
+          const submitted = onSend(text, queuedImages, options);
+          if (submitted instanceof Promise) {
+            void submitted.catch(() => {
+              // Generic boolean failures never change the persisted hold.
+            });
+          }
+        } catch {
+          // The protected row stays held when its send owner is unavailable.
+          requestAnimationFrame(() => textareaRef.current?.focus());
+          observeQueuedAttempt(binding);
+          return;
         }
-      } else {
-        setQueuedPrompts((items) => items.filter((item) => item.id !== prompt.id));
+        observeQueuedAttempt(binding);
       }
       requestAnimationFrame(() => textareaRef.current?.focus());
     },
-    [isStreaming, onSend, rememberQueuedSend, workspaceFullRetiring],
+    [
+      isStreaming,
+      onSend,
+      observeQueuedAttempt,
+      prepareQueuedPrompt,
+      queuedActionDisabled,
+      queuedEdit?.id,
+    ],
   );
 
-  const sendNextQueuedPrompt = useCallback(() => {
-    if (workspaceFullRetiring) return;
-    if (queuedPrompts.length === 0) return;
-    const nextPrompt = queuedPrompts.find(
-      (prompt) => prompt.text.trim() && !heldQueuedPromptIdsRef.current.has(prompt.id),
-    );
-    if (!nextPrompt) return;
-    heldQueuedPromptIdsRef.current.delete(nextPrompt.id);
-    const queuedImages = queuedImagesToSendImages(nextPrompt.images);
-    const options: SendOptions | undefined = (
-      nextPrompt.quotedContext
-      || nextPrompt.sessionMentions?.length
-    )
-      ? {
-          ...(nextPrompt.quotedContext ? { quotedContext: nextPrompt.quotedContext } : {}),
-          ...(nextPrompt.sessionMentions?.length
-            ? { sessionMentions: nextPrompt.sessionMentions }
-            : {}),
-        }
-      : undefined;
-    let submitted: SubmittedTurn | null | boolean | void | Promise<boolean | void>;
-    if (queuedImages?.length && options) {
-      submitted = onSend(nextPrompt.text.trim(), queuedImages, options);
-    } else if (queuedImages?.length) {
-      submitted = onSend(nextPrompt.text.trim(), queuedImages);
-    } else if (options) {
-      submitted = onSend(nextPrompt.text.trim(), undefined, options);
-    } else {
-      submitted = onSend(nextPrompt.text.trim());
+  /**
+   * Admit one queued row only after the next-turn setting acknowledgement.
+   *
+   * A refused choice keeps the row ready and the draft intact; it never sends
+   * under the previous folder/model/mode.
+   */
+  const sendQueuedPromptAfterSettings = useCallback((
+    prompt: QueuedPrompt,
+  ): Promise<void> => {
+    if (!onBeforeNewTurnSend || isStreaming) {
+      sendQueuedPrompt(prompt);
+      return Promise.resolve();
     }
-    if (submitted === false || submitted === null) {
-      heldQueuedPromptIdsRef.current.add(nextPrompt.id);
-    } else {
-      setQueuedPrompts((items) => items.filter((item) => item.id !== nextPrompt.id));
-      if (isSubmittedTurn(submitted)) rememberQueuedSend(submitted, nextPrompt);
-    }
-    requestAnimationFrame(() => textareaRef.current?.focus());
-  }, [onSend, queuedPrompts, rememberQueuedSend, workspaceFullRetiring]);
+    return onBeforeNewTurnSend().then(() => {
+      sendQueuedPrompt(prompt);
+    }).catch(() => {
+      // The owner already surfaced the refusal; the row stays retryable.
+    });
+  }, [isStreaming, onBeforeNewTurnSend, sendQueuedPrompt]);
 
   useEffect(() => {
-    const wasStreaming = wasStreamingRef.current;
-    wasStreamingRef.current = isStreaming;
-    if (!isStreaming) secondEnterPromptIdRef.current = null;
-    if (!wasStreaming || isStreaming || queuedPrompts.length === 0 || workspaceFullRetiring) return;
-    if (skipNextQueuedFlushRef.current) {
-      skipNextQueuedFlushRef.current = false;
+    if (!queueCompletionTurnId || handledQueueCompletionRef.current === queueCompletionTurnId) return;
+    const head = queuedPromptsRef.current[0];
+    const eligible = head?.submission.state === "ready" && head.id !== queuedEdit?.id
+      && !isStreaming && !automaticQueueSendBlocked && !interactionDisabled
+      && !workspaceFullRetiring && !modelNeedsSetup && !stopPending;
+    // A setting acknowledgement can make this exact natural completion
+    // eligible later. Reconnect, Stop, or an uncertain head never do.
+    if (eligible && newTurnBlocked) return;
+    handledQueueCompletionRef.current = queueCompletionTurnId;
+    if (eligible) void sendQueuedPromptAfterSettings(head);
+  }, [automaticQueueSendBlocked, interactionDisabled, isStreaming, modelNeedsSetup, newTurnBlocked,
+    queueCompletionTurnId, queuedEdit?.id, sendQueuedPromptAfterSettings, stopPending,
+    workspaceFullRetiring]);
+
+  const submit = useCallback((steer = false) => {
+    const content = value.trim();
+    if (
+      !steer
+      && !disabled
+      && hasStopAction
+      && onStop
+      && content.toLowerCase() === "/stop"
+    ) {
+      if (!handleStop()) return;
+      // Only the typed command was consumed. Keep staged attachments and
+      // quoted context, as well as unrelated queued prompts.
+      clearComposerText();
       return;
     }
-    sendNextQueuedPrompt();
-  }, [sendNextQueuedPrompt, isStreaming, queuedPrompts.length, workspaceFullRetiring]);
-
-  const handleStop = useCallback(() => {
-    secondEnterPromptIdRef.current = null;
-    if (queuedPrompts.length > 0) {
-      skipNextQueuedFlushRef.current = true;
-    }
-    onStop?.();
-  }, [onStop, queuedPrompts.length]);
-
-  const submit = useCallback(() => {
-    if (modelNeedsSetup) {
+    if (pendingSendRef.current !== null) return;
+    if (modelNeedsSetup && !steer) {
       if (hasComposerContent) {
         setModelSetupAttentionRequest((request) => request + 1);
       }
       return;
     }
-    if (!canSend) return;
-    const trimmed = value.trim();
-    const content = trimmed;
+    if (steer ? !canQueueGuidance || steerDisabled || stopPending : !canSend) return;
     if (utf8Bytes(formatQuotedUserMessage(content, normalizedQuotedContext)) > maxTextBytes) {
       setInlineError(textTooLargeMessage());
       return;
@@ -2105,34 +2583,30 @@ export function ThreadComposer({
     const slashLifecycle = hasPlainTextCommandPayload
       ? slashCommandLifecycle(content, slashCommands)
       : null;
-    if (
-      slashLifecycle === "stop_active_turn"
-      && isStreaming
-      && onStop
-    ) {
-      handleStop();
-      setQueuedPrompts([]);
-      clear();
-      clearComposerText();
-      onQuotedContextChange?.(null);
-      return;
-    }
     const isSlashSideChannel = isSideChannelLifecycle(slashLifecycle);
     const finalizeActiveTurn =
       slashLifecycle === "finalize_active_turn";
+    const sendDraftScope = draftScopeRef.current;
     const finishSend = () => {
+      // The owner took custody of the full payload: drop the stored draft for
+      // the chat that sent it, even if the editor has since unmounted or moved.
+      saveComposerDraft(sendDraftScope, {
+        text: "", quotedContext: null, mentions: [], attachments: [], reattachNames: [],
+        selection: null, focused: false,
+      });
       if (hasTouchPrimaryPointer) textareaRef.current?.blur();
-      setQueuedPrompts([]);
       // Bubble owns the data URL copy; safe to revoke every staged blob
       // preview here without affecting the rendered message.
       clear();
       clearComposerText(!hasTouchPrimaryPointer);
+      reattachNamesRef.current = [];
+      setReattachNames([]);
       onQuotedContextChange?.(null);
     };
     const result = onSend(
       content,
       payload,
-      isSlashSideChannel
+      steer ? { ...options, continueActiveTurn: true } : isSlashSideChannel
         ? {
             ...options,
             sideChannel: true,
@@ -2141,29 +2615,42 @@ export function ThreadComposer({
         : options,
     );
     if (result instanceof Promise) {
+      const attempt = Symbol();
+      pendingSendRef.current = attempt;
       setSendPending(true);
       void result
         .then((accepted) => {
-          if (accepted !== false) finishSend();
+          if (accepted === false || accepted === null) return;
+          saveComposerDraft(sendDraftScope, {
+            text: "", quotedContext: null, mentions: [], attachments: [], reattachNames: [],
+            selection: null, focused: false,
+          });
+          if (pendingSendRef.current === attempt) finishSend();
         })
         .catch((error: unknown) => {
           console.error("Failed to send message", error);
         })
-        .finally(() => setSendPending(false));
+        .finally(() => {
+          if (pendingSendRef.current !== attempt) return;
+          pendingSendRef.current = null;
+          setSendPending(false);
+        });
       return;
     }
-    if (result !== false) finishSend();
+    if (result !== false && result !== null) finishSend();
   }, [
     activeCliMentionApps,
     activeMcpPresetMentions,
     activeSessionMentions,
+    canQueueGuidance,
     canSend,
     clear,
     clearComposerText,
+    disabled,
     hasTouchPrimaryPointer,
     hasComposerContent,
+    hasStopAction,
     handleStop,
-    isStreaming,
     maxTextBytes,
     modelNeedsSetup,
     onSend,
@@ -2172,11 +2659,16 @@ export function ThreadComposer({
     normalizedQuotedContext,
     readyImages,
     slashCommands,
+    steerDisabled,
+    stopPending,
     textTooLargeMessage,
     value,
   ]);
 
   const onKeyDown = (e: ReactKeyboardEvent<HTMLTextAreaElement>) => {
+    // Do not treat an IME commit or a held Enter as an action, including
+    // accepting palette entries.
+    if (e.nativeEvent.isComposing || (e.key === "Enter" && e.repeat)) return;
     if (showCliAppMenu) {
       if (e.key === "ArrowDown") {
         e.preventDefault();
@@ -2225,28 +2717,18 @@ export function ThreadComposer({
         return;
       }
     }
-    if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
+    if (e.key === "Enter" && !e.shiftKey && !e.altKey) {
+      const modifiedEnter = e.metaKey || e.ctrlKey;
+      if (modifiedEnter && !isStreaming) return;
       e.preventDefault();
+      if (modifiedEnter) {
+        submit(true);
+        return;
+      }
       if (canQueueGuidance) {
-        if (!e.repeat) queueGuidancePrompt();
+        queueGuidancePrompt();
         return;
       }
-      const secondEnterPrompt = queuedPrompts.find(
-        (prompt) => prompt.id === secondEnterPromptIdRef.current,
-      );
-      if (
-        isStreaming
-        && value.length === 0
-        && images.length === 0
-        && !e.altKey
-        && !e.ctrlKey
-        && !e.metaKey
-        && secondEnterPrompt
-      ) {
-        if (!e.repeat) sendQueuedPrompt(secondEnterPrompt);
-        return;
-      }
-      secondEnterPromptIdRef.current = null;
       submit();
     }
   };
@@ -2313,7 +2795,14 @@ export function ThreadComposer({
       : voiceRecorder.state === "transcribing"
         ? t("thread.composer.voice.transcribing")
         : t("thread.composer.voice.hint");
-  const showStopButton = isStreaming && !!onStop;
+  // One primary button. While a turn runs it stops an empty composer and sends
+  // (queueing guidance) when there is something to say, matching the reference
+  // harness. Stop stays reachable from the queue rows and the slash command.
+  // A secondary Stop icon is only shown when the main turn is idle yet
+  // background child work can still be stopped.
+  const showGuidanceSendButton = canQueueGuidance;
+  const showStopButton = isStreaming && !!onStop && !hasComposerContent;
+  const showSecondaryStopButton = !isStreaming && stopAvailable && !!onStop;
   const relaxedHeroInput = isHero && images.length === 0 && !isStreaming;
   const inputTextClasses = cn(
     "w-full resize-none bg-transparent",
@@ -2328,12 +2817,16 @@ export function ThreadComposer({
     <WorkspaceProjectPicker
       inline
       isHero={isHero}
+      ownerKey={pendingQueueKey}
       disabled={interactionDisabled || workspaceScopeDisabled || workspaceControlsHidden}
       scope={workspaceScope}
       defaultScope={workspaceDefaultScope}
       controls={workspaceControls}
       workspaces={workspaces}
       error={workspaceError}
+      nextTurnScope={nextWorkspaceScope}
+      nextTurnPending={nextTurnSettingsPending}
+      turnActive={isStreaming}
       onPickFolder={onPickWorkspaceFolder}
       onRefreshWorkspaces={onRefreshWorkspaces}
       onChange={onWorkspaceScopeChange}
@@ -2342,12 +2835,16 @@ export function ThreadComposer({
   const projectPickerLine = (
     <WorkspaceProjectPicker
       line
+      ownerKey={pendingQueueKey}
       disabled={interactionDisabled || workspaceScopeDisabled || workspaceControlsHidden}
       scope={workspaceScope}
       defaultScope={workspaceDefaultScope}
       controls={workspaceControls}
       workspaces={workspaces}
       error={workspaceError}
+      nextTurnScope={nextWorkspaceScope}
+      nextTurnPending={nextTurnSettingsPending}
+      turnActive={isStreaming}
       onPickFolder={onPickWorkspaceFolder}
       onRefreshWorkspaces={onRefreshWorkspaces}
       onChange={onWorkspaceScopeChange}
@@ -2357,7 +2854,9 @@ export function ThreadComposer({
     && !voiceRecorder.isRecording
     && !workspaceControlsHidden
     && projectPickerAvailable;
-  const hasMobileUsage = contextUsage != null || recentRoundUsage.length > 0;
+  const hasMobileUsage = contextUsage != null
+    || hasConfiguredModel
+    || recentRoundUsage.length > 0;
   const showMobileWorkspaceRow = mobileComposer
     && !voiceRecorder.isRecording
     && (showMobileWorkspaceLine || hasMobileUsage);
@@ -2368,7 +2867,7 @@ export function ThreadComposer({
       permissions={workspacePermissions}
       loading={workspacePermissionsLoading}
       error={workspacePermissionsError}
-      disabled={persistentWorkspaceChat && interactionDisabled}
+      disabled={persistentWorkspaceChat && (interactionDisabled || workspaceAccessModeUnknownBlocked)}
       persistentChat={persistentWorkspaceChat}
       draftFullAccess={!persistentWorkspaceChat && !!onDraftFullAccess}
       onRequestFullAccess={
@@ -2401,6 +2900,7 @@ export function ThreadComposer({
       modelPreset={modelPreset}
       modelPresets={modelPresets}
       onPresetChange={onModelPresetChange}
+      reasoning={modelReasoning}
       onManageModels={onManageModels}
       onRequestComposerFocus={() => {
         // A touch keyboard would cover the thread; only restore composer focus
@@ -2480,11 +2980,63 @@ export function ThreadComposer({
             <div className="thread-composer-mobile-workspace-meta flex min-w-0 items-center">
               <ComposerUsagePopover
                 context={contextUsage}
+                hasConfiguredModel={hasConfiguredModel}
                 rounds={recentRoundUsage}
               />
             </div>
           ) : null}
         </div>
+      ) : null}
+      {queuedPrompts.length > 0 ? (
+        <QueuedPromptStack
+          prompts={queuedPrompts}
+          edit={queuedEdit ? (
+            <div key={queuedEdit.id} data-queued-prompt-row="true" className="flex flex-wrap items-center gap-1 px-2 py-1">
+              <textarea
+                autoFocus
+                aria-label={t("thread.composer.queued.edit")}
+                className="min-w-24 flex-1 rounded-control border border-border bg-background p-1.5 text-sm"
+                rows={2}
+                value={queuedEdit.text}
+                onChange={(event) => setQueuedEdit({ id: queuedEdit.id, text: event.target.value })}
+                onKeyDown={(event) => {
+                  if (event.key === "Escape" && !event.nativeEvent.isComposing) setQueuedEdit(null);
+                }}
+              />
+              <Button type="button" size="sm" onClick={saveQueuedEdit}>
+                {t("thread.composer.queued.saveEdit", { defaultValue: "Save edit" })}
+              </Button>
+              <Button type="button" variant="ghost" size="sm" onClick={() => setQueuedEdit(null)}>
+                {t("thread.composer.queued.cancelEdit", { defaultValue: "Cancel" })}
+              </Button>
+            </div>
+          ) : null}
+          awaitingConfirmationPromptIds={awaitingConfirmationPromptIds}
+          isHero={isHero}
+          className={interactionDisabled ? "opacity-60" : undefined}
+          label={t("thread.composer.queued.label")}
+          awaitingConfirmationLabel={t("thread.composer.queued.awaitingConfirmation")}
+          actionLabel={isStreaming
+            ? t("thread.composer.queued.guide")
+            : t("thread.composer.queued.send", { defaultValue: "Send" })}
+          actionDisabled={queuedActionDisabled}
+          deleteLabel={t("thread.composer.queued.delete")}
+          dragLabel={t("thread.composer.queued.drag")}
+          editLabel={t("thread.composer.queued.edit")}
+          onAction={(prompt) => void sendQueuedPromptAfterSettings(prompt)}
+          onDelete={removeQueuedPrompt}
+          onEdit={editQueuedPrompt}
+          onDragStart={(id) => {
+            draggedQueuedPromptIdRef.current = id;
+          }}
+          onDragEnd={() => {
+            draggedQueuedPromptIdRef.current = null;
+          }}
+          onDrop={(targetId) => {
+            const dragId = draggedQueuedPromptIdRef.current;
+            if (dragId) moveQueuedPrompt(dragId, targetId);
+          }}
+        />
       ) : null}
       <div
         ref={surfaceRef}
@@ -2500,31 +3052,6 @@ export function ThreadComposer({
             "goal-shell-glow ring-1 ring-sky-400/35 motion-reduce:ring-sky-400/25 dark:ring-sky-400/45",
         )}
       >
-        {queuedPrompts.length > 0 ? (
-          <QueuedPromptStack
-            prompts={queuedPrompts}
-            isHero={isHero}
-            label={t("thread.composer.queued.label")}
-            guideLabel={t("thread.composer.queued.guide")}
-            deleteLabel={t("thread.composer.queued.delete")}
-            dragLabel={t("thread.composer.queued.drag")}
-            editLabel={t("thread.composer.queued.edit")}
-            onGuide={sendQueuedPrompt}
-            onDelete={removeQueuedPrompt}
-            onEdit={editQueuedPrompt}
-            onDragStart={(id) => {
-              secondEnterPromptIdRef.current = null;
-              draggedQueuedPromptIdRef.current = id;
-            }}
-            onDragEnd={() => {
-              draggedQueuedPromptIdRef.current = null;
-            }}
-            onDrop={(targetId) => {
-              const dragId = draggedQueuedPromptIdRef.current;
-              if (dragId) moveQueuedPrompt(dragId, targetId);
-            }}
-          />
-        ) : null}
         {images.length > 0 ? (
           <div
             className="flex flex-wrap gap-2 px-3 pt-3"
@@ -2591,20 +3118,44 @@ export function ThreadComposer({
             ref={textareaRef}
             value={value}
             onChange={(e) => {
-              secondEnterPromptIdRef.current = null;
               setValue(e.target.value);
               setSlashMenuDismissed(false);
               setCliAppMenuDismissed(false);
               setCursorPosition(e.target.selectionStart ?? e.target.value.length);
             }}
-            onBlur={() => {
-              secondEnterPromptIdRef.current = null;
-            }}
             onInput={onInput}
             onKeyDown={onKeyDown}
-            onKeyUp={(e) => setCursorPosition(e.currentTarget.selectionStart ?? e.currentTarget.value.length)}
-            onSelect={(e) => setCursorPosition(e.currentTarget.selectionStart ?? e.currentTarget.value.length)}
-            onClick={(e) => setCursorPosition(e.currentTarget.selectionStart ?? e.currentTarget.value.length)}
+            onFocus={(e) => {
+              updateComposerDraftSelection(
+                draftScopeRef.current,
+                { start: e.currentTarget.selectionStart, end: e.currentTarget.selectionEnd },
+                true,
+              );
+            }}
+            onKeyUp={(e) => {
+              setCursorPosition(e.currentTarget.selectionStart ?? e.currentTarget.value.length);
+              updateComposerDraftSelection(
+                draftScopeRef.current,
+                { start: e.currentTarget.selectionStart, end: e.currentTarget.selectionEnd },
+                document.activeElement === e.currentTarget,
+              );
+            }}
+            onSelect={(e) => {
+              setCursorPosition(e.currentTarget.selectionStart ?? e.currentTarget.value.length);
+              updateComposerDraftSelection(
+                draftScopeRef.current,
+                { start: e.currentTarget.selectionStart, end: e.currentTarget.selectionEnd },
+                document.activeElement === e.currentTarget,
+              );
+            }}
+            onClick={(e) => {
+              setCursorPosition(e.currentTarget.selectionStart ?? e.currentTarget.value.length);
+              updateComposerDraftSelection(
+                draftScopeRef.current,
+                { start: e.currentTarget.selectionStart, end: e.currentTarget.selectionEnd },
+                document.activeElement === e.currentTarget,
+              );
+            }}
             onPaste={onPaste}
             rows={1}
             placeholder={sessionDragPreview ? "" : resolvedPlaceholder}
@@ -2619,6 +3170,41 @@ export function ThreadComposer({
             )}
           />
         </div>
+        {reattachNames.length > 0 ? (
+          <div
+            role="status"
+            data-testid="composer-reattach-notice"
+            className="mx-3 mb-1 flex items-start justify-between gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-2.5 py-1 text-[11.5px] font-medium text-amber-700 dark:text-amber-300"
+          >
+            <span>
+              {t("thread.composer.reattachNotice", {
+                names: reattachNames.join(", "),
+                defaultValue: `Attachments were not restored after relaunch. Reattach: ${reattachNames.join(", ")}`,
+              })}
+            </span>
+            <button
+              type="button"
+              className="shrink-0 underline"
+              onClick={() => {
+                reattachNamesRef.current = [];
+                setReattachNames([]);
+              }}
+            >
+              {t("thread.composer.reattachDismiss", { defaultValue: "Dismiss" })}
+            </button>
+          </div>
+        ) : null}
+        {nextTurnSettingsError && !inlineError ? (
+          <div
+            role="alert"
+            data-testid="composer-next-turn-error"
+            className="mx-3 mb-1 rounded-md border border-destructive/40 bg-destructive/8 px-2.5 py-1 text-[11.5px] font-medium text-destructive"
+          >
+            {t("workspace.picker.nextTurnFailed", {
+              defaultValue: "The folder change was not saved. The previous choice is still in effect; your draft is intact.",
+            })}
+          </div>
+        ) : null}
         {inlineError ? (
           <div
             role="alert"
@@ -2723,6 +3309,7 @@ export function ThreadComposer({
             {!voiceRecorder.isRecording && !mobileComposer ? (
               <ComposerUsagePopover
                 context={contextUsage}
+                hasConfiguredModel={hasConfiguredModel}
                 rounds={recentRoundUsage}
                 isHero={isHero}
               />
@@ -2774,18 +3361,49 @@ export function ThreadComposer({
                 </Tooltip>
               </TooltipProvider>
             ) : null}
+            {showSecondaryStopButton ? (
+              <Button
+                type="button"
+                size="icon"
+                variant="outline"
+                disabled={disabled || stopDisabled}
+                aria-label={stopPending
+                  ? t("thread.composer.stopping", { defaultValue: "Stopping" })
+                  : t("thread.composer.stop")}
+                onClick={handleStop}
+                className="thread-composer-background-stop touch-target h-9 w-9 shrink-0 rounded-full"
+              >
+                {stopPending
+                  ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+                  : <Square className="h-3.5 w-3.5 fill-current stroke-current" aria-hidden />}
+              </Button>
+            ) : null}
             <Button
-              type={showStopButton || modelNeedsSetup ? "button" : "submit"}
+              type={showStopButton || showGuidanceSendButton || modelNeedsSetup
+                ? "button"
+                : "submit"}
               size="icon"
-              disabled={showStopButton ? interactionDisabled : !canSend && !canOpenModelSettings}
+              disabled={showStopButton
+                ? disabled || stopDisabled
+                : !canSend && !showGuidanceSendButton && !canOpenModelSettings}
               aria-label={
                 showStopButton
-                  ? t("thread.composer.stop")
+                  ? stopPending
+                    ? t("thread.composer.stopping", { defaultValue: "Stopping" })
+                    : t("thread.composer.stop")
                   : modelNeedsSetup
                     ? t("thread.composer.configureModel", { defaultValue: "Configure model" })
-                    : t("thread.composer.send")
+                    : showGuidanceSendButton
+                      ? t("thread.composer.queueGuidance")
+                      : t("thread.composer.send")
               }
-              onClick={showStopButton ? handleStop : modelNeedsSetup ? onModelBadgeClick : undefined}
+              onClick={showStopButton
+                ? handleStop
+                : showGuidanceSendButton
+                  ? queueGuidancePrompt
+                  : modelNeedsSetup
+                    ? onModelBadgeClick
+                    : undefined}
               className={cn(
                 "thread-composer-action touch-target shrink-0 rounded-full transition-transform",
                 showStopButton
@@ -2797,10 +3415,10 @@ export function ThreadComposer({
                 (canSend || canOpenModelSettings || showStopButton) && "hover:scale-[1.03] active:scale-95",
               )}
             >
-              {showStopButton ? (
+              {showStopButton ? stopPending ? (
+                <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+              ) : (
                 <Square className={cn("fill-current stroke-current", isHero ? "h-3 w-3" : "h-3.5 w-3.5")} />
-              ) : isStreaming ? (
-                <Loader2 className={cn(isHero ? "h-4 w-4" : "h-4 w-4", "animate-spin")} />
               ) : (
                 <ArrowUp className={cn(isHero ? "h-4 w-4" : "h-4 w-4")} />
               )}
@@ -2814,13 +3432,18 @@ export function ThreadComposer({
 
 function QueuedPromptStack({
   prompts,
+  edit,
+  awaitingConfirmationPromptIds,
   isHero,
+  className,
   label,
-  guideLabel,
+  awaitingConfirmationLabel,
+  actionLabel,
+  actionDisabled,
   deleteLabel,
   dragLabel,
   editLabel,
-  onGuide,
+  onAction,
   onDelete,
   onEdit,
   onDragStart,
@@ -2828,46 +3451,52 @@ function QueuedPromptStack({
   onDrop,
 }: {
   prompts: QueuedPrompt[];
+  edit: ReactElement | null;
+  awaitingConfirmationPromptIds: ReadonlySet<string>;
   isHero: boolean;
+  className?: string;
   label: string;
-  guideLabel: string;
+  awaitingConfirmationLabel: string;
+  actionLabel: string;
+  actionDisabled: boolean;
   deleteLabel: string;
   dragLabel: string;
   editLabel: string;
-  onGuide: (prompt: QueuedPrompt) => void;
+  onAction: (prompt: QueuedPrompt) => void;
   onDelete: (id: string) => void;
   onEdit: (prompt: QueuedPrompt) => void;
   onDragStart: (id: string) => void;
   onDragEnd: () => void;
   onDrop: (targetId: string) => void;
 }) {
-  const stripMaxHeight = Math.min(240, 14 + prompts.length * 34 + Math.max(0, prompts.length - 1) * 4);
-
   return (
     <div
       role="group"
       data-state="enter"
       className={cn(
-        "composer-status-strip relative z-20 mx-3 mt-3 overflow-hidden rounded-floating",
-        "border border-black/[0.05] bg-popover/90 p-1.5",
-        "shadow-[0_10px_28px_rgba(15,23,42,0.07)] backdrop-blur-md",
-        "dark:border-white/[0.08] dark:bg-popover/90 dark:shadow-[0_14px_34px_rgba(0,0,0,0.30)]",
-        isHero ? "max-w-none" : "max-w-none",
+        "composer-status-strip relative z-0 mx-auto -mb-px w-[calc(100%-1.5rem)] overflow-hidden rounded-t-floating",
+        "border border-b-0 border-black/[0.06] bg-muted p-1.5",
+        "dark:border-white/[0.08]",
+        isHero ? "max-w-[56.5rem]" : "max-w-[48rem]",
+        className,
       )}
-      style={{ "--composer-strip-max-height": `${stripMaxHeight}px` } as CSSProperties}
+      style={{ "--composer-strip-max-height": "260px" } as CSSProperties}
       aria-label={label}
     >
-      <div className="flex max-h-[216px] flex-col gap-1 overflow-y-auto">
-        {prompts.map((prompt) => (
+      <div className="queued-prompt-list flex max-h-[216px] flex-col gap-1 overflow-y-auto">
+        {prompts.map((prompt) => edit?.key === prompt.id ? edit : (
           <QueuedPromptRow
             key={prompt.id}
             prompt={prompt}
+            awaitingConfirmation={awaitingConfirmationPromptIds.has(prompt.id)}
             isHero={isHero}
-            guideLabel={guideLabel}
+            actionLabel={actionLabel}
+            actionDisabled={actionDisabled}
+            awaitingConfirmationLabel={awaitingConfirmationLabel}
             deleteLabel={deleteLabel}
             dragLabel={dragLabel}
             editLabel={editLabel}
-            onGuide={onGuide}
+            onAction={onAction}
             onDelete={onDelete}
             onEdit={onEdit}
             onDragStart={onDragStart}
@@ -2882,12 +3511,15 @@ function QueuedPromptStack({
 
 function QueuedPromptRow({
   prompt,
+  awaitingConfirmation,
   isHero,
-  guideLabel,
+  actionLabel,
+  actionDisabled,
+  awaitingConfirmationLabel,
   deleteLabel,
   dragLabel,
   editLabel,
-  onGuide,
+  onAction,
   onDelete,
   onEdit,
   onDragStart,
@@ -2895,12 +3527,15 @@ function QueuedPromptRow({
   onDrop,
 }: {
   prompt: QueuedPrompt;
+  awaitingConfirmation: boolean;
   isHero: boolean;
-  guideLabel: string;
+  actionLabel: string;
+  actionDisabled: boolean;
+  awaitingConfirmationLabel: string;
   deleteLabel: string;
   dragLabel: string;
   editLabel: string;
-  onGuide: (prompt: QueuedPrompt) => void;
+  onAction: (prompt: QueuedPrompt) => void;
   onDelete: (id: string) => void;
   onEdit: (prompt: QueuedPrompt) => void;
   onDragStart: (id: string) => void;
@@ -2914,29 +3549,35 @@ function QueuedPromptRow({
       data-queued-prompt-row="true"
       onDragEnter={(event) => {
         event.preventDefault();
-        onDrop(prompt.id);
+        if (!awaitingConfirmation) onDrop(prompt.id);
       }}
       onDragOver={(event) => {
         event.preventDefault();
-        event.dataTransfer.dropEffect = "move";
+        event.dataTransfer.dropEffect = awaitingConfirmation ? "none" : "move";
       }}
       onDrop={(event) => {
         event.preventDefault();
-        onDrop(prompt.id);
+        if (!awaitingConfirmation) onDrop(prompt.id);
       }}
       onDragEnd={onDragEnd}
+      aria-busy={awaitingConfirmation || undefined}
       className={cn(
-        "queued-prompt-row group/queued flex min-h-8 items-center gap-1.5 rounded-control px-2 py-0.5",
+        "queued-prompt-row group/queued flex min-h-8 shrink-0 items-start gap-1.5 rounded-control px-2 py-0.5",
         "text-[13px] transition-colors hover:bg-muted/55 dark:hover:bg-white/[0.055]",
         isHero && "text-[13.5px]",
       )}
     >
       <span
-        draggable
+        draggable={!awaitingConfirmation}
         role="button"
-        tabIndex={0}
+        tabIndex={awaitingConfirmation ? -1 : 0}
         aria-label={dragLabel}
+        aria-disabled={awaitingConfirmation || undefined}
         onDragStart={(event) => {
+          if (awaitingConfirmation) {
+            event.preventDefault();
+            return;
+          }
           event.dataTransfer.effectAllowed = "move";
           event.dataTransfer.setData("text/plain", prompt.id);
           suppressNativeDragPreview(event.dataTransfer);
@@ -2947,35 +3588,43 @@ function QueuedPromptRow({
           "inline-flex h-7 w-7 shrink-0 cursor-grab items-center justify-center rounded-lg",
           "text-muted-foreground/45 transition-colors hover:bg-background/80 hover:text-muted-foreground",
           "active:cursor-grabbing dark:hover:bg-white/[0.06]",
+          awaitingConfirmation && "cursor-default opacity-50",
         )}
       >
         <GripVertical className="pointer-events-none h-3.5 w-3.5" aria-hidden />
       </span>
-      <div className="flex min-h-7 min-w-0 flex-1 items-center">
+      <div className="flex min-h-7 min-w-0 flex-1 flex-col items-start justify-center">
         <p
           title={displayLabel}
           className={cn(
-            "line-clamp-3 whitespace-pre-wrap break-words font-medium leading-[1.28] text-foreground/88",
+            "w-full truncate font-medium leading-[1.28] text-foreground/88",
             isHero && "text-[13.5px]",
           )}
         >
           {displayLabel}
         </p>
+        {awaitingConfirmation ? (
+          <span role="status" className="pt-0.5 text-[10px] leading-3 text-muted-foreground">
+            {awaitingConfirmationLabel}
+          </span>
+        ) : null}
       </div>
       <Button
         type="button"
         variant="ghost"
         size="sm"
+        disabled={awaitingConfirmation || actionDisabled}
         className="h-7 shrink-0 rounded-full px-2 text-[11.5px] font-medium text-muted-foreground hover:bg-muted/70 hover:text-foreground dark:hover:bg-white/[0.07]"
-        onClick={() => onGuide(prompt)}
+        onClick={() => onAction(prompt)}
       >
         <CornerDownRight className="mr-1 h-3 w-3" aria-hidden />
-        {guideLabel}
+        {actionLabel}
       </Button>
       <Button
         type="button"
         variant="ghost"
         size="icon"
+        disabled={awaitingConfirmation}
         aria-label={editLabel}
         title={editLabel}
         className="h-7 w-7 shrink-0 rounded-full text-muted-foreground hover:bg-background/85 hover:text-foreground dark:hover:bg-white/[0.07]"
@@ -2987,6 +3636,7 @@ function QueuedPromptRow({
         type="button"
         variant="ghost"
         size="icon"
+        disabled={awaitingConfirmation}
         aria-label={deleteLabel}
         className="h-7 w-7 shrink-0 rounded-full text-muted-foreground hover:bg-background/85 hover:text-destructive dark:hover:bg-white/[0.07]"
         onClick={() => onDelete(prompt.id)}

@@ -420,12 +420,14 @@ def _result_for_settlement(result: SenderResult) -> dict[str, object]:
 
 @dataclass(slots=True)
 class _DispatchEntry:
-    """One process/store/claim invocation retained for the claim lifetime."""
+    """One process/store/claim invocation retained until its waiters settle."""
 
     claim: DeliveryClaim
     task: asyncio.Task[SenderResult] | None = None
     sender_task: asyncio.Future[object] | None = None
     reentrant_error: CronDeliveryReentrancyError | None = None
+    waiters: int = 0
+    settlement_failed: bool = False
 
 
 class _DispatchRegistry:
@@ -965,6 +967,27 @@ class CronDeliveryRuntime:
                 claim, fence, request, selected_sender, timeout, entry
             )
 
+    def _release_entry(self, key: int, entry: _DispatchEntry) -> None:
+        """Evict a terminal entry after its last waiter observes the dispatch.
+
+        Durable outbox receipts stay readable through the store after this
+        removal.  An entry whose durable settlement failed is retained: its
+        result is not terminal and a later dispatch must observe the same
+        settlement error without invoking the sender again.
+        """
+
+        with self._dispatch_registry.lock:
+            entry.waiters = max(0, entry.waiters - 1)
+            if entry.waiters or entry.settlement_failed:
+                return
+            task = entry.task
+            if task is None or not task.done():
+                return
+            if self._dispatch_registry.entries.get(key) is entry:
+                self._dispatch_registry.entries.pop(key, None)
+                entry.task = None
+                entry.sender_task = None
+
     async def dispatch(
         self,
         claim: DeliveryClaim | str,
@@ -1037,6 +1060,7 @@ class CronDeliveryRuntime:
                     self._dispatch_once(delivery_claim, selected, bounded_timeout, entry)
                 )
                 entry.task = task
+                entry.waiters = 1
                 self._dispatch_registry.entries[key] = entry
             else:
                 task = entry.task
@@ -1048,6 +1072,7 @@ class CronDeliveryRuntime:
                     )
                     entry.reentrant_error = error
                     raise error
+                entry.waiters += 1
         try:
             return await asyncio.shield(task)
         except asyncio.CancelledError as cancellation:
@@ -1072,9 +1097,12 @@ class CronDeliveryRuntime:
                 # Retrieve terminal exceptions so a caller that was cancelled
                 # after completion cannot leave an unobserved task warning.
                 try:
-                    task.exception()
+                    terminal_error = task.exception()
                 except BaseException:
-                    pass
+                    terminal_error = None
+                if isinstance(terminal_error, CronDeliverySettlementError):
+                    entry.settlement_failed = True
+                self._release_entry(key, entry)
 
 
 # Compatibility aliases keep the package vocabulary discoverable without

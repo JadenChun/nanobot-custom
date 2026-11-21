@@ -160,7 +160,10 @@ def test_local_markdown_image_is_staged_and_rewritten(
         )
 
     assert "![Cloud Architecture Diagram](/api/media/" in first
-    assert second == first
+    # The immutable target/signature stays stable; each uncertain publication
+    # keeps its own identity until its actual writer commits.
+    assert second.split("?publication=", 1)[0] == first.split("?publication=", 1)[0]
+    assert second != first
     staged = list((media / "websocket").iterdir())
     assert len(staged) == 1
     assert staged[0].read_bytes() == _PNG_BYTES
@@ -503,3 +506,45 @@ async def test_media_route_serves_svg_with_strict_csp(
     assert resp.headers.get("x-content-type-options") == "nosniff"
     assert "default-src 'none'" in resp.headers.get("content-security-policy", "")
     assert "sandbox" in resp.headers.get("content-security-policy", "")
+
+
+@pytest.mark.parametrize("streamed", [False, True])
+async def test_markdown_publication_transfers_exact_custody_through_real_recorder(
+    bus: MagicMock, tmp_path: Path, streamed: bool,
+) -> None:
+    from nanobot.attachments.store import AttachmentStore
+    from nanobot.bus.events import OutboundMessage
+    from nanobot.config.loader import get_config_path, set_config_path
+    from nanobot.webui.transcript import read_transcript_lines
+
+    previous = get_config_path()
+    set_config_path(tmp_path / "config.json")
+    try:
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        image = workspace / "publication.png"
+        image.write_bytes(_PNG_BYTES)
+        manager = SessionManager(workspace, sessions_root=tmp_path / "sessions")
+        channel = _ch(bus, session_manager=manager, workspace_path=workspace, port=0)
+        text = "![publication](publication.png)"
+        if streamed:
+            await channel.send_delta("publication", text, stream_id="one")
+            await channel.send_delta("publication", "", stream_id="one", stream_end=True)
+        else:
+            await channel.send_projected_message(OutboundMessage(channel="websocket",
+                chat_id="publication", content=text), None)
+        store = AttachmentStore(tmp_path / "media" / "attachments", media_root=tmp_path / "media")
+        assert store.custody.records("pending") == []
+        retained = read_transcript_lines("websocket:publication")
+        assert len(retained) == 1
+        if streamed:
+            assert "/api/media/" in retained[0]["text"]
+        else:
+            assert retained[0]["text"] == text
+            assert retained[0]["media_publications"]
+        with store.custody.maintenance() as (_gate, evidence):
+            assert evidence.complete, evidence.reasons
+            staged = next((tmp_path / "media" / "websocket").iterdir())
+            assert staged in evidence.paths
+    finally:
+        set_config_path(previous)

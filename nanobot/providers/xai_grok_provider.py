@@ -22,8 +22,10 @@ from nanobot.providers.base import (
     LLMUsage,
     ProviderCallContext,
     ToolCallRequest,
+    record_transport_attempt,
     resolve_stream_idle_timeout_s,
 )
+from nanobot.providers.oauth_credentials import CredentialOwner
 from nanobot.providers.oauth_model_catalog import OAuthModelCatalog, OAuthModelCatalogSnapshot
 from nanobot.providers.openai_responses import (
     consume_sse_with_reasoning,
@@ -79,16 +81,19 @@ class XAIGrokProvider(LLMProvider):
         extra_body: dict[str, Any] | None = None,
         *,
         provider_name: str = "xai_grok",
+        credential_owner: CredentialOwner | None = None,
     ):
         super().__init__(api_key=None, api_base=None, provider_name=provider_name)
         self.default_model = default_model
         self.proxy = proxy or None
+        self._credential_owner = credential_owner
         self._extra_body = dict(extra_body or {})
 
     async def _supports_backend_search(self, model: str) -> bool:
         catalog = await asyncio.to_thread(
             get_xai_grok_model_catalog,
             self.proxy,
+            owner=self._credential_owner,
         )
         if catalog.message:
             logger.warning(
@@ -118,7 +123,9 @@ class XAIGrokProvider(LLMProvider):
 
         stage = "oauth_token"
         try:
-            token = await asyncio.to_thread(get_xai_oauth_token, proxy=self.proxy)
+            token = await asyncio.to_thread(
+                get_xai_oauth_token, proxy=self.proxy, owner=self._credential_owner,
+            )
             configured_tools = self._extra_body.get("tools")
             tools_are_explicit = "tools" in self._extra_body
             configured_hosted_search = isinstance(configured_tools, list) and any(
@@ -178,6 +185,7 @@ class XAIGrokProvider(LLMProvider):
                         body, transport="xai_grok_responses", model=wire_model,
                         provider_context=provider_context, completion_reserve_tokens=max_tokens,
                     )
+                    record_transport_attempt(provider_context)
                     result = await _request_xai(
                         DEFAULT_XAI_GROK_URL,
                         headers,
@@ -197,6 +205,7 @@ class XAIGrokProvider(LLMProvider):
                         get_xai_oauth_token,
                         proxy=self.proxy,
                         force_refresh=True,
+                        owner=self._credential_owner,
                     )
                     headers = _build_headers(token.access, wire_model)
                     stage = "xai_request_after_oauth_refresh"
@@ -695,19 +704,26 @@ def _should_retry_status(
     return status_code in LLMProvider._RETRYABLE_STATUS_CODES or status_code >= 500  # pyright: ignore[reportPrivateUsage]
 
 
-def get_xai_grok_model_catalog(proxy: str | None = None) -> OAuthModelCatalogSnapshot:
-    token = get_xai_oauth_login_status()
+def get_xai_grok_model_catalog(
+    proxy: str | None = None, *, owner: CredentialOwner | None = None,
+) -> OAuthModelCatalogSnapshot:
+    token = get_xai_oauth_login_status(owner)
     account_key = _catalog_account_key(getattr(token, "account_id", None))
-    cache_key = f"{get_xai_oauth_storage_path()}\0{account_key}\0{proxy or ''}"
-    return _XAI_GROK_MODEL_CATALOG.get(cache_key=cache_key, proxy=proxy)
+    cache_key = f"{get_xai_oauth_storage_path(owner)}\0{account_key}\0{proxy or ''}"
+    return _XAI_GROK_MODEL_CATALOG.get(
+        cache_key=cache_key, proxy=proxy, owner=owner,
+        fetch=lambda selected_proxy: _fetch_xai_grok_models(selected_proxy, owner=owner),
+    )
 
 
-def invalidate_xai_grok_model_catalog() -> None:
-    _XAI_GROK_MODEL_CATALOG.invalidate()
+def invalidate_xai_grok_model_catalog(owner: CredentialOwner | None = None) -> None:
+    _XAI_GROK_MODEL_CATALOG.invalidate(owner=owner)
 
 
-def _fetch_xai_grok_models(proxy: str | None) -> tuple[ProviderModelSpec, ...]:
-    token = get_xai_oauth_token(proxy=proxy)
+def _fetch_xai_grok_models(
+    proxy: str | None, *, owner: CredentialOwner | None = None,
+) -> tuple[ProviderModelSpec, ...]:
+    token = get_xai_oauth_token(proxy=proxy, owner=owner)
     client_kwargs: dict[str, Any] = {"timeout": 10.0, "follow_redirects": False}
     if proxy:
         client_kwargs.update(proxy=proxy, trust_env=False)

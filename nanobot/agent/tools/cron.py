@@ -140,6 +140,30 @@ class CronTool(Tool):
         return session_key, ctx.channel or "", ctx.chat_id or "", _snapshot_origin_metadata(ctx.metadata or {})
 
     @staticmethod
+    def _scope_session_key(session_key: str | None, channel: str, chat_id: str) -> str:
+        """Resolve a principal exactly like the creation route does."""
+        raw_key = f"{channel}:{chat_id}" if channel and chat_id else ""
+        return raw_key if session_key == UNIFIED_SESSION_KEY else (session_key or "")
+
+    @classmethod
+    def _request_scope(cls) -> tuple[str | None, bool]:
+        """Return the requesting principal and whether an admitted request exists."""
+        if current_request_context() is None:
+            return None, False
+        return cls._request_route()[0], True
+
+    @classmethod
+    def _turn_scope(cls, context: TurnContext) -> tuple[str | None, bool]:
+        """Return the principal bound to an immutable turn request."""
+        if context.request is not None:
+            return cls._turn_route(context)[0], True
+        if current_request_context() is not None:
+            return cls._request_route()[0], True
+        if context.session_key:
+            return cls._scope_session_key(context.session_key, "", ""), True
+        return None, False
+
+    @staticmethod
     def _turn_route(context: TurnContext) -> tuple[str, str, str, dict[str, Any]]:
         """Return the detached route admitted with an immutable turn request."""
         request = context.request
@@ -334,9 +358,9 @@ class CronTool(Tool):
                 route=self._request_route(),
             )
         elif action == "list":
-            return self._list_jobs()
+            return self._list_jobs(scope=self._request_scope())
         elif action == "remove":
-            return self._remove_job(job_id)
+            return self._remove_job(job_id, scope=self._request_scope())
         return f"Unknown action: {action}"
 
     async def execute_with_context(self, context: TurnContext, **kwargs: Any) -> ToolOutcome:
@@ -370,9 +394,11 @@ class CronTool(Tool):
             )
             return ToolOutcome(content=result)
         if action == "list":
-            return ToolOutcome(content=self._list_jobs())
+            return ToolOutcome(content=self._list_jobs(scope=self._turn_scope(context)))
         if action == "remove":
-            return ToolOutcome(content=self._remove_job(kwargs.get("job_id")))
+            return ToolOutcome(
+                content=self._remove_job(kwargs.get("job_id"), scope=self._turn_scope(context))
+            )
         return ToolOutcome(content=f"Unknown action: {action}")
 
     def _add_job(
@@ -498,8 +524,18 @@ class CronTool(Tool):
             return "Dream memory consolidation for long-term memory."
         return "System-managed internal job."
 
-    def _list_jobs(self) -> str:
-        jobs = self._cron.list_jobs()
+    def _list_jobs(self, *, scope: tuple[str | None, bool] | None = None) -> str:
+        """List only jobs the requesting chat creator (or admin) may manage.
+
+        With no admitted request, a local single-owner process keeps global
+        visibility.  A request with no resolvable session is anonymous and
+        sees nothing.
+        """
+        session_key, scoped = scope if scope is not None else self._request_scope()
+        if scoped:
+            jobs = self._cron.list_jobs_for_session(session_key or "")
+        else:
+            jobs = self._cron.list_jobs()
         if not jobs:
             return "No scheduled jobs."
         lines: list[str] = []
@@ -518,18 +554,29 @@ class CronTool(Tool):
             lines.append("\n".join(parts))
         return "Scheduled jobs:\n" + "\n".join(lines)
 
-    def _remove_job(self, job_id: str | None) -> str:
+    def _remove_job(
+        self, job_id: str | None, *, scope: tuple[str | None, bool] | None = None
+    ) -> str:
         if not job_id:
             return ToolResult.error("Error: job_id is required for remove")
+        session_key, scoped = scope if scope is not None else self._request_scope()
         job = self._cron.get_job(job_id)
         if job is None:
             return f"Job {job_id} not found"
         try:
-            result = self._cron.remove_job(
-                job_id,
-                job_instance_id=job.job_instance_id,
-                definition_revision=job.definition_revision,
-            )
+            if scoped:
+                result = self._cron.remove_job(
+                    job_id,
+                    job_instance_id=job.job_instance_id,
+                    definition_revision=job.definition_revision,
+                    session_key=session_key or "",
+                )
+            else:
+                result = self._cron.remove_job(
+                    job_id,
+                    job_instance_id=job.job_instance_id,
+                    definition_revision=job.definition_revision,
+                )
         except (
             CronDefinitionTokenRequiredError,
             DefinitionStoreConflictError,

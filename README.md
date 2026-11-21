@@ -1,6 +1,6 @@
 <div align="center">
-  <img src="nanobot_logo.png" alt="nanobot" width="500">
-  <h1>nanobot: Ultra-Lightweight Personal AI Assistant</h1>
+  <img src="webui/public/brand/nanobot_icon_512.png" alt="Kohaku" width="144">
+  <h1>Kohaku</h1>
   <p>
     <a href="https://pypi.org/project/nanobot-ai/"><img src="https://img.shields.io/pypi/v/nanobot-ai" alt="PyPI"></a>
     <a href="https://pepy.tech/project/nanobot-ai"><img src="https://static.pepy.tech/badge/nanobot-ai" alt="Downloads"></a>
@@ -14,7 +14,7 @@
 
 > **This is a personal fork of [HKUDS/nanobot](https://github.com/HKUDS/nanobot)** with a redesigned agent harness. See [What's changed from upstream](#whats-changed-from-upstream) for details.
 
-🐈 **nanobot** is an **ultra-lightweight** personal AI assistant inspired by [OpenClaw](https://github.com/openclaw/openclaw).
+**Kohaku** is a personal AI assistant that helps you plan work and carry out tasks across apps and files.
 
 ⚡️ Delivers core agent functionality with **99% fewer lines of code** than OpenClaw.
 

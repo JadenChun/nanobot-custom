@@ -37,6 +37,30 @@ class ProviderModelSpec:
     aliases: tuple[str, ...] = ()
 
 
+def reasoning_effort_values_for(provider_name: str, model: str) -> list[str]:
+    """Return the selectable efforts and the empty provider-default value."""
+    spec = find_by_name(provider_name) if provider_name else None
+    model_lower = model.lower()
+    slug = model_lower.rsplit("/", 1)[-1]
+    if slug == "kimi-k3":
+        return ["", "max"]
+    if spec is not None:
+        if any(pattern in model_lower for pattern in spec.implicit_reasoning_models):
+            return [""]
+        if spec.reasoning_effort_remap:
+            levels = dict.fromkeys(
+                wire for _, wire in spec.reasoning_effort_remap if wire and wire != "none"
+            )
+            return ["", *levels]
+        for entry in spec.builtin_models:
+            identifiers = (entry.id, *entry.aliases)
+            if entry.reasoning_efforts and any(
+                slug == identifier.lower().rsplit("/", 1)[-1] for identifier in identifiers
+            ):
+                return ["", *entry.reasoning_efforts]
+    return ["", "low", "medium", "high"]
+
+
 @dataclass(frozen=True)
 class ProviderSpec:
     """One LLM provider's metadata. See PROVIDERS below for real examples.

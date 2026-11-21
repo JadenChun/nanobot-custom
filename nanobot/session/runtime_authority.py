@@ -5,11 +5,161 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Awaitable, Callable, Protocol, runtime_checkable
+from typing import Any, Awaitable, Callable, Literal, Mapping, Protocol, cast, runtime_checkable
 
 from nanobot.session.manager import SessionManager
 from nanobot.session.mode_storage import LifetimeWriterLease
 from nanobot.session.session_mode import SessionModeError, SessionModeResolver
+
+RUNTIME_SESSION_METADATA_KEY = "_runtime_session"
+RUNTIME_SESSION_METADATA_VERSION = 1
+
+
+class RuntimeSessionMetadataError(ValueError):
+    """A runtime session reference is malformed or no longer current."""
+
+
+@dataclass(frozen=True, slots=True)
+class RuntimeSessionMetadata:
+    """Versioned, content-free runtime facts attached to one session."""
+
+    profile: str = "default"
+    execution_kind: Literal["native", "external"] = "native"
+    delegation_depth: int = 0
+    parent_key: str | None = None
+    parent_incarnation: str | None = None
+    backend_binding: str | None = None
+    runtime_generation: int = 0
+    recovery_disposition: Literal[
+        "none", "interrupted", "completed", "uncertain",
+    ] = "none"
+
+    def __post_init__(self) -> None:
+        if type(self.profile) is not str or not self.profile.strip():
+            raise RuntimeSessionMetadataError("runtime profile must be non-empty")
+        if self.execution_kind not in {"native", "external"}:
+            raise RuntimeSessionMetadataError("runtime execution kind is invalid")
+        if type(self.delegation_depth) is not int or self.delegation_depth < 0:
+            raise RuntimeSessionMetadataError("runtime delegation depth is invalid")
+        if (self.parent_key is None) != (self.parent_incarnation is None):
+            raise RuntimeSessionMetadataError("runtime parent reference is incomplete")
+        for value in (self.parent_key, self.parent_incarnation, self.backend_binding):
+            if value is not None and (type(value) is not str or not value.strip()):
+                raise RuntimeSessionMetadataError("runtime reference is invalid")
+        if type(self.runtime_generation) is not int or self.runtime_generation < 0:
+            raise RuntimeSessionMetadataError("runtime generation is invalid")
+        if self.recovery_disposition not in {
+            "none", "interrupted", "completed", "uncertain",
+        }:
+            raise RuntimeSessionMetadataError("runtime recovery disposition is invalid")
+
+    def payload(self) -> dict[str, object]:
+        return {
+            "version": RUNTIME_SESSION_METADATA_VERSION,
+            "profile": self.profile,
+            "execution_kind": self.execution_kind,
+            "delegation_depth": self.delegation_depth,
+            "parent_key": self.parent_key,
+            "parent_incarnation": self.parent_incarnation,
+            "backend_binding": self.backend_binding,
+            "runtime_generation": self.runtime_generation,
+            "recovery_disposition": self.recovery_disposition,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class RuntimeSessionState:
+    """Parsed runtime facts plus whether they may be used for execution."""
+
+    metadata: RuntimeSessionMetadata
+    present: bool
+    executable: bool
+    issue: str | None = None
+
+
+def parse_runtime_session_metadata(
+    metadata: Mapping[str, Any] | None,
+    *,
+    parent_incarnation: str | None = None,
+) -> RuntimeSessionState:
+    """Parse old, current, malformed, or stale runtime session metadata."""
+    raw = metadata.get(RUNTIME_SESSION_METADATA_KEY) if metadata is not None else None
+    if raw is None:
+        return RuntimeSessionState(RuntimeSessionMetadata(), False, True)
+    if not isinstance(raw, Mapping):
+        return RuntimeSessionState(
+            RuntimeSessionMetadata(), True, False, "malformed",
+        )
+    data = dict(cast(Mapping[str, Any], raw))
+    if data.get("version") != RUNTIME_SESSION_METADATA_VERSION:
+        return RuntimeSessionState(
+            RuntimeSessionMetadata(), True, False, "unsupported_version",
+        )
+    try:
+        parsed = RuntimeSessionMetadata(
+            profile=cast(str, data.get("profile", "default")),
+            execution_kind=cast(
+                Literal["native", "external"],
+                data.get("execution_kind", "native"),
+            ),
+            delegation_depth=cast(int, data.get("delegation_depth", 0)),
+            parent_key=cast(str | None, data.get("parent_key")),
+            parent_incarnation=cast(str | None, data.get("parent_incarnation")),
+            backend_binding=cast(str | None, data.get("backend_binding")),
+            runtime_generation=cast(int, data.get("runtime_generation", 0)),
+            recovery_disposition=cast(
+                Literal["none", "interrupted", "completed", "uncertain"],
+                data.get("recovery_disposition", "none"),
+            ),
+        )
+    except (TypeError, ValueError):
+        return RuntimeSessionState(
+            RuntimeSessionMetadata(), True, False, "malformed",
+        )
+    if parsed.parent_key is not None and parent_incarnation != parsed.parent_incarnation:
+        return RuntimeSessionState(parsed, True, False, "stale_parent")
+    return RuntimeSessionState(parsed, True, True)
+
+
+def read_runtime_session(
+    manager: SessionManager,
+    key: str,
+) -> RuntimeSessionState:
+    """Read runtime facts without making an unreadable history unusable."""
+    session = manager.read_session_snapshot(key)
+    if session is None:
+        return RuntimeSessionState(RuntimeSessionMetadata(), False, True)
+    raw = session.metadata.get(RUNTIME_SESSION_METADATA_KEY)
+    parent_incarnation = None
+    if isinstance(raw, Mapping):
+        parent_key = cast(Mapping[str, Any], raw).get("parent_key")
+        if isinstance(parent_key, str) and parent_key:
+            parent = manager.read_session_snapshot(parent_key)
+            if parent is not None:
+                parent_incarnation = parent.incarnation
+    return parse_runtime_session_metadata(
+        session.metadata,
+        parent_incarnation=parent_incarnation,
+    )
+
+
+def write_runtime_session(
+    manager: SessionManager,
+    key: str,
+    metadata: RuntimeSessionMetadata,
+    *,
+    create_if_absent: bool = False,
+) -> bool:
+    """Persist runtime facts through the existing metadata owner."""
+    if metadata.parent_key is not None:
+        parent = manager.read_session_snapshot(metadata.parent_key)
+        if parent is None or parent.incarnation != metadata.parent_incarnation:
+            raise RuntimeSessionMetadataError("runtime parent reference is stale")
+    return manager.upsert_session_metadata(
+        key,
+        {RUNTIME_SESSION_METADATA_KEY: metadata.payload()},
+        create_if_absent=create_if_absent,
+    )
 
 
 class SessionAuthorityUnavailableError(RuntimeError):
@@ -180,8 +330,16 @@ __all__ = [
     "BorrowedSessionAuthority",
     "DurableSessionAuthority",
     "OfflineSessionOperator",
+    "RUNTIME_SESSION_METADATA_KEY",
+    "RUNTIME_SESSION_METADATA_VERSION",
+    "RuntimeSessionMetadata",
+    "RuntimeSessionMetadataError",
+    "RuntimeSessionState",
     "SessionAuthority",
     "SessionAuthorityLease",
     "SessionAuthorityUnavailableError",
     "Stage1UnavailableSessionAuthority",
+    "parse_runtime_session_metadata",
+    "read_runtime_session",
+    "write_runtime_session",
 ]

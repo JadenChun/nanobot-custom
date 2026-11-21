@@ -9,7 +9,7 @@ from typing import BinaryIO, TypeAlias, cast
 
 MAX_FRAME_BYTES = 65_536
 _ERROR_CODE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
-_OPS = frozenset({"hello", "start", "status", "bootstrap", "stop"})
+_OPS = frozenset({"prepare_default_config", "hello", "start", "status", "bootstrap", "stop"})
 Params: TypeAlias = dict[str, object]
 Dispatch: TypeAlias = Callable[[str, Params], Mapping[str, object]]
 
@@ -36,6 +36,8 @@ def _params_valid(op: str, value: object) -> bool:
     if not isinstance(value, dict):
         return False
     params = cast(dict[str, object], value)
+    if op == "prepare_default_config":
+        return not params
     if op == "hello":
         return (
             set(params) == {"config_path", "workspace"}

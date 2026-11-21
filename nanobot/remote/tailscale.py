@@ -6,6 +6,7 @@ import json
 import shutil
 import subprocess
 from typing import Any, cast
+from urllib.parse import urlparse
 
 
 def _run_json(command: list[str]) -> dict[str, Any] | None:
@@ -30,7 +31,47 @@ def _run_json(command: list[str]) -> dict[str, Any] | None:
     return cast(dict[str, Any], value) if isinstance(value, dict) else None
 
 
-def tailscale_status() -> dict[str, Any]:
+def _serve_target(
+    serve: dict[str, Any],
+    *,
+    dns_name: str,
+    expected_port: int | None,
+) -> str | None:
+    """Return the exact /mobile/v1 proxy target, if it matches the host."""
+    web = serve.get("Web")
+    if not isinstance(web, dict):
+        return None
+    web_map = cast(dict[str, Any], web)
+    for key, entry in web_map.items():
+        if not key.startswith(f"{dns_name}:"):
+            continue
+        if not isinstance(entry, dict):
+            continue
+        entry_map = cast(dict[str, Any], entry)
+        handlers = entry_map.get("Handlers")
+        if not isinstance(handlers, dict):
+            continue
+        handler_map = cast(dict[str, Any], handlers)
+        handler = handler_map.get("/mobile/v1")
+        if not isinstance(handler, dict):
+            continue
+        handler_value = cast(dict[str, Any], handler)
+        proxy = handler_value.get("Proxy")
+        if not isinstance(proxy, str) or not proxy:
+            continue
+        if expected_port is not None:
+            parsed = urlparse(proxy)
+            if (
+                parsed.scheme != "http"
+                or parsed.hostname not in {"127.0.0.1", "::1", "localhost"}
+                or parsed.port != expected_port
+            ):
+                continue
+        return proxy
+    return None
+
+
+def tailscale_status(expected_port: int | None = None) -> dict[str, Any]:
     """Return bounded readiness data; never mutate Tailscale or Serve state."""
 
     binary = shutil.which("tailscale")
@@ -62,15 +103,18 @@ def tailscale_status() -> dict[str, Any]:
     backend_state = status.get("BackendState")
     connected = isinstance(backend_state, str) and backend_state == "Running"
     serve = _run_json([binary, "serve", "status", "--json"]) or {}
-    mapped = "/mobile/v1" in json.dumps(serve, sort_keys=True)
+    target = _serve_target(serve, dns_name=dns_text, expected_port=expected_port)
+    mapped = target is not None
     origin = f"https://{dns_text}" if dns_text else ""
     return {
         "available": True,
         "connected": connected,
         "serve_mapped": mapped,
+        "serve_target": target or "",
         "dns_name": dns_text,
         "origin": origin,
         "error": "" if connected and mapped else (
-            "Tailscale Serve is missing /mobile/v1" if connected else "Tailscale is not connected"
+            "Tailscale Serve is missing the exact /mobile/v1 target"
+            if connected else "Tailscale is not connected"
         ),
     }

@@ -1,12 +1,13 @@
 import {
   useEffect,
+  useId,
   useLayoutEffect,
   useRef,
   useState,
   type KeyboardEvent,
   type PointerEvent,
 } from "react";
-import { Check, SlidersHorizontal, Sparkles } from "lucide-react";
+import { Check, ChevronLeft, ChevronRight, Search, Sparkles } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import {
@@ -19,6 +20,7 @@ import { inferProviderFromModelName, providerBrand } from "@/lib/provider-brand"
 import { cn } from "@/lib/utils";
 
 const pickerWidthClassName = "w-[min(18rem,calc(100vw-2rem))]";
+const QUICK_SWITCH_LIMIT = 3;
 const LONG_PRESS_MS = 400;
 const PRESS_SLOP_PX = 8;
 const PILL_GAP_PX = 4;
@@ -79,12 +81,22 @@ export interface ModelPresetOption {
   provider?: string | null;
 }
 
+export interface ModelReasoningControl {
+  value: string | null;
+  defaultValue: string | null;
+  options: string[];
+  pending: boolean;
+  failed: boolean;
+  onChange: (effort: string | null) => void;
+}
+
 interface ModelPresetBadgeProps {
   label: string;
   modelDetail?: string | null;
   modelPreset?: string | null;
   modelPresets?: ModelPresetOption[];
   onPresetChange?: (name: string) => void;
+  reasoning?: ModelReasoningControl;
   onManageModels?: () => void;
   onRequestComposerFocus?: () => void;
   provider?: string | null;
@@ -102,7 +114,7 @@ export function ModelPresetBadge({
   modelPreset,
   modelPresets = [],
   onPresetChange,
-  onManageModels,
+  reasoning,
   onRequestComposerFocus,
   provider,
   providerLabel,
@@ -114,6 +126,8 @@ export function ModelPresetBadge({
 }: ModelPresetBadgeProps) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
+  const [showAllModels, setShowAllModels] = useState(false);
+  const [modelQuery, setModelQuery] = useState("");
   const [motion, setMotion] = useState<PresetMotion | null>(null);
   const [motionWidth, setMotionWidth] = useState<number | null>(null);
   const gestureRef = useRef<PresetGesture | null>(null);
@@ -148,6 +162,30 @@ export function ModelPresetBadge({
   const opensSetup = Boolean(onClick);
   const canSwitch = !opensSetup && Boolean(onPresetChange) && activeName !== "" && presets.length > 1;
   const currentIndex = Math.max(0, presets.findIndex((preset) => preset.name === activeName));
+  const otherPresets = presets.filter((preset) => preset.name !== activeName);
+  const hasMoreModels = otherPresets.length > QUICK_SWITCH_LIMIT;
+  const quickSwitchPresets = hasMoreModels
+    ? otherPresets.slice(0, QUICK_SWITCH_LIMIT)
+    : otherPresets;
+  const query = modelQuery.trim().toLowerCase();
+  const filteredPresets = query
+    ? presets.filter((preset) =>
+        preset.name.toLowerCase().includes(query)
+        || (preset.model ?? "").toLowerCase().includes(query))
+    : presets;
+  const activeProviderLabel = providerLabel
+    || displayProvider
+    || inferProviderFromModelName(displayModelDetail || displayLabel);
+  // The composer label is the user-facing model name; the preset key is an
+  // internal identifier, so the header never leads with it.
+  const activeDisplayName = displayLabel;
+  const activeDetail = compactModelName(displayModelDetail);
+  const effortLabelFor = (effort: string) => t(`thread.composer.reasoningEfforts.${effort}`, {
+    defaultValue: effortLabel(effort),
+  });
+  // A non-default effort is part of how the next turn will run, so the closed
+  // pill names it next to the model.
+  const activeEffortLabel = reasoning?.value ? effortLabelFor(reasoning.value) : null;
   const pillHeight = isHero ? 32 : 36;
   const pillStride = pillHeight + PILL_GAP_PX;
   const switchModelLabel = t("thread.composer.switchModel", {
@@ -155,14 +193,10 @@ export function ModelPresetBadge({
   });
 
   const selectPreset = (name: string) => {
+    if (reasoning?.pending) return;
     setOpen(false);
     if (name !== activeName) onPresetChange?.(name);
     requestAnimationFrame(() => onRequestComposerFocus?.());
-  };
-
-  const openModelSettings = () => {
-    setOpen(false);
-    onManageModels?.();
   };
 
   const clearGesture = () => {
@@ -279,6 +313,7 @@ export function ModelPresetBadge({
       modelDetail={displayModelDetail}
       provider={displayProvider}
       providerLabel={fallbackModelName ? null : providerLabel}
+      effortLabel={needsSetup || fallbackModelName ? null : activeEffortLabel}
       needsSetup={needsSetup}
       needsAttention={needsSetup && attentionRequest > 0}
       fallbackModelName={fallbackModelName}
@@ -287,7 +322,7 @@ export function ModelPresetBadge({
     />
   );
 
-  if (!canSwitch) {
+  if (!canSwitch && !reasoning) {
     const Container = opensSetup ? "button" : "span";
     return (
       <Container
@@ -332,7 +367,7 @@ export function ModelPresetBadge({
             if (gestureRef.current?.active) event.preventDefault();
           }}
           onDragStart={(event) => event.preventDefault()}
-          onKeyDown={handleKeyDown}
+          onKeyDown={canSwitch ? handleKeyDown : undefined}
           onClickCapture={(event) => {
             if (!suppressClickRef.current) return;
             suppressClickRef.current = false;
@@ -403,6 +438,7 @@ export function ModelPresetBadge({
         aria-label={switchModelLabel}
         onOpenAutoFocus={(event) => {
           event.preventDefault();
+          if (showAllModels) return;
           const content = event.currentTarget;
           if (!(content instanceof HTMLElement)) return;
           const selected = content.querySelector<HTMLElement>(
@@ -412,42 +448,259 @@ export function ModelPresetBadge({
         }}
         className={cn(
           pickerWidthClassName,
-          "origin-[var(--radix-popover-content-transform-origin)] p-1.5 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[state=closed]:slide-out-to-bottom-1 data-[state=open]:slide-in-from-bottom-1 duration-200 ease-out motion-reduce:animate-none",
+          "max-h-[var(--radix-popover-content-available-height)] origin-[var(--radix-popover-content-transform-origin)] overflow-y-auto p-1.5 scrollbar-thin scrollbar-track-transparent data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[state=closed]:slide-out-to-bottom-1 data-[state=open]:slide-in-from-bottom-1 duration-200 ease-out motion-reduce:animate-none",
         )}
       >
-        <div
-          role="listbox"
-          aria-label={switchModelLabel}
-          className="max-h-[min(16rem,var(--radix-popover-content-available-height))] overflow-y-auto py-1 scrollbar-thin scrollbar-track-transparent"
-        >
-          {presets.map((preset) => (
-            <PresetOption
-              key={preset.name}
-              preset={preset}
-              selected={preset.name === activeName}
-              onSelect={selectPreset}
-            />
-          ))}
-        </div>
-        {onManageModels ? (
-          <div className="mt-1 border-t border-border/55 pt-1">
-            <button
-              type="button"
-              onClick={openModelSettings}
-              className={cn(
-                floatingItemClassName,
-                floatingItemFocusClassName,
-                "flex min-h-9 w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-sm font-medium text-muted-foreground hover:text-foreground",
-              )}
+        {showAllModels ? (
+          <div data-testid="model-picker-all">
+            <div className="flex items-center gap-1 pb-1">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowAllModels(false);
+                  setModelQuery("");
+                }}
+                aria-label={t("thread.composer.backToQuickModels", {
+                  defaultValue: "Back to quick models",
+                })}
+                className={cn(
+                  floatingItemClassName,
+                  floatingItemFocusClassName,
+                  "inline-flex min-h-8 items-center gap-1 rounded-lg px-2 text-xs font-medium text-muted-foreground hover:text-foreground",
+                )}
+              >
+                <ChevronLeft className="size-3.5 shrink-0" strokeWidth={1.9} aria-hidden />
+                <span>{t("thread.composer.back", { defaultValue: "Back" })}</span>
+              </button>
+            </div>
+            <label className="flex items-center gap-2 rounded-lg bg-muted/45 px-2.5 py-1.5">
+              <Search className="size-3.5 shrink-0 text-muted-foreground/70" strokeWidth={1.9} aria-hidden />
+              <input
+                autoFocus
+                type="search"
+                value={modelQuery}
+                onChange={(event) => setModelQuery(event.target.value)}
+                placeholder={t("thread.composer.searchModels", { defaultValue: "Search models" })}
+                aria-label={t("thread.composer.searchModels", { defaultValue: "Search models" })}
+                className="min-w-0 flex-1 bg-transparent text-[13px] text-foreground outline-none placeholder:text-muted-foreground/60"
+              />
+            </label>
+            <div
+              role="listbox"
+              aria-label={switchModelLabel}
+              className="max-h-[min(16rem,var(--radix-popover-content-available-height))] overflow-y-auto py-1 scrollbar-thin scrollbar-track-transparent"
             >
-              <SlidersHorizontal className="size-4 shrink-0" strokeWidth={1.75} />
-              <span>{t("thread.composer.manageModels")}</span>
-            </button>
+              {filteredPresets.map((preset) => (
+                <PresetOption
+                  key={preset.name}
+                  preset={preset}
+                  selected={preset.name === activeName}
+                  onSelect={selectPreset}
+                />
+              ))}
+            </div>
+            {filteredPresets.length === 0 ? (
+              <p className="px-2.5 py-2 text-xs text-muted-foreground">
+                {t("thread.composer.noMatchingModels", { defaultValue: "No matching models" })}
+              </p>
+            ) : null}
           </div>
-        ) : null}
+        ) : (
+          <>
+            <div
+              data-testid="model-picker-active"
+              className="flex min-w-0 items-center gap-2.5 rounded-lg bg-muted/55 px-2.5 py-2"
+            >
+              <PresetProviderIcon
+                label={activeDisplayName}
+                modelDetail={activeDetail}
+                provider={displayProvider}
+                isHero={false}
+              />
+              <span className="flex min-w-0 flex-1 flex-col">
+                <span className="flex min-w-0 items-center gap-1.5">
+                  <span className="min-w-0 truncate text-[13px] font-semibold text-foreground">
+                    {activeDisplayName}
+                  </span>
+                  <Check className="size-3.5 shrink-0 text-foreground/70" aria-hidden />
+                </span>
+                {activeProviderLabel ? (
+                  <span className="min-w-0 truncate text-[11.5px] text-muted-foreground">
+                    {activeProviderLabel}
+                  </span>
+                ) : activeDetail && activeDetail !== activeDisplayName ? (
+                  <span className="min-w-0 truncate text-[11.5px] text-muted-foreground">
+                    {activeDetail}
+                  </span>
+                ) : null}
+              </span>
+            </div>
+            {reasoning ? (
+              <ReasoningEffortPills
+                key={activeName}
+                control={reasoning}
+                labelFor={effortLabelFor}
+              />
+            ) : null}
+            <div
+              role="listbox"
+              aria-label={switchModelLabel}
+              data-testid="model-picker-quick-switch"
+              className="py-1"
+            >
+              {quickSwitchPresets.map((preset) => (
+                <PresetOption
+                  key={preset.name}
+                  preset={preset}
+                  selected={preset.name === activeName}
+                  onSelect={selectPreset}
+                />
+              ))}
+            </div>
+            {hasMoreModels ? (
+              <div className="border-t border-border/55 pt-1">
+                <button
+                  type="button"
+                  data-testid="model-picker-more"
+                  onClick={() => setShowAllModels(true)}
+                  className={cn(
+                    floatingItemClassName,
+                    floatingItemFocusClassName,
+                    "flex min-h-9 w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-sm font-medium text-muted-foreground hover:text-foreground",
+                  )}
+                >
+                  <span className="min-w-0 flex-1 truncate text-left">
+                    {t("thread.composer.moreModels", {
+                      count: presets.length,
+                      defaultValue: "More models ({{count}})",
+                    })}
+                  </span>
+                  <ChevronRight className="size-4 shrink-0" strokeWidth={1.75} aria-hidden />
+                </button>
+              </div>
+            ) : null}
+          </>
+        )}
       </PopoverContent>
     </Popover>
   );
+}
+
+interface ReasoningEffortPillsProps {
+  control: ModelReasoningControl;
+  labelFor: (effort: string) => string;
+}
+
+/**
+ * One-click segmented effort pills.
+ *
+ * Every available option stays visible, including middle values, so the user
+ * never has to drag a slider to discover or select an intermediate effort. A
+ * preset default is offered as a labelled reset option.
+ */
+function ReasoningEffortPills({ control, labelFor }: ReasoningEffortPillsProps) {
+  const { t } = useTranslation();
+  const sliderId = useId();
+  const [preview, setPreview] = useState<number | null>(null);
+  const pointer = useRef<number | null>(null);
+  const efforts: (string | null)[] = [null, ...control.options];
+  const committed = Math.max(0, efforts.indexOf(control.value));
+  const selected = preview ?? committed;
+  const last = efforts.length - 1;
+  const selectedEffort = efforts[selected];
+  const valueText = selectedEffort
+    ? labelFor(selectedEffort)
+    : control.defaultValue
+      ? `${t("thread.composer.presetReasoningDefault", { defaultValue: "Preset default" })} (${labelFor(control.defaultValue)})`
+      : t("thread.composer.presetReasoningDefault", { defaultValue: "Preset default" });
+
+  const commit = (index: number) => {
+    if (index !== committed && index >= 0 && index <= last) {
+      control.onChange(efforts[index]);
+    }
+  };
+  const endPreview = (event: PointerEvent<HTMLInputElement>, apply: boolean) => {
+    if (pointer.current !== event.pointerId) return;
+    pointer.current = null;
+    setPreview(null);
+    if (apply) commit(event.currentTarget.valueAsNumber);
+  };
+
+  return (
+    <div
+      data-testid="reasoning-effort-pills"
+      role="group"
+      aria-label={t("settings.models.reasoningEffort", { defaultValue: "Reasoning effort" })}
+      aria-busy={control.pending}
+      className="space-y-1 border-t border-border/55 px-1.5 py-2"
+    >
+      <div className="flex flex-wrap items-baseline justify-between gap-x-2 px-1">
+        <label htmlFor={sliderId} className="text-xs font-medium text-muted-foreground">
+          {t("settings.models.reasoningEffort", { defaultValue: "Reasoning effort" })}
+        </label>
+        <span className="text-xs font-medium text-foreground">{valueText}</span>
+      </div>
+      <div className="px-1">
+        <input
+          id={sliderId}
+          type="range"
+          min={0}
+          max={last}
+          step={1}
+          value={selected}
+          aria-valuetext={valueText}
+          onChange={(event) => {
+            const index = event.target.valueAsNumber;
+            if (pointer.current === null) commit(index);
+            else setPreview(index);
+          }}
+          onPointerDown={(event) => {
+            if (event.button !== 0) {
+              event.preventDefault();
+              return;
+            }
+            pointer.current = event.pointerId;
+            event.currentTarget.setPointerCapture?.(event.pointerId);
+          }}
+          onPointerUp={(event) => endPreview(event, true)}
+          onPointerCancel={(event) => endPreview(event, false)}
+          onLostPointerCapture={(event) => endPreview(event, false)}
+          className="block h-6 w-full cursor-pointer touch-pan-y accent-foreground focus-visible:rounded focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring/50"
+        />
+      </div>
+      <div className="flex items-center justify-between gap-0.5">
+        {efforts.map((effort, index) => {
+          const active = index === selected;
+          return (
+            <button
+              key={effort ?? "default"}
+              type="button"
+              aria-pressed={index === committed}
+              onClick={() => commit(index)}
+              className={cn(
+                "min-h-6 rounded px-1 text-[11px] transition-colors duration-150 motion-reduce:transition-none",
+                "focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring/50",
+                active
+                  ? "font-semibold text-foreground"
+                  : "text-muted-foreground hover:text-foreground",
+              )}
+            >
+              {effort ? labelFor(effort) : t("settings.values.default", { defaultValue: "Default" })}
+            </button>
+          );
+        })}
+      </div>
+      {control.failed ? (
+        <p role="status" className="px-1 text-xs text-red-500 dark:text-red-400">
+          {t("thread.composer.reasoningEffortFailed", { defaultValue: "Could not update reasoning effort. Try again." })}
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
+function effortLabel(effort: string): string {
+  return effort === "xhigh" ? "Extra high" : effort.charAt(0).toUpperCase() + effort.slice(1);
 }
 
 function PresetOption({
@@ -480,10 +733,14 @@ function PresetOption({
         provider={preset.provider}
         isHero={false}
       />
-      <span className="flex min-w-0 flex-1 items-baseline gap-1.5 overflow-hidden whitespace-nowrap">
-        <span className="shrink-0 text-[13px] font-medium text-foreground">{preset.name}</span>
+      <span className="flex min-w-0 flex-1 flex-col">
+        <span className="truncate text-[13px] font-medium leading-snug text-foreground">
+          {preset.name}
+        </span>
         {detail && detail !== preset.name ? (
-          <span className="truncate text-[12px] text-muted-foreground">{detail}</span>
+          <span className="truncate text-[11px] leading-tight text-muted-foreground/80">
+            {detail}
+          </span>
         ) : null}
       </span>
       {selected ? <Check className="h-4 w-4 shrink-0 text-foreground/80" aria-hidden /> : null}
@@ -496,6 +753,7 @@ function PresetPill({
   modelDetail,
   provider,
   providerLabel,
+  effortLabel,
   needsSetup = false,
   needsAttention = false,
   fallbackModelName,
@@ -508,6 +766,7 @@ function PresetPill({
   modelDetail?: string | null;
   provider?: string | null;
   providerLabel?: string | null;
+  effortLabel?: string | null;
   needsSetup?: boolean;
   needsAttention?: boolean;
   fallbackModelName?: string | null;
@@ -521,7 +780,8 @@ function PresetPill({
   const inferredProvider = needsSetup
     ? null
     : provider || inferProviderFromModelName(modelDetail || label);
-  const title = [...new Set([label, modelDetail, providerLabel].filter(Boolean))].join(" · ");
+  const title = [...new Set([label, modelDetail, providerLabel, effortLabel].filter(Boolean))]
+    .join(" · ");
   const fallbackTitle = fallbackModelName
     ? `${fallbackFromLabel || label} · using ${fallbackModelName}`
     : title;
@@ -575,6 +835,17 @@ function PresetPill({
       >
         {needsSetup ? <SetupPromptLabel label={label} /> : label}
       </span>
+      {effortLabel && !needsSetup ? (
+        <span
+          data-testid="composer-model-effort-tag"
+          className={cn(
+            "shrink-0 rounded-full bg-muted/70 px-1.5 text-[10.5px] font-semibold leading-4 text-muted-foreground",
+            isHero && "px-1 text-[10px]",
+          )}
+        >
+          {effortLabel}
+        </span>
+      ) : null}
     </span>
   );
 }

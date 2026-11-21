@@ -11,6 +11,7 @@ import {
   Check,
   ChevronRight,
   CircleAlert,
+  CircleHelp,
   Clock3,
   Copy,
   ImageIcon,
@@ -27,6 +28,7 @@ import { MarkdownText } from "@/components/MarkdownText";
 import { SlashCommandText } from "@/components/SlashCommandText";
 import { ReasoningRow } from "@/components/thread/activity/ReasoningRow";
 import { ContextCompactionNotice } from "@/components/thread/ContextCompactionNotice";
+import { SubagentStatus } from "@/components/thread/SubagentStatus";
 import { UserMessageText } from "@/components/UserMessageText";
 import {
   Tooltip,
@@ -34,6 +36,12 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { cn } from "@/lib/utils";
 import { copyTextToClipboard } from "@/lib/clipboard";
 import {
@@ -53,6 +61,7 @@ import type {
   UIImage,
   UIMediaAttachment,
   UIMessage,
+  DelegatedChildReference,
   MessageDeliveryErrorKind,
   MessageDeliveryStatus,
 } from "@/lib/types";
@@ -61,6 +70,8 @@ interface MessageBubbleProps {
   message: UIMessage;
   /** The containing agent turn has not received turn_end yet. */
   isTurnStreaming?: boolean;
+  /** Reveal this completed assistant body when its conversation enters history. */
+  revealOnHistoryEntry?: boolean;
   /** Give temporary-chat user turns the dashed private-mode treatment. */
   temporary?: boolean;
   /** When false, hide this message's copy button. Default true. */
@@ -70,6 +81,50 @@ interface MessageBubbleProps {
   slashCommands?: SlashCommand[];
   onOpenFilePreview?: (path: string) => void;
   onForkFromHere?: () => void;
+  onOpenChildHistory?: (child: DelegatedChildReference, trigger: HTMLButtonElement) => void;
+  delegatedStatusAvailable?: boolean;
+}
+
+function DelegatedChildRow({
+  child,
+  onOpen,
+  statusAvailable,
+}: {
+  child: DelegatedChildReference;
+  onOpen?: (child: DelegatedChildReference, trigger: HTMLButtonElement) => void;
+  statusAvailable: boolean;
+}) {
+  const { t } = useTranslation();
+  const taskLabel = child.task_label?.trim() || child.profile || "Delegated task";
+  return (
+    <section
+      className="my-1 max-w-[49.5rem]"
+      data-delegated-child={child.child_id}
+      aria-label={taskLabel}
+    >
+      <button
+        type="button"
+        className="flex min-h-11 w-full items-center gap-3 rounded-control px-2.5 py-2 text-start text-[13px] transition-colors enabled:hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-default"
+        onClick={(event) => onOpen?.(child, event.currentTarget)}
+        disabled={!onOpen}
+        aria-label={t("thread.delegatedChild.inspectTask", {
+          task: taskLabel,
+          defaultValue: "Inspect {{task}} activity",
+        })}
+      >
+        <span className="min-w-0 flex-1 space-y-0.5">
+          <span className="block break-words font-medium leading-snug text-foreground">{taskLabel}</span>
+          <SubagentStatus child={child} available={statusAvailable} />
+          {child.result_summary ? (
+            <span className="line-clamp-2 whitespace-pre-wrap break-words leading-snug text-muted-foreground">
+              {child.result_summary}
+            </span>
+          ) : null}
+        </span>
+        {onOpen ? <ChevronRight aria-hidden className="size-4 shrink-0 text-muted-foreground rtl:rotate-180" /> : null}
+      </button>
+    </section>
+  );
 }
 
 function ForkArrowIcon({ className }: { className?: string }) {
@@ -201,6 +256,11 @@ function deliveryErrorCopy(
         title: t("errors.connectionClosed.title"),
         body: t("errors.connectionClosed.body"),
       };
+    case "session_recovery_required":
+      return {
+        title: t("errors.sessionRecoveryRequired.title"),
+        body: t("errors.sessionRecoveryRequired.body"),
+      };
     case "turn_rejected":
     case undefined:
       return {
@@ -222,7 +282,8 @@ function UserDeliveryStatus({
   errorKind: MessageDeliveryErrorKind | undefined;
 }) {
   const { t } = useTranslation();
-  if (status !== "sending" && status !== "failed") return null;
+  const finePointer = useMediaQuery("(hover: hover) and (pointer: fine)", true);
+  if (status !== "sending" && status !== "failed" && status !== "unknown") return null;
   if (status === "sending") {
     return (
       <span
@@ -232,6 +293,72 @@ function UserDeliveryStatus({
         <Clock3 className="h-3.5 w-3.5" aria-hidden />
         {t("message.delivery.sending")}
       </span>
+    );
+  }
+
+  if (errorKind === "session_recovery_required") {
+    const { title, body } = deliveryErrorCopy(errorKind, t);
+    return (
+      <div role="alert" className="max-w-72 break-words text-right text-[12px] leading-4 text-destructive">
+        <p className="font-medium">{title}</p>
+        <p>{body}</p>
+      </div>
+    );
+  }
+
+  if (status === "unknown") {
+    const label = t("message.delivery.awaitingConfirmation");
+    const { title, body } = deliveryErrorCopy(errorKind ?? "connection_closed", t);
+    const trigger = (
+      <button
+        type="button"
+        aria-label={label}
+        className={cn(
+          "inline-flex max-w-full flex-wrap items-center gap-1 rounded-sm text-right",
+          "text-[12px] leading-4 text-amber-700 transition-colors hover:text-amber-800",
+          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+          "dark:text-amber-300 dark:hover:text-amber-200",
+        )}
+      >
+        <CircleHelp className="h-3.5 w-3.5 shrink-0" aria-hidden />
+        {label}
+      </button>
+    );
+    const details = (
+      <>
+        <p className="font-medium text-popover-foreground">{title}</p>
+        <p className="mt-1 leading-relaxed text-muted-foreground">{body}</p>
+      </>
+    );
+    return (
+      <>
+        {finePointer ? (
+          <Tooltip>
+            <TooltipTrigger asChild>{trigger}</TooltipTrigger>
+            <TooltipContent
+              side="top"
+              align="end"
+              className="max-w-72 px-3 py-2.5 text-left"
+            >
+              {details}
+            </TooltipContent>
+          </Tooltip>
+        ) : (
+          <Popover>
+            <PopoverTrigger asChild>{trigger}</PopoverTrigger>
+            <PopoverContent
+              side="top"
+              align="end"
+              className="max-w-72 px-3 py-2.5 text-left"
+            >
+              {details}
+            </PopoverContent>
+          </Popover>
+        )}
+        <span role="status" aria-live="polite" className="sr-only">
+          {label}. {title}. {body}
+        </span>
+      </>
     );
   }
 
@@ -282,7 +409,9 @@ function IncomingSessionMessage({
 }) {
   const handle = message.sessionMessage!.session;
   const color = sessionHandleColor(handle.id);
-  const createdAtLabel = formatMessageEndTime(message.createdAt);
+  const createdAtLabel = message.timestampAvailable === false
+    ? ""
+    : formatMessageEndTime(message.createdAt);
   const handleName = `@${handle.name}`;
 
   return (
@@ -332,6 +461,7 @@ function IncomingSessionMessage({
 export function MessageBubble({
   message,
   isTurnStreaming = false,
+  revealOnHistoryEntry = false,
   temporary = false,
   showCopyAction = true,
   cliApps = [],
@@ -339,6 +469,8 @@ export function MessageBubble({
   slashCommands = [],
   onOpenFilePreview,
   onForkFromHere,
+  onOpenChildHistory,
+  delegatedStatusAvailable = true,
 }: MessageBubbleProps) {
   const { t } = useTranslation();
   const mentionCliApps = useMemo(
@@ -349,6 +481,16 @@ export function MessageBubble({
     () => mergeMcpMentionPresets(mcpPresets, message.mcpPresets),
     [mcpPresets, message.mcpPresets],
   );
+
+  if (message.kind === "delegated_child" && message.delegatedChild) {
+    return (
+      <DelegatedChildRow
+        child={message.delegatedChild}
+        onOpen={onOpenChildHistory}
+        statusAvailable={delegatedStatusAvailable}
+      />
+    );
+  }
 
   if (message.kind === "compaction" && message.compaction) {
     return <ContextCompactionNotice compaction={message.compaction} />;
@@ -377,8 +519,12 @@ export function MessageBubble({
     const userContent = parsedMessage.content;
     const hasText = userContent.trim().length > 0;
     const showDeliveryStatus =
-      message.deliveryStatus === "sending" || message.deliveryStatus === "failed";
-    const createdAtLabel = formatMessageEndTime(message.createdAt);
+      message.deliveryStatus === "sending"
+      || message.deliveryStatus === "failed"
+      || message.deliveryStatus === "unknown";
+    const createdAtLabel = message.timestampAvailable === false
+      ? ""
+      : formatMessageEndTime(message.createdAt);
     const showCreatedAt = createdAtLabel.length > 0;
     const createdAtTitle = showCreatedAt ? fmtDateTime(message.createdAt) : "";
     const quotedContext = parsedMessage.quotedContext;
@@ -479,15 +625,16 @@ export function MessageBubble({
   const forkLabel = t("message.forkFromHere");
   const completedAt = message.completedAt;
   const completedAtLabel =
-    message.role === "assistant" && !message.isStreaming
+    message.role === "assistant" && !message.isStreaming && message.timestampAvailable !== false
       ? formatMessageEndTime(completedAt)
       : "";
   const assistantTimestamp =
-    typeof completedAt === "number" && Number.isFinite(completedAt)
+    message.timestampAvailable !== false
+    && typeof completedAt === "number" && Number.isFinite(completedAt)
       ? completedAt
       : message.createdAt;
   const assistantTimestampLabel =
-    message.role === "assistant" && !message.isStreaming
+    message.role === "assistant" && !message.isStreaming && message.timestampAvailable !== false
       ? formatMessageEndTime(assistantTimestamp)
       : "";
   const showCompletedAt =
@@ -521,6 +668,12 @@ export function MessageBubble({
             <MarkdownText
               streaming={!!message.isStreaming}
               preserveStreamingLayout
+              revealOnHistoryEntry={
+                revealOnHistoryEntry
+                && !isTurnStreaming
+                && !message.isStreaming
+                && message.compactReply === undefined
+              }
               onOpenFilePreview={onOpenFilePreview}
             >
               {assistantContent}

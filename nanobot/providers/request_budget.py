@@ -322,9 +322,22 @@ class FinalizedRequestBudgetExceeded(ProviderRequestRejected):  # noqa: N818
 class ProviderRouteChanged(ProviderRequestRejected):
     """Dispatch selected a different leaf than the captured preparation route."""
 
-    def __init__(self, *, expected: str, actual: str) -> None:
+    def __init__(
+        self,
+        *,
+        expected: str,
+        actual: str,
+        actual_provider: str | None = None,
+        actual_model: str | None = None,
+        actual_fallback_index: int | None = None,
+        consumed_through: int = -1,
+    ) -> None:
         self.expected = expected
         self.actual = actual
+        self.actual_provider = actual_provider
+        self.actual_model = actual_model
+        self.actual_fallback_index = actual_fallback_index
+        self.consumed_through = consumed_through
         super().__init__(reason="route_changed")
 
 
@@ -1142,7 +1155,7 @@ def measure_finalized_request(
     reserve = max(concrete_reserve, completion_reserve_tokens or 0, configured_reserve or 0)
     total = limits.effective_total_tokens if limits is not None else None
     safety = limits.safety_buffer_tokens if limits is not None else 0
-    input_limit = total - reserve - safety if total is not None else None
+    input_limit = max(0, total - reserve - safety) if total is not None else None
     if capabilities is None:
         capabilities = default_model_capabilities(
             identity.provider,

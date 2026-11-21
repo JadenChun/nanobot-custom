@@ -39,12 +39,15 @@ from nanobot.providers.base import (
     ProviderConversationTransportReceipt,
     ToolCallRequest,
     parse_tool_arguments,
+    record_transport_attempt,
     resolve_stream_idle_timeout_s,
     tool_arguments_json_for_replay,
     track_stream_delivery,
 )
 from nanobot.providers.capabilities import ModelCapabilities, model_capabilities_from_metadata
+from nanobot.providers.image_history import recent_image_messages
 from nanobot.providers.openai_responses import (
+    MISSING_TERMINAL_EVENT_MESSAGE,
     ResponsesStreamCapture,
     build_responses_compaction_state,
     build_responses_state,
@@ -582,6 +585,14 @@ class OpenAICompatProvider(LLMProvider):
     """
 
     _native_compaction_available = True
+    # A tool batch that returns images (for example a video tool's sampled
+    # review frames) is bounded by count and bytes so one call cannot flood the
+    # local vision context. The token budget still allows far more than this at
+    # ordinary frame sizes, so the previous value of 3 left a review of a 5 s
+    # clip mostly unseen. Six covers a short clip's sampled frames; the byte
+    # limit below remains the hard ceiling.
+    _MAX_LOCAL_TOOL_IMAGES_PER_BATCH = 6
+    _MAX_LOCAL_TOOL_IMAGE_BATCH_BYTES = 8 * 1024 * 1024
 
     def __init__(
         self,
@@ -657,6 +668,31 @@ class OpenAICompatProvider(LLMProvider):
         # probe again after _RESPONSES_PROBE_INTERVAL_S seconds.
         self._responses_failures: dict[str, int] = {}
         self._responses_tripped_at: dict[str, float] = {}
+
+    def _prepare_local_tool_image_batch(
+        self,
+        messages: list[dict[str, Any]],
+        provider_context: ProviderCallContext | None,
+    ) -> tuple[list[dict[str, Any]], ProviderCallContext | None]:
+        """Bound the newest tool-image batch on the selected local leaf."""
+        if not self._is_local:
+            return messages, provider_context
+        byte_limit = self._MAX_LOCAL_TOOL_IMAGE_BATCH_BYTES
+        if self.policy.max_request_bytes is not None:
+            byte_limit = min(byte_limit, self.policy.max_request_bytes)
+        prepared = recent_image_messages(
+            messages,
+            max_tool_images=self._MAX_LOCAL_TOOL_IMAGES_PER_BATCH,
+            max_tool_image_bytes=byte_limit,
+        )
+        if prepared != messages and provider_context is not None:
+            # A native prefix or usage anchor may still include the omitted images.
+            provider_context = replace(
+                provider_context,
+                conversation_state=None,
+                local_usage_anchor=None,
+            )
+        return prepared, provider_context
 
     def model_capabilities(
         self,
@@ -1847,13 +1883,7 @@ class OpenAICompatProvider(LLMProvider):
     def _record_transport_attempt(
         provider_context: ProviderCallContext | None,
     ) -> None:
-        if provider_context is None or provider_context.on_transport_attempt is None:
-            return
-        kind = "auxiliary" if provider_context.source_summary_mode is not None else "main"
-        try:
-            provider_context.on_transport_attempt(kind)
-        except Exception:
-            logger.warning("Provider transport attempt observer failed")
+        record_transport_attempt(provider_context)
 
     @staticmethod
     def _stream_timeout_budget(
@@ -2013,6 +2043,12 @@ class OpenAICompatProvider(LLMProvider):
         stream: bool,
         tool_choice: str | dict[str, Any] | None = None,
     ) -> PreparedRequestBudgetPreview | None:
+        messages, prepared_context = self._prepare_local_tool_image_batch(
+            messages,
+            provider_context,
+        )
+        assert prepared_context is not None
+        provider_context = prepared_context
         if not self.supports_source_summary:
             return None
         if self._should_use_responses_api(model, generation.reasoning_effort):
@@ -2450,6 +2486,7 @@ class OpenAICompatProvider(LLMProvider):
                 provider_context=provider_context,
                 completion_reserve_tokens=completion_reserve_tokens,
             )
+            self._record_transport_attempt(provider_context)
             return await client.responses.create(**body)
 
     # ------------------------------------------------------------------
@@ -3024,6 +3061,10 @@ class OpenAICompatProvider(LLMProvider):
         tool_choice: str | dict[str, Any] | None = None,
         provider_context: ProviderCallContext | None = None,
     ) -> LLMResponse:
+        messages, provider_context = self._prepare_local_tool_image_batch(
+            messages,
+            provider_context,
+        )
         client = await self._ensure_client()
         try:
             if self._should_use_responses_api(model, reasoning_effort):
@@ -3207,15 +3248,31 @@ class OpenAICompatProvider(LLMProvider):
 
             timed_iterator = _timed_stream()
             capture = ResponsesStreamCapture()
-            content, tool_calls, finish_reason, usage, reasoning_content = (
-                await consume_sdk_stream(
-                    timed_iterator,
-                    callbacks["on_content_delta"],
-                    on_tool_call_delta=callbacks["on_tool_call_delta"],
-                    on_reasoning_delta=callbacks["on_thinking_delta"],
-                    capture=capture,
+            try:
+                content, tool_calls, finish_reason, usage, reasoning_content = (
+                    await consume_sdk_stream(
+                        timed_iterator,
+                        callbacks["on_content_delta"],
+                        on_tool_call_delta=callbacks["on_tool_call_delta"],
+                        on_reasoning_delta=callbacks["on_thinking_delta"],
+                        capture=capture,
+                    )
                 )
-            )
+            except RuntimeError as exc:
+                if (
+                    str(exc) == MISSING_TERMINAL_EVENT_MESSAGE
+                    and provider_context is not None
+                    and provider_context.source_summary_mode is not None
+                ):
+                    # A summary request may use its visible partial text, but
+                    # only as an explicitly incomplete auxiliary result.
+                    return LLMResponse(
+                        content=f"Error calling LLM: {exc}",
+                        finish_reason="error",
+                        error_kind="summary_incomplete_stream",
+                        error_should_retry=False,
+                    )
+                raise
             incomplete_auxiliary = (
                 provider_context is not None
                 and provider_context.source_summary_mode is not None
@@ -3292,6 +3349,10 @@ class OpenAICompatProvider(LLMProvider):
         on_tool_call_delta: Callable[[dict[str, Any]], Awaitable[None]] | None = None,
         provider_context: ProviderCallContext | None = None,
     ) -> LLMResponse:
+        messages, provider_context = self._prepare_local_tool_image_batch(
+            messages,
+            provider_context,
+        )
         chat_stream: object | None = None
         stream_iter: AsyncIterator[Any] | None = None
         preserve_cleanup_outcome = False

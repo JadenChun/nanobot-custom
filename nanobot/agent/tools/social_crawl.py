@@ -45,7 +45,6 @@ MAX_PRESERVED_PAGES = 5
 MAX_PRESERVED_HTML_CHARS = 1800
 CRAWLER_CLEANUP_TIMEOUT_SECONDS = 5.0
 CRAWLER_READ_NAVIGATION_ACTIONS = frozenset({
-    "expand",
     "follow_link",
     "inspect",
     "navigate",
@@ -60,9 +59,10 @@ CRAWLER_STATE_CHANGING_ACTIONS = frozenset({"click", "submit", "type"})
 def classify_crawler_action(action: object) -> str:
     """Classify a crawler operation for a later policy layer.
 
-    Validated navigation/read primitives are explicitly named.  Generic click
-    and unknown operations remain state-changing so policy can require an
-    approval decision without guessing at website semantics.
+    Validated navigation/read primitives are explicitly named.  Generic click,
+    expand (which clicks a page element), and unknown operations remain
+    state-changing so policy can require an approval decision without guessing
+    at website semantics.
     """
 
     normalized = action.strip().lower() if isinstance(action, str) else ""
@@ -308,7 +308,6 @@ class SocialCrawlTool(Tool, metaclass=_ConstantToolMetadata):
                         "open",
                         "navigate",
                         "follow_link",
-                        "expand",
                         "paginate",
                         "inspect",
                         "scroll",
@@ -321,7 +320,7 @@ class SocialCrawlTool(Tool, metaclass=_ConstantToolMetadata):
                 },
                 "selector": {
                     "type": "string",
-                    "description": "CSS selector for inspect, follow_link, expand, or paginate.",
+                    "description": "CSS selector for inspect, follow_link, or paginate.",
                 },
                 "scroll_pixels": {
                     "type": "integer",

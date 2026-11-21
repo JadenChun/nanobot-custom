@@ -28,6 +28,13 @@ class ScriptedProvider(LLMProvider):
         return 'synthetic-model'
 
 
+def _upgrade_source(loop, key):
+    """Upgrade one session to a canonical source before a delegated child turn."""
+    from tests.agent.test_migration_source_engine import upgrade
+
+    return upgrade(loop, key)
+
+
 @pytest.mark.parametrize("adapter", ["classic", "sdk", "bus"])
 async def test_representative_adapters_delegate_exactly_one_execute_turn(
     engine_config, adapter,
@@ -113,6 +120,7 @@ async def test_real_main_runner_delegates_to_real_planner_runner(engine_config):
     ])
     loop = AgentLoop.from_config(engine_config, tool_registry=ToolRegistry(), provider=provider)
     try:
+        _upgrade_source(loop, 'cli:test')
         result = await loop.execute_turn(TurnRequest(content='plan fixture work', session_key='cli:test'))
         assert result.content == 'planned' and result.tools_used == ['plan_task']
         assert len(provider.calls) == 3
@@ -185,6 +193,8 @@ async def test_concurrent_real_delegation_keeps_admitted_runtime(engine_config):
                 for provider, name in ((one, 'one'), (two, 'two'))]
     loop = AgentLoop.from_config(engine_config, tool_registry=ToolRegistry(), provider=ScriptedProvider([]))
     try:
+        _upgrade_source(loop, 'cli:one')
+        _upgrade_source(loop, 'cli:two')
         results = await asyncio.gather(*[
             loop._execute_direct('plan fixture', session_key=f'cli:{runtime.model}', runtime=runtime)
             for runtime in runtimes
@@ -205,6 +215,7 @@ async def test_real_nested_read_only_block_stops_main_without_approval(engine_co
     ])
     loop = AgentLoop.from_config(engine_config, tool_registry=ToolRegistry(), provider=provider)
     try:
+        _upgrade_source(loop, 'cli:test')
         result = await loop.execute_turn(TurnRequest(content='inspect fixture', session_key='cli:test'))
         assert result.stop_reason == 'policy_blocked'
         assert len(provider.calls) == 2
@@ -223,6 +234,7 @@ async def test_real_worker_writes_only_its_explicit_scope(engine_config):
     ])
     loop = AgentLoop.from_config(engine_config, tool_registry=ToolRegistry(), provider=provider)
     try:
+        _upgrade_source(loop, 'cli:test')
         result = await loop.execute_turn(TurnRequest(content='write a fixture file', session_key='cli:test'))
         assert result.content == 'main complete'
         assert (engine_config.workspace_path / 'allowed.txt').read_text() == 'worker output'

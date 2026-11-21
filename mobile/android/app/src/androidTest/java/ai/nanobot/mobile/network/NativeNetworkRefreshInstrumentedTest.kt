@@ -30,6 +30,7 @@ class NativeNetworkRefreshInstrumentedTest {
             .put("operation", operation)
             .put("method", if (body == null) "GET" else "POST")
             .put("path", path)
+            .put("native", true)
             .put("headers", encodedHeaders)
         if (body != null) {
             request.put(

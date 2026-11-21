@@ -100,11 +100,11 @@ def test_xai_catalog_fetches_remote_models_and_reuses_capability_metadata(
 
     monkeypatch.setattr(
         "nanobot.providers.xai_grok_provider.get_xai_oauth_storage_path",
-        lambda: tmp_path / "auth" / "xai.json",
+        lambda _owner=None: tmp_path / "auth" / "xai.json",
     )
     monkeypatch.setattr(
         "nanobot.providers.xai_grok_provider.get_xai_oauth_login_status",
-        lambda: token,
+        lambda _owner=None: token,
     )
     monkeypatch.setattr(
         "nanobot.providers.xai_grok_provider.get_xai_oauth_token",
@@ -200,7 +200,7 @@ def test_openai_codex_catalog_uses_account_catalog_and_filters_hidden_models(
     )
     monkeypatch.setattr(
         "nanobot.providers.openai_codex_provider.get_codex_authority",
-        lambda: SimpleNamespace(
+        lambda _owner=None: SimpleNamespace(
             get_view_or_import=lambda: SimpleNamespace(generation="generation-codex")
         ),
     )
@@ -292,7 +292,7 @@ def test_github_copilot_catalog_only_lists_compatible_chat_models(
 
     monkeypatch.setattr(
         "nanobot.providers.github_copilot_provider.get_copilot_authority",
-        lambda: SimpleNamespace(
+        lambda _owner=None: SimpleNamespace(
             get_view_or_import=lambda: SimpleNamespace(
                 generation="generation-copilot",
                 token=SimpleNamespace(account_id="octocat"),
@@ -371,7 +371,7 @@ def test_codex_catalog_never_publishes_a_models_after_a_to_b_to_c_churn(
     authority = SimpleNamespace(
         get_view_or_import=lambda: view(current["generation"]),
     )
-    monkeypatch.setattr(provider, "get_codex_authority", lambda: authority)
+    monkeypatch.setattr(provider, "get_codex_authority", lambda _owner=None: authority)
     monkeypatch.setattr(
         provider,
         "get_codex_credential_view",
@@ -410,10 +410,10 @@ def test_copilot_catalog_never_publishes_a_models_after_a_to_b_to_c_churn(
         )
 
     authority = SimpleNamespace(get_view_or_import=lambda: view(current["generation"]))
-    monkeypatch.setattr(provider, "get_copilot_authority", lambda: authority)
+    monkeypatch.setattr(provider, "get_copilot_authority", lambda _owner=None: authority)
 
     def fetch(
-        _proxy: str | None, *, expected_generation: str | None = None
+        _proxy: str | None, *, expected_generation: str | None = None, owner=None
     ) -> tuple[ProviderModelSpec, ...]:
         assert expected_generation is not None
         if expected_generation == "a":

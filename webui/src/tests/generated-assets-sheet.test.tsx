@@ -1,8 +1,8 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { GeneratedAssetsSheet } from "@/components/thread/GeneratedAssetsSheet";
+import { GeneratedAssetsPanel, GeneratedAssetsSheet } from "@/components/thread/GeneratedAssetsSheet";
 import { setAppLanguage } from "@/i18n";
 import type { SessionGeneratedAssetsPayload } from "@/lib/types";
 
@@ -211,6 +211,32 @@ describe("GeneratedAssetsSheet", () => {
     );
   });
 
+  it("renders newest-first session assets first in flat and call views", async () => {
+    const newestFirst = {
+      ...payload,
+      groups: [...payload.groups].reverse().map((group, index) => ({
+        ...group,
+        sequence: payload.groups.length - index,
+      })),
+    };
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(response(newestFirst)));
+    const user = userEvent.setup();
+    render(<GeneratedAssetsSheet sessionKey="websocket:chat-1" token="tok" />);
+
+    await user.click(screen.getByRole("button", { name: "Open generated assets" }));
+
+    const flatThumbs = await screen.findAllByTestId("generated-asset-thumbnail");
+    expect(
+      flatThumbs.map((thumb) => thumb.querySelector("button")?.getAttribute("aria-label")),
+    ).toEqual(["Open b1.png", "Open a1.png", "Open a2.png"]);
+
+    await user.click(screen.getByRole("button", { name: "By tool call" }));
+
+    const groups = await screen.findAllByTestId("generated-assets-group");
+    expect(groups[0]).toHaveTextContent("second batch prompt");
+    expect(groups[1]).toHaveTextContent("first batch prompt");
+  });
+
   it("renders and opens generated video assets", async () => {
     const videoGroup = {
       ...payload.groups[1],
@@ -298,5 +324,71 @@ describe("GeneratedAssetsSheet", () => {
     await user.click(screen.getByRole("button", { name: "Retry" }));
 
     expect(await screen.findByTestId("generated-assets-flat")).toBeInTheDocument();
+  });
+});
+
+describe("GeneratedAssetsPanel", () => {
+  beforeEach(async () => {
+    await setAppLanguage("en");
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(response(payload)));
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("loads assets without a sheet wrapper and opens the lightbox from it", async () => {
+    const user = userEvent.setup();
+    render(<GeneratedAssetsPanel sessionKey="websocket:chat-1" token="tok" modal={false} />);
+
+    expect(await screen.findByTestId("generated-assets-flat")).toBeInTheDocument();
+    expect(await screen.findAllByTestId("generated-asset-thumbnail")).toHaveLength(3);
+    expect(fetch).toHaveBeenCalledWith(
+      expect.stringContaining("/api/sessions/websocket%3Achat-1/generated-assets?limit=50"),
+      expect.objectContaining({ headers: { Authorization: "Bearer tok" } }),
+    );
+
+    await user.click(screen.getByRole("button", { name: "Open a1.png" }));
+    expect(await screen.findAllByAltText("a1.png")).toHaveLength(2);
+  });
+
+  it("stays idle until the tab becomes active", async () => {
+    const { rerender } = render(
+      <GeneratedAssetsPanel sessionKey="websocket:chat-1" token="tok" modal={false} active={false} />,
+    );
+    expect(screen.queryByTestId("generated-asset-thumbnail")).not.toBeInTheDocument();
+    await waitFor(() => expect(fetch).not.toHaveBeenCalled());
+
+    rerender(
+      <GeneratedAssetsPanel sessionKey="websocket:chat-1" token="tok" modal={false} active />,
+    );
+    expect(await screen.findByTestId("generated-assets-flat")).toBeInTheDocument();
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("renders a dialog with a close control in modal mode", async () => {
+    const onClose = vi.fn();
+    render(
+      <GeneratedAssetsPanel
+        sessionKey="websocket:chat-1"
+        token="tok"
+        modal
+        visible
+        onClose={onClose}
+      />,
+    );
+
+    expect(await screen.findByRole("dialog")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Close generated assets" }));
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("fills the docked inspector tabpanel width with flex-1 and min-w-0", async () => {
+    render(
+      <GeneratedAssetsPanel sessionKey="websocket:chat-1" token="tok" modal={false} active />,
+    );
+    const panel = await screen.findByTestId("generated-assets-panel");
+    expect(panel.className).toContain("flex-1");
+    expect(panel.className).toContain("min-w-0");
   });
 });

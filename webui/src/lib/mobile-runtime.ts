@@ -67,8 +67,9 @@ export interface MobileRuntime {
   createWebSocket(url: string): WebSocket;
   /** Restore foreground connectivity once; no-op when no runtime is installed. */
   recover(): Promise<void>;
-  /** Mint a fresh access token and reopen live sockets before it expires. */
+  /** Refresh access and retire live sockets for the owning client's reconnect. */
   renew(): Promise<void>;
+  dispose?(): void;
 }
 
 let installedMobileRuntime: MobileRuntime | null = null;
@@ -110,6 +111,7 @@ export function recoverMobileRuntime(): Promise<void> {
 }
 
 export function resetMobileRuntime(): void {
+  installedMobileRuntime?.dispose?.();
   installedMobileRuntime = null;
   ownerCapability = false;
   standardDispatchCapability = false;
@@ -121,19 +123,63 @@ export function shouldRegisterServiceWorker(): boolean {
 
 class MobileRuntimeError extends Error {}
 
-export function createMobileRuntime(transport: MobileTransport): MobileRuntime {
-  const pending = new Map<number, {
+export function createMobileRuntime(transport: MobileTransport): MobileRuntime & { dispose(): void } {
+  type Entry = {
+    id: number | null;
+    done: boolean;
     resolve: (response: MobileHttpResponse) => void;
     reject: (error: Error) => void;
     timer: ReturnType<typeof setTimeout>;
-  }>();
+  };
+  const pending = new Map<number, Entry>();
+  const admitted = new Set<Entry>();
+  // Native returns its request ID after launch. Join terminal events arriving
+  // during that interval, within the same finite admission and byte bounds.
+  const early = new Map<number, MobileEvent>();
+  const maxPending = 64;
+  const maxEarlyBytes = 64 * 1024 * 1024;
+  let earlyBytes = 0;
+  let launching = 0;
+  let disposed = false;
+  const cancel = (id: number): void => { void transport.cancel(id).catch(() => undefined); };
+  const settle = (entry: Entry, event?: MobileEvent, error?: Error): void => {
+    if (entry.done) return;
+    entry.done = true;
+    admitted.delete(entry);
+    if (entry.id !== null) pending.delete(entry.id);
+    clearTimeout(entry.timer);
+    if (error) {
+      if (entry.id !== null) cancel(entry.id);
+      entry.reject(error);
+    } else if (event?.type === "http_error") {
+      entry.reject(new MobileRuntimeError(event.code ?? "http_error"));
+    } else if (event) {
+      entry.resolve({ requestId: entry.id!, status: event.status ?? 0,
+        headers: event.headers ?? {}, bodyBase64: event.body_base64 ?? "" });
+    }
+  };
   const listeners = new Set<(event: MobileEvent) => void>();
   let listening: Promise<() => void> | null = null;
   const sockets = new Set<MobileWebSocket>();
   let recovery: Promise<void> | null = null;
+  let renewal: Promise<void> | null = null;
+  // Register credential work synchronously when requested. New adapters capture
+  // this phase only, never the later wait for ordered native socket cleanup.
+  let credentialMaintenance = Promise.resolve();
+  let socketWork = Promise.resolve();
+  // Keep native admission behind prior closes, including cleanup of an ID
+  // returned after its adapter was retired. HTTP traffic is independent.
+  const orderSocketWork = (work: () => Promise<void>): Promise<void> => {
+    const result = socketWork.then(work);
+    // Settlement, not release proof: each adapter reports its own failure and
+    // the broker still decides whether a subsequent open can be admitted.
+    socketWork = result.catch(() => undefined);
+    return result;
+  };
   let renewalTimer: ReturnType<typeof setTimeout> | null = null;
 
   const scheduleRenewal = (payload: Record<string, unknown>): void => {
+    if (disposed) return;
     const limits = payload.limits;
     const rawTtl = limits && typeof limits === "object"
       ? Number((limits as Record<string, unknown>).access_ttl_seconds)
@@ -149,24 +195,17 @@ export function createMobileRuntime(transport: MobileTransport): MobileRuntime {
   const ensureListener = (): Promise<() => void> => {
     if (listening === null) {
       listening = transport.onEvent((event) => {
-        if (event.type === "http_response" && typeof event.request_id === "number") {
+        if (disposed) return;
+        if ((event.type === "http_response" || event.type === "http_error")
+          && typeof event.request_id === "number") {
           const entry = pending.get(event.request_id);
-          if (entry) {
-            pending.delete(event.request_id);
-            clearTimeout(entry.timer);
-            entry.resolve({
-              requestId: event.request_id,
-              status: event.status ?? 0,
-              headers: event.headers ?? {},
-              bodyBase64: event.body_base64 ?? "",
-            });
-          }
-        } else if (event.type === "http_error" && typeof event.request_id === "number") {
-          const entry = pending.get(event.request_id);
-          if (entry) {
-            pending.delete(event.request_id);
-            clearTimeout(entry.timer);
-            entry.reject(new MobileRuntimeError(event.code ?? "http_error"));
+          if (entry) settle(entry, event);
+          else if (launching > 0 && !early.has(event.request_id)) {
+            const bytes = (event.body_base64?.length ?? 0) + (event.message?.length ?? 0) + 8192;
+            if (early.size < maxPending && earlyBytes + bytes <= maxEarlyBytes) {
+              early.set(event.request_id, event);
+              earlyBytes += bytes;
+            }
           }
         }
         for (const listener of listeners) listener(event);
@@ -175,17 +214,39 @@ export function createMobileRuntime(transport: MobileTransport): MobileRuntime {
     return listening;
   };
 
-  const execute = async (input: MobileHttpRequest, timeoutMs: number): Promise<MobileHttpResponse> => {
-    await ensureListener();
-    const requestId = await transport.http(input);
-    if (!requestId) throw new MobileRuntimeError("mobile request was not admitted");
+  const execute = (input: MobileHttpRequest, timeoutMs: number): Promise<MobileHttpResponse> => {
+    if (disposed) return Promise.reject(new MobileRuntimeError("mobile runtime disposed"));
+    if (admitted.size >= maxPending) return Promise.reject(new MobileRuntimeError("mobile request queue is full"));
     return new Promise<MobileHttpResponse>((resolve, reject) => {
-      const timer = setTimeout(() => {
-        pending.delete(requestId);
-        void transport.cancel(requestId);
-        reject(new MobileRuntimeError("mobile request timed out"));
-      }, timeoutMs);
-      pending.set(requestId, { resolve, reject, timer });
+      const entry: Entry = { id: null, done: false, resolve, reject,
+        timer: setTimeout(() => settle(entry, undefined, new MobileRuntimeError("mobile request timed out")), timeoutMs) };
+      admitted.add(entry);
+      void (async () => {
+        try {
+          await ensureListener();
+          if (entry.done || disposed) return;
+          launching += 1;
+          try {
+            const id = await transport.http(input);
+            if (!id) throw new MobileRuntimeError("mobile request was not admitted");
+            entry.id = id;
+            const event = early.get(id);
+            if (event) {
+              earlyBytes -= (event.body_base64?.length ?? 0) + (event.message?.length ?? 0) + 8192;
+              early.delete(id);
+            }
+            if (entry.done || disposed) { cancel(id); return; }
+            if (pending.has(id)) throw new MobileRuntimeError("duplicate mobile request ID");
+            pending.set(id, entry);
+            if (event) settle(entry, event);
+          } finally {
+            launching -= 1;
+            if (launching === 0) { early.clear(); earlyBytes = 0; }
+          }
+        } catch (error) {
+          settle(entry, undefined, error instanceof Error ? error : new MobileRuntimeError(String(error)));
+        }
+      })();
     });
   };
 
@@ -198,9 +259,20 @@ export function createMobileRuntime(transport: MobileTransport): MobileRuntime {
     return response;
   };
 
-  const runtime: MobileRuntime = {
+  const runtime: MobileRuntime & { dispose(): void } = {
     transport,
     request,
+    dispose() {
+      if (disposed) return;
+      disposed = true;
+      if (renewalTimer !== null) clearTimeout(renewalTimer);
+      for (const entry of [...admitted]) settle(entry, undefined, new MobileRuntimeError("mobile runtime disposed"));
+      early.clear(); earlyBytes = 0;
+      listeners.clear();
+      for (const socket of sockets) socket.close();
+      sockets.clear();
+      if (listening) void listening.then((remove) => remove()).catch(() => undefined);
+    },
     async handshake() {
       // Rotate the access token first: refresh invalidates every previous token
       // for this installation, so a token inherited from an earlier session can
@@ -237,37 +309,64 @@ export function createMobileRuntime(transport: MobileTransport): MobileRuntime {
       return () => listeners.delete(listener);
     },
     createWebSocket(url) {
-      const socket = new MobileWebSocket(runtime, url);
+      if (disposed) throw new MobileRuntimeError("mobile runtime disposed");
+      const socket = new MobileWebSocket(runtime, url, orderSocketWork, credentialMaintenance);
       sockets.add(socket);
       return socket as unknown as WebSocket;
     },
     async recover() {
+      if (disposed) return;
       if (recovery !== null) return recovery;
-      recovery = (async () => {
-        const active = [...sockets].filter((socket) => !socket.isRetired());
+      const active = [...sockets].filter((socket) => !socket.isRetired());
+      const work = credentialMaintenance.then(async () => {
+        if (disposed) return;
         for (const socket of active) {
           await socket.recover();
           if (socket.isRetired()) sockets.delete(socket);
         }
-      })().finally(() => {
+      });
+      credentialMaintenance = work.catch(() => undefined);
+      recovery = work.then(async () => {
+        for (const socket of active) await socket.waitForClose();
+      }).finally(() => {
         recovery = null;
       });
       return recovery;
     },
     async renew() {
-      // Access tokens live for minutes; the gateway closes a socket once its
-      // token expires, losing any send in flight. Refresh first, then reopen
-      // live sockets so they carry the fresh token.
-      const refreshed = await transport.refresh().catch(() => false);
-      if (!refreshed) return;
-      for (const socket of [...sockets]) {
-        await socket.renew();
-        if (socket.isRetired()) sockets.delete(socket);
-      }
+      if (disposed) return;
+      if (renewal !== null) return renewal;
+      // Capture adapter generations before refresh/serialization. A client
+      // replacement created during either wait does not belong to this repair.
+      const active = [...sockets].filter((socket) => !socket.isRetired());
+      const work = credentialMaintenance.then(async () => {
+        if (disposed || active.every((socket) => socket.isRetired())) return;
+        const refreshed = await transport.refresh().catch(() => false);
+        if (!refreshed || disposed) return;
+        for (const socket of active) {
+          socket.close();
+          if (socket.isRetired()) sockets.delete(socket);
+        }
+      });
+      credentialMaintenance = work.catch(() => undefined);
+      renewal = work.then(async () => {
+        for (const socket of active) await socket.waitForClose();
+      }).finally(() => {
+        renewal = null;
+      });
+      return renewal;
     },
   };
   return runtime;
 }
+
+type MobileSocketEvent = {
+  type: "ws_frame" | "ws_closed";
+  wsId: number;
+  payload: string;
+  payloadBytes: number;
+  code: number;
+};
 
 class MobileWebSocket {
   binaryType: BinaryType = "blob";
@@ -281,14 +380,25 @@ class MobileWebSocket {
   private unsubscribe: (() => void) | null = null;
   private retired = false;
   private closeEmitted = false;
+  private errorEmitted = false;
+  private openingEvents = true;
+  private earlyEvents: MobileSocketEvent[] = [];
+  private earlyBytes = 0;
+  private opening: Promise<void>;
+  private closing: Promise<void> | null = null;
 
-  constructor(private runtime: MobileRuntime, url: string) {
+  constructor(
+    private runtime: MobileRuntime,
+    url: string,
+    private orderSocketWork: (work: () => Promise<void>) => Promise<void>,
+    private credentialsReady: Promise<void>,
+  ) {
     this.url = url;
     const parsed = new URL(url);
     if (parsed.pathname !== "/mobile/v1/ws") {
       throw new Error("mobile socket path is not allowlisted");
     }
-    void this.open();
+    this.opening = orderSocketWork(() => this.open()).catch(() => this.failTransport());
   }
 
   isRetired(): boolean {
@@ -297,100 +407,136 @@ class MobileWebSocket {
 
   async recover(): Promise<void> {
     if (this.retired) return;
-    if (this.readyState !== 1 || !this.wsId) {
-      // The owning client performs the reconnect; refreshing here makes a
-      // foreground return use the current access token without duplicating
-      // the socket.
-      await this.runtime.transport.refresh().catch(() => false);
-      return;
+    const wsId = this.wsId;
+    if (this.readyState === 1 && wsId) {
+      const ping = this.runtime.transport.wsPing;
+      if (!ping) return;
+      const healthy = await ping.call(this.runtime.transport, wsId).catch(() => false);
+      if (this.retired || this.wsId !== wsId) return;
+      if (healthy) return;
     }
-    const ping = this.runtime.transport.wsPing;
-    if (!ping) return;
-    const healthy = await ping.call(this.runtime.transport, this.wsId).catch(() => false);
-    if (healthy && this.readyState === 1) return;
-    await this.runtime.transport.refresh().catch(() => false);
-    await this.reopen();
-  }
-
-  private async reopen(): Promise<void> {
-    const staleId = this.wsId;
-    this.wsId = 0;
-    this.readyState = 0;
-    this.unsubscribe?.();
-    this.unsubscribe = null;
-    if (staleId) void this.runtime.transport.wsClose(staleId);
-    await this.open();
+    const refreshed = await this.runtime.transport.refresh().catch(() => false);
+    if (!refreshed || this.retired) return;
+    this.close();
   }
 
   private async open(): Promise<void> {
-    try {
-      const unsubscribe = await this.runtime.onEvent((event) => this.handleEvent(event));
-      if (this.retired) {
-        unsubscribe();
-        return;
-      }
-      this.unsubscribe = unsubscribe;
-      const wsId = await this.runtime.transport.wsOpen("/mobile/v1/ws");
-      if (this.retired) {
-        if (wsId) void this.runtime.transport.wsClose(wsId);
-        return;
-      }
-      if (!wsId) throw new Error("mobile socket was not admitted");
-      this.wsId = wsId;
-      this.readyState = 1;
-      this.onopen?.call(this as unknown as WebSocket, new Event("open"));
-    } catch {
-      if (this.retired) return;
-      this.onerror?.call(this as unknown as WebSocket, new Event("error"));
-      this.emitClose(1006);
+    if (this.retired) return;
+    await this.credentialsReady;
+    if (this.retired) return;
+    const unsubscribe = await this.runtime.onEvent((event) => this.handleEvent(event));
+    if (this.retired) {
+      unsubscribe();
+      return;
     }
+    this.unsubscribe = unsubscribe;
+    const wsId = await this.runtime.transport.wsOpen("/mobile/v1/ws");
+    if (!Number.isSafeInteger(wsId) || wsId <= 0) throw new Error("mobile socket was not admitted");
+    if (this.retired) {
+      // This cleanup is part of the opening barrier, not queued behind itself.
+      await this.runtime.transport.wsClose(wsId);
+      return;
+    }
+    this.wsId = wsId;
+    this.readyState = 1;
+    this.onopen?.call(this as unknown as WebSocket, new Event("open"));
+    // Keep buffering through onopen so any synchronous native responses remain
+    // behind frames that arrived while the ID was still unknown.
+    while (!this.retired && this.earlyEvents.length > 0) {
+      const event = this.earlyEvents.shift()!;
+      this.earlyBytes -= event.payloadBytes;
+      this.deliverEvent(event);
+    }
+    this.openingEvents = false;
   }
 
   send(data: string | ArrayBufferLike | Blob | ArrayBufferView): void {
     if (this.readyState !== 1 || typeof data !== "string") {
       throw new Error("mobile socket accepts text frames only");
     }
-    // A rejected native send means the frame never left the device. Surface it
-    // as a transport close so the client reconnects instead of waiting for an
-    // acknowledgement that cannot arrive.
+    const wsId = this.wsId;
+    // Native queue acceptance is not server admission or delivery proof. A
+    // refusal retires only this adapter; the client retains outcome uncertainty.
     void this.runtime.transport
-      .wsSend(this.wsId, new TextEncoder().encode(data), "text")
-      .catch(() => this.failTransport());
+      .wsSend(wsId, new TextEncoder().encode(data), "text")
+      .catch(() => {
+        if (!this.retired && this.wsId === wsId) this.failTransport();
+      });
   }
 
-  /** Reopen on a refreshed access token without reporting a disconnect. */
-  async renew(): Promise<void> {
-    if (this.retired) return;
-    await this.reopen();
+  /** Cleanup must not hold the credential phase that a queued replacement needs. */
+  async waitForClose(): Promise<void> {
+    await this.opening;
+    await this.closing;
   }
 
   private failTransport(): void {
-    if (this.closeEmitted) return;
-    this.onerror?.call(this as unknown as WebSocket, new Event("error"));
-    this.emitClose(1006);
+    this.emitError();
+    this.retire(1006);
   }
 
   close(): void {
+    this.retire(1000);
+  }
+
+  private retire(code: number): void {
     if (this.retired) return;
     this.retired = true;
     this.readyState = 2;
     const wsId = this.wsId;
     this.wsId = 0;
-    if (wsId) void this.runtime.transport.wsClose(wsId);
-    this.unsubscribe?.();
-    this.unsubscribe = null;
-    this.emitClose(1000);
+    if (wsId) {
+      this.closing = this.orderSocketWork(() => this.runtime.transport.wsClose(wsId))
+        .catch(() => this.emitError());
+    }
+    this.emitClose(code);
   }
 
   private handleEvent(event: MobileEvent): void {
-    if (this.retired || !this.wsId) return;
-    if (event.type === "ws_frame" && event.ws_id === this.wsId) {
-      const raw = typeof event.data_base64 === "string" ? decodeBase64(event.data_base64) : "";
-      this.onmessage?.call(this as unknown as WebSocket, new MessageEvent("message", { data: raw }));
-    } else if (event.type === "ws_closed" && event.ws_id === this.wsId) {
-      this.wsId = 0;
-      this.emitClose(Number(event.code ?? 1000));
+    if (this.retired || (event.type !== "ws_frame" && event.type !== "ws_closed")
+      || typeof event.ws_id !== "number" || !Number.isSafeInteger(event.ws_id) || event.ws_id <= 0) return;
+    const socketEvent: MobileSocketEvent = {
+      type: event.type,
+      wsId: event.ws_id,
+      payload: event.type === "ws_frame" && typeof event.data_base64 === "string" ? event.data_base64 : "",
+      payloadBytes: 0,
+      code: Number(event.code ?? 1000),
+    };
+    if (this.openingEvents) {
+      const remaining = 4 * 1024 * 1024 - this.earlyBytes;
+      // Valid base64 is ASCII; malformed input must not bypass the byte bound.
+      socketEvent.payloadBytes = socketEvent.payload.length > remaining
+        ? socketEvent.payload.length : new TextEncoder().encode(socketEvent.payload).byteLength;
+      if (this.earlyEvents.length >= 64 || socketEvent.payloadBytes > remaining) {
+        this.failTransport();
+        return;
+      }
+      this.earlyEvents.push(socketEvent);
+      this.earlyBytes += socketEvent.payloadBytes;
+      return;
     }
+    this.deliverEvent(socketEvent);
+  }
+
+  private deliverEvent(event: MobileSocketEvent): void {
+    if (this.retired || event.wsId !== this.wsId) return;
+    if (event.type === "ws_frame") {
+      try {
+        const raw = decodeBase64(event.payload);
+        this.onmessage?.call(this as unknown as WebSocket, new MessageEvent("message", { data: raw }));
+      } catch {
+        this.failTransport();
+      }
+    } else {
+      this.wsId = 0;
+      this.emitClose(event.code);
+    }
+  }
+
+  private emitError(): void {
+    if (this.errorEmitted) return;
+    this.errorEmitted = true;
+    this.onerror?.call(this as unknown as WebSocket, new Event("error"));
   }
 
   private emitClose(code: number): void {
@@ -399,6 +545,8 @@ class MobileWebSocket {
     this.retired = true;
     this.wsId = 0;
     this.readyState = 3;
+    this.earlyEvents = [];
+    this.earlyBytes = 0;
     const unsubscribe = this.unsubscribe;
     this.unsubscribe = null;
     unsubscribe?.();

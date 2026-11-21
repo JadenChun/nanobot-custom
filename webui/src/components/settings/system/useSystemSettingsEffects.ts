@@ -1,4 +1,4 @@
-import { useCallback, useEffect } from "react";
+import { useCallback, useEffect, useRef } from "react";
 
 import type { SettingsSectionKey } from "@/components/settings/contracts";
 import {
@@ -48,6 +48,16 @@ export function useSystemSettingsEffects({
     setNanobotFeaturesError,
     setNanobotFeaturesLoading,
   } = state;
+  const hasCliAppsRef = useRef(false);
+  const hasFeaturesRef = useRef(false);
+  const hasApiServiceRef = useRef(false);
+  const hasMcpPresetsRef = useRef(false);
+  const hasAutomationsRef = useRef(false);
+  hasCliAppsRef.current = state.cliApps !== null;
+  hasFeaturesRef.current = state.nanobotFeatures !== null;
+  hasApiServiceRef.current = state.apiService !== null;
+  hasMcpPresetsRef.current = state.mcpPresets !== null;
+  hasAutomationsRef.current = state.automations !== null;
 
   useEffect(() => {
     if (activeSection !== "apps" || !pageVisible) return;
@@ -84,7 +94,7 @@ export function useSystemSettingsEffects({
         });
     };
     setCliAppsError(null);
-    loadCliApps(true);
+    loadCliApps(!hasCliAppsRef.current);
     return () => {
       cancelled = true;
       if (retry !== null) window.clearTimeout(retry);
@@ -118,7 +128,7 @@ export function useSystemSettingsEffects({
         if (!cancelled && showLoading) setNanobotFeaturesLoading(false);
       }
     };
-    void refresh(true);
+    void refresh(!hasFeaturesRef.current);
     const interval = activeSection === "channels"
       ? window.setInterval(() => void refresh(false), 5000)
       : null;
@@ -140,7 +150,8 @@ export function useSystemSettingsEffects({
   useEffect(() => {
     if (activeSection !== "runtime") return;
     let cancelled = false;
-    setApiServiceLoading(true);
+    const showLoading = !hasApiServiceRef.current;
+    if (showLoading) setApiServiceLoading(true);
     fetchApiService(getToken())
       .then((payload) => {
         if (!cancelled) {
@@ -152,7 +163,7 @@ export function useSystemSettingsEffects({
         if (!cancelled) setApiServiceError((err as Error).message);
       })
       .finally(() => {
-        if (!cancelled) setApiServiceLoading(false);
+        if (!cancelled && showLoading) setApiServiceLoading(false);
       });
     return () => {
       cancelled = true;
@@ -184,7 +195,7 @@ export function useSystemSettingsEffects({
           if (!cancelled && showLoading) setMcpPresetsLoading(false);
         });
     };
-    loadMcpPresets(true);
+    loadMcpPresets(!hasMcpPresetsRef.current);
     return () => {
       cancelled = true;
       if (retry !== null) window.clearTimeout(retry);
@@ -227,7 +238,7 @@ export function useSystemSettingsEffects({
         if (!cancelled && showLoading) setAutomationsLoading(false);
       }
     };
-    void refresh(true);
+    void refresh(!hasAutomationsRef.current);
     const interval = window.setInterval(() => void refresh(false), 5000);
     const refreshOnFocus = () => void refresh(false);
     window.addEventListener("focus", refreshOnFocus);

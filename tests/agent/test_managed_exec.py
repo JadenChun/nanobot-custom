@@ -783,7 +783,7 @@ if grandchild:
     os._exit(0)
 for fd in (0, 1, 2):
     os.close(fd)
-time.sleep(0.8)
+time.sleep(1.8)
 open({str(marker)!r}, 'w').write('finished')
 os._exit(0)
 """
@@ -796,7 +796,7 @@ os._exit(0)
         elapsed = time.monotonic() - started
         assert "ROOT_STDOUT" in result
         assert "Exit code: 7" in result
-        assert elapsed < 0.7, f"command result waited for detached descendant ({elapsed:.3f}s)"
+        assert elapsed < 1.3, f"command result waited for detached descendant ({elapsed:.3f}s)"
         assert not marker.exists()
 
         project = tmp_path / "project"
@@ -815,7 +815,7 @@ os._exit(0)
             )
 
         for _attempt in range(100):
-            if marker.exists():
+            if marker.exists() and marker.read_text(encoding="utf-8") == "finished":
                 break
             await asyncio.sleep(0.02)
         assert marker.read_text(encoding="utf-8") == "finished"
@@ -893,7 +893,7 @@ if grandchild:
 open({str(descendant_ready_marker)!r}, 'w').write('ready')
 for fd in (0, 1, 2):
     os.close(fd)
-time.sleep(0.8)
+time.sleep(1.8)
 open({str(finished_marker)!r}, 'w').write('finished')
 os._exit(0)
 """
@@ -927,7 +927,7 @@ os._exit(0)
         elapsed = time.monotonic() - started
         assert not isinstance(result, ToolOutcome), repr(result)
         assert "Exit code: 0" in result
-        assert elapsed < 0.7, f"tool waited for detached bwrap descendant ({elapsed:.3f}s)"
+        assert elapsed < 1.3, f"tool waited for detached bwrap descendant ({elapsed:.3f}s)"
         assert started_marker.read_text(encoding="utf-8") == "started"
         assert descendant_ready_marker.read_text(encoding="utf-8") == "ready"
         assert not finished_marker.exists()

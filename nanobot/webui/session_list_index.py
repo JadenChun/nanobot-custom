@@ -31,8 +31,16 @@ from nanobot.session.manager import (
     _message_preview_text,  # pyright: ignore[reportPrivateUsage]
     _metadata_title,  # pyright: ignore[reportPrivateUsage]
 )
-from nanobot.session.model_selection import model_preset_from_metadata
+from nanobot.session.model_selection import (
+    model_preset_from_metadata,
+    reasoning_effort_from_metadata,
+)
 from nanobot.session.recovery import recovery_state_from_metadata
+from nanobot.session.session_handles import (
+    SESSION_HANDLE_METADATA_KEY,
+    session_handle_for_name,
+    stored_session_handle_name,
+)
 from nanobot.webui.session_identity import (
     WEBUI_SESSION_STORAGE_PREFIX,
     is_webui_session_key,
@@ -40,11 +48,15 @@ from nanobot.webui.session_identity import (
     webui_session_key,
 )
 
-_INDEX_VERSION = 8
+_INDEX_VERSION = 10
 _MODEL_PRESET_FIELD = "model_preset"
 _ROW_SOURCE_FIELD = "_source"
 _SESSION_SOURCE = "session"
 _TRANSCRIPT_SOURCE = "webui_transcript"
+# Canonical rows have a session file with metadata, so the documented read path
+# can serve them. Transcript-only rows are display records with no metadata.
+CANONICAL_ROW_SOURCE = _SESSION_SOURCE
+TRANSCRIPT_ROW_SOURCE = _TRANSCRIPT_SOURCE
 _WORKSPACE_SCOPE_PRESENT_FIELD = "_workspace_scope_present"
 _WORKSPACE_SCOPE_VALUE_FIELD = "_workspace_scope_value"
 WEBUI_SESSION_INDEX_INTERNAL_FIELDS = frozenset(
@@ -60,6 +72,15 @@ _WEBUI_SESSION_STEM_PREFIX = SessionManager.safe_key(WEBUI_SESSION_STORAGE_PREFI
 _WEBUI_CHAT_ID_RE = re.compile(r"^[A-Za-z0-9_:-]{1,64}$")
 _TRANSCRIPT_SEGMENTS_SUFFIX = ".segments"
 _TRANSCRIPT_NON_ANSWER_KINDS = {"progress", "reasoning", "tool_hint"}
+
+
+def _session_key_from_stem(stem: str) -> str | None:
+    decoded = SessionManager.decode_storage_key(stem)
+    if decoded is not None and is_webui_session_key(decoded):
+        return decoded
+    if stem.startswith(_WEBUI_SESSION_STEM_PREFIX):
+        return webui_session_key(stem[len(_WEBUI_SESSION_STEM_PREFIX):])
+    return None
 
 
 def list_webui_sessions(session_manager: SessionManager) -> list[dict[str, Any]]:
@@ -94,9 +115,13 @@ def _reconcile_index(session_manager: SessionManager) -> tuple[list[dict[str, An
             session_paths[key] = path
 
     session_keys_by_stem = {
-        SessionManager.safe_key(key): key
+        stem: key
         for key in session_paths
         if is_webui_session_key(key)
+        for stem in (
+            SessionManager.safe_key(key),
+            SessionManager.storage_key(key),
+        )
     }
     rows: list[dict[str, Any]] = []
     changed = existing_rows is None
@@ -231,7 +256,10 @@ def _indexed_transcript_row_matches(
         return False
     if row.get(_ROW_SOURCE_FIELD) != _TRANSCRIPT_SOURCE:
         return False
-    if row.get("key") != session_key or row.get("file") != SessionManager.safe_key(session_key):
+    if row.get("key") != session_key or row.get("file") not in {
+        SessionManager.safe_key(session_key),
+        SessionManager.storage_key(session_key),
+    }:
         return False
     if not isinstance(row.get("title", ""), str) or not isinstance(row.get("preview", ""), str):
         return False
@@ -251,18 +279,24 @@ def _public_row(sessions_dir: Path, webui_dir: Path, row: dict[str, Any]) -> dic
         path = webui_dir / f"{file}.jsonl"
     else:
         path = sessions_dir / file
-    return {
-        "key": row.get("key"),
+    key = row.get("key")
+    public = {
+        "key": key,
         "created_at": row.get("created_at"),
         "updated_at": row.get("updated_at"),
         "title": row.get("title", ""),
         "preview": row.get("preview", ""),
         _MODEL_PRESET_FIELD: row.get(_MODEL_PRESET_FIELD),
+        **({"reasoning_effort": row["reasoning_effort"]} if row.get("reasoning_effort") else {}),
         "recovery_state": row.get("recovery_state"),
         _WORKSPACE_SCOPE_PRESENT_FIELD: row.get(_WORKSPACE_SCOPE_PRESENT_FIELD, False),
         _WORKSPACE_SCOPE_VALUE_FIELD: row.get(_WORKSPACE_SCOPE_VALUE_FIELD),
         "path": str(path),
     }
+    name = stored_session_handle_name(row)
+    if isinstance(key, str) and is_webui_session_key(key) and name is not None:
+        public["handle"] = session_handle_for_name(key, name).public_payload()
+    return public
 
 
 def indexed_workspace_scope(row: dict[str, Any]) -> tuple[bool, object]:
@@ -369,7 +403,7 @@ def _webui_transcript_sources(webui_dir: Path) -> dict[str, tuple[Path, ...]]:
             stem = path.name.removesuffix(_TRANSCRIPT_SEGMENTS_SUFFIX)
         else:
             continue
-        if stem.startswith(_WEBUI_SESSION_STEM_PREFIX):
+        if _session_key_from_stem(stem) is not None:
             stems.add(stem)
     return {
         stem: paths
@@ -390,28 +424,29 @@ def _valid_transcript_session_key(key: str, stem: str) -> bool:
     chat_id = webui_chat_id(key)
     if chat_id is None:
         return False
-    return _WEBUI_CHAT_ID_RE.fullmatch(chat_id) is not None and SessionManager.safe_key(key) == stem
+    return _WEBUI_CHAT_ID_RE.fullmatch(chat_id) is not None and stem in {
+        SessionManager.safe_key(key),
+        SessionManager.storage_key(key),
+    }
 
 
 def _webui_activity_paths(session_key: str, webui_dir: Path) -> list[Path]:
-    stem = SessionManager.safe_key(session_key)
-    paths = [
-        webui_dir / f"{stem}.jsonl",
-        webui_dir / f"{stem}.json",
-    ]
-    segments_dir = webui_dir / f"{stem}{_TRANSCRIPT_SEGMENTS_SUFFIX}"
-    if segments_dir.is_dir() and not segments_dir.is_symlink():
-        try:
-            paths.extend(
-                sorted(
-                    path
-                    for path in segments_dir.iterdir()
-                    if path.is_file() and not path.is_symlink()
-                )
-            )
-        except OSError:
-            pass
-    return paths
+    paths: dict[Path, None] = {}
+    for stem in (
+        SessionManager.safe_key(session_key),
+        SessionManager.storage_key(session_key),
+    ):
+        paths[webui_dir / f"{stem}.jsonl"] = None
+        paths[webui_dir / f"{stem}.json"] = None
+        segments_dir = webui_dir / f"{stem}{_TRANSCRIPT_SEGMENTS_SUFFIX}"
+        if segments_dir.is_dir() and not segments_dir.is_symlink():
+            try:
+                for path in sorted(segments_dir.iterdir()):
+                    if path.is_file() and not path.is_symlink():
+                        paths[path] = None
+            except OSError:
+                pass
+    return list(paths)
 
 
 def _webui_activity_signature(session_key: str, webui_dir: Path) -> dict[str, int]:
@@ -499,7 +534,9 @@ def _indexed_row_for_session(session: Session, path: Path, webui_dir: Path) -> d
         "title": _metadata_title(session.metadata),
         "preview": _preview_from_messages(session.messages),
         _MODEL_PRESET_FIELD: model_preset_from_metadata(session.metadata),
+        "reasoning_effort": reasoning_effort_from_metadata(session.metadata),
         "recovery_state": recovery_state_from_metadata(session.metadata),
+        SESSION_HANDLE_METADATA_KEY: stored_session_handle_name(session.metadata),
         **_indexed_workspace_scope_fields(session.metadata),
         _ROW_SOURCE_FIELD: _SESSION_SOURCE,
         "file": path.name,
@@ -547,9 +584,9 @@ def _scan_transcript_row(
     paths: tuple[Path, ...],
     webui_dir: Path,
 ) -> dict[str, Any] | None:
-    path_key = session_key or webui_session_key(
-        stem.removeprefix(_WEBUI_SESSION_STEM_PREFIX)
-    )
+    path_key = session_key or _session_key_from_stem(stem)
+    if path_key is None:
+        return None
     signature = _webui_activity_signature(path_key, webui_dir)
     activity_updated_at = _webui_activity_updated_at(signature)
     if activity_updated_at is None:
@@ -590,7 +627,7 @@ def _scan_transcript_row(
                         or scanned_chars >= _SESSION_LIST_PREVIEW_MAX_CHARS
                     ):
                         break
-        except OSError:
+        except (OSError, UnicodeDecodeError):
             continue
         if preview or (
             scanned_records >= _SESSION_LIST_PREVIEW_MAX_RECORDS
@@ -600,8 +637,8 @@ def _scan_transcript_row(
     if not saw_record:
         return None
     if session_key is None:
-        fallback = webui_session_key(stem.removeprefix(_WEBUI_SESSION_STEM_PREFIX))
-        if not _valid_transcript_session_key(fallback, stem):
+        fallback = _session_key_from_stem(stem)
+        if fallback is None or not _valid_transcript_session_key(fallback, stem):
             return None
         session_key = fallback
 
@@ -705,7 +742,9 @@ def _scan_session_row(
                 "title": _metadata_title(metadata),
                 "preview": preview or fallback_preview,
                 _MODEL_PRESET_FIELD: model_preset_from_metadata(metadata),
+                "reasoning_effort": reasoning_effort_from_metadata(metadata),
                 "recovery_state": recovery_state_from_metadata(metadata),
+                SESSION_HANDLE_METADATA_KEY: stored_session_handle_name(metadata),
                 **_indexed_workspace_scope_fields(metadata),
                 _ROW_SOURCE_FIELD: _SESSION_SOURCE,
                 "file": path.name,

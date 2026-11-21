@@ -11,14 +11,15 @@ import asyncio
 import json
 import os
 import re
+import sys
 import threading
 import weakref
-from contextlib import suppress
+from contextlib import contextmanager, suppress
 from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable, Iterator, Literal, cast
+from typing import TYPE_CHECKING, Any, Callable, Generator, Iterator, Literal, cast
 from uuid import uuid4
 
 from loguru import logger
@@ -50,7 +51,8 @@ from nanobot.providers.request_budget import (
 from nanobot.runtime_context import public_history_messages
 from nanobot.session.manager import Session, SessionManager
 from nanobot.session.summary import is_summary_checkpoint, session_summary_from_metadata
-from nanobot.utils.gitstore import GitStore
+from nanobot.utils.dream_operation import dream_workspace_lock
+from nanobot.utils.gitstore import GitStore, GitStoreError
 from nanobot.utils.helpers import (
     content_with_media_breadcrumbs,
     ensure_dir,
@@ -85,7 +87,7 @@ class MemoryStore:
     # Durable files whose real working-tree delta grounds Dream commit messages.
     # Deliberately excludes memory/.dream_cursor so progress bookkeeping never
     # appears as a durable-memory edit in the audit record.
-    _DREAM_CONTENT_PATHS = ("SOUL.md", "USER.md", "memory/MEMORY.md")
+    _DREAM_CONTENT_PATHS = ("SOUL.md", "USER.md", "memory/MEMORY.md", "skills")
     _LEGACY_ENTRY_START_RE = re.compile(r"^\[(\d{4}-\d{2}-\d{2}[^\]]*)\]\s*")
     _LEGACY_TIMESTAMP_RE = re.compile(r"^\[(\d{4}-\d{2}-\d{2} \d{2}:\d{2})\]\s*")
     _LEGACY_RAW_MESSAGE_RE = re.compile(
@@ -123,7 +125,11 @@ class MemoryStore:
             self._append_lock = threading.Lock()  # serialize cursor allocation + append
             self._git = GitStore(workspace, tracked_files=[
                 "SOUL.md", "USER.md", "memory/MEMORY.md", "memory/.dream_cursor",
+                "skills",
             ])
+            from nanobot.attachments._media import configured_custody
+
+            configured_custody().declare("memory", self.memory_dir.resolve(strict=True))
             self._maybe_migrate_legacy_history()
             if memory_lock is not None:
                 memory_lock.require_current()
@@ -350,7 +356,11 @@ class MemoryStore:
         content = self._normalize_history_entry(entry, max_chars=max_chars)
         # Cursor allocation and the append must be atomic: concurrent writers
         # could otherwise read the same current cursor and emit duplicates.
-        with self._append_lock:
+        from nanobot.agent.memory_recovery_storage import open_workspace_memory_lock
+        from nanobot.attachments._media import configured_custody
+        from nanobot.attachments.store import AttachmentStore
+
+        with self._append_lock, open_workspace_memory_lock(self.workspace):
             cursor = self._next_cursor()
             if raw and not content:
                 logger.debug(
@@ -363,9 +373,13 @@ class MemoryStore:
                 record["session_key"] = session_key
             if source:
                 record["source"] = source
-            with open(self.history_file, "a", encoding="utf-8") as f:
-                f.write(json.dumps(record, ensure_ascii=False) + "\n")
-            self._cursor_file.write_text(str(cursor), encoding="utf-8")
+            custody = configured_custody()
+            with AttachmentStore(custody.root / "attachments", media_root=custody.root).publication(record):
+                with open(self.history_file, "a", encoding="utf-8") as f:
+                    f.write(json.dumps(record, ensure_ascii=False) + "\n")
+                    f.flush()
+                    os.fsync(f.fileno())
+                self._cursor_file.write_text(str(cursor), encoding="utf-8")
         return cursor
 
     @staticmethod
@@ -559,7 +573,10 @@ class MemoryStore:
         return workspace_prompt_file(self.workspace, "dream")
 
     def has_dream_prompt_override(self) -> bool:
-        return has_workspace_prompt_override(self.dream_prompt_file)
+        return has_workspace_prompt_override(
+            self.dream_prompt_file,
+            workspace=self.workspace,
+        )
 
     @staticmethod
     def default_dream_prompt() -> str:
@@ -572,7 +589,10 @@ class MemoryStore:
         )
 
     def _dream_template(self) -> str:
-        text, original_chars = load_workspace_prompt_override(self.dream_prompt_file)
+        text, original_chars = load_workspace_prompt_override(
+            self.dream_prompt_file,
+            workspace=self.workspace,
+        )
         if text is not None:
             if (
                 original_chars > WORKSPACE_PROMPT_MAX_CHARS
@@ -595,6 +615,7 @@ class MemoryStore:
         The current contents of the durable memory files (SOUL.md, USER.md,
         memory/MEMORY.md) reach Dream through the normal agent system context.
         """
+        self.reconcile_dream_operation()
         last_cursor = self.get_last_dream_cursor()
         entries = self.read_unprocessed_history(since_cursor=last_cursor)
         if not entries:
@@ -619,13 +640,13 @@ class MemoryStore:
             return ""
         return self._git.summarize_working_tree(list(self._DREAM_CONTENT_PATHS))
 
-    def build_dream_tools(self) -> ToolRegistry:
+    def build_dream_tools(self, *, operation_id: str | None = None) -> ToolRegistry:
         """Build the restricted tool registry used by Dream runs."""
         from nanobot.agent.skills import BUILTIN_SKILLS_DIR
         from nanobot.agent.tools.apply_patch import ApplyPatchTool
         from nanobot.agent.tools.file_state import FileStates
         from nanobot.agent.tools.filesystem import EditFileTool, ReadFileTool, WriteFileTool
-        from nanobot.agent.tools.registry import ToolRegistry
+        from nanobot.agent.tools.registry import ManagedToolDispatchGuard, ToolRegistry
 
         tools = ToolRegistry()
         file_states = FileStates()
@@ -660,8 +681,93 @@ class MemoryStore:
             extra_write_allowed_files=editable_files,
             file_states=file_states,
         ))
+        if operation_id is not None:
+            denial = "Dream file tools are unavailable because their operation is no longer current."
+
+            class _DreamOperationDispatchGuard(ManagedToolDispatchGuard):
+                def __init__(self) -> None:
+                    super().__init__(None)
+
+                def error(self, name: str) -> str | None:
+                    try:
+                        with dream_workspace_lock(workspace):
+                            return None if self._active() else denial
+                    except Exception:
+                        return denial
+
+                @contextmanager
+                def admit(self, name: str) -> Generator[str | None, None, None]:
+                    gate = dream_workspace_lock(workspace)
+                    try:
+                        gate.__enter__()
+                    except Exception:
+                        yield denial
+                        return
+                    try:
+                        active = self._active()
+                    except Exception:
+                        active = False
+                    if not active:
+                        gate.__exit__(None, None, None)
+                        yield denial
+                        return
+                    try:
+                        yield None
+                    except BaseException:
+                        gate.__exit__(*sys.exc_info())
+                        raise
+                    else:
+                        gate.__exit__(None, None, None)
+
+                def _active(self) -> bool:
+                    return self_store._git.dream_run_is_active(operation_id)
+
+            self_store = self
+            tools.set_dispatch_guard(_DreamOperationDispatchGuard())
         self._record_dream_tools(tools)
         return tools
+
+    def reserve_dream_run(self, cursor_before: int, cursor_after: int) -> str:
+        """Durably fence one history batch before Dream tools are dispatched."""
+
+        return self._git.reserve_dream_run(cursor_before, cursor_after)
+
+    def finish_dream_run(
+        self,
+        operation_id: str,
+        *,
+        completed: bool,
+        commit_message: str,
+    ) -> str | None:
+        """Settle one run's files and cursor through GitStore's durable proof."""
+
+        return self._git.settle_dream_run(
+            operation_id,
+            completed=completed,
+            message=commit_message,
+        )
+
+    def reconcile_dream_operation(self) -> None:
+        """Resume safe local work or fence Dream while an execution is unresolved."""
+
+        if not self._git.is_initialized():
+            return
+        record = self._git.dream_operation_status()
+        if record is None:
+            return
+        if record.kind == "restore":
+            self._git.reconcile_pending_dream_operation()
+            return
+        if record.phase == "settling" and record.completion is not None:
+            diff_body = self.dream_content_diff()
+            message = self.build_dream_commit_message("dream: manual run", diff_body)
+            self.finish_dream_run(
+                record.operation_id,
+                completed=record.completion == "completed",
+                commit_message=message,
+            )
+            return
+        raise GitStoreError("A previous Dream run is unresolved; restore its Dream snapshot to continue")
 
     def _record_dream_tools(self, tools: ToolRegistry) -> None:
         self._dream_tool_bindings[tools] = {

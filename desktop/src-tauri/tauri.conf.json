@@ -12,9 +12,9 @@
     "windows": [
       {
         "label": "chat",
-        "title": "Nanobot Desktop",
-        "width": 650,
-        "height": 720,
+        "title": "Kohaku",
+        "width": 1120,
+        "height": 780,
         "minWidth": 520,
         "minHeight": 620,
         "resizable": true,
@@ -29,8 +29,8 @@
     "active": true,
     "targets": ["rpm"],
     "category": "Utility",
-    "shortDescription": "Desktop shell for an installed Nanobot backend",
-    "longDescription": "A thin desktop shell that connects to an existing compatible Nanobot Python installation.",
+    "shortDescription": "Personal AI assistant",
+    "longDescription": "Kohaku connects to a compatible Nanobot Python installation.",
     "license": "MIT",
     "icon": ["icons/icon.png"],
     "resources": ["resources/backend-compat.json", "resources/THIRD_PARTY_NOTICES.md", "resources/LICENSE"],

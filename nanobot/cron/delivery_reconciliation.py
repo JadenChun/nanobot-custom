@@ -50,6 +50,19 @@ _PLAN_DOMAIN = b"nanobot-cron-delivery-reconciliation-plan-v1\0"
 _ARTIFACT_DOMAIN = b"nanobot-cron-delivery-reconciliation-artifact-v1\0"
 
 
+def _artifact_signature(info: os.stat_result) -> tuple[int, int, int, int, int, int, int]:
+    """Capture metadata that stays stable when a reader updates access time."""
+    return (
+        info.st_mode,
+        info.st_uid,
+        info.st_gid,
+        info.st_nlink,
+        info.st_size,
+        info.st_mtime_ns,
+        info.st_ctime_ns,
+    )
+
+
 class DeliveryReconciliationError(RuntimeError):
     """Base content-free offline reconciliation error."""
 
@@ -393,7 +406,7 @@ class _ArtifactStore:
                 remaining -= len(chunk)
             data = b"".join(chunks)
             after = os.fstat(fd)
-            if len(data) > _MAX_ARTIFACT or before != after:
+            if len(data) > _MAX_ARTIFACT or _artifact_signature(before) != _artifact_signature(after):
                 raise ReconciliationUnsafeError("artifact changed during read")
             return data
         except ReconciliationUnsafeError:
@@ -421,19 +434,10 @@ class _ArtifactStore:
         entry = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
         _private(descriptor, directory=False)
         _private(entry, directory=False)
-        current_signature = (
-            descriptor.st_mode,
-            descriptor.st_uid,
-            descriptor.st_gid,
-            descriptor.st_nlink,
-            descriptor.st_size,
-            descriptor.st_mtime_ns,
-            descriptor.st_ctime_ns,
-        )
         if (
             (descriptor.st_dev, descriptor.st_ino) != inode
             or (entry.st_dev, entry.st_ino) != inode
-            or current_signature != signature
+            or _artifact_signature(descriptor) != signature
         ):
             raise ReconciliationUnsafeError("artifact file binding changed")
         os.lseek(fd, 0, os.SEEK_SET)
@@ -460,15 +464,7 @@ class _ArtifactStore:
             info = os.fstat(fd)
             _private(info, directory=False)
             inode = (info.st_dev, info.st_ino)
-            signature = (
-                info.st_mode,
-                info.st_uid,
-                info.st_gid,
-                info.st_nlink,
-                info.st_size,
-                info.st_mtime_ns,
-                info.st_ctime_ns,
-            )
+            signature = _artifact_signature(info)
             cls._assert_open_file(
                 directory_fd, name, fd, inode=inode, signature=signature, expected=expected
             )
@@ -525,15 +521,7 @@ class _ArtifactStore:
                 view = view[written:]
             info = os.fstat(fd)
             inode = (info.st_dev, info.st_ino)
-            signature = (
-                info.st_mode,
-                info.st_uid,
-                info.st_gid,
-                info.st_nlink,
-                info.st_size,
-                info.st_mtime_ns,
-                info.st_ctime_ns,
-            )
+            signature = _artifact_signature(info)
             self._assert_open_file(
                 directory_fd, name, fd, inode=inode, signature=signature, expected=data
             )

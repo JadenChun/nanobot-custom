@@ -123,7 +123,7 @@ class RunKeepAliveService : Service() {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
         return NotificationCompat.Builder(this, CHANNEL_ID)
-            .setSmallIcon(android.R.drawable.stat_notify_sync)
+            .setSmallIcon(R.drawable.ic_stat_nanobot)
             .setContentTitle(getString(R.string.run_keepalive_title))
             .setContentText(getString(R.string.run_keepalive_text))
             .setContentIntent(openApp)

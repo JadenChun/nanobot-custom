@@ -49,7 +49,7 @@ func (c *Core) WSOpen(input WSRequest) (uint64, error) {
 	if baseContext == nil {
 		baseContext = context.Background()
 	}
-	target, route, err := resolveRoute(&c.cfg, c.origin, input.Operation, http.MethodGet, input.Path)
+	target, route, err := resolveRoute(&c.cfg, c.origin, input.Operation, http.MethodGet, input.Path, false)
 	if err != nil {
 		return 0, err
 	}
@@ -180,12 +180,12 @@ func (s *wsSession) readLoop() {
 			return
 		}
 		if len(data) > s.core.cfg.MaxWSFrameBytes {
-			s.close(websocket.StatusMessageTooBig, "frame exceeds limit")
 			_ = s.core.emit(map[string]any{
 				"type":  "ws_error",
 				"ws_id": s.id,
 				"code":  "too_large",
 			})
+			s.close(websocket.StatusMessageTooBig, "frame exceeds limit")
 			return
 		}
 		kind := "text"
@@ -199,12 +199,15 @@ func (s *wsSession) readLoop() {
 			"data_base64": base64.StdEncoding.EncodeToString(data),
 			"bytes":       len(data),
 		}); err != nil {
-			s.close(websocket.StatusPolicyViolation, "event queue full")
+			// Report the cause first. The close is the single terminal result
+			// reserved for this admitted session, and it replaces the error
+			// when the normal queue is full.
 			_ = s.core.emit(map[string]any{
 				"type":  "ws_error",
 				"ws_id": s.id,
 				"code":  "queue_full",
 			})
+			s.close(websocket.StatusPolicyViolation, "event queue full")
 			return
 		}
 	}

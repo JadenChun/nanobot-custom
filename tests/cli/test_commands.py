@@ -592,7 +592,7 @@ def test_provider_logout_xai_grok_removes_instance_credentials(tmp_path, monkeyp
     lock_path.write_text("", encoding="utf-8")
     monkeypatch.setattr(
         "nanobot.providers.xai_oauth.get_xai_oauth_storage_path",
-        lambda: token_path,
+        lambda *_args, **_kwargs: token_path,
     )
 
     result = runner.invoke(app, ["provider", "logout", "xai-grok"])
@@ -705,7 +705,7 @@ def test_provider_login_can_set_openai_codex_as_main_provider(tmp_path):
     called = False
     original = provider_commands._LOGIN_HANDLERS["openai_codex"]
 
-    def fake_login() -> None:
+    def fake_login(_owner=None) -> None:
         nonlocal called
         called = True
 
@@ -739,7 +739,7 @@ def test_provider_login_can_set_openai_codex_as_main_provider(tmp_path):
 def test_provider_login_can_set_github_copilot_as_main_provider(tmp_path):
     config_path = tmp_path / "config.json"
     original = provider_commands._LOGIN_HANDLERS["github_copilot"]
-    provider_commands._LOGIN_HANDLERS["github_copilot"] = lambda: None
+    provider_commands._LOGIN_HANDLERS["github_copilot"] = lambda _owner=None: None
     try:
         result = runner.invoke(
             app,
@@ -768,7 +768,7 @@ def test_provider_login_can_set_github_copilot_as_main_provider(tmp_path):
 def test_provider_login_can_set_xai_grok_as_main_provider(tmp_path):
     config_path = tmp_path / "config.json"
     original = provider_commands._LOGIN_HANDLERS["xai_grok"]
-    provider_commands._LOGIN_HANDLERS["xai_grok"] = lambda: None
+    provider_commands._LOGIN_HANDLERS["xai_grok"] = lambda _owner=None: None
     try:
         result = runner.invoke(
             app,
@@ -798,7 +798,7 @@ def test_provider_login_can_set_xai_grok_as_main_provider(tmp_path):
 def test_provider_login_model_implies_set_main_provider(tmp_path):
     config_path = tmp_path / "config.json"
     original = provider_commands._LOGIN_HANDLERS["github_copilot"]
-    provider_commands._LOGIN_HANDLERS["github_copilot"] = lambda: None
+    provider_commands._LOGIN_HANDLERS["github_copilot"] = lambda _owner=None: None
     try:
         result = runner.invoke(
             app,
@@ -948,7 +948,7 @@ def test_provider_login_xai_grok_runs_browser_flow_with_configured_proxy(monkeyp
     )
     captured: dict[str, object] = {}
 
-    def fake_login(*, print_fn, prompt_fn, proxy=None):
+    def fake_login(*, print_fn, prompt_fn, proxy=None, owner=None):
         captured.update(print_fn=print_fn, prompt_fn=prompt_fn, proxy=proxy)
         return SimpleNamespace(access="access-token", account_id="user@example.com")
 
@@ -3363,8 +3363,9 @@ def test_serve_rejects_specific_network_interface_without_api_key(
     )
 
     assert result.exit_code == 1
-    assert "api_key" in result.stdout
-    assert "prevent unauthenticated access" in result.stdout
+    output = " ".join(result.stdout.split())
+    assert "api_key" in output
+    assert "prevent unauthenticated access" in output
     assert "api_app" not in seen
 
 

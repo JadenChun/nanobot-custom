@@ -38,6 +38,16 @@ def get_media_dir(channel: str | None = None) -> Path:
     return ensure_dir(base / channel) if channel else base
 
 
+def inspect_media_dir() -> Path:
+    """Return the configured media path without creating inspection state."""
+    return (get_config_path().parent / "media").expanduser().absolute()
+
+
+def inspect_webui_dir() -> Path:
+    """Return the configured display path without creating inspection state."""
+    return (get_config_path().parent / "webui").expanduser().absolute()
+
+
 def get_attachments_dir() -> Path:
     """Return the canonical inbound attachment store under the media root."""
     return ensure_dir(get_media_dir() / "attachments")

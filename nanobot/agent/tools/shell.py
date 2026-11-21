@@ -12,7 +12,10 @@ import stat
 import subprocess
 import sys
 import tempfile
-from contextlib import suppress
+import time
+from collections.abc import Generator
+from contextlib import contextmanager, suppress
+from contextvars import ContextVar
 from dataclasses import dataclass, replace
 from pathlib import Path, PureWindowsPath
 from typing import TYPE_CHECKING, Any, Protocol, cast
@@ -49,7 +52,11 @@ from nanobot.agent.tools.native_process import (
     native_supervisor_available,
     spawn_native_process,
 )
-from nanobot.agent.tools.sandbox import wrap_command, wrap_managed_command
+from nanobot.agent.tools.sandbox import (
+    managed_bwrap_available,
+    wrap_command,
+    wrap_managed_command,
+)
 from nanobot.agent.tools.schema import (
     ArraySchema,
     BooleanSchema,
@@ -64,6 +71,7 @@ from nanobot.context_repo import ResourceAccessPolicy
 from nanobot.context_repo.policy import FolderAccessNeededError
 from nanobot.security.folder_grants import (
     FolderGrantSnapshot,
+    FolderGrantView,
 )
 from nanobot.security.native_admission import NativeProcessReservation
 from nanobot.security.workspace_access import (
@@ -73,11 +81,27 @@ from nanobot.security.workspace_access import (
 )
 
 if TYPE_CHECKING:
+    from nanobot.agent.policy import LaunchConfinementAttestation
     from nanobot.agent.tools.filesystem import ReadFileTool
+    from nanobot.security.desktop_permissions import (
+        DesktopPermissionOwner,
+        WorkspacePermissionReference,
+    )
 from nanobot.security.workspace_policy import is_path_within
 
 _IS_WINDOWS = sys.platform == "win32"
 _PROCESS_TREE_OWNER_ATTR = "_nanobot_process_tree_owner"
+_approved_exec_cwd: ContextVar[Path | None] = ContextVar("nanobot_approved_exec_cwd", default=None)
+
+
+@contextmanager
+def bind_approved_exec_cwd(cwd: Path | None) -> Generator[None, None, None]:
+    """Carry the server-approved working directory to the shell executor."""
+    token = _approved_exec_cwd.set(cwd)
+    try:
+        yield
+    finally:
+        _approved_exec_cwd.reset(token)
 
 
 class _ProcessTreeOwner(Protocol):
@@ -158,6 +182,7 @@ class _PreparedCommand:
     managed: bool = False
     logical_cwd: str | None = None
     grant_snapshot: FolderGrantSnapshot | None = None
+    launch_attestation: LaunchConfinementAttestation | None = None
 
 
 @tool_parameters(
@@ -321,6 +346,94 @@ class ExecTool(Tool):
         self.sandbox_rw_binds = self._normalize_bind_roots(sandbox_rw_binds)
         self.allowed_env_keys = allowed_env_keys or []
         self._session_manager = session_manager or DEFAULT_EXEC_SESSION_MANAGER
+        from nanobot.agent.policy import register_launch_confinement_attestor
+
+        register_launch_confinement_attestor(
+            self.working_dir or os.getcwd(), self.attest_launch_confinement,
+        )
+
+    def _full_access_active(self) -> bool:
+        focus = current_workspace_focus()
+        return bool(
+            focus is not None
+            and focus.permission_owner is not None
+            and focus.full_reference is not None
+            and focus.permission_owner.is_current_full_reference(focus.full_reference)
+        )
+
+    def _outer_confinement_provider(self, working_dir: str | None) -> str | None:
+        """Name the OS sandbox this executor applies to a launched command.
+
+        The provider is named only when that sandbox can actually wrap this
+        command here. An unavailable backend proves nothing.
+        """
+        policy = self.resource_policy
+        if policy is not None and policy.managed_mode and not self._full_access_active():
+            return "managed" if managed_bwrap_available() else None
+        if not self.sandbox or _IS_WINDOWS:
+            return None
+        workspace = self.working_dir or os.getcwd()
+        try:
+            wrap_command(self.sandbox, "true", workspace, working_dir or workspace)
+        except (OSError, ValueError):
+            return None
+        return self.sandbox
+
+    @staticmethod
+    def _process_ownership_identity() -> str | None:
+        """Name the process owner that can reap the launched command tree."""
+        if native_supervisor_available():
+            return "native-supervisor"
+        if os.name == "posix" or _IS_WINDOWS:
+            return "process-tree"
+        return None
+
+    def attest_launch_confinement(
+        self, command: str, working_dir: str | None = None,
+    ) -> LaunchConfinementAttestation | None:
+        """Attest confinement and process ownership for one nested launch.
+
+        Returns ``None`` when this executor cannot prove both for that exact
+        launch, including every tmux launch and every unconfined shell.
+        """
+        from nanobot.agent.policy import (
+            LaunchConfinementAttestation,
+            nested_launch_id,
+            nested_launch_path,
+        )
+
+        if nested_launch_path(command) != "shell":
+            return None
+        sandbox = self._outer_confinement_provider(working_dir)
+        owner = self._process_ownership_identity()
+        if sandbox is None or owner is None:
+            return None
+        return LaunchConfinementAttestation(
+            launch_id=nested_launch_id(
+                command, working_dir, self.working_dir or os.getcwd(),
+            ),
+            path="shell",
+            sandbox=sandbox,
+            process_owner=owner,
+        )
+
+    def _admit_nested_launch(
+        self, command: str, working_dir: str | None,
+    ) -> LaunchConfinementAttestation | ToolResult | None:
+        """Refuse a reduced-protection launch this executor cannot attest."""
+        from nanobot.agent.policy import nested_launch_path
+
+        if nested_launch_path(command) is None:
+            return None
+        attestation = self.attest_launch_confinement(command, working_dir)
+        if attestation is None:
+            return ToolResult.error(
+                "Error: nested agent launch refused before start "
+                "(launch_confinement_unproven): this launch reduces the nested agent's "
+                "sandbox or approval protection, and this executor cannot prove outer "
+                "confinement and process ownership for it."
+            )
+        return attestation
 
     def _input_path_is_private(self, resolved: Path) -> bool:
         from nanobot.config.paths import get_data_dir, get_media_dir
@@ -347,12 +460,7 @@ class ExecTool(Tool):
         if not values:
             return None, []
         reader = self._read_file_tool
-        if reader is None:
-            return ToolResult.error("Error: input file read policy is unavailable")
-        if len(values) > self._MAX_INPUT_FILES:
-            return ToolResult.error(
-                f"Error: input_files accepts at most {self._MAX_INPUT_FILES} files"
-            )
+        assert reader is not None  # execute validated the input options.
         staging = Path(tempfile.mkdtemp(prefix="nanobot-exec-inputs-"))
         staged: list[_StagedInput] = []
         seen: set[Path] = set()
@@ -455,6 +563,63 @@ class ExecTool(Tool):
     def exclusive(self) -> bool:
         return True
 
+    @staticmethod
+    def request_location(
+        command: str | None = None, cmd: str | None = None,
+        working_dir: str | None = None, workdir: str | None = None, **kwargs: object,
+    ) -> tuple[str | None, str | None]:
+        """Resolve compatibility aliases identically for policy and execution."""
+        return command or cmd, working_dir or workdir
+
+    def approval_preflight(
+        self, command: str | None = None, cmd: str | None = None,
+        working_dir: str | None = None, workdir: str | None = None,
+        timeout: int | None = None, shell: str | None = None,
+        login: bool | None = None, yield_time_ms: int | None = None,
+        notify_on_exit: bool = False, input_files: list[str] | None = None,
+        **kwargs: object,
+    ) -> Path | str | ToolOutcome:
+        """Return the effective cwd, or a refusal consent cannot change.
+
+        Prepare the command, but do not copy inputs, reserve admission, or
+        launch it. The live launch must still independently enforce these checks.
+        """
+        command, working_dir = self.request_location(command, cmd, working_dir, workdir)
+        if not command:
+            return ToolResult.error("Error: Missing command. Provide command or cmd.")
+        if (error := self._input_options_error(input_files, yield_time_ms, notify_on_exit)) is not None:
+            return error
+        try:
+            prepared = self._prepare_command(command, working_dir, timeout, shell, login)
+            if not isinstance(prepared, _PreparedCommand):
+                return prepared
+            policy = self.resource_policy
+            grants = policy.folder_grants if policy is not None else None
+            refusal = self._native_command_refusal(
+                grants, managed=prepared.managed, owned=self._owned_native_permission() is not None,
+            )
+            if refusal is not None:
+                return refusal
+            cwd = Path(prepared.logical_cwd or prepared.cwd).resolve(strict=True)
+            if not cwd.is_dir():
+                return ToolResult.error("Error: working_dir is not a directory")
+            return cwd
+        except (OSError, RuntimeError, ValueError) as exc:
+            return ToolResult.error(f"Error: Command preparation failed ({exc})")
+
+    def _input_options_error(
+        self, input_files: list[str] | None, yield_time_ms: int | None, notify_on_exit: bool,
+    ) -> ToolResult | None:
+        if not input_files:
+            return None
+        if yield_time_ms is not None or notify_on_exit:
+            return ToolResult.error("Error: input_files is supported only for foreground commands")
+        if self._read_file_tool is None:
+            return ToolResult.error("Error: input file read policy is unavailable")
+        if len(input_files) > self._MAX_INPUT_FILES:
+            return ToolResult.error(f"Error: input_files accepts at most {self._MAX_INPUT_FILES} files")
+        return None
+
     async def execute(
         self, command: str | None = None, cmd: str | None = None,
         working_dir: str | None = None, workdir: str | None = None,
@@ -472,10 +637,8 @@ class ExecTool(Tool):
         confinement. Supplying a path is not an access grant; each path passes
         the same read resolver and current policy as ``read_file``.
         """
-        if input_files and (yield_time_ms is not None or notify_on_exit):
-            return ToolResult.error(
-                "Error: input_files is supported only for foreground commands"
-            )
+        if (error := self._input_options_error(input_files, yield_time_ms, notify_on_exit)) is not None:
+            return error
         staged_result = self._stage_input_files(input_files)
         if isinstance(staged_result, str):
             return staged_result
@@ -517,8 +680,7 @@ class ExecTool(Tool):
         staged_inputs: list[_StagedInput] | None = None,
         **kwargs: Any,
     ) -> str | ToolOutcome:
-        command = command or cmd
-        working_dir = working_dir or workdir
+        command, working_dir = self.request_location(command, cmd, working_dir, workdir)
         if not command:
             return ToolResult.error("Error: Missing command. Provide command or cmd.")
         if max_output_chars is None:
@@ -551,6 +713,8 @@ class ExecTool(Tool):
 
         revalidation_error = self._revalidate_input_files(staged_inputs or [])
         if revalidation_error is not None:
+            if native_admission is not None:
+                native_admission.cancel_if_unlaunched()
             return revalidation_error
 
         if yield_time_ms is not None or notify_on_exit:
@@ -700,13 +864,7 @@ class ExecTool(Tool):
         input_mounts: tuple[tuple[Path, str], ...] = (),
     ) -> _PreparedCommand | str | ToolOutcome:
         focus = current_workspace_focus()
-        full_reference = focus.full_reference if focus is not None else None
-        full_active = bool(
-            focus is not None
-            and focus.permission_owner is not None
-            and full_reference is not None
-            and focus.permission_owner.is_current_full_reference(full_reference)
-        )
+        full_active = self._full_access_active()
         managed = bool(
             self.resource_policy
             and self.resource_policy.managed_mode
@@ -727,6 +885,15 @@ class ExecTool(Tool):
             )
         else:
             cwd = workspace_root or os.getcwd()
+        if (approved_cwd := _approved_exec_cwd.get()) is not None:
+            try:
+                resolved_cwd = Path(cwd).expanduser().resolve(strict=True)
+            except (OSError, RuntimeError, ValueError):
+                return ToolResult.error("Error: working_dir is no longer available after approval.")
+            if resolved_cwd != approved_cwd or not resolved_cwd.is_dir():
+                return ToolResult.error("Error: working_dir changed after approval. Reassess the command.")
+            # Do not hand the original alias to a later launch step.
+            cwd = str(resolved_cwd)
         # Prevent an LLM-supplied working_dir from escaping the configured
         # workspace when restrict_to_workspace is enabled (#2826). Without
         # this, a caller can pass working_dir="/etc" and then all absolute
@@ -753,8 +920,11 @@ class ExecTool(Tool):
         )
         if guard_error:
             return guard_error
+        launch_admission = self._admit_nested_launch(command, working_dir)
+        if isinstance(launch_admission, str):
+            return launch_admission
         grant_snapshot: FolderGrantSnapshot | None = None
-        logical_cwd = cwd if managed else None
+        logical_cwd = cwd
         if managed:
             policy = self.resource_policy
             grants = policy.folder_grants if policy is not None else None
@@ -851,7 +1021,30 @@ class ExecTool(Tool):
             managed=managed,
             logical_cwd=logical_cwd,
             grant_snapshot=grant_snapshot,
+            launch_attestation=launch_admission,
         )
+
+    @staticmethod
+    def _owned_native_permission() -> tuple[DesktopPermissionOwner, WorkspacePermissionReference] | None:
+        focus = current_workspace_focus()
+        if focus is None or (owner := focus.permission_owner) is None:
+            return None
+        if (task := focus.task_reference) is not None and owner.is_current_task_reference(task):
+            return owner, task
+        if (full := focus.full_reference) is not None and owner.is_current_full_reference(full):
+            return owner, full
+        return None
+
+    @staticmethod
+    def _native_command_refusal(
+        grants: FolderGrantView | None, *, managed: bool, owned: bool,
+    ) -> ToolResult | None:
+        if owned and grants is None:
+            return ToolResult.error("Error: native command admission is unavailable")
+        needs_supervisor = owned or (not managed and grants is not None and not grants.is_managed)
+        if needs_supervisor and not native_supervisor_available():
+            return ToolResult.error("Error: whole-tree native process proof is unavailable")
+        return None
 
     def _reserve_native_admission(
         self,
@@ -865,27 +1058,13 @@ class ExecTool(Tool):
         """Close the first-activation race around legacy process launch."""
         policy = self.resource_policy
         grants = policy.folder_grants if policy is not None else None
-        focus = current_workspace_focus()
-        permission_owner = focus.permission_owner if focus is not None else None
-        permission_reference = None
-        if focus is not None and permission_owner is not None:
-            task_reference = focus.task_reference
-            full_reference = focus.full_reference
-            if task_reference is not None and permission_owner.is_current_task_reference(
-                task_reference,
-            ):
-                permission_reference = task_reference
-            elif full_reference is not None and permission_owner.is_current_full_reference(
-                full_reference,
-            ):
-                permission_reference = full_reference
-        if permission_reference is not None:
-            if permission_owner is None:
-                return ToolResult.error("Error: workspace permission owner is unavailable"), None
-            if policy is None or grants is None:
-                return ToolResult.error("Error: native command admission is unavailable"), None
-            if not native_supervisor_available():
-                return ToolResult.error("Error: whole-tree native process proof is unavailable"), None
+        owned = self._owned_native_permission()
+        refusal = self._native_command_refusal(grants, managed=prepared.managed, owned=owned is not None)
+        if refusal is not None:
+            return refusal, None
+        if owned is not None:
+            permission_owner, permission_reference = owned
+            assert grants is not None  # Checked by _native_command_refusal.
             try:
                 reservation = grants.try_begin_owned_native_process(
                     permission_owner,
@@ -1132,10 +1311,43 @@ class ExecTool(Tool):
             _reap_pid(process.pid)
 
     @staticmethod
+    async def process_tree_quiescent(
+        process: asyncio.subprocess.Process | NativeProcessHandle,
+        *,
+        timeout: float = 0.0,
+    ) -> bool:
+        """Return whether the owned process tree has no live members."""
+        if isinstance(process, NativeProcessHandle):
+            return (
+                process.quiescence_proven()
+                if timeout <= 0
+                else await process.wait_quiescent(timeout)
+            )
+        owner = ExecTool._process_tree_owner(process)
+        if owner is not None or _IS_WINDOWS:
+            # Windows owns the tree through the Job Object. The root exit is the
+            # only portable observation available here; the job termination is
+            # the whole-tree action.
+            return process.returncode is not None
+        if process.returncode is None:
+            return False
+        deadline = time.monotonic() + max(0.0, timeout)
+        while True:
+            try:
+                os.killpg(process.pid, 0)
+            except ProcessLookupError:
+                return True
+            except PermissionError:
+                return False
+            if time.monotonic() >= deadline:
+                return False
+            await asyncio.sleep(0.01)
+
+    @staticmethod
     async def kill_process_tree(
         process: asyncio.subprocess.Process | NativeProcessHandle,
     ) -> None:
-        """Kill a session process and descendants, then reap the root process."""
+        """Kill a session process and descendants, then prove tree quiescence."""
         if isinstance(process, NativeProcessHandle):
             await process.kill_process_tree()
             return
@@ -1157,6 +1369,8 @@ class ExecTool(Tool):
                             timeout=5.0,
                         )
             else:
+                # Signal the group even after the root exits so adopted
+                # descendants cannot outlive an already-reaped root.
                 try:
                     os.killpg(process.pid, signal.SIGKILL)
                 except (ProcessLookupError, PermissionError):

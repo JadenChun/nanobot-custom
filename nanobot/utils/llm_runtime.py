@@ -30,6 +30,7 @@ class LLMRuntime:
     snapshot_signature: tuple[object, ...] | None = None
     capabilities: ModelCapabilities | None = None
     policy: ProviderPolicy | None = None
+    capability_generation: int = 0
 
     @classmethod
     def capture(
@@ -42,6 +43,7 @@ class LLMRuntime:
         snapshot_signature: tuple[object, ...] | None = None,
         capabilities: ModelCapabilities | None = None,
         policy: ProviderPolicy | None = None,
+        capability_generation: int = 0,
     ) -> LLMRuntime:
         """Capture provider defaults without retaining mutable generation state."""
         defaults = GenerationSettings()
@@ -77,6 +79,28 @@ class LLMRuntime:
                 if policy is not None
                 else _resolve_provider_policy(provider)
             ),
+            capability_generation=capability_generation,
+        )
+
+    def with_route_identity(
+        self,
+        *,
+        model: str,
+        context_window_tokens: int,
+        capability_generation: int,
+    ) -> LLMRuntime:
+        """Return a runtime whose capability snapshot matches the new route identity."""
+        return replace(
+            self,
+            model=model,
+            context_window_tokens=context_window_tokens,
+            capabilities=_resolve_provider_capabilities(
+                self.provider,
+                model,
+                context_window_tokens=context_window_tokens,
+                max_output_tokens=self.generation.max_tokens,
+            ),
+            capability_generation=capability_generation,
         )
 
     @property

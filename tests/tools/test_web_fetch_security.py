@@ -45,6 +45,7 @@ def _patch_web_fetch_fake_client(monkeypatch: pytest.MonkeyPatch) -> list[dict]:
         status_code = 200
         headers = {"content-type": "text/html"}
         url = "https://example.com/page"
+        request = httpx.Request("GET", "https://example.com/page")
 
         async def __aenter__(self):
             return self
@@ -52,14 +53,31 @@ def _patch_web_fetch_fake_client(monkeypatch: pytest.MonkeyPatch) -> list[dict]:
         async def __aexit__(self, exc_type, exc, tb):
             return False
 
+        async def aiter_bytes(self):
+            yield b"<html><head><title>Example</title></head><body><p>Hello</p></body></html>"
+
     class FakeJinaResponse:
         status_code = 200
+        headers: dict[str, str] = {}
 
         def raise_for_status(self):
             return None
 
-        def json(self):
-            return {"data": {"title": "Example", "content": "Hello", "url": "https://example.com/page"}}
+        async def aiter_bytes(self):
+            yield json.dumps({
+                "data": {
+                    "title": "Example",
+                    "content": "Hello",
+                    "url": "https://example.com/page",
+                }
+            }).encode("utf-8")
+
+    class FakeJinaStream:
+        async def __aenter__(self):
+            return FakeJinaResponse()
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
 
     class FakeClient:
         def __init__(self, *args, **kwargs):
@@ -72,6 +90,8 @@ def _patch_web_fetch_fake_client(monkeypatch: pytest.MonkeyPatch) -> list[dict]:
             return False
 
         def stream(self, method, url, headers=None, **kwargs):
+            if "r.jina.ai" in url:
+                return FakeJinaStream()
             return FakeStreamResponse()
 
         async def get(self, url, headers=None, **kwargs):
@@ -294,6 +314,7 @@ async def test_web_fetch_can_skip_jina_and_use_custom_user_agent(monkeypatch):
         status_code = 200
         headers = {"content-type": "text/html"}
         url = "https://example.com/page"
+        request = httpx.Request("GET", "https://example.com/page")
 
         async def __aenter__(self):
             return self
@@ -303,6 +324,12 @@ async def test_web_fetch_can_skip_jina_and_use_custom_user_agent(monkeypatch):
 
         async def aread(self):
             raise AssertionError("non-image prefetch body should not be read")
+
+        async def aiter_bytes(self):
+            yield (
+                b"<html><head><title>Test</title></head>"
+                b"<body><p>Hello world</p></body></html>"
+            )
 
     class FakeResponse:
         status_code = 200
@@ -361,6 +388,24 @@ async def test_web_fetch_falls_back_when_readability_dependency_is_missing(monke
         def raise_for_status(self):
             return None
 
+    class FakeStreamResponse:
+        status_code = 200
+        headers = {"content-type": "text/html"}
+        url = "https://example.com/page"
+        request = httpx.Request("GET", "https://example.com/page")
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def aiter_bytes(self):
+            yield (
+                b"<html><head><title>Test</title></head>"
+                b"<body><p>Hello world</p></body></html>"
+            )
+
     class FakeClient:
         def __init__(self, *args, **kwargs):
             pass
@@ -370,6 +415,9 @@ async def test_web_fetch_falls_back_when_readability_dependency_is_missing(monke
 
         async def __aexit__(self, exc_type, exc, tb):
             return False
+
+        def stream(self, method, url, headers=None, **kwargs):
+            return FakeStreamResponse()
 
         async def get(self, url, headers=None, follow_redirects=False, **kwargs):
             return FakeResponse()
@@ -409,10 +457,22 @@ async def test_web_fetch_blocks_private_redirect_before_readability_request(monk
         async def aread(self):
             raise AssertionError("non-image prefetch body should not be read")
 
+        async def aiter_bytes(self):
+            yield (
+                b"<html><head><title>Test</title></head>"
+                b"<body><p>Hello world</p></body></html>"
+            )
+
     class FakeRedirectResponse:
         status_code = 302
         headers = {"location": "http://127.0.0.1:8765/metadata"}
         url = "https://attacker.example/start"
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
 
         async def aclose(self):
             return None
@@ -428,7 +488,12 @@ async def test_web_fetch_blocks_private_redirect_before_readability_request(monk
             return False
 
         def stream(self, method, url, headers=None, **kwargs):
-            return FakeStreamResponse()
+            requested.append(url)
+            if url == "http://127.0.0.1:8765/metadata":
+                raise AssertionError("private redirect target should not be requested")
+            if len(requested) == 1:
+                return FakeStreamResponse()
+            return FakeRedirectResponse()
 
         async def get(self, url, headers=None, **kwargs):
             requested.append(url)
@@ -450,7 +515,8 @@ async def test_web_fetch_blocks_private_redirect_before_readability_request(monk
     data = json.loads(result)
     assert "error" in data
     assert "redirect blocked" in data["error"].lower()
-    assert requested == ["https://attacker.example/start"]
+    assert requested == ["https://attacker.example/start", "https://attacker.example/start"]
+    assert "http://127.0.0.1:8765/metadata" not in requested
 
 
 @pytest.mark.asyncio

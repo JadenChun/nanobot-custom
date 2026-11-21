@@ -407,6 +407,26 @@ def test_exec_session_preserves_completed_session_output_until_polled(tmp_path):
     assert "Exit code: 0" in final
 
 
+def test_exec_session_poll_after_deadline_keeps_completed_success(tmp_path):
+    async def run() -> tuple[str, str]:
+        manager = ExecSessionManager()
+        exec_tool = ExecTool(working_dir=str(tmp_path), timeout=1, session_manager=manager)
+        session_tool = ExecSessionTool(manager=manager)
+
+        initial = await exec_tool.execute(command="echo hi", yield_time_ms=0)
+        sid = _session_id(initial)
+        await asyncio.sleep(1.3)
+        final = await session_tool.execute(session_id=sid, input="", timeout_ms=0)
+        return initial, final
+
+    initial, final = asyncio.run(run())
+
+    assert "Process running" in initial
+    assert "hi" in final
+    assert "Exit code: 0" in final
+    assert "timed out" not in final.lower()
+
+
 def test_exec_session_until_exit_waits_for_silent_process(tmp_path):
     async def run() -> tuple[str, str]:
         manager = ExecSessionManager()
@@ -1027,3 +1047,129 @@ def test_agent_loop_shutdown_preserves_single_cleanup_error():
         loop._exec_session_manager.close_all.assert_awaited_once()
 
     asyncio.run(run())
+
+
+@pytest.mark.asyncio
+async def test_yielded_session_reaches_deadline_without_a_later_poll(tmp_path):
+    manager = ExecSessionManager(max_sessions=2)
+    try:
+        session_id, poll = await manager.start(
+            command=f"{sys.executable} -c 'import time; time.sleep(30)'",
+            cwd=str(tmp_path),
+            env={},
+            timeout=1,
+            shell_program=None,
+            login=False,
+            yield_time_ms=0,
+            max_output_chars=1000,
+        )
+        assert not poll.done
+
+        await asyncio.sleep(1.6)
+
+        session = manager._sessions[session_id]
+        assert session.process.returncode is not None
+        assert session._timed_out is True
+
+        final = await manager.write(
+            session_id=session_id,
+            chars=None,
+            close_stdin=False,
+            terminate=False,
+            yield_time_ms=0,
+            max_output_chars=1000,
+        )
+        assert final.done
+        assert final.timed_out
+    finally:
+        await manager.close_all()
+
+
+@pytest.mark.asyncio
+async def test_concurrent_terminate_settles_once(tmp_path):
+    manager = ExecSessionManager(max_sessions=2)
+    try:
+        session_id, poll = await manager.start(
+            command=f"{sys.executable} -c 'import time; time.sleep(30)'",
+            cwd=str(tmp_path),
+            env={},
+            timeout=0,
+            shell_program=None,
+            login=False,
+            yield_time_ms=0,
+            max_output_chars=1000,
+        )
+        assert not poll.done
+
+        polls = await asyncio.gather(
+            manager.write(
+                session_id=session_id,
+                chars=None,
+                close_stdin=False,
+                terminate=True,
+                yield_time_ms=0,
+                max_output_chars=1000,
+            ),
+            manager.write(
+                session_id=session_id,
+                chars=None,
+                close_stdin=False,
+                terminate=True,
+                yield_time_ms=0,
+                max_output_chars=1000,
+            ),
+        )
+
+        assert all(item.done for item in polls)
+    finally:
+        await manager.close_all()
+
+
+@pytest.mark.asyncio
+async def test_failed_kill_leaves_session_inspectable(tmp_path):
+    manager = ExecSessionManager(max_sessions=2)
+    session = None
+    original_kill = None
+    process = None
+    try:
+        session_id, poll = await manager.start(
+            command=f"{sys.executable} -c 'import time; time.sleep(30)'",
+            cwd=str(tmp_path),
+            env={},
+            timeout=0,
+            shell_program=None,
+            login=False,
+            yield_time_ms=0,
+            max_output_chars=1000,
+        )
+        assert not poll.done
+
+        session = manager._sessions[session_id]
+        process = session.process
+        original_kill = session.kill
+
+        async def fail_kill() -> None:
+            raise RuntimeError("kill failed")
+
+        session.kill = fail_kill
+
+        with pytest.raises(RuntimeError, match="kill failed"):
+            await manager.write(
+                session_id=session_id,
+                chars=None,
+                close_stdin=False,
+                terminate=True,
+                yield_time_ms=0,
+                max_output_chars=1000,
+            )
+
+        assert session_id in manager._sessions
+    finally:
+        if session is not None and original_kill is not None:
+            session.kill = original_kill
+        try:
+            await manager.close_all()
+        finally:
+            if process is not None and process.returncode is None:
+                process.kill()
+                await process.wait()

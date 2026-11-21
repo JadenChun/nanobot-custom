@@ -67,7 +67,7 @@ To monitor:
 
 ## Orchestrating Coding Agents (Codex, Claude Code)
 
-tmux excels at running multiple coding agents in parallel:
+tmux excels at running multiple coding agents in parallel. The examples use `codex exec`, which runs non-interactively with Codex's default approval and sandbox policy. The `--sandbox workspace-write` flag lets Codex edit files inside the workspace only.
 
 ```bash
 SOCKET="${TMPDIR:-/tmp}/codex-army.sock"
@@ -77,13 +77,13 @@ for i in 1 2 3 4 5; do
   tmux -S "$SOCKET" new-session -d -s "agent-$i"
 done
 
-# Launch agents in different workdirs
-tmux -S "$SOCKET" send-keys -t agent-1 "cd /tmp/project1 && codex --yolo 'Fix bug X'" Enter
-tmux -S "$SOCKET" send-keys -t agent-2 "cd /tmp/project2 && codex --yolo 'Fix bug Y'" Enter
+# Launch agents in different workdirs, inside Codex's sandbox
+tmux -S "$SOCKET" send-keys -t agent-1 "cd /tmp/project1 && codex exec --sandbox workspace-write 'Fix bug X'" Enter
+tmux -S "$SOCKET" send-keys -t agent-2 "cd /tmp/project2 && codex exec --sandbox workspace-write 'Fix bug Y'" Enter
 
-# Poll for completion (check if prompt returned)
+# Poll for completion (check if the shell prompt returned)
 for sess in agent-1 agent-2; do
-  if tmux -S "$SOCKET" capture-pane -p -t "$sess" -S -3 | grep -q "❯"; then
+  if tmux -S "$SOCKET" capture-pane -p -t "$sess" -S -3 | tail -n 1 | grep -qE '^(❯|[$%#] )'; then
     echo "$sess: DONE"
   else
     echo "$sess: Running..."
@@ -98,7 +98,9 @@ tmux -S "$SOCKET" capture-pane -p -t agent-1 -S -500
 - Use separate git worktrees for parallel fixes (no branch conflicts)
 - `pnpm install` first before running codex in fresh clones
 - Check for shell prompt (`❯` or `$`) to detect completion
-- Codex needs `--yolo` or `--full-auto` for non-interactive fixes
+- `codex exec` already runs non-interactively; `--sandbox workspace-write` keeps Codex's approval and sandbox layer enabled
+- Do not add `--yolo` (alias of `--dangerously-bypass-approvals-and-sandbox`) or `--sandbox danger-full-access` unless the operator has positively established an external sandbox and the user approved that bypass
+- Autonomous runs need an external sandbox or an explicit approval policy from the operator; this skill does not provide either
 
 ## Cleanup
 

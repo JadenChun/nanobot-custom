@@ -16,8 +16,75 @@ afterEach(() => {
 });
 
 describe("ThreadMessages", () => {
+  it("keeps one timer through interleaved work and freezes the full duration on completion", () => {
+    vi.useFakeTimers();
+    const startedAt = 1_800_000_000_000;
+    const turnId = "staged-work";
+    const search = 'web_search({"query":"stage handoff"})';
+    const read = 'read_file({"path":"frame.png"})';
+    const messages: UIMessage[] = [
+      { id: "prompt", role: "user", content: "Inspect the clip", turnId, createdAt: startedAt },
+      { id: "plan", role: "assistant", content: "Planning", turnId, createdAt: startedAt + 5_000 },
+      { id: "search", role: "tool", kind: "trace", content: search, turnId, createdAt: startedAt + 10_000 },
+      { id: "check", role: "assistant", content: "Checking", turnId, createdAt: startedAt + 18_000 },
+      { id: "read", role: "tool", kind: "trace", content: read, turnId, createdAt: startedAt + 25_000 },
+      { id: "write", role: "assistant", content: "Writing", turnId, createdAt: startedAt + 34_000 },
+    ];
+    vi.setSystemTime(startedAt + 7_000);
+    const { rerender } = render(
+      <ThreadMessages messages={messages.slice(0, 2)} isStreaming activeTurnId={turnId} />,
+    );
+    // Before the first activity row the pending fold already says "Working", so
+    // the request never looks idle while it is processing.
+    expect(screen.getByRole("status", { name: /^Working(?: · |$)/ })).toBeInTheDocument();
+
+    act(() => { vi.advanceTimersByTime(10_000); });
+    rerender(<ThreadMessages messages={messages.slice(0, 3)} isStreaming activeTurnId={turnId} />);
+    expect(screen.getByRole("button", { name: /^Working(?: · |$)/ })).toHaveAttribute("aria-expanded", "true");
+
+    act(() => { vi.advanceTimersByTime(20_000); });
+    rerender(<ThreadMessages messages={messages} isStreaming activeTurnId={turnId} />);
+    const live = screen.getByRole("button", { name: /^Working(?: · |$)/ });
+    expect(screen.getAllByRole("button", { name: /^Working(?: · |$)/ })).toHaveLength(1);
+    // One work group per turn, placed before that turn's answers, so the turn
+    // never reads as work/reply/work/reply. The live fold is that group.
+    const order = [
+      screen.getByText("Inspect the clip"), screen.getByText("Planning"),
+      live, screen.getByText("Checking"), screen.getByText("Writing"),
+    ];
+    for (let index = 1; index < order.length; index += 1) {
+      expect(order[index - 1].compareDocumentPosition(order[index]) & Node.DOCUMENT_POSITION_FOLLOWING)
+        .toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+    }
+    expect(screen.getByText("Searched stage handoff")).toBeVisible();
+    expect(screen.getByText("frame.png", { exact: false })).toBeVisible();
+
+    rerender(<ThreadMessages messages={[
+      ...messages.slice(0, -1),
+      { ...messages[5], content: "Done", latencyMs: 42_000, createdAt: startedAt + 42_000 },
+    ]} />);
+    expect(screen.getByRole("button", { name: "Worked for 42s" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^Working(?: · |$)/ })).toBeNull();
+  });
+
+  it("shows one historical duration for each completed run", () => {
+    const startedAt = 1_800_000_000_000;
+    const messages = [32_000, 72_000].flatMap((latencyMs, index): UIMessage[] => {
+      const turnId = `history-${index}`;
+      const time = startedAt + index * 100_000;
+      return [
+        { id: `${turnId}-prompt`, role: "user", content: `Prompt ${index}`, turnId, createdAt: time },
+        { id: `${turnId}-tool`, role: "tool", kind: "trace", content: "search()", turnId, createdAt: time + 1_000 },
+        { id: `${turnId}-answer`, role: "assistant", content: `Result ${index}`, turnId, latencyMs, createdAt: time + latencyMs },
+      ];
+    });
+    render(<ThreadMessages messages={messages} />);
+    expect(screen.getAllByRole("button", { name: /^Worked for / }).map((button) => button.textContent))
+      .toEqual(["Worked for 32s", "Worked for 1m 12s"]);
+  });
+
   it.each([0, -13_000, -14_000, -15_000, 15_000])(
-    "keeps the optimistic timer through acknowledgement and output with %i ms server clock skew",
+    "keeps one live Working state through acknowledgement and output with %i ms server clock skew",
     (clockSkewMs) => {
       vi.useFakeTimers();
       const now = new Date("2026-08-13T10:00:05.000Z").getTime();
@@ -39,7 +106,7 @@ describe("ThreadMessages", () => {
         />,
       );
 
-      expect(screen.getByRole("status", { name: "Working for 0s" })).toBeInTheDocument();
+      expect(screen.getByRole("status", { name: /^Working(?: · |$)/ })).toBeInTheDocument();
 
       rerender(
         <ThreadMessages
@@ -49,7 +116,7 @@ describe("ThreadMessages", () => {
           runStartedAt={(now + clockSkewMs) / 1000}
         />,
       );
-      expect(screen.getByRole("status", { name: "Working for 0s" })).toBeInTheDocument();
+      expect(screen.getByRole("status", { name: /^Working(?: · |$)/ })).toBeInTheDocument();
       act(() => { vi.advanceTimersByTime(1000); });
 
       rerender(
@@ -73,7 +140,7 @@ describe("ThreadMessages", () => {
         />,
       );
 
-      expect(screen.getByRole("button", { name: "Working for 1s" })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /^Working(?: · |$)/ })).toBeInTheDocument();
     },
   );
 
@@ -98,7 +165,44 @@ describe("ThreadMessages", () => {
         runStartedAt={(now - 43_000) / 1000}
       />,
     );
-    expect(screen.getByRole("status", { name: "Working for 30s" })).toBeInTheDocument();
+    expect(screen.getByRole("status", { name: /^Working(?: · |$)/ })).toBeInTheDocument();
+  });
+
+  it("opens child history from its canonical row and marks disconnected state unavailable", () => {
+    const child = {
+      child_session_key: "child-session",
+      child_id: "child-id",
+      profile: "research",
+      state: "running",
+      task_label: "Compare release notes",
+      result_summary: null,
+      runtime_generation: 2,
+    };
+    const onOpenChildHistory = vi.fn();
+    render(
+      <ThreadMessages
+        messages={[{
+          id: "child-row",
+          role: "system",
+          kind: "delegated_child",
+          content: "",
+          createdAt: 1,
+          delegatedChild: child,
+        }]}
+        onOpenChildHistory={onOpenChildHistory}
+        delegatedStatusAvailable={false}
+      />,
+    );
+
+    expect(screen.getByText("Compare release notes")).toBeInTheDocument();
+    expect(screen.getByText("Status unavailable (last known Working)")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Wait" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Steer" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Stop" })).not.toBeInTheDocument();
+
+    const button = screen.getByRole("button", { name: "Inspect Compare release notes activity" });
+    fireEvent.click(button);
+    expect(onOpenChildHistory).toHaveBeenCalledWith(child, button);
   });
 
   it("keeps a mounted tail answer eagerly rendered on the next turn", () => {
@@ -450,24 +554,22 @@ describe("ThreadMessages", () => {
         : unit.message.id
     ))).toEqual([
       "user",
-      "activity:reasoning-before,ok-reasoning",
+      "activity:reasoning-before,ok-reasoning,first-tool,second-tool,final-reasoning",
       "ok",
-      "activity:first-tool,second-tool,final-reasoning",
       "final",
     ]);
-    expect(units.map((unit) => unit.sourceMessageCount)).toEqual([1, 1, 1, 3, 1]);
+    expect(units.map((unit) => unit.sourceMessageCount)).toEqual([1, 4, 1, 1]);
 
     render(<ThreadMessages messages={messages} isStreaming={false} />);
 
-    const activityShells = screen.getAllByRole("button", { name: /worked/i });
+    const activityShells = screen.getAllByRole("button", { name: /^(?:Activity|Worked)/ });
     const ok = screen.getByText("ok");
     const final = screen.getByText("finished");
-    expect(activityShells).toHaveLength(2);
+    // One work group per turn, before the turn's answers, never interleaved.
+    expect(activityShells).toHaveLength(1);
     expect(activityShells[0].compareDocumentPosition(ok) & Node.DOCUMENT_POSITION_FOLLOWING)
       .toBeTruthy();
-    expect(ok.compareDocumentPosition(activityShells[1]) & Node.DOCUMENT_POSITION_FOLLOWING)
-      .toBeTruthy();
-    expect(activityShells[1].compareDocumentPosition(final) & Node.DOCUMENT_POSITION_FOLLOWING)
+    expect(activityShells[0].compareDocumentPosition(final) & Node.DOCUMENT_POSITION_FOLLOWING)
       .toBeTruthy();
   });
 
@@ -861,7 +963,7 @@ describe("ThreadMessages", () => {
     expect(screen.queryByLabelText(/edited foo\.txt/i)).not.toBeInTheDocument();
   });
 
-  it("times live activity from the user turn start", () => {
+  it("anchors live activity to the user turn start", () => {
     vi.useFakeTimers();
     const startedAt = 1_700_000_000_000;
     vi.setSystemTime(startedAt + 230_000);
@@ -896,14 +998,13 @@ describe("ThreadMessages", () => {
 
     render(<ThreadMessages messages={messages} isStreaming />);
 
-    expect(screen.getByText("Working for 3m 50s")).toBeInTheDocument();
-    expect(screen.queryByText("Working for 10s")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^Working(?: · |$)/ })).toBeInTheDocument();
   });
 
-  it("keeps a guided run's timer on its original activity cluster", () => {
+  it("keeps the original turn start after guidance and more activity", () => {
     vi.useFakeTimers();
     const startedAt = 1_700_000_000_000;
-    vi.setSystemTime(startedAt + 215_000);
+    vi.setSystemTime(startedAt + 300_000);
     const messages: UIMessage[] = [
       {
         id: "u-original",
@@ -942,22 +1043,31 @@ describe("ThreadMessages", () => {
         turnId: "turn-guidance",
         turnPhase: "user",
         turnSeq: 0,
-        createdAt: startedAt + 215_000,
+        createdAt: startedAt + 310_000,
+      },
+      {
+        id: "t-after-guidance",
+        role: "tool",
+        kind: "trace",
+        content: "read_file()",
+        turnId: "turn-original",
+        turnSeq: 3,
+        createdAt: startedAt + 315_000,
       },
     ];
 
-    render(
-      <ThreadMessages
-        messages={messages}
-        isStreaming
-        activeTurnId="turn-original"
-        runStartedAt={startedAt / 1000}
-      />,
+    const renderRun = (visibleMessages: UIMessage[]) => (
+      <ThreadMessages messages={visibleMessages} isStreaming activeTurnId="turn-original"
+        runStartedAt={startedAt / 1000} />
     );
+    const { rerender } = render(renderRun(messages.slice(0, 3)));
+    expect(screen.getByRole("button", { name: /^Working(?: · |$)/ })).toBeInTheDocument();
 
-    expect(screen.getByText("Working for 3m 35s")).toBeInTheDocument();
-    expect(screen.queryByText("Worked for 1s")).not.toBeInTheDocument();
-    expect(screen.queryByText("Thinking for 3m 35s")).not.toBeInTheDocument();
+    act(() => { vi.advanceTimersByTime(20_000); });
+    rerender(renderRun(messages));
+    // Guidance and later work stay in the same live fold; the state is named
+    // once, so the transcript cannot show two progress claims at the same time.
+    expect(screen.getAllByRole("button", { name: /^Working(?: · |$)/ })).toHaveLength(1);
   });
 
   it("folds final answer reasoning into the preceding activity timeline", () => {
@@ -1189,7 +1299,7 @@ describe("ThreadMessages", () => {
 
     render(<ThreadMessages messages={messages} isStreaming={false} />);
 
-    const activities = screen.getAllByRole("button", { name: /worked/i });
+    const activities = screen.getAllByRole("button", { name: /^(?:Activity|Worked)/ });
     const answer = screen.getByText("知道，IEM Cologne Major 2026 今天开打了。");
     expect(activities).toHaveLength(2);
     expect(activities[0].compareDocumentPosition(answer) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();

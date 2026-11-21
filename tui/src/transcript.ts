@@ -16,6 +16,7 @@ import {
 
 import type {
   ContextCompaction,
+  DelegatedChildReference,
   FileEditEvent,
   HistoryMessage,
   MediaAttachment,
@@ -120,6 +121,11 @@ export class Transcript {
     phase: ContextCompaction["phase"]
     text: TextRenderable
   }>()
+  private readonly delegatedChildRows = new Map<string, {
+    row: BoxRenderable
+    text: TextRenderable
+  }>()
+  private delegatedChildOpenHandler: ((childId: string) => void) | undefined
   private readonly frames = new Set<BoxRenderable>()
   private readonly userRows = new Set<BoxRenderable>()
   private readonly userMessages = new Set<{
@@ -143,10 +149,11 @@ export class Transcript {
     private readonly treeSitterClient: TreeSitterClient,
     private readonly onNavigationChange?: (state: TranscriptNavigation) => void,
     private readonly workspace = "",
+    private readonly idPrefix = "",
   ) {
     this.codeRailColor = RGBA.fromHex(theme.border)
     this.root = new ScrollBoxRenderable(renderer, {
-      id: "nanobot-tui-transcript",
+      id: this.idPrefix ? `${this.idPrefix}-transcript` : "nanobot-tui-transcript",
       width: "100%",
       minHeight: 0,
       flexGrow: 0,
@@ -241,6 +248,7 @@ export class Transcript {
     this.markdown.clear()
     this.activities.clear()
     this.compactions.clear()
+    this.delegatedChildRows.clear()
     this.frames.clear()
     this.userRows.clear()
     this.userMessages.clear()
@@ -255,7 +263,8 @@ export class Transcript {
 
   history(messages: HistoryMessage[]): void {
     for (const message of messages) {
-      if (message.compaction) this.compaction(message.compaction)
+      if (message.delegatedChild) continue
+      else if (message.compaction) this.compaction(message.compaction)
       else if (message.role === "user") {
         this.user(message.content, message.turnId, message.media)
       }
@@ -264,6 +273,44 @@ export class Transcript {
       else this.progress(message.content, message.toolEvents)
     }
     this.finishActivity()
+  }
+
+  setDelegatedChildOpenHandler(handler: ((childId: string) => void) | undefined): void {
+    this.delegatedChildOpenHandler = handler
+  }
+
+  updateDelegatedChildren(
+    children: readonly DelegatedChildReference[],
+    statusAvailable = true,
+    connected = true,
+  ): void {
+    const nextIds = new Set(children.map((child) => child.child_id))
+    for (const [childId, entry] of this.delegatedChildRows) {
+      if (nextIds.has(childId)) continue
+      this.root.remove(entry.row)
+      entry.row.destroyRecursively()
+      this.delegatedChildRows.delete(childId)
+    }
+    for (const child of children) {
+      let entry = this.delegatedChildRows.get(child.child_id)
+      if (!entry) {
+        this.finishActivity()
+        const row = this.createRow("delegated-child")
+        const text = this.createText("", "muted", false, "delegated-child-activity")
+        row.add(text)
+        row.onMouseDown = (event) => {
+          if (event.button !== 0 || !this.delegatedChildOpenHandler) return
+          event.preventDefault()
+          this.delegatedChildOpenHandler(child.child_id)
+        }
+        this.root.add(row)
+        entry = { row, text }
+        this.delegatedChildRows.set(child.child_id, entry)
+        this.wrote = true
+      }
+      entry.text.content = formatDelegatedChild(child, statusAvailable, connected)
+    }
+    this.renderer.requestRender()
   }
 
   async prependHistory(messages: HistoryMessage[]): Promise<void> {
@@ -448,6 +495,7 @@ export class Transcript {
     this.live = null
     this.activity = null
     this.compactions.clear()
+    this.delegatedChildRows.clear()
     this.frames.clear()
     this.userRows.clear()
     this.userMessages.clear()
@@ -503,7 +551,9 @@ export class Transcript {
 
   private id(prefix: string): string {
     this.nextId += 1
-    return `${prefix}-${this.nextId}`
+    return this.idPrefix
+      ? `${this.idPrefix}-${prefix}-${this.nextId}`
+      : `${prefix}-${this.nextId}`
   }
 
   private createRow(kind = "row", direction: "column" | "row" = "column"): BoxRenderable {
@@ -758,6 +808,38 @@ export class Transcript {
     this.wrote = true
     return row
   }
+}
+
+function formatDelegatedChild(
+  child: DelegatedChildReference,
+  statusAvailable: boolean,
+  connected: boolean,
+): string {
+  const label = child.task_label?.trim().replace(/\s+/gu, " ") || child.profile || "Delegated task"
+  const status = child.history_kind === "summary"
+    ? `summary · ${child.state.replace(/_/gu, " ")}`
+    : child.state === "uncertain" || child.result_disposition === "uncertain"
+      ? "needs reconciliation"
+      : child.state.replace(/_/gu, " ")
+  const lines = [`  ◈ ${label} · ${status}`]
+  if (child.outcome && child.outcome !== child.state) lines.push(`     Outcome: ${child.outcome}`)
+  if (child.result_summary) {
+    lines.push(`     ${child.result_summary}${child.result_summary_truncated ? "…" : ""}`)
+  }
+  if (child.history_kind !== "summary"
+    && child.state === "waiting_approval"
+    && child.pending_approval_id) {
+    lines.push(`     Approval required · /child approvals`)
+  }
+  if (child.history_kind === "summary") {
+    lines.push("     Read-only summary · current controls unavailable")
+  } else if (!statusAvailable) {
+    lines.push(connected
+      ? "     Canonical status unavailable"
+      : "     Status unavailable while disconnected")
+  }
+  lines.push(`     Inspect read-only: /child open ${child.child_id}`)
+  return lines.join("\n")
 }
 
 function cleanProgress(value: string): string {

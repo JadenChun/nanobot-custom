@@ -396,28 +396,15 @@ def _tcp_endpoint_reachable(host: str, port: int, *, timeout_s: float = 0.25) ->
 
 
 def _gateway_health_ready(host: str, port: int, *, timeout_s: float = 0.4) -> bool:
-    """Return whether the nanobot gateway health endpoint responds OK."""
-    import json
-    import urllib.error
-    import urllib.request
+    """Return whether the gateway health endpoint reports readiness.
 
-    browser_host = _host_for_local_browser(host)
-    try:
-        with urllib.request.urlopen(
-            f"http://{browser_host}:{port}/health",
-            timeout=timeout_s,
-        ) as response:
-            if response.status != 200:
-                return False
-            body = response.read(1024)
-    except (OSError, urllib.error.URLError, TimeoutError, ValueError):
-        return False
+    The CLI uses the same readiness contract as the gateway status path. The probe
+    ignores proxy settings and treats a non-object, malformed or non-200 response,
+    a connection error and a timeout as not ready.
+    """
+    from nanobot.gateway.runtime import gateway_health_ready
 
-    try:
-        payload = json.loads(body.decode("utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError):
-        return False
-    return payload.get("status") == "ok"
+    return gateway_health_ready(host, port, timeout_s=timeout_s)
 
 
 def _webui_endpoint_reachable(url: str, *, timeout_s: float = 0.25) -> bool:

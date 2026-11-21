@@ -8,6 +8,8 @@ export type TurnUnit =
       messages: UIMessage[];
       /** Number of raw UI messages represented by this display unit. */
       sourceMessageCount: number;
+      turnId?: string;
+      showTurnDuration?: boolean;
       turnLatencyMs?: number;
       startedAtMs?: number;
     }
@@ -17,6 +19,14 @@ export type TurnUnit =
       /** Number of raw UI messages represented by this display unit. */
       sourceMessageCount: number;
     };
+
+interface TurnTiming {
+  promptAtMs?: number;
+  firstAtMs?: number;
+  lastAtMs?: number;
+  latencyMs?: number;
+  lastActivityIndex?: number;
+}
 
 export function isReasoningOnlyAssistant(message: UIMessage): boolean {
   if (message.role !== "assistant" || message.kind === "trace") return false;
@@ -61,9 +71,17 @@ export function normalizeActivityTimeline(
   messages: UIMessage[],
 ): TurnUnit[] {
   const units: TurnUnit[] = [];
+  const timings = new Map<string | number, TurnTiming>();
   let turnMessages: UIMessage[] = [];
   let activeTurnId: string | undefined;
   let activeTurnStartedAtMs: number | undefined;
+
+  const timingFor = (turnId: string | undefined): TurnTiming => {
+    const key = turnId ?? timings.size;
+    const timing = timings.get(key) ?? {};
+    timings.set(key, timing);
+    return timing;
+  };
 
   const flushTurn = () => {
     if (!turnMessages.length) {
@@ -72,11 +90,27 @@ export function normalizeActivityTimeline(
       return;
     }
 
-    const projected = projectOrderedTurn(
-      orderMessagesByTurnSeq(turnMessages),
-      activeTurnStartedAtMs,
-    );
+    const ordered = orderMessagesByTurnSeq(turnMessages);
+    const projected = projectOrderedTurn(ordered, activeTurnId);
+    const timing = timingFor(activeTurnId);
+    timing.promptAtMs ??= activeTurnStartedAtMs;
+    for (const message of ordered) {
+      const timestamp = availableCreatedAtMs(message);
+      if (timestamp !== undefined) {
+        timing.firstAtMs = Math.min(timing.firstAtMs ?? timestamp, timestamp);
+        timing.lastAtMs = Math.max(timing.lastAtMs ?? timestamp, timestamp);
+      }
+      if (typeof message.completedAt === "number" && Number.isFinite(message.completedAt)) {
+        timing.lastAtMs = Math.max(timing.lastAtMs ?? message.completedAt, message.completedAt);
+      }
+      if (isValidLatency(message.latencyMs)) timing.latencyMs = message.latencyMs;
+    }
     if (projected.length) {
+      for (let index = projected.length - 1; index >= 0; index -= 1) {
+        if (projected[index].type !== "activity") continue;
+        timing.lastActivityIndex = units.length + index;
+        break;
+      }
       units.push(...projected);
     } else if (units.length) {
       // A turn containing only completed transport placeholders has no
@@ -100,7 +134,8 @@ export function normalizeActivityTimeline(
       flushTurn();
       units.push({ type: "message", message, sourceMessageCount: 1 });
       activeTurnId = message.turnId;
-      activeTurnStartedAtMs = validCreatedAtMs(message.createdAt);
+      activeTurnStartedAtMs = availableCreatedAtMs(message);
+      if (activeTurnId) timingFor(activeTurnId).promptAtMs ??= activeTurnStartedAtMs;
       continue;
     }
     if (message.turnId && activeTurnId && message.turnId !== activeTurnId) flushTurn();
@@ -109,18 +144,86 @@ export function normalizeActivityTimeline(
   }
 
   flushTurn();
+  for (const timing of timings.values()) {
+    const index = timing.lastActivityIndex;
+    if (index === undefined) continue;
+    const unit = units[index];
+    if (unit.type !== "activity") continue;
+    const startedAtMs = timing.promptAtMs ?? timing.firstAtMs;
+    const elapsedMs = startedAtMs !== undefined && timing.lastAtMs !== undefined
+      ? Math.max(0, timing.lastAtMs - startedAtMs)
+      : undefined;
+    units[index] = {
+      ...unit,
+      showTurnDuration: true,
+      startedAtMs,
+      turnLatencyMs: timing.latencyMs ?? elapsedMs,
+    };
+  }
   return units;
 }
 
 export function projectActivityTimeline(
   messages: UIMessage[],
 ): TurnUnit[] {
-  return normalizeActivityTimeline(messages);
+  return groupTurnActivity(normalizeActivityTimeline(messages));
+}
+
+/**
+ * Collapse a turn's work into one group per turn.
+ *
+ * Reference chat UIs present a turn as "what the agent did" followed by the
+ * reply, not as work/reply/work/reply. Grouping here keeps the semantic order
+ * of answers while moving every activity fold of a turn into a single surface
+ * placed before that turn's first answer. Turns with no work, and rows that are
+ * not part of a turn, keep their original position.
+ */
+function groupTurnActivity(units: TurnUnit[]): TurnUnit[] {
+  const grouped = new Map<string, TurnUnit[]>();
+  for (const unit of units) {
+    if (unit.type !== "activity" || !unit.turnId) continue;
+    const list = grouped.get(unit.turnId) ?? [];
+    list.push(unit);
+    grouped.set(unit.turnId, list);
+  }
+  if (![...grouped.values()].some((list) => list.length > 1)) return units;
+
+  const emitted = new Set<string>();
+  const result: TurnUnit[] = [];
+  for (const unit of units) {
+    const turnId = unit.type === "activity" ? unit.turnId : unit.message.turnId;
+    const groups = turnId ? grouped.get(turnId) : undefined;
+    if (unit.type !== "activity" || !turnId || !groups) {
+      result.push(unit);
+      continue;
+    }
+    if (emitted.has(turnId)) continue;
+    emitted.add(turnId);
+    result.push(mergeActivityGroup(groups));
+  }
+  return result;
+}
+
+function mergeActivityGroup(groups: TurnUnit[]): TurnUnit {
+  const activityGroups = groups.filter(
+    (unit): unit is Extract<TurnUnit, { type: "activity" }> => unit.type === "activity",
+  );
+  if (activityGroups.length === 1) return activityGroups[0];
+  const first = activityGroups[0];
+  const last = activityGroups[activityGroups.length - 1];
+  return {
+    ...first,
+    messages: activityGroups.flatMap((unit) => unit.messages),
+    sourceMessageCount: activityGroups.reduce((sum, unit) => sum + unit.sourceMessageCount, 0),
+    showTurnDuration: activityGroups.some((unit) => unit.showTurnDuration === true),
+    turnLatencyMs: last.turnLatencyMs ?? first.turnLatencyMs,
+    startedAtMs: first.startedAtMs,
+  };
 }
 
 function projectOrderedTurn(
   messages: UIMessage[],
-  startedAtMs?: number,
+  turnId?: string,
 ): TurnUnit[] {
   const units: TurnUnit[] = [];
   let activity: UIMessage[] = [];
@@ -135,7 +238,7 @@ function projectOrderedTurn(
       type: "activity",
       messages: activity,
       sourceMessageCount: activitySourceMessageCount,
-      startedAtMs,
+      turnId,
     });
     activity = [];
     activitySourceMessageCount = 0;
@@ -175,6 +278,16 @@ function projectOrderedTurn(
   };
 
   for (const message of messages) {
+    if (message.kind === "delegated_child") {
+      flushActivity();
+      flushAnswers();
+      units.push({
+        type: "message",
+        message,
+        sourceMessageCount: 1 + claimLeadingNoops(),
+      });
+      continue;
+    }
     if (message.kind === "compaction") {
       flushActivity();
       flushAnswers();
@@ -211,21 +324,6 @@ function projectOrderedTurn(
   flushActivity();
   flushAnswers();
 
-  let lastActivityIndex = -1;
-  for (let index = units.length - 1; index >= 0; index -= 1) {
-    if (units[index].type !== "activity") continue;
-    lastActivityIndex = index;
-    break;
-  }
-  if (lastActivityIndex >= 0) {
-    const lastActivity = units[lastActivityIndex];
-    if (lastActivity.type === "activity") {
-      const turnLatencyMs = activityTurnLatencyMs(lastActivity.messages, messages);
-      if (turnLatencyMs !== undefined) {
-        units[lastActivityIndex] = { ...lastActivity, turnLatencyMs };
-      }
-    }
-  }
   return units;
 }
 
@@ -320,20 +418,10 @@ function stripInlineReasoning(message: UIMessage): UIMessage {
   return next;
 }
 
-function validCreatedAtMs(value: unknown): number | undefined {
-  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
-}
-
-function activityTurnLatencyMs(activityMessages: UIMessage[], allMessages: UIMessage[]): number | undefined {
-  for (let index = allMessages.length - 1; index >= 0; index -= 1) {
-    const latency = allMessages[index].latencyMs;
-    if (isValidLatency(latency)) return latency;
-  }
-  for (let index = activityMessages.length - 1; index >= 0; index -= 1) {
-    const latency = activityMessages[index].latencyMs;
-    if (isValidLatency(latency)) return latency;
-  }
-  return undefined;
+function availableCreatedAtMs(message: UIMessage): number | undefined {
+  return message.timestampAvailable !== false && Number.isFinite(message.createdAt)
+    ? message.createdAt
+    : undefined;
 }
 
 function isValidLatency(value: unknown): value is number {

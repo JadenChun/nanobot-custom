@@ -1,16 +1,27 @@
 """Real canonical source turns with temporary state and synthetic providers."""
 
+import asyncio
 from unittest.mock import Mock
 
 import pytest
 
 from nanobot.agent.loop import AgentLoop
+from nanobot.agent.tools.message import MessageTool
 from nanobot.agent.tools.registry import ToolRegistry
-from nanobot.agent.turn import HistoryMode, TraceMode, TurnRequest
+from nanobot.agent.turn import (
+    ApprovalDecision,
+    DeliveryTarget,
+    HistoryMode,
+    TraceMode,
+    TurnRequest,
+    TurnSource,
+)
 from nanobot.providers.base import LLMResponse, ToolCallRequest
-from nanobot.session.source import validate_execution_links
+from nanobot.session.execution_owner import acquire_execution
+from nanobot.session.source import new_source_event, validate_execution_links
 from tests.agent import test_migration_engine as engine_fixtures
 from tests.agent.test_migration_engine import ScriptedProvider
+from tests.session.test_execution_auto_recovery import fence
 
 engine_config = engine_fixtures.engine_config
 
@@ -24,10 +35,17 @@ def upgrade(loop, key='cli:source'):
     return backend
 
 
-def forbid_legacy(loop, monkeypatch):
+def forbid_legacy(loop, monkeypatch, *, allow_child_source_bootstrap=False):
     for method in ('_save_turn', '_set_runtime_checkpoint'):
         monkeypatch.setattr(loop, method, Mock(side_effect=AssertionError('legacy source path')))
-    monkeypatch.setattr(loop.sessions, 'save', Mock(side_effect=AssertionError('legacy save')))
+    original_save = loop.sessions.save
+
+    def guarded_save(session):
+        if allow_child_source_bootstrap and session.key.startswith('delegated:'):
+            return original_save(session)
+        raise AssertionError('legacy save')
+
+    monkeypatch.setattr(loop.sessions, 'save', guarded_save)
     monkeypatch.setattr(loop.auto_compact, 'prepare_session', Mock(side_effect=AssertionError('legacy compaction')))
 
 
@@ -63,6 +81,154 @@ async def test_canonical_source_turn_persists_each_event_once(engine_config, mon
         await loop.aclose()
 
 
+async def test_identical_media_sends_publish_once_per_turn(engine_config):
+    attachment = engine_config.workspace_path / "example.png"
+    attachment.write_bytes(b"fixture media")
+    repeated = {"content": "Edited images", "media": [str(attachment)]}
+    distinct = {**repeated, "content": "A distinct reply"}
+    provider = ScriptedProvider([
+        LLMResponse(content=None, tool_calls=[
+            ToolCallRequest(id="first", name="message", arguments=repeated),
+            ToolCallRequest(id="same", name="message", arguments=repeated),
+        ]),
+        LLMResponse(content=None, tool_calls=[
+            ToolCallRequest(id="distinct", name="message", arguments=distinct),
+        ]),
+        LLMResponse(content=distinct["content"]),
+        LLMResponse(content=None, tool_calls=[
+            ToolCallRequest(id="later", name="message", arguments=repeated),
+        ]),
+        LLMResponse(content=repeated["content"]),
+    ])
+    loop = AgentLoop.from_config(engine_config, tool_registry=ToolRegistry(), provider=provider)
+    key = "websocket:media"
+    route = DeliveryTarget(channel="websocket", chat_id="media")
+    upgrade(loop, key)
+    sent = []
+
+    async def capture(message):
+        await asyncio.sleep(0)
+        sent.append((message.content, message.media))
+
+    tool = loop.tools.get("message")
+    assert isinstance(tool, MessageTool)
+    tool.set_send_callback(capture)
+    try:
+        first = await loop.execute_turn(TurnRequest(content="Send the edited image", session_key=key, route=route))
+        assert first.error is None and first.outbound is None
+        assert sent == [(repeated["content"], [str(attachment)]), (distinct["content"], [str(attachment)])]
+
+        later = await loop.execute_turn(TurnRequest(content="Send the same edit again", session_key=key, route=route))
+        assert later.error is None and later.outbound is None
+        assert sent[2:] == [(repeated["content"], [str(attachment)])]
+    finally:
+        await loop.aclose()
+
+
+@pytest.mark.parametrize("completion", ["The edit is complete.", "Edited images", None])
+async def test_empty_stop_after_media_reply_finalizes_without_tools(engine_config, completion):
+    attachment = engine_config.workspace_path / "example.png"
+    attachment.write_bytes(b"fixture media")
+    send = ToolCallRequest(
+        id="send", name="message", arguments={"content": "Edited images", "media": [str(attachment)]},
+    )
+    provider = ScriptedProvider([
+        LLMResponse(content=None, tool_calls=[send]),
+        LLMResponse(content=None, finish_reason="stop"),
+        LLMResponse(content=completion, finish_reason="stop"),
+    ])
+    loop = AgentLoop.from_config(engine_config, tool_registry=ToolRegistry(), provider=provider)
+    key = "websocket:media"
+    upgrade(loop, key)
+    sent = []
+
+    async def capture(message):
+        sent.append(message)
+
+    tool = loop.tools.get("message")
+    assert isinstance(tool, MessageTool)
+    tool.set_send_callback(capture)
+    try:
+        result = await loop.execute_turn(TurnRequest(
+            content="Send the edited image", session_key=key,
+            route=DeliveryTarget(channel="websocket", chat_id="media"),
+        ))
+
+        assert result.error is None and result.stop_reason == "completed"
+        assert len(sent) == 1 and sent[0].media == [str(attachment)]
+        assert len(provider.calls) == 3 and not provider.calls[-1][1]
+        if completion == "The edit is complete.":
+            assert result.outbound is not None and result.outbound.content == completion
+        else:
+            assert result.outbound is None
+    finally:
+        await loop.aclose()
+
+
+async def test_ephemeral_run_preserves_stale_fence_and_persistent_run_recovers(engine_config):
+    provider = ScriptedProvider([LLMResponse(content="Done"), LLMResponse(content="Resumed")])
+    loop = AgentLoop.from_config(engine_config, tool_registry=ToolRegistry(), provider=provider)
+    key = "sdk:source"
+    backend = upgrade(loop, key)
+    fence(backend, key, lease=True)
+    before = backend.source.load_source_snapshot(key)
+    try:
+        await loop.process_direct_result("Inspect", session_key=key, source=TurnSource.SDK, ephemeral=True)
+        after = backend.source.load_source_snapshot(key)
+        assert after.header == before.header
+        assert after.events == before.events
+
+        resumed = await loop.execute_turn(TurnRequest(content="Resume", session_key=key))
+        assert resumed.error is None and resumed.content == "Resumed"
+    finally:
+        await loop.aclose()
+
+
+@pytest.mark.parametrize("has_uncertain_result", [False, True])
+async def test_unsettled_write_blocks_normal_turn_and_allows_explicit_reset(
+    engine_config, has_uncertain_result,
+):
+    provider = ScriptedProvider([LLMResponse(content="Ready")])
+    loop = AgentLoop.from_config(engine_config, tool_registry=ToolRegistry(), provider=provider)
+    key = "cli:source"
+    backend = upgrade(loop, key)
+    call = ToolCallRequest(id="write", name="write_file", arguments={"path": "sample.txt"})
+    intent = new_source_event(
+        {"role": "assistant", "content": None, "tool_calls": [call.to_openai_tool_call()]},
+        run_id="interrupted",
+    )
+    intent["_execution_ids"] = ["write-intent"]
+    events = [intent]
+    if has_uncertain_result:
+        outcome = new_source_event({
+            "role": "tool", "tool_call_id": "write", "name": "write_file",
+            "content": "Write outcome is unknown.", "_dispatched": True, "_outcome_status": "error",
+        }, run_id="interrupted")
+        outcome["_execution_id"] = "write-intent"
+        events.append(outcome)
+    try:
+        async with acquire_execution(backend, key, run_id="interrupted") as owner:
+            backend.source.append_source_events(key, owner.read_snapshot().state, events, owner=owner)
+        interrupted = backend.source.load_source_snapshot(key)
+
+        refused = await loop.execute_turn(TurnRequest(content="Keep working", session_key=key))
+        assert refused.error == "Source session requires recovery before execution"
+        assert not provider.calls
+        assert backend.source.load_source_snapshot(key).events == interrupted.events
+
+        reset = await loop.execute_turn(TurnRequest(content="/new", session_key=key))
+        assert reset.error is None
+        after = backend.source.load_source_snapshot(key)
+        assert after.state.generation == interrupted.state.generation + 1
+        assert not after.events
+        assert not (engine_config.workspace_path / "sample.txt").exists()
+
+        next_turn = await loop.execute_turn(TurnRequest(content="Start again", session_key=key))
+        assert next_turn.error is None and next_turn.content == "Ready"
+    finally:
+        await loop.aclose()
+
+
 async def test_source_reload_ignores_archive_cursor_and_fresh_excludes_old_input(engine_config, monkeypatch):
     provider = ScriptedProvider([LLMResponse(content='first'), LLMResponse(content='second'), LLMResponse(content='fresh')])
     loop = AgentLoop.from_config(engine_config, tool_registry=ToolRegistry(), provider=provider)
@@ -84,20 +250,46 @@ async def test_source_reload_ignores_archive_cursor_and_fresh_excludes_old_input
 
 
 async def test_source_nested_planner_stream_does_not_leak_into_root_history(engine_config, monkeypatch):
+    from nanobot.session.execution_owner import ExecutionOwner
+
     provider = ScriptedProvider([
         LLMResponse(content=None, tool_calls=[ToolCallRequest(id='plan', name='plan_task', arguments={'objective': 'fixture plan'})]),
         LLMResponse(content='child plan'), LLMResponse(content='parent final'), LLMResponse(content='next'),
     ])
     loop = AgentLoop.from_config(engine_config, tool_registry=ToolRegistry(), provider=provider)
     backend = upgrade(loop)
-    forbid_legacy(loop, monkeypatch)
+    forbid_legacy(loop, monkeypatch, allow_child_source_bootstrap=True)
+    owner_tasks = []
+    original_track_task = ExecutionOwner.track_task
+
+    def record_owner_task(owner, task):
+        owner_tasks.append((owner.key, task.get_coro().__qualname__))
+        return original_track_task(owner, task)
+
+    monkeypatch.setattr(ExecutionOwner, 'track_task', record_owner_task)
     try:
         result = await loop.execute_turn(TurnRequest(content='plan fixture', session_key='cli:source'))
         assert result.error is None, result.error
         assert result.content == 'parent final'
-        events = backend.source.load_source_snapshot('cli:source').events
-        assert sum('_parent_stream_id' in e for e in events) == 2
-        assert not validate_execution_links(events)
+        parent_events = backend.source.load_source_snapshot('cli:source').events
+        assert not any('_parent_stream_id' in event for event in parent_events)
+        assert not validate_execution_links(parent_events)
+        tree = loop._fork_dependencies.foreground_manager._delegation_tree
+        assert tree is not None
+        children = tree.children_of('cli:source')
+        assert len(children) == 1
+        child = children[0]
+        assert any(
+            key == 'cli:source' and 'run_and_finalize' in coroutine
+            for key, coroutine in owner_tasks
+        )
+        child_events = backend.source.load_source_snapshot(child.session_key).events
+        assert [event['role'] for event in child_events] == ['user', 'assistant']
+        assert 'fixture plan' in child_events[0]['content']
+        assert child_events[1]['content'] == 'child plan'
+        assert all(event['_run_id'] == child.current_run_id for event in child_events)
+        assert not any('_parent_stream_id' in event for event in child_events)
+        assert not validate_execution_links(child_events)
         result = await loop.execute_turn(TurnRequest(content='next input', session_key='cli:source'))
         assert result.error is None, result.error
         assert not any(m.get('role') == 'assistant' and m.get('content') == 'child plan' for m in provider.calls[-1][0])
@@ -229,10 +421,19 @@ async def test_source_scoped_worker_records_child_effects_under_parent_owner(eng
         assert result.error is None, result.error
         assert result.content == 'main complete'
         assert (engine_config.workspace_path / 'allowed.txt').read_text() == 'worker output'
-        events = backend.source.load_source_snapshot('cli:source').events
-        assert not validate_execution_links(events)
-        assert len([e for e in events if e.get('_parent_stream_id')]) == 4
-        assert len([e for e in events if e['role'] == 'tool' and e['_dispatched']]) == 2
+        parent_events = backend.source.load_source_snapshot('cli:source').events
+        assert not validate_execution_links(parent_events)
+        # The parent source owns only parent events: no inline child rows and no
+        # worker tool evidence.
+        assert not any(e.get('_parent_stream_id') for e in parent_events)
+        assert not any(e.get('tool_call_id') == 'write' for e in parent_events)
+        assert any(e.get('tool_call_id') == 'delegate' for e in parent_events)
+        tree = loop._fork_dependencies.foreground_manager._delegation_tree
+        assert tree is not None
+        child, = tree.children_of('cli:source')
+        child_events = backend.source.load_source_snapshot(child.session_key).events
+        assert not validate_execution_links(child_events)
+        assert any(e.get('tool_call_id') == 'write' for e in child_events)
     finally:
         await loop.aclose()
 
@@ -279,10 +480,22 @@ async def test_source_waiter_does_not_consume_approval_before_owner_releases(eng
     backend = upgrade(loop)
     consume = AsyncMock(wraps=loop.approval_admission.consume)
     loop.approval_admission.consume = consume
+    pending = await loop.approval_admission.store(
+        session_key='cli:source', channel='cli', chat_id='direct', summary='task',
+    )
+    decision = ApprovalDecision(
+        approval_id=pending.approval_id,
+        decision='approve',
+        session_key='cli:source',
+    )
     task = None
     try:
         async with acquire_execution(backend, 'cli:source', run_id='other-process-equivalent'):
-            task = asyncio.create_task(loop.execute_turn(TurnRequest(content='input', session_key='cli:source')))
+            task = asyncio.create_task(loop.execute_turn(TurnRequest(
+                content='approval_decision',
+                session_key='cli:source',
+                approval_decision=decision,
+            )))
             await asyncio.sleep(0.08)
             assert not task.done() and not provider.calls
             consume.assert_not_awaited()
@@ -812,40 +1025,56 @@ async def test_real_local_pressure_compaction_preserves_root_and_continues_lengt
         assert result.error is None, result.error
         assert result.content.endswith('local done' if mode == 'fresh' else 'parent done')
         assert not provider.responses
-        assert len(local_states) == 3
-        main_calls = [
-            call[0] for call in provider.calls
-            if not call[0][0]['content'].startswith('Summarize historical evidence')
-        ]
-        assert local_requests == [rows for rows in main_calls if rows in local_requests]
-        assert all('root private' not in str(rows) and 'root original' not in str(rows)
-                   for rows in local_requests)
-        assert local_requests[-1].count(build_length_recovery_message('first_segment')) == 1
-        assert local_requests[-1].count(build_length_recovery_message('second_segment')) == 1
-        state = local_states[-1]
-        assert len(state.source_compaction.attempts) >= 1
-        assert all(attempt.calls >= 1 for attempt in state.source_compaction.attempts)
-        assert state.source_compaction.attempts[-1].status == 'succeeded'
-        assert state.source_compaction.local_checkpoint.summary == 'local historical facts'
-        assert not state.source.has_pending_requests
-        assert not any(row.get('role') == 'assistant' and row.get('content') == 'first_segment'
-                       for row in state.messages)
-        assert 'second_segment' in str(state.messages)
-        assert 'local historical facts' in str(state.messages)
-        assert 'root private' not in str(state.messages)
         after = backend.source.load_source_snapshot('cli:source')
-        assert after.checkpoint == before.checkpoint
-        assert after.events[:len(before.events)] == before.events
-        for segment in ('first_segment', 'second_segment'):
-            persisted = [row for row in after.events if row.get('content') == segment]
-            assert len(persisted) == 1
-            assert persisted[0]['_stream_id'] == state.source_compaction.stream_id
-        if mode == 'child':
-            intents = [row for row in after.events if any(
-                call.get('id') == 'plan' for call in row.get('tool_calls', []))]
-            results = [row for row in after.events if row.get('tool_call_id') == 'plan']
-            assert len(intents) == len(results) == 1
-            assert results[0]['_execution_id'] == intents[0]['_execution_ids'][0]
+        if mode == 'fresh':
+            assert len(local_states) == 3
+            main_calls = [
+                call[0] for call in provider.calls
+                if not call[0][0]['content'].startswith('Summarize historical evidence')
+            ]
+            assert local_requests == [rows for rows in main_calls if rows in local_requests]
+            assert all('root private' not in str(rows) and 'root original' not in str(rows)
+                       for rows in local_requests)
+            assert local_requests[-1].count(build_length_recovery_message('first_segment')) == 1
+            assert local_requests[-1].count(build_length_recovery_message('second_segment')) == 1
+            state = local_states[-1]
+            assert len(state.source_compaction.attempts) >= 1
+            assert all(attempt.calls >= 1 for attempt in state.source_compaction.attempts)
+            assert state.source_compaction.attempts[-1].status == 'succeeded'
+            assert state.source_compaction.local_checkpoint.summary == 'local historical facts'
+            assert not state.source.has_pending_requests
+            assert not any(row.get('role') == 'assistant' and row.get('content') == 'first_segment'
+                           for row in state.messages)
+            assert 'second_segment' in str(state.messages)
+            assert 'local historical facts' in str(state.messages)
+            assert 'root private' not in str(state.messages)
+            assert after.checkpoint == before.checkpoint
+            assert after.events[:len(before.events)] == before.events
+            for segment in ('first_segment', 'second_segment'):
+                persisted = [row for row in after.events if row.get('content') == segment]
+                assert len(persisted) == 1
+                assert persisted[0]['_stream_id'] == state.source_compaction.stream_id
+        else:
+            # The planner child now runs a canonical child source, so the local
+            # pressure compaction and its length recovery live in the child
+            # source, not the parent. Root history stays unchanged.
+            tree = loop._fork_dependencies.foreground_manager._delegation_tree
+            assert tree is not None
+            child, = tree.children_of('cli:source')
+            child_snapshot = backend.source.load_source_snapshot(child.session_key)
+            contents = [row.get('content') for row in child_snapshot.events]
+            assert contents.index('first_segment') < contents.index('second_segment') < contents.index('local done')
+            assert child_snapshot.checkpoint is not None
+            assert child_snapshot.checkpoint['summary'] == 'local historical facts'
+            # Child compaction must not leak root text into child history.
+            assert 'root private' not in str(contents)
+            assert 'root original' not in str(contents)
+            # Root history is unchanged and gains no child segment events.
+            assert after.checkpoint == before.checkpoint
+            assert after.events[:len(before.events)] == before.events
+            assert not any(row.get('content') == segment
+                           for row in after.events
+                           for segment in ('first_segment', 'second_segment', 'local done'))
         assert not validate_execution_links(after.events)
         summaries = [call[0] for call in provider.calls if call[0][0]['content'].startswith('Summarize historical evidence')]
         assert len(summaries) >= 1

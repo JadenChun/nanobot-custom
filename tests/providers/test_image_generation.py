@@ -1050,6 +1050,34 @@ async def test_openai_reference_images_send_multiple_multipart_files(
 
 
 @pytest.mark.asyncio
+async def test_openai_reference_image_above_limit_is_refused_before_upload(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """R1: the edit upload refuses an over-limit reference before any request."""
+    ref = tmp_path / "ref.png"
+    ref.write_bytes(PNG_BYTES)
+    monkeypatch.setattr(
+        "nanobot.providers.image_generation.MAX_REFERENCE_IMAGE_BYTES",
+        len(PNG_BYTES) - 1,
+    )
+    fake = FakeClient(FakeResponse({"data": [{"b64_json": RAW_B64}]}))
+    client = OpenAIImageGenerationClient(
+        api_key="sk-openai-test",
+        client=fake,  # type: ignore[arg-type]
+    )
+
+    with pytest.raises(ImageGenerationError, match="per-image byte limit"):
+        await client.generate(
+            prompt="edit",
+            model="gpt-image-1",
+            reference_images=[str(ref)],
+        )
+
+    assert fake.calls == []
+
+
+@pytest.mark.asyncio
 async def test_openai_gpt_image_without_reference_images_uses_generations_json() -> None:
     fake = FakeClient(FakeResponse({"data": [{"b64_json": RAW_B64}]}))
     client = OpenAIImageGenerationClient(

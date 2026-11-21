@@ -14,7 +14,7 @@ from copy import deepcopy
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
-from typing import TYPE_CHECKING, Any, Literal, cast
+from typing import TYPE_CHECKING, Any, Literal, TypedDict, cast
 
 import json_repair
 from loguru import logger
@@ -56,6 +56,45 @@ RetryEventCallback = Callable[[str], Awaitable[None]]
 LLMCallObserver = Callable[["LLMCallRecord"], None]
 ProviderCompactionScope = Literal["prior_context", "current_request"]
 RetryStatusCallback = Callable[[RetryStatusEvent], Awaitable[None]]
+
+
+class ContextUsagePayload(TypedDict):
+    context_tokens: int | None
+    context_window_tokens: int | None
+
+
+@dataclass(frozen=True, slots=True)
+class ContextUsageSnapshot:
+    """One current main-request observation, separate from additive spending.
+
+    A present null snapshot is an invalidation. An absent snapshot means no update.
+    """
+
+    context_tokens: int | None
+    context_window_tokens: int | None
+
+    @classmethod
+    def from_value(cls, value: object) -> ContextUsageSnapshot:
+        """Normalize a *present* wire/persisted value, failing closed."""
+        if isinstance(value, cls):
+            count, window = value.context_tokens, value.context_window_tokens
+        elif isinstance(value, dict):
+            data = cast(dict[object, object], value)
+            if not {"context_tokens", "context_window_tokens"} <= data.keys():
+                return cls(None, None)
+            count, window = data["context_tokens"], data["context_window_tokens"]
+        else:
+            return cls(None, None)
+        if (count is None and window is None) or (
+            type(count) is int and count >= 0
+            and (window is None or (type(window) is int and window > 0))
+        ):
+            return cls(count, window)
+        return cls(None, None)
+
+    def to_dict(self) -> ContextUsagePayload:
+        return {"context_tokens": self.context_tokens,
+                "context_window_tokens": self.context_window_tokens}
 
 
 def track_stream_delivery(kwargs: dict[str, Any], delivered: list[bool]) -> None:
@@ -416,6 +455,12 @@ class ProviderCallContext:
     selected_route: PreparedRequestRoute | None = field(
         default=None, repr=False,
     )
+    # Content-free retry position for one logical request. ``candidate_index``
+    # is the next leaf to attempt; ``consumed_through`` records the highest
+    # leaf that already ran. A pre-dispatch route change can advance the
+    # candidate without consuming the skipped leaf.
+    route_candidate_index: int = 0
+    route_consumed_through: int = -1
 
 
 @dataclass(frozen=True, slots=True)
@@ -747,6 +792,9 @@ class LLMResponse:
     error_retry_after_s: float | None = None
     error_should_retry: bool | None = None
     local_usage_receipt: LocalRequestUsageReceipt | None = field(default=None, repr=False)
+    # Resolved context window capacity of the leaf provider that actually produced
+    # this response, used when pre-request route preview was unavailable.
+    context_window_tokens: int | None = field(default=None, repr=False)
 
     @property
     def has_tool_calls(self) -> bool:
@@ -772,6 +820,17 @@ class GenerationSettings:
 
 
 _SYNTHETIC_USER_CONTENT = "(conversation continued)"
+
+
+def record_transport_attempt(provider_context: ProviderCallContext | None) -> None:
+    """Report one physical transport dispatch to the existing attempt observer."""
+    if provider_context is None or provider_context.on_transport_attempt is None:
+        return
+    kind = "auxiliary" if provider_context.source_summary_mode is not None else "main"
+    try:
+        provider_context.on_transport_attempt(kind)
+    except Exception:
+        logger.warning("Provider transport attempt observer failed")
 
 
 class LLMProvider(ABC):

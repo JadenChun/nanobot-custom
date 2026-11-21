@@ -64,23 +64,42 @@ class BedrockProvider(LLMProvider):
         extra_body: dict[str, Any] | None = None,
         client: Any | None = None,
         provider_name: str = "bedrock",
+        allow_process_bearer: bool = False,
     ):
         super().__init__(api_key, api_base, provider_name=provider_name)
         self.default_model = default_model
         self.region = region or os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION")
         self.profile = profile
         self._extra_body = extra_body or {}
+        self.allow_process_bearer = allow_process_bearer
         self._client = client if client is not None else self._make_client()
 
     def _make_client(self) -> Any:
-        if self.api_key:
-            os.environ["AWS_BEARER_TOKEN_BEDROCK"] = self.api_key
         try:
             import boto3
         except ImportError as exc:  # pragma: no cover - exercised only without boto3 installed
             raise RuntimeError(
                 "AWS Bedrock provider requires boto3. Run `nanobot plugins enable bedrock`."
             ) from exc
+        if self.api_key:
+            # The installed AWS SDK accepts the Bedrock bearer token only as
+            # process identity. Require an explicit gate and never replace a
+            # live process credential with another instance's key.
+            existing = os.environ.get("AWS_BEARER_TOKEN_BEDROCK")
+            if existing == self.api_key:
+                pass
+            elif not self.allow_process_bearer:
+                raise RuntimeError(
+                    "Bedrock API key requires an explicit process-identity gate. "
+                    "Set providers.bedrock.allow_process_bearer=true or export "
+                    "AWS_BEARER_TOKEN_BEDROCK before start."
+                )
+            elif existing:
+                raise RuntimeError(
+                    "Refusing to replace a live process-level Bedrock bearer credential"
+                )
+            else:
+                os.environ["AWS_BEARER_TOKEN_BEDROCK"] = self.api_key
 
         session_kwargs: dict[str, Any] = {}
         if self.profile:

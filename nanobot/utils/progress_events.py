@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import inspect
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from typing import Any, cast
 
 from nanobot.agent.hook import AgentHookContext
@@ -14,6 +14,10 @@ from nanobot.bus.outbound_events import (
     StreamEndEvent,
 )
 from nanobot.events import NO_EVENTS, AgentEvent, EventSink
+
+_PROGRESS_INLINE_IMAGE_SUMMARY = (
+    "[Inline image omitted from activity; see the saved file reference for details.]"
+)
 
 
 def _on_progress_accepts(cb: Callable[..., Any], name: str) -> bool:
@@ -114,6 +118,35 @@ def tool_event_result_extras(result: Any) -> tuple[list[Any], list[Any]]:
     return files, embeds
 
 
+def _progress_tool_result(result: Any) -> Any:
+    """Remove inline image bytes from structured activity results."""
+    if not isinstance(result, list):
+        return result
+    projected: list[Any] = []
+    for raw_block in cast(list[object], result):
+        if isinstance(raw_block, dict):
+            block = cast(dict[str, object], raw_block)
+            block_type: object = block.get("type")
+            image_value: object = block.get("image_url")
+            image_url: object = (
+                cast(Mapping[object, object], image_value).get("url")
+                if isinstance(image_value, Mapping)
+                else image_value
+            )
+            if (
+                block_type in {"image_url", "input_image", "output_image"}
+                and isinstance(image_url, str)
+                and image_url.startswith("data:image/")
+            ):
+                projected.append({
+                    "type": "text",
+                    "text": _PROGRESS_INLINE_IMAGE_SUMMARY,
+                })
+                continue
+        projected.append(raw_block)
+    return projected
+
+
 def build_tool_event_finish_payloads(context: AgentHookContext) -> list[dict[str, Any]]:
     payloads: list[dict[str, Any]] = []
     count = min(len(context.tool_calls), len(context.tool_results), len(context.tool_events))
@@ -131,7 +164,7 @@ def build_tool_event_finish_payloads(context: AgentHookContext) -> list[dict[str
             "call_id": str(getattr(tool_call, "id", "") or ""),
             "name": getattr(tool_call, "name", ""),
             "arguments": _tool_event_arguments(tool_call),
-            "result": result if phase == "end" else None,
+            "result": _progress_tool_result(result) if phase == "end" else None,
             "error": None,
             "files": files,
             "embeds": embeds,

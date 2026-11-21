@@ -3,6 +3,15 @@ package main
 /*
 #include <stdint.h>
 #include <stdlib.h>
+#include <sys/syscall.h>
+#include <unistd.h>
+
+// nanobot_thread_id returns the OS thread that is executing the call. cgo pins
+// the calling goroutine to the caller's thread for the duration of an exported
+// call, so a failing call and its diagnostic copy report the same id.
+static int32_t nanobot_thread_id(void) {
+	return (int32_t)syscall(SYS_gettid);
+}
 */
 import "C"
 
@@ -15,23 +24,106 @@ import (
 	"nanobot/mobile/native-network/internal/broker"
 )
 
+// maxThreadErrors bounds the per-thread diagnostics kept at once. A thread that
+// stops failing is evicted least-recently-used before a new thread is recorded.
+const maxThreadErrors = 64
+
 var (
 	managerMu  sync.Mutex
 	cores      = map[uint64]*broker.Core{}
 	nextHandle uint64
-	lastErrC   *C.char
-	lastErr    string
+
+	// lastErrorMu owns every diagnostic. Each failing call stores its message
+	// under the calling thread, so two concurrent operations cannot read each
+	// other's text. lastErrC/lastErr keep the legacy process-wide pointer that
+	// nanobot_network_last_error returns.
+	lastErrorMu    sync.Mutex
+	lastErrorClock uint64
+	lastErrors     = map[int32]*threadError{}
+	lastErrC       *C.char
+	lastErr        string
 )
+
+// threadError is the diagnostic of the last failing call on one thread.
+type threadError struct {
+	text string
+	used uint64
+}
 
 func main() {}
 
-func setError(err error) C.int32_t {
-	lastErr = err.Error()
+func currentThreadID() int32 {
+	return int32(C.nanobot_thread_id())
+}
+
+// recordError stores one diagnostic for the calling thread and refreshes the
+// legacy process-wide pointer.
+func recordError(tid int32, err error) {
+	text := err.Error()
+	lastErrorMu.Lock()
+	defer lastErrorMu.Unlock()
+	lastErrorClock++
+	lastErr = text
 	if lastErrC != nil {
 		C.free(unsafe.Pointer(lastErrC))
 	}
-	lastErrC = C.CString(lastErr)
+	lastErrC = C.CString(text)
+	entry := lastErrors[tid]
+	if entry == nil {
+		if len(lastErrors) >= maxThreadErrors {
+			evictOldestThreadErrorLocked()
+		}
+		entry = &threadError{}
+		lastErrors[tid] = entry
+	}
+	entry.text = text
+	entry.used = lastErrorClock
+}
+
+func evictOldestThreadErrorLocked() {
+	oldest := int32(0)
+	var oldestUsed uint64
+	found := false
+	for tid, entry := range lastErrors {
+		if !found || entry.used < oldestUsed {
+			oldest, oldestUsed, found = tid, entry.used, true
+		}
+	}
+	if found {
+		delete(lastErrors, oldest)
+	}
+}
+
+func setError(err error) C.int32_t {
+	recordError(currentThreadID(), err)
 	return codeFor(err)
+}
+
+// copyErrorForThread writes one thread's diagnostic into out and NUL-terminates
+// it. A thread with no recorded failure reads the legacy process-wide message.
+func copyErrorForThread(tid int32, out []byte) int {
+	lastErrorMu.Lock()
+	defer lastErrorMu.Unlock()
+	if len(out) == 0 {
+		return -1
+	}
+	text := lastErr
+	if entry, ok := lastErrors[tid]; ok {
+		text = entry.text
+	}
+	n := copy(out, text)
+	if n < len(out) {
+		out[n] = 0
+		return n
+	}
+	n = len(out) - 1
+	out[n] = 0
+	return n
+}
+
+// copyLastError writes the calling thread's own message into out.
+func copyLastError(out []byte) int {
+	return copyErrorForThread(currentThreadID(), out)
 }
 
 func codeFor(err error) C.int32_t {
@@ -240,6 +332,15 @@ func nanobot_network_poll_event(handle C.int64_t, out *C.char, capacity C.int32_
 	return C.int32_t(n)
 }
 
+//export nanobot_network_pending_event_size
+func nanobot_network_pending_event_size(handle C.int64_t) C.int32_t {
+	core := lookup(handle)
+	if core == nil {
+		return codeFor(broker.ErrNotFound)
+	}
+	return C.int32_t(core.PendingEventSize())
+}
+
 //export nanobot_network_stop
 func nanobot_network_stop(handle C.int64_t) C.int32_t {
 	managerMu.Lock()
@@ -257,12 +358,21 @@ func nanobot_network_stop(handle C.int64_t) C.int32_t {
 
 //export nanobot_network_last_error
 func nanobot_network_last_error() *C.char {
-	managerMu.Lock()
-	defer managerMu.Unlock()
+	lastErrorMu.Lock()
+	defer lastErrorMu.Unlock()
 	if lastErrC == nil {
 		lastErrC = C.CString("")
 	}
 	return lastErrC
+}
+
+//export nanobot_network_last_error_copy
+func nanobot_network_last_error_copy(out *C.char, capacity C.int32_t) C.int32_t {
+	if out == nil || capacity <= 0 {
+		return -1
+	}
+	buffer := unsafe.Slice((*byte)(unsafe.Pointer(out)), int(capacity))
+	return C.int32_t(copyLastError(buffer))
 }
 
 //export nanobot_network_media_set_token

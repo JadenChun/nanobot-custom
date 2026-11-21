@@ -507,7 +507,7 @@ def test_gateway_without_session_manager_keeps_protected_skill_context(
     )
     monkeypatch.setattr(
         "nanobot.webui.gateway_services.FolderGrantStore.for_workspace",
-        lambda _workspace, *, sessions_root=None: grants,
+        lambda _workspace, *, sessions_root=None, **_kwargs: grants,
     )
 
     services = build_gateway_services(

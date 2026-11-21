@@ -13,12 +13,54 @@ import re
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Collection, Mapping, cast
 
 CONTRACT_PATH = Path(__file__).with_name("contracts") / "operations-v1.json"
 CONTRACT_VERSION = 1
 MAX_PATH_BYTES = 4096
 MAX_TEMPLATE_SEGMENTS = 8
+
+CHAT_MUTATIONS = frozenset({
+    "sidebar.update", "session.delete", "recovery.continue", "recovery.dismiss",
+})
+
+
+def mobile_mutation_allowed(scopes: Collection[str], action: str) -> bool:
+    """Intersect the operation allowlist with the live grant's action scope."""
+    spec = load_registry().mutations.get(action)
+    if spec is None or not spec.enabled:
+        return False
+    if action in CHAT_MUTATIONS:
+        if action == "session.delete":
+            return "chat.write" in scopes and "owner" in scopes and spec.scope in scopes
+        return "chat.write" in scopes
+    return "owner" in scopes and spec.scope in scopes
+
+
+def mobile_frame_allowed(scopes: Collection[str], envelope: Mapping[str, object]) -> bool:
+    """Authorize the shared WebUI wire operation before dispatch or hydration."""
+    kind = envelope.get("type")
+    if kind == "webui_request":
+        action = envelope.get("action")
+        return isinstance(action, str) and mobile_mutation_allowed(scopes, action)
+    if kind == "attachment":
+        return "attachment.write" in scopes
+    if kind == "set_sidebar_state":
+        return mobile_mutation_allowed(scopes, "sidebar.update")
+    if not isinstance(kind, str):
+        return False
+    specs = load_registry().ws_frames.get(kind, ())
+    if not any(spec.enabled for spec in specs):
+        return False
+    if kind == "attach":
+        return "chat.read" in scopes
+    if "chat.write" not in scopes:
+        return False
+    if kind == "message":
+        if (envelope.get("media") or envelope.get("attachments")) and "attachment.write" not in scopes:
+            return False
+        return True
+    return "owner" in scopes and any(spec.enabled and spec.scope in scopes for spec in specs)
 
 
 class OperationRegistryError(RuntimeError):

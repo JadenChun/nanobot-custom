@@ -15,6 +15,7 @@ import hashlib
 import json
 import time
 import uuid
+from collections.abc import Iterable
 from copy import deepcopy
 from datetime import datetime
 from pathlib import Path
@@ -296,8 +297,14 @@ class CronService:
         completion_projector: CronCompletionProjector | None = None,
         delivery_store: CronDeliveryOutboxStore | None = None,
         delivery_runtime: CronDeliveryRuntime | None = None,
+        admin_session_keys: Iterable[str] = (),
     ):
         """Create a service over the C2 definition authority.
+
+        ``admin_session_keys`` is the explicit global-management allowlist for
+        creator-scoped management.  An empty allowlist keeps management
+        creator-only; a deliberately single-owner process can pass the owner's
+        session key to select global management explicitly.
 
         ``store_path`` remains the historical ``jobs.json`` location for
         callers that still provide it.  Unless a definition store is injected,
@@ -375,6 +382,10 @@ class CronService:
         self.delivery_store = None if delivery_runtime is None else delivery_runtime.outbox_store
         self.on_job = on_job
         self.max_sleep_ms = max_sleep_ms
+        admin_keys = tuple(admin_session_keys)
+        if any(not key for key in admin_keys):
+            raise ValueError("admin_session_keys must contain non-empty strings")
+        self.admin_session_keys: frozenset[str] = frozenset(admin_keys)
         self._store: CronStore | None = None
         self._timer_task: asyncio.Task[None] | None = None
         self._running = False
@@ -857,6 +868,31 @@ class CronService:
         jobs = store.jobs if include_disabled else [job for job in store.jobs if job.enabled]
         return sorted(jobs, key=lambda job: job.id)
 
+    def is_admin_session(self, session_key: str) -> bool:
+        """Return whether one session holds the explicit global-management role."""
+        return bool(session_key) and session_key in self.admin_session_keys
+
+    def may_manage_job(self, job: CronJob, session_key: str) -> bool:
+        """Authorize one creator or admin session; an id alone grants nothing."""
+        if not session_key:
+            return False
+        if self.is_admin_session(session_key):
+            return True
+        creator = job.payload.session_key
+        return bool(creator) and creator == session_key
+
+    def list_jobs_for_session(self, session_key: str) -> list[CronJob]:
+        """List only the jobs one chat/session creator may manage.
+
+        An admin session keeps global visibility.  An anonymous session sees
+        nothing, so a valid job id can never be used as authority on its own.
+        """
+        if not session_key:
+            return []
+        if self.is_admin_session(session_key):
+            return self.list_jobs()
+        return [job for job in self.list_jobs() if self.may_manage_job(job, session_key)]
+
     def list_bound_cron_jobs_for_session(
         self,
         session_key: str,
@@ -1023,8 +1059,15 @@ class CronService:
         definition_revision: str | None = None,
         expected_job_instance_id: str | None = None,
         expected_definition_revision: str | None = None,
+        session_key: str | None = None,
     ) -> Literal["removed", "protected", "not_found"]:
-        """Delete a definition with the exact instance and revision tokens."""
+        """Delete a definition with the exact instance and revision tokens.
+
+        ``session_key`` binds the request to its chat/session creator (or an
+        admin).  It is checked before the mutation tokens so an unauthorized
+        caller cannot distinguish a foreign id from a missing one.  ``None``
+        keeps the unscoped operator path.
+        """
         if job_instance_id is None:
             job_instance_id = expected_job_instance_id
         if definition_revision is None:
@@ -1032,6 +1075,11 @@ class CronService:
         replay = self._replay_and_settle()
         current = self._find_definition(replay, job_id)
         if current is None:
+            return "not_found"
+        if session_key is not None and not self.may_manage_job(
+            _public_job(current), session_key
+        ):
+            logger.info("Cron: refused cross-session removal of definition {}", job_id)
             return "not_found"
         self._require_tokens(
             job=current,

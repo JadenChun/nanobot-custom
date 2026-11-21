@@ -1,0 +1,3513 @@
+# A3 implementation correction handoff
+
+## Permission-policy review — 2026-11-19
+
+The [permission and macOS shell review](permission-policy-review.md) records
+the verified policy correction: routine structured edits use the editor's
+actual candidate, and shell refusals that consent cannot change do not become
+approval prompts. Material changes still need single-use approval bound to
+the prepared effect. Source verification covered macOS and the shared Linux
+paths; no installed app was updated.
+
+Native macOS Sandbox execution is the remaining gate, not part of the policy
+fix. Seatbelt passed the filesystem fixtures; the existing POSIX owner
+reported quiescence while a child in another session was still alive. Use
+the [A3-2 lifecycle criteria](../../audits/implementation-packets/A3-2-runtime-process-ownership.md)
+to qualify a supported native backend before exposing it. Keep the existing
+refusal and do not fall back to unsandboxed execution.
+
+## Git checkpoint — 2026-11-18
+
+The [client-fix record](client-ux-followups.md#git-checkpoint--2026-11-18)
+lists the three validated commits for send reconciliation, notification icons
+and word reveal on `codex/staging-audit-implementation`. They follow
+`a89acead0`; staging remains separate. The reveal-related assertions were
+updated without changing product code further, and the full WebUI suite passed.
+Author and committer are **Jaden <changherng.jc@gmail.com>**. No staging merge,
+PR, install, service restart or release was performed. Earlier pre-publication
+checkpoints below retain their scope and test evidence.
+
+Next, verify the reported Android image load and OS notification delivery/click
+on **one** remote device with a matching APK and gateway. The older APK symptom
+is undetermined, not a reproduced defect on the current candidate. Keep these
+device checks separate from CUI-7 general Retry/recreated-client recovery and
+from staging/release acceptance.
+
+Local validation receipts:
+`/Users/jaden/.codex/qa/nanobot-client-sync-20261118-WPmSEKeb/` (commit snapshots,
+before/after checker reports, and test/build logs), and
+`/Users/jaden/.codex/qa/nanobot-current-verify-20261118-VRGpn7hV/` (the macOS
+browser smoke and remote-media checks for the same production source).
+
+## Current checkpoint — 2026-11-18 (CUI-5)
+
+The [history reveal](client-ux-followups.md#current-checkpoint--2026-11-18-cui-5)
+reuses Streamdown's word fade for the latest short completed assistant reply
+instead of clipping the transcript. The small change adds one regression test;
+102 focused tests, TypeScript, affected lint and a local browser preview passed.
+It is uncommitted on `codex/staging-audit-implementation` and not installed.
+Continue with real notification delivery on one remote device or the remaining
+CUI-7 recovery work separately; neither is qualified by this UI change.
+
+## Current checkpoint — 2026-11-18 (CUI-4-L1)
+
+**PASS_SOURCE_NOTIFICATION_ICON_PAYLOAD** for native icon identity/resource
+payload only. This advances the narrow CUI-4 icon issue recorded in the earlier
+“next work” section below; it does not qualify overall notification reliability,
+permission/background delivery, activation/navigation or operating-system
+rendering.
+
+The correction is limited to seven implementation/test/resource paths: the
+authenticated Fedora notifier adds the existing bundled icon as a separate
+argv value when present; the actual Android bootstrap includes
+`smallIcon="ic_stat_nanobot"` and
+`largeIcon="ic_nanobot_notification"` on its immediate schedule; the keepalive
+uses the same 24dp white-alpha fox mask; and the Android large icon is byte
+identical to the existing 192×192 WebUI PNG. Authorization, routing, delivery
+ownership, permission requests, notification channel, lifecycle, click behavior
+and public protocol were not changed. The CUI-5 item remains untouched.
+
+Independent evidence is under
+`/Users/jaden/.codex/qa/nanobot-cui4-20261118-du14uo_z/`, especially
+`root-source-qualification.md`, `CUI4-implementation-receipts.md`,
+`root-backend.{json,log}`, `root-notification-chain-qualified.{json,log}`,
+`root-full-webui.{json,log}`, `root-tsc.json`, `root-eslint.json`,
+`root-ruff.json`, `root-diff-check.json`,
+`root-after-basedpyright.json`, `root-type-regressions.json` and the visually
+inspected `root-native-icon-preview.svg.png`. Root passed 13 notification and
+listener/auth cases, 4 actual client→hook→bootstrap source-chain cases with a
+stub native plugin, 1,753 WebUI tests / 109 files, TypeScript, ESLint, Ruff and
+diff checks. The unchanged checker covered 548 files with no diagnostics; the
+frozen global comparator found no newly introduced signatures. The source-chain
+probe does not test OS delivery. A first QA probe's cleanup misuse and the
+worker's early fixture path typo are retained separately from the intended
+original-source RED evidence; neither required a product correction.
+
+The seven implementation/test/resource paths and these two progress records
+remain **local and uncommitted** on
+`codex/staging-audit-implementation`, based on
+`a89acead0d4287d1b35c5ce73a6bcfbad6759eb3`; there was no build, install, device
+action, service restart, commit, push, merge or deployment. The installed release
+is unchanged. No full Python-repository, P6, broader A3 or release completion is
+claimed. Next CUI-4 evidence is actual permission/background delivery and click
+verification on one remote device. Fedora OS rendering/activation and macOS
+browser/PWA behavior remain unverified. CUI-5 remains an untouched separate
+issue; CUI-7's general Retry and recreated-client recovery limits remain open.
+
+## Current checkpoint — 2026-11-18
+
+**PASS_SOURCE_LIVE_INPUT_RECONCILIATION** for the bounded CUI-7 source package.
+See the [current behavior, exact additive contract and evidence](client-ux-followups.md#current-checkpoint--2026-11-18).
+Earlier dated open/readback statements below remain historical outside this
+qualified slice; they do not erase the new evidence or close broader CUI-7.
+
+### Git and installed state
+
+- Branch: `codex/staging-audit-implementation`.
+- Base HEAD and freshly fetched origin:
+  `a89acead0d4287d1b35c5ce73a6bcfbad6759eb3`.
+- This package's code/tests and progress records are **local and uncommitted**;
+  no new push, merge or PR was performed. Git identity is
+  **Jaden <changherng.jc@gmail.com>**.
+- Staging remains separate at `f1a6bb85588ba044fc2ca50e3e9f41eb2f13b6f9`.
+- No build/install, service/operator restart or deployment occurred. The installed
+  October 20 release and sampled files are unchanged; source qualification does
+  not mean these fixes are installed.
+
+### What is complete in this package
+
+New negotiated ordinary plain-text `new` attempts in **existing durable canonical
+chats**, while the original pending client owner survives, carry immutable
+source/principal/payload identity. The canonical owner atomically commits it with
+the user event, joins an exact duplicate before another run/effect, and answers
+positive-only lookup through existing `attach`/`attached`. Queue and direct hook
+consumers accept only that exact qualified proof, preserving later drafts/rows,
+UNKNOWN on missing proof and independent activity/history projection. No second
+ledger, prompt copy, new RPC, permission scope or automatic resend was added.
+
+The fresh review's direct-hook omission was corrected in **one** bounded round
+through a local typed fact on the existing chat callback/buffer, not another wire
+protocol. The original four real-hook failures became seven passing checks;
+40 direct-consumer regression cases are included in final independent
+**1,749 WebUI tests / 108 files**. TypeScript `--noEmit`, ESLint, Ruff and diff
+checks passed. Independent backend checks passed **661 tests / 20 affected files**
+(four retained temporary-chat AsyncMock warnings). Full strict checking passed
+**548 files / zero diagnostics**, with **zero introduced signatures** under the
+unchanged Python/dependency environment. The final TS-only correction preserved
+all Python/backend/checker hashes; no baseline was refreshed. The same reviewer
+performed a narrow successful recheck. This is not the full Python repository
+suite, P6, broader A3, installed/native or release acceptance.
+
+Raw local contracts, source/environment manifests, actual backend-to-client wire
+bridge, command/exit receipts, original REDs, correction and root PASS are in
+`/Users/jaden/.codex/qa/nanobot-cui7-20261118-supzqn6x/`. The portable tests and
+bridge-reproduction instructions are linked in the current CUI-7 record above;
+another device need not rely on that local QA directory to run regressions.
+
+### Next work and boundaries
+
+1. Keep CUI-7's limits explicit: **no general Retry**, negative replay proof,
+   app/client-recreation recovery, first-chat bootstrap, rich/Steer/control
+   recovery or installed/physical-device qualification. Old unbound UNKNOWN
+   attempts cannot be upgraded from a newly acquired capability. No unknown
+   effects are resumed. One remote device is enough for later real qualification;
+   do not expand into a multi-device matrix.
+2. Next independent issue: **CUI-4 notifications/icons**, then **CUI-5 word reveal**.
+   Establish each failure with the debugging skill before editing; use one write
+   owner and minimal corrections. Luna Max remains suitable for clear bounded
+   worker tasks after the owning contract/root cause is known.
+3. CUI-2 normal context accounting, merged-text compaction continuation, CUI-3
+   Browse lifetime and CUI-6 reasoning disclosure retain their earlier bounded
+   qualifications. Do not reclassify their broader installed/native reports as
+   complete. Package/build/install remains deferred until explicitly requested.
+4. Commit/sync is a separate next action: preserve the local candidate, review
+   its actual diff and use the correct Git identity above. Do not merge it into
+   staging or install it merely because this source package passed.
+
+## Current checkpoint — 2026-11-17
+
+This checkpoint accompanies all completed client fixes on
+`codex/staging-audit-implementation`: CUI-6 reasoning disclosure, CUI-2 context
+presentation and request-bound accounting, merged-text continuation across
+compaction, CUI-3 folder Browse lifetime safety, related locale corrections,
+regressions and progress records. They are included together in the client-fix
+checkpoint commit, using author and committer **Jaden <changherng.jc@gmail.com>**.
+The base before this checkpoint was
+`4f598372299f43041beee6fbe2d049b52b678aba`.
+
+The accompanying Git sync targets only
+`origin/codex/staging-audit-implementation`; remote publication must be confirmed
+against that branch rather than inferred from historical checkpoint text. Staging
+remains separate at `f1a6bb85588ba044fc2ca50e3e9f41eb2f13b6f9`.
+No staging merge, PR, build/install, operator restart or release is part of this
+checkpoint. Earlier local/uncommitted and no-push statements below describe their
+pre-publication source-qualification snapshots, not additional pending fixes.
+
+Fresh commit-snapshot verification passed **1,671 WebUI tests / 106 files**,
+**151 selected Python tests** (including the six backend scope guards), TypeScript
+`--noEmit`, ESLint, Ruff and diff whitespace checks. Frozen before/after full
+strict checking covers **547 files / 0 errors / 0 warnings**, with **0 introduced
+diagnostic signatures** and unchanged dependencies. This is not the full Python
+repository suite or installed/native-device, P6, broader A3 or release acceptance.
+The installed nanobot release remains unchanged; no external model was used.
+
+CUI-6 retains its bounded source-preview qualification. **CUI-2 normal context
+accounting is now source-qualified**, beyond the earlier unavailable-state
+presentation safeguard; this is not blanket all-compaction client or installed
+runtime acceptance. **Live rewritten-cumulative text duplication is separately
+source-qualified** for the reproduced compaction/length-recovery mechanism;
+earlier OPEN records below are historical, not installed-runtime acceptance.
+CUI-3 is **PASS_SOURCE_FOLDER_BROWSE_LIFETIME** for the reproduced local stale-
+choice mechanism, not closure of the broader intermittent installed/native
+report. Active-response and unresolved-input locks remain intentional, with the
+existing backend `chat_running` refusal authoritative; no next-turn staging was
+introduced. See the [bounded CUI-3 source record](client-ux-followups.md#cui-3-folder-browse-lifetime--2026-11-17).
+CUI-4 notifications/icons, CUI-5 word reveal and general CUI-7 safe Retry,
+canonical same-attempt deduplication/readback and authoritative restart recovery
+remain open and separate. The user deferred package/build/install work;
+no bundle, build, install or release operation was performed. Full Python-repository
+suite, broader A3, P6 and native/physical-device acceptance are not claimed.
+
+## Historical Git checkpoint: fixes synced to origin — 2026-11-16
+
+The restored-queue anti-replay fix is committed and published at
+`185c3729bc0f28f3225837aa6d75142a9e82ffd6` on
+`origin/codex/staging-audit-implementation`. This includes the previously accepted
+macOS Stop/tooling, queue/Steer, mobile reconnect and bounded CUI-7 owner-seam base
+`b1d7eb24873b02bb5f52036cabf2bcc80957a873`, published in the same sync. Both commits
+use author and committer **Jaden <changherng.jc@gmail.com>**. This section records
+that 2026-11-16 sync and its validation. Local/uncommitted and no-push statements
+in Nov16 pre-sync qualification records below refer to those snapshots only; the
+current working-tree state is recorded above.
+
+At the 2026-11-16 sync checkpoint, staging remained separate and there was no
+staging merge, PR, service change or deployment. See the current checkpoint above
+for the present branch and local uncommitted work.
+
+## CUI-6 reasoning disclosure — 2026-11-17
+
+**Bounded WebUI PASS.** The shared ReasoningRow now retains its collapsed compact
+preview and offers a native keyboard-operable disclosure for the complete supplied
+reasoning text. Expanded content uses the existing lazy Markdown renderer; the full
+body updates during streaming, remains open or closed across appends/completion,
+and is unmounted while collapsed. Empty or whitespace-only text has no control.
+The shared row is exercised through standalone MessageBubble and the existing
+AgentActivityCluster fold; the answer, activity grouping, markers and tool privacy
+remain separate and intact. No provider, transport, persistence or server behavior
+changed.
+
+The intentional pre-edit RED showed the three new disclosure regressions failing
+while the five existing focused files passed 145 tests. The final focused command
+passed **150 tests / 6 files**. Parent final checks passed **1,631 WebUI tests /
+106 files**, TypeScript --noEmit, ESLint and git diff --check.
+
+Parent browser verification used actual MessageBubble and AgentActivityCluster
+components with fixture text only at **1280 × 720** and **390 × 844**. It showed
+the full heading, 36 paragraphs, code block and end marker; appends remained visible
+while open; closing before completion stayed closed and removed full-body descendants.
+The existing outer fold retained its behavior, Enter opened one grouped row,
+Space closed it, and the sibling remained independent. The answer stayed separate.
+Narrow layout stayed at **390 px page width** without horizontal overflow; the end
+and appended markers were reached by scrolling. The viewport was reset and preview
+server PID 72546 was stopped. This was a source preview only, with no gateway,
+provider/model, installed package, native app or physical device.
+
+The nine non-English common.json recovery-notice additions were a separate
+root-owned preflight repair (i18n parity **26/26**), not CUI-6; HEAD remains
+4f598372299f43041beee6fbe2d049b52b678aba with local, uncommitted changes, while
+the Python 3.13.12 / 216-distribution environment and October 20 installed hashes
+remain unchanged. No bundle, wheel, install, service, release, commit or push
+operation was performed.
+
+Evidence is retained under
+/private/tmp/nb-cui6-reasoning-20261117-JwbUuymJ/ (focused RED/GREEN, parent
+full-test/typecheck/lint receipts, browser-observations.json and six screenshots).
+At the 2026-11-17 CUI-6 checkpoint, CUI-2 context accounting was next. Its bounded
+presentation qualification is recorded below. The user's subsequent clarification
+keeps CUI-2 open before CUI-3;
+CUI-4 notifications/icons and CUI-5 word reveal remain open. General CUI-7
+Retry/restart recovery remains open. This bounded UI result does not close A3,
+P6, release or native/physical-device acceptance.
+
+## Live cumulative-text continuation — 2026-11-17
+
+**PASS_SOURCE_LIVE_REWRITE**, bounded source qualification. Debugging confirmed a
+local hook defect: compaction notices closed an answer explicitly kept open by
+`resuming=true, merge_next=true`. The server retained cumulative text, so subsequent
+replacement frames populated new bubbles and repeated earlier segments. Replay's
+existing buffer behavior was correct. Only the hook's compaction flush now preserves
+the open answer; existing stream/tool/reasoning/turn boundaries remain intact. No
+new state, schema, text-prefix matching, persistence, transport, provider or context
+accounting change was needed.
+
+The new regression fails before the fix (**3 answer rows vs 1**), while the genuinely
+closed-segment control already passes. Actual-source frame replay in `ThreadShell`
+changes **3/2/1 live → 1/1/1 live**, matching canonical reload; final visible text
+and the latest signed image URL match. **16** captured-frame live/reload checks pass,
+including unchanged **42% / 42% / 17%** context usage. Full WebUI **1,664 / 106 files**,
+selected producer/replay Python **70**, TypeScript, ESLint, Ruff and diff checks pass.
+Frozen full strict before/after: **547 files / 0 errors / 0 warnings**, with **0**
+introduced diagnostic signatures. Python/dependencies and sampled October 20
+installation remain unchanged; all earlier local work is preserved. No commit,
+push, staging merge, build/install, operator restart or external model call occurred.
+This does not qualify the full Python repository, installed/native/device runtime,
+P6, A3 or a release.
+
+Evidence: `/private/tmp/nb-live-rewrite-20261117-2u27146w/`; see the
+[detailed live-continuation record](client-ux-followups.md#live-cumulative-text-continuation--2026-11-17).
+Earlier OPEN live-text statements below are historical and superseded only for
+this reproduced mechanism. Next independent work: CUI-3 folder selection; general
+CUI-7 mobile recovery/retry, CUI-4 notifications/icons and CUI-5 reveal remain open.
+
+## CUI-2 normal context accounting — 2026-11-17
+
+*Historical accounting checkpoint: its then-OPEN live-text finding is superseded
+only for the reproduced mechanism by the separate continuation correction above;
+the accounting verdict and other limits remain unchanged.*
+
+**PASS_AMENDED_SOURCE_ACCOUNTING; source accounting only, not full CUI-2
+all-compaction-client, installed-runtime or release acceptance.** The proven
+length-recovery request was freshly measured after compaction, but cumulative
+answer placement led replay to stamp usage onto a notice and discard it by row
+position. The correction qualifies one immutable snapshot with the final prepared
+request's epoch/exact-route-window receipt, then uses the existing terminal hook,
+scoped delivery/publisher slot and typed completion flow for live and replay.
+Native pre-compaction dispatched usage cannot reauthorize the replacement epoch;
+fresh reported/existing estimated main-request context resumes normally.
+**Omitted = no update; present explicit-null = actual invalidation/hard barrier**,
+never aggregate or older-history fallback. No ledger, canonical-text segmentation,
+source schema/checkpoint persistence, provider dispatch, billing or rounds change.
+
+Coordinator-rebuilt root/tool/length scenarios cover reported and estimated
+measurements live/reload (**42% / 42% / 17%**, respectively), preserving exact
+preparation/dispatch chronology and spend. Six modern plus two real signed-Markdown
+rewrite source probes pass canonical verification; actual `ThreadShell`
+live/reload checks pass **12 + 4**.
+
+**Separate OPEN live-text followup:** identical frames produce pre-existing
+rewritten-cumulative marker counts **3/2/1 live**, **1/1/1 canonical reload** in
+both actual pre-edit and candidate views. Visible canonical answer text nodes,
+including signed media URLs, are byte-identical before/after. Accounting neither
+introduces nor fixes this duplication. AC2 explicitly qualifies **no new text
+regression plus exact-once canonical replay**, not blanket live exactly-once.
+Keep this defect **OPEN** for independent next scoped work; do not fold it into
+CUI-3 or report full CUI-2 client completion.
+
+Final selected Python passes **1,918/1,918 in 137.07s**, exit0, not the full
+repository suite. The initial expanded selection failed: four delta-caused
+delivery-double errors were fixed by one faithful no-hook fixture field, retaining
+all assertions; long macOS AF_UNIX temporary paths and tight API timing under
+heavy concurrent checks were resolved with short paths and sequential execution
+of the same selection, not product workarounds, test skips or weaker thresholds.
+Full WebUI **1,662 tests / 106 files**, TypeScript `--noEmit`, ESLint, Ruff and
+diff checks pass. All original 26 candidate paths, including frontend source/tests,
+remain hash-identical after the one Python-fixture correction, so that full
+frontend result is reused. Repeated strict: **547 files / 0 errors / 0 warnings**;
+frozen-baseline comparator: **0** introduced signatures. Python **3.13.12**,
+**216** distributions and dependencies remain unchanged; fresh correction review
+passes the amended source-accounting contract.
+
+Evidence is under `/private/tmp/nb-cui2-accounting-20261117-aebB1h/`:
+`code-qualification.json`, `root-python-corrected-final.{json,log}` and
+`root-python-suite-files.txt`, `root-frontend-final.{json,log}`,
+`root-corrected-basedpyright.json` / `root-corrected-type-comparator.{json,log}`,
+`review/correction-recheck.md`, `root-source-probe/` and
+`root-rewrite-baseline-comparison.json`. See the
+[latest detailed accounting record](client-ux-followups.md#cui-2-normal-context-accounting--2026-11-17)
+for concise validation commands and the independent live-text followup.
+
+Legacy absent proof after successful compaction remains unknown; unknown fallback
+capacity has no inferred ratio, and success without a later measurement stays
+unavailable. Source tests did include **disposable private loopback gateway and
+remote-owner fixtures**; none matching remain. No operator service was restarted;
+the October 20 installed link and three sampled hashes remain unchanged. No full
+Python-repository suite, external model, installed/device/native, P6, A3 or release
+acceptance is claimed; build/install remains deferred. CUI-3/4/5 and general CUI-7
+remain separate open work.
+
+The configured-capacity section below is the **historical presentation-only
+checkpoint, retained unchanged**; its pending-accounting direction is superseded
+only by the bounded source-accounting verdict above.
+
+## CUI-2 configured capacity and unavailable usage — 2026-11-17
+
+**User clarification: continue CUI-2 before CUI-3.** The presentation safeguard
+does not satisfy the requirement for normal context usage after compaction. The
+old request measurement is invalidated, while the compaction event publishes only
+ID/phase, not its replacement. Internal rebuilt-request measurements/estimates
+exist, and controlled tests restore usage on an ordinary later measured reply;
+persistent absence in the user's actual run is not yet reproduced. Trace the full
+compaction and subsequent request/live/replay path and correct the replacement
+accounting at its owner. Do not simply keep stale counts or call the unavailable
+label a complete fix. No new production change or broader accounting acceptance
+is recorded by this clarification.
+
+**Bounded presentation PASS; no immediate post-compaction metric or
+effective-fallback provenance is claimed.** The shell derives an informational
+descriptor from the exact selected settings preset and passes it through the
+existing composer to the context popover. A successful compaction still
+invalidates the prior request measurement;
+known configured model/window remain visible alongside explicit unavailable usage.
+The last-known numeric block keeps its captured denominator. Invalid or unresolved
+configured rows do not borrow the global agent capacity. No provider, Python,
+runtime event, hook state, persistent data or effective fallback provenance was
+added. The UI does not claim a post-compaction numerator before a new request is
+measured.
+
+Worker RED-to-GREEN regressions cover ThreadShell live/replay with and without
+rounds, exact preset ownership, malformed capacity, last-known denominator and
+mobile no-round visibility. Parent verification passed **1,644 WebUI tests / 106
+files**, TypeScript `--noEmit`, lint and the strict no-new-diagnostics comparator;
+the unchanged Python environment/source and prior locale values were preserved.
+No full Python test suite, build, install or release was run or claimed.
+
+The parent previewed actual `ThreadComposer`, `ComposerUsagePopover` and
+`ContextCompactionNotice` with fixture state at **1280 × 720** and **390 × 844**;
+this was not a browser exercise of `ThreadShell`. It confirmed the configured
+65.5K window and unavailable usage without a percent/meter, last-known measurements
+retaining their own denominator, rounds, keyboard opening, and a narrow layout with
+no horizontal overflow. ThreadShell live/replay is covered by source tests. The
+viewport was reset and preview PID **76381** stopped; no gateway, provider/model,
+native app or physical device was used.
+
+See the [detailed CUI-2 UX qualification](client-ux-followups.md#cui-2-configured-capacity-and-unavailable-usage--2026-11-17)
+for exact commands, validation counts, preservation checks, browser observations
+and the local evidence directory `/private/tmp/nb-cui2-context-20261117-_2jn61sv/`.
+This source qualification does not imply build, install, release, A3, P6 or
+native/physical-device acceptance.
+
+## Final CUI-7 restored-queue anti-replay — 2026-11-16
+
+**Bounded validation PASS; broader CUI-7 recovery remains open.** The existing
+queue row carries content-free submission provenance and the existing
+`NanobotClient` remains the only outcome owner. Submitted/unknown rows stay held
+through same-device remount, chat switching and recreated-client restoration.
+Exact original receipts consume only their matching row after durable projection;
+canonical-fenced or timestamp-less running events, generic errors and missing
+owner outcomes do not authorize replay. The package adds no second ledger, new wire
+field, prompt/media store or automatic retry path. Legacy rows without trustworthy
+provenance remain held and some genuinely unsent legacy rows may be stranded.
+
+Parent's final source qualification reported **1,624 WebUI tests / 105 files**,
+**4 external baseline tests / 2 files**, TypeScript/Vite build PASS with the existing
+chunk-size advisory, and final lint PASS. A narrow reviewer found the original
+defects resolved and no remaining production defect. The affected owner/storage
+tests passed **16/16** after the final edit. Full suite, external baselines and build
+used the frozen source immediately before correction round 2's sole test-only
+change (removing an unused import); production hashes were unchanged. Parent reran
+the owner/storage focus and lint after that edit. Both correction rounds are closed.
+
+The browser fixture for the single-device scope used actual `ThreadShell`,
+`useNanobotStream`, `NanobotClient` and app styles with fake socket/fetch, no
+gateway/provider/model, at **604 × 852** and **390 × 844**. It confirms remount
+hold; an offscreen exact A
+receipt preserves B's current draft and consumes only A on return; stale receipts
+preserve the current later draft; and a recreated client keeps its submitted row
+held with mutation controls disabled and no automatic drain. Narrow layout had no
+horizontal overflow. Exact active-Steer receipt behavior and late canonical-idle
+running proof with next-row/draft preservation are covered in separate tests, not
+one combined matrix. Browser evidence does not claim rich draft persistence across
+view remount/recreation. No multi-device, cross-tab or simultaneous-client matrix
+was requested or run.
+
+Raw final evidence: `/private/tmp/nb-cui7-restored-20261116-f4f8t2qi/`, including
+`root-full-webui-final.log`, `root-external-final.log`, `root-build-final.log`,
+`root-lint-qualified.log`, `root-focused-qualified.log`,
+`browser-final-observations.json`, `preview-stopped.json`, and four
+`queue-*.jpg` screenshots. Preview PID **63691** was stopped and the viewport was
+reset. Python manifest inputs remained **1,515 unchanged files** and the
+**216-distribution Python 3.13.12 environment** remained unchanged; Python tests,
+strict checks, wheel packaging and native app qualification were not rerun for this
+client-only package. The bounded review is complete.
+
+**Open:** general safe Retry, canonical same-attempt deduplication/readback, and
+authoritative exact-outcome recovery after same-device restart remain unimplemented.
+A recreated client's UNKNOWN row stays held instead of auto-retrying. Physical
+Android/native-client and macOS Full/process-tree qualification also remain open.
+This bounded PASS is not complete CUI-7, A3, P6, release or merge acceptance.
+CUI-6 reasoning expansion is next, followed by CUI-2–5; no code work on them was
+started here.
+
+## Earlier presentation checkpoint: flat queue and Steer — 2026-11-16 (historical)
+
+**Bounded presentation PASS.** The queue remains outside the input card but now
+touches it as a flat, subtly bordered strip: no panel shadow/backdrop blur, no
+visible heading/count, and one-line ellipsized previews with full text retained
+through title/accessibility and Edit. The English action is **Steer**, not Guide.
+No queue/admission/recovery handlers or shared animation behavior changed.
+
+Final full WebUI **1,606 tests / 102 files**, build and lint passed. Desktop,
+390 × 844 and light-hero actual-component previews verified flat styling, bounded
+scrolling, pending locks and a preserved later draft. No installed-wheel/backend
+or physical-device qualification was repeated. See [the bounded record](client-ux-followups.md#flat-queue-and-steer-presentation-follow-up--2026-11-16).
+The flat presentation change did not alter the bounded CUI-7 behavior recorded
+above. General safe-Retry/device limits remain open. At that presentation
+checkpoint, its source changes were local/uncommitted; no Git publication, staging
+merge or deployment occurred then.
+
+## Earlier CUI-7 owner-seam qualification — 2026-11-16 (historical)
+
+**Owner-seam PASS at this checkpoint.** The restored-row replay gap was still open
+then; the final restored-queue qualification above supersedes that status. The
+owner-seam findings remain qualified, while broader safe Retry, restart recovery,
+device qualification, A3 and P6 remain open.
+
+- New-turn owner receipts now follow successful user input append through one
+  typed `UserInputCommitted` fact. Lifecycle start remains separate. Active Steer's
+  correctly ordered receipt, Mac Stop cleanup and native reconnect ownership remain.
+- Explicit authorized idle history can show committed replies and clear main/sidebar
+  activity without admitting UNKNOWN or replaying its input. Original pending queue
+  rows, later inputs and rich drafts are retained. Workspace selection/recovery and
+  access-mode mutations stay blocked while UNKNOWN; known-active controls remain.
+- A late exact receipt dequeues only its own original row; it cannot revive the
+  old run or trigger the next queued send. The external queue layout is preserved.
+  No extra ledger, reconnect owner, persistence schema or recovery framework was added.
+
+Final independent checks: **18,492 Python passes, 68 skips, 6 subtests**, plus
+**129 serial CLI passes**; **1,606 WebUI passes / 102 files**; build and both lints
+pass; strict **547 files / zero diagnostics**, zero new diagnostic signatures,
+unchanged Python 3.13.12 / 216 distributions and Bun 1.4.2. The initial incomplete
+test-double failures and a concurrent full WebUI timeout/cascade run are retained;
+the identical source/command passed after the full Python run ended. The exact
+concurrent-run failure cause remains unproven, not silently dismissed.
+
+Final wheel SHA-256:
+`641f5be5bc869a17bc4c046d02d725eb90d43a1fc417aeaa29fb3a767bc51d86`.
+All 547 Python and 590 WebUI packaged files matched source and installation. The
+offline installed fixture proved queued completion before actual reconnect with
+UNKNOWN retained; exact delayed receipt changed queue 2 → 1 with no automatic
+next send or draft loss. A separate active-at-reconnect case completed once afterward.
+Desktop/narrow UI had no phantom busy state; all disposable processes exited and
+the viewport was reset. No external/paid LLM or user gateway/device was used.
+
+**Historical remaining safety work at that checkpoint:** queue-key switch/remount
+and reload/restart could lose restored-row held identity. The final bounded
+qualification above closes that specific blind-replay gap for submitted/unknown
+rows in the single-device scope: recreated-client UNKNOWN stays held and does not
+auto-retry. Authoritative exact-outcome recovery after restart, canonical
+same-attempt deduplication/readback and general safe Retry remain open. Physical
+Android/native-app and macOS Full/process-tree qualification also remain open.
+CUI-6 reasoning access and CUI-2–5 remain separate UI work.
+
+See [the final bounded qualification and remaining boundary](client-ux-followups.md#cui-7-bounded-owner-seam-and-restored-queue-qualification--2026-11-16).
+Raw local evidence: `/private/tmp/nb-cui7-seams-20261116-xy1unsld/`, particularly
+`acceptance.json`, `integrated-review-recheck.md` and `browser-final-observations.json`.
+Temporary evidence is not automatically available on another device.
+
+At this earlier checkpoint the work was **local/uncommitted** on
+`codex/staging-audit-implementation`, HEAD
+`de2e0fec517203d0f2c45fa83ecf7c591fa2ab4b`. The current base and local package
+state are recorded at the top of this handoff. No commit, push, merge, PR or
+deployment occurred at that checkpoint. Git identity is
+`Jaden <changherng.jc@gmail.com>`.
+
+## Queue outside the input card — 2026-11-16
+
+The user's screenshot-based queue placement request is implemented as a **layout-only
+follow-up**: the existing queue is a separate, inset panel above the input card.
+Queue state, callbacks and admission/recovery behavior were not changed. **129 focused
+tests**, TypeScript/Vite build and lint passed; actual desktop/narrow and light-hero
+component previews verified spacing, bounded scrolling and a preserved later draft.
+See [the layout qualification](client-ux-followups.md#queue-placement-follow-up--2026-11-16)
+for scope/evidence. This is local/uncommitted, not an installed-app/device qualification
+or deployment. General safe Retry, authoritative same-device restart recovery and
+native/physical-device qualification remain open as recorded above.
+
+## Cumulative simplicity review hold — 2026-11-16
+
+**Historical checkpoint**, superseded for its two defects by the latest bounded
+qualification above. Its evidence and broader recovery limits remain recorded.
+
+**At that checkpoint: HELD / requires correction.** The user requested review of our accumulated work
+before further patches. The current Mac Stop, active-Steer and native reconnect
+corrections are appropriately scoped root-cause fixes; no wholesale removal or new
+recovery framework is recommended. CUI-7 owner-seam implementation remains frozen;
+the layout-only follow-up above does not resume those corrections. See the
+[client UX review checkpoint](client-ux-followups.md#cui-7-cumulative-review-checkpoint)
+for exact scope, evidence and limits.
+
+Two concrete owner-boundary defects remain:
+
+1. CUI-7's UNKNOWN admission guard also blocks the entire authorized history refresh.
+   A real installed-browser test recorded one original input/model call, canonical
+   completion **before actual reconnect**, and an idle thread response with the
+   assistant reply. The browser still showed Connected + Working, hid the reply and
+   disabled the project picker. Keep UNKNOWN/no-replay safety, but separate attempt
+   disposition from appropriately fenced transcript/current-activity projection.
+2. The fresh-turn `message_admitted` producer runs from `SessionTurnStarted` before
+   the canonical input append. This producer defect predates our diff; newly
+   forwarding the receipt exposes queued new-turn prompts to premature removal.
+   Emit admission only after successful input commit. Keep active Steer's correctly
+   ordered post-append `InjectionCommitted` path.
+
+At that frozen review snapshot, checks passed **536 focused / 9 files**, **1,579 full WebUI /
+102 files**, TypeScript/Vite build and lint. These results do **not** close the
+installed reconnect defect. Python/accepted queue source and the 216-distribution
+environment remain unchanged; no full Python rerun, installed correction1 wheel or
+physical-phone acceptance is claimed. The latest uncertainty correction fixed two
+weak-proof bypasses and touch detail access, not the newly reproduced history seam.
+
+**Next: settle one coherent correction contract at these existing owner seams,
+not another layer of local exceptions.** Preserve source/lineage/run/UI-revision
+fences, unresolved attempts and later drafts. No second ledger, competing reconnect
+loop, blind replay or null-Stop-target inference. General Retry still needs original
+attempt reconciliation/deduplication through the canonical source and existing read
+owners; it is not implemented. Restart-persistent pending metadata is also open.
+CUI-6 reasoning expansion follows independently; CUI-2–5 are not started.
+
+All changes remain **local/uncommitted** on `codex/staging-audit-implementation`
+at `de2e0fec517203d0f2c45fa83ecf7c591fa2ab4b`; staging remains separate and
+unchanged. Effective Git identity remains `Jaden <changherng.jc@gmail.com>`.
+No commit, push, merge, PR, deployment or operator-gateway replacement occurred.
+Local raw review/command/browser evidence is in
+`/private/tmp/nb-cui7-20261116-4kzzm322/`; the progress record is self-contained
+because temporary evidence is not automatically available on another device.
+
+## Client queue/Steer correction qualified — 2026-11-16
+
+**CUI-1 passed** independent final tests, installed macOS browser checks and fresh
+integrated review. The client now delivers owner-admission receipts to the queue;
+only the matching admitted row disappears, while a later draft survives. Pending
+submissions cannot be sent twice, exact rejection permits explicit recovery even
+beyond five pending attempts, and multiline rows no longer overlap in the bounded
+queue at desktop or narrow widths.
+
+Final checks: **440 focused tests / 5 files**, **1,541 full WebUI tests / 100 files**,
+TypeScript/Vite build and ESLint passed. A matching isolated installed wheel was
+verified with six rows at desktop and 390 × 844; a real steer receipt removed one
+row (6 → 5) without clearing the newer draft. No external/paid model was used.
+See [client UX qualification and remaining work](client-ux-followups.md) for exact
+artifact/evidence details and limits.
+
+All work remains **local/uncommitted** on `codex/staging-audit-implementation`;
+staging is unchanged. The latest intake prioritizes **CUI-7 mobile delivery**, then
+**CUI-6 reasoning access**, before CUI-2 context accounting and the remaining reports.
+Those issues are not closed by this active-Steer qualification. The cumulative
+review above additionally holds fresh-turn receipt ordering and reconnect projection;
+no full A3/merge acceptance or native macOS Full support is implied.
+
+## macOS correction qualification and client intake — 2026-11-16
+
+The bounded macOS Stop/test/tooling correction package passed independent checks and
+fresh integrated review. Full Python passed 18,471 cases plus 129 serial CLI cases;
+strict checking is clean in 547 files. The real installed Mac browser now returns to
+idle and restores project controls after original-chat Stop without a reload.
+See the [qualification record](macos-qualification-2026-11-16.md) for exact snapshots,
+test-only final strengthening, artifact identity and remaining capability limits.
+
+This is local uncommitted work on `codex/staging-audit-implementation`, not a staging
+merge or full A3 release acceptance. Native macOS Full/process-tree support remains
+unavailable. The separately tracked [sequential client UX follow-ups](client-ux-followups.md)
+record active-Steer qualification and the newer CUI-7 review hold. Current priority
+is the mobile admission/projection seam, then reasoning access and context accounting.
+
+## Steer admission and access-mode switch 2026-11-15
+
+**Queued guidance never committed.** The WebUI queue holds a steer until its
+own owner receipt arrives. `MessageAdmittedEvent` was built only from
+`SessionTurnStarted`, which fires once per agent turn. A steer is an injection
+into the running turn, so its own turn id never received a receipt. The row
+stayed in "Queued guidance" and its held head blocked every later item.
+
+The loop now publishes `InjectionCommitted` after the steer is part of the
+running turn, and the WebUI coordinator translates it into the same receipt
+with `starts_turn` false and the joined turn as `active_turn_id`. The composer
+also exposes a queue-guidance button, because the send button becomes Stop
+while a turn runs and touch clients have no Enter key. Rejection restore now
+covers every named reason instead of two.
+
+**Access-mode switch cost.** Measured on a copy of the staging state, with a
+103 MiB transcript and 2.2 MiB of sessions:
+
+| Stage | Time |
+| --- | --- |
+| One history read, `limit=1` (each permission round trip) | 1.2 ms |
+| One history read, `limit=80 latest` | 245–252 ms |
+| Session source parse | 5.0 ms |
+| Metadata rewrite with two fsyncs | 20.0 ms |
+| One native-admission ledger scan | 1.4 ms |
+| Session list scan, seven files | 0.4 ms |
+
+The deployed `dd8a02ca` and this branch measured the same on every row, so the
+server work is milliseconds and was never the delay. The switch therefore runs
+four client round trips where two are full transcript reads, and the mutation
+executed synchronously on the gateway event loop. The mutation now runs in a
+worker thread, and the client reuses the live projection instead of repeating
+the pre-read. A `webui permission action=... duration_ms=...` line now reports
+each mutation, because mutations previously bypassed `_log_slow_http` and no
+access-mode timing existed anywhere.
+
+Two earlier suspects were ruled out by measurement: the transcript rotation
+call is 0.5 ms, and the session list scan is 0.4 ms.
+
+## MCP schema admission repair 2026-11-15
+
+A staging chat could not use the ComfyUI MCP server. The gateway log at
+`13:23:58` shows the connection completed and then refused all six enabled
+tools with `schema uses unsupported keyword '$schema'`. The server publishes
+draft-07 schemas with a root `$schema` marker and `multipleOf` limits on
+canvas sizes. Both keywords were outside the local admission subset, so no
+MCP tool reached the model.
+
+Commit `78a4963f` accepts a non-empty string `$schema` as an annotation. It
+also enforces `multipleOf`, numeric `exclusiveMinimum` and numeric
+`exclusiveMaximum` against arguments before dispatch. An unusable limit stays
+refused: a non-numeric or boolean value, or a `multipleOf` of zero or less.
+
+A bounded probe against the live server published the six enabled tools. The
+probe called `generate_image` with `width: 513` and the registry refused it
+with `width must be a multiple of 32` before dispatch. It then dispatched
+`comfy_status` and received the live status document. The focused run passed
+1,650 tests with six skips; the two changed test modules passed 217 tests.
+The full Linux suite passed 18,607 tests with 22 skips and six subtests, and
+strict BasedPyright reported zero diagnostics in 546 files.
+
+The staging configuration also declared no `tools.mediaOutputRoots`, and the
+harness writes generated files under `/mnt/sshd/shared/comfyui/outputs`.
+Without that root, a returned image file cannot enter the media library. The
+staging configuration now lists that root. The running gateway still uses the
+`dd8a02ca` code, so the repair and the root take effect after a new candidate
+is installed and the gateway restarts.
+
+## Checkpoint after the reconciliation run 2026-11-15
+
+Commit `a0077313` projects the history response from one validated session
+source, so the permission data no longer repeats the same validation. The
+delegated-child scan runs in a worker thread; the live Stop target stays on
+the event loop because it reads event-loop task state. Commit `90ba7a20`
+keeps the composer docked while a saved chat opens and reveals the transcript
+from the newest message upward. Commit `9ec90bd4` enrolls the phone as
+`nanobot-<device label>`. Commit `a8f5a2a0` retains image-edit references
+that carry a role.
+
+The focused suites and the full Linux suite above cover these commits.
+`ruff check nanobot/` is clean.
+
+The memory-recovery suites require a tmpfs scratch directory on this host.
+The same file passes 205 tests under `/tmp` and fails 43 under the btrfs
+`/home` mount, and the fail-closed startup gate then spreads those errors.
+Use `/tmp` for the pytest basetemp and clean it afterwards.
+
+
+## Final Android emulator readback
+
+The installed APK digest was `07d7e3e1103443d3bc35ffc8249b53a72cfd71bf5a36f21ac06eeeba45a492ff`.
+It ran on Android 16 x86_64 against the disposable Linux gateway at
+`dd8a02ca`. The app signed the owner's challenge with its device key and
+opened a WebSocket through Serve TLS.
+
+The fixture advanced the gateway clock by 601 seconds. After the app cold
+restart, the first handshake returned `401`. The signed device recovery
+returned `200` and kept the same device generation. The app read from the
+gateway and reopened its socket. The separate 24-case host receipt covers
+lost delivery, replay, proof refusals, and closure of a revoked connection.
+
+The gateway owner revoked the app device and recorded `attempted` and
+`applied`. The app's next authenticated request returned `401`. Recovery
+returned `403 device_revoked` and the app showed the pairing screen. A later
+cold restart still showed pairing. Both installed wheel versions retained this
+revocation and proof when reading an identical stopped state copy.
+
+The test gateway and emulator stopped after the run. The receipts are under
+`a3-evidence/a3-reconciliation-2026-11-14/resume4/final/emulator/`. The
+release artifact digests are in the [run summary](reconciliation-run-summary.md#final-verification).
+A3-9 and A3-10 are accepted for the selected Linux and emulator scope.
+The implementation merge remains on hold.
+
+## Fifth wave: OAuth and release readback
+
+Codex corrected E02-F16 in `dd8a02ca5d3b0dc52b6b11d5b320dc38d4659d0b`.
+The runtime captures its credential owner from the selected config. Explicit
+owners use their own credential paths. The legacy unscoped entry points keep
+their auth-path overrides. The settings catalog and active sign-in flows
+use the same owner as their credential store.
+
+Six regression cases failed at `509b29c9` and passed at `dd8a02ca`.
+A fresh requirements-only session authored the public cases. The receiving
+test recorded the account used by each provider's request.
+The focused run passed 2,278 tests with three skips. The full Linux run passed
+18,569 tests with 22 skips and six subtests. Strict checking found zero
+diagnostics in 546 files. The comparator found zero new signatures.
+
+The Linux wheel passed a clean install, dependency check, gateway startup,
+and an isolated switch and rollback. The stopped-copy session and cron
+rehearsal also passed. The signed APK installed and cold-launched twice on the
+Android 16 x86_64 emulator. The gateway passed 24 device-key checks over Serve
+TLS at `dd8a02ca`. The installed app's full pairing and recovery receipt
+at this checkpoint applied to the earlier signed APK `08e171e0`. The
+[final emulator readback](#final-android-emulator-readback) closes that gap.
+
+Both installed wheel versions read the revoked device and its proof from a
+stopped copy of the earlier test gateway. The copy had the same digest after
+both reads. See `resume4/final/copied-revocation.jsonl`.
+
+The evidence is in `a3-evidence/a3-reconciliation-2026-11-14/resume4/`.
+See the [run summary](reconciliation-run-summary.md#final-verification) for
+artifact digests and the remaining scope.
+
+## Fourth wave 2026-11-15 (resume3)
+
+The November 15 decisions were applied to the last four findings. Every record
+used `commandcode/deepseek/deepseek-v4.1-flash`.
+
+### H01-F5 Git sync/shell approval and K01-F06 nested launch
+
+`019e3ae1` removes the `autoPush` shell/Git exemption from `policy.py`: every
+shell call now runs the ordinary risky-effect patterns, and the shell policy no
+longer reads context-repo state. Base allowed `git reset --hard`,
+`git clean -fd` and `git status && rm -rf build` with `autoPush=True`; the
+candidate requires approval for all three and still allows `git status`. The
+follow-up `c992dcbe` keeps `autoPush` as a sync-owner setting: off commits
+locally and reports `pending` without remote contact; on keeps the existing
+commit-audit-push path; re-enabling pushes the retained commit once. The
+reviewer accepted H01-F5 in `resume3/shell-review/REVIEW.md` and proved base
+discrimination, owner checks, idempotence and an unchanged shell decision.
+
+The same commit adds `nested_launch_path` and a launch-bound executor
+`LaunchConfinementAttestation`. A reduced-protection launch needs exact approval
+and a covering attestation in Sandbox and Full access, refuses with
+`policy_blocked`/`launch_confinement_unproven` before any process, and the
+executor repeats the check before spawn. The first review rejected two missed
+spellings: Claude `--permission-mode bypassPermissions` (the alternative was
+mixed-case against a lowercased command) and Codex `-c/--config
+sandbox_mode=danger-full-access`. `77ca5846` fixes the case handling and adds
+the config-override alternatives plus quoted `--sandbox`/`--ask-for-approval`.
+The recheck accepted at `9c55817b`: fifteen reduced forms and their tmux
+variants refuse with zero spawns in both access modes; approval alone is
+insufficient; a confined, approved launch dispatches once with an attestation
+bound to the launch id; protected forms and near-misses stay ordinary; the
+`f126a952` guidance is byte-identical.
+
+### E02-F16 provider OAuth instance owner
+
+`ddfefdbb` (integrated `22caed46`) adds an explicit `CredentialOwner` derived
+from the resolved instance root. The reproduced leak was real: a settings
+request for instance B reported A's Codex/Copilot/xAI logins, and a logout for B
+deleted A's Codex credential. Login, cancel, refresh, logout, status and caches
+now bind per instance; legacy shared data imports only through an explicit
+target. 65 focused and 3,617 broad tests pass; strict 0/546. Review receipt:
+`resume3/oauth-review/REVIEW.md`.
+
+### R01-F05 signed-app device-key qualification
+
+The release APK (52,016,558 B, SHA-256 `08e171e0`, package
+`ai.nanobot.mobile`, one RSA-4096 `CN=jaden` signer, v2+v3) ran on a headless
+API 36 x86_64 emulator against a disposable production gateway over real Serve
+TLS. The reviewer tied the APK to `918f6bb3` through a byte-identical
+`mobile-bootstrap.js`, then accepted all six decision criteria: P-256
+proof-bound pairing and read; one-effect mutation replay with a 409 on
+changed-payload reuse; expiry/restart/lost-delivery recovery; `410`, `403
+origin_mismatch` and `403 pairing_rejected` refusals; owner revoke with an
+applied audit entry, after which the app got `401`/`403 device_revoked`, cleared
+local custody 198 ms later, and a live device-key socket closed `1008`. Emulator
+coverage only; no physical device. The mobile WS mutation/logout frame gap is a
+disclosed limit: `handle_ws_frame` has no caller and `build_mobile_edge` has no
+replay cache or mutation handler. The decision explicitly leaves legacy bearer
+refresh/logout routes, headless enrollment keys and historical APK upgrades out
+of this pass.
+
+## Third wave 2026-11-14 (resume2)
+
+Every record below used the exact model
+`commandcode/deepseek/deepseek-v4.1-flash`. Repairs stayed local.
+
+### A3-4 P4 applied outcome and sidebar identity
+
+The integrated branch reproduced two defects at `7c1aa1a8`:
+E02-F20 returned `500/uncertain` and skipped invalidation when a
+`sidebar.update` fan-out failed after the effect applied; U01-F05 reused a
+failed sidebar request id for a changed payload, so the owner answered `409`
+and later edits never persisted.
+
+`3120f4d5` (integrated `cf0b2edd`) moves the sidebar broadcast out of the
+mutation try, keeps `applied`, runs invalidation, and emits
+`projection_error(request_id, reason="sidebar_broadcast_failed")`. `4f4789df`
+(integrated `2912b792`) retains a failed id only for an identical payload and
+mints a fresh id otherwise. Both are ACCEPTED after independent review at
+`cf0b2edd` (`resume2/a34-review/REVIEW.md`): 29 focused and 213 websocket
+tests pass, 4 hook tests pass, C2 and C4 fail on the base, and the C5/C6
+refusal and timeout outcomes stay distinct.
+
+### A3-6 evidence review
+
+Ten findings marked satisfied but unaccepted were reviewed at `7c1aa1a8`
+(`resume2/a36-evidence/REVIEW.md`): T01-F05, T01-F06, H03-F1, T01-F11,
+U01-F02, K01-F02, K01-F08, X01-F04, H03-F4, T01-F12. All ten ACCEPTED with
+21 source blobs matched to the pin, 6/6 probes passing, and the focused suites
+green. The recorded limits are probe-only content-length refusal, no
+AgentRunner end-to-end partial-tool-EOF case, sequential MCP startup, the
+Bedrock gate env var staying for the process, and broker-TTL VPN cleanup.
+
+### A3-8 review findings RR1 and RR3
+
+Both accepted at `7c1aa1a8` (`resume2/rr-review/REVIEW.md`). Five corruption
+classes plus age and quota pressure preserve every blob, sidecar and generated
+asset, with a non-vacuous positive control through `MediaCustody`. Whole-root
+manifests are unchanged for API/CLI preview, refusal and declined
+confirmation; a committed prune removes exactly the intended pair. No
+committed attachment migration route exists, so migration atomicity is
+recorded absent, not passed.
+
+### A3-5 delegation review and K01-F06 guidance
+
+T01-F04 and X01-F02 ACCEPTED at `7c1aa1a8` (`resume2/a35-review/REVIEW.md`).
+Remote MCP read-only hints are untrusted outside stdio/loopback and remote
+tools default to mutating; crawler `expand` is state-changing and refused
+before any result.
+
+K01-F06 is PARTIAL. `923715c7` (integrated `f126a952`) replaces the
+`codex --yolo` guidance with `codex exec --sandbox workspace-write` and states
+the external-sandbox and approval prerequisite. The policy half still needs
+the K01-Q5/D2-D4 decision: `_risky_exec_reason` does not classify nested
+`--yolo`, `--sandbox danger-full-access`, or the tmux `send-keys` form.
+
+### A3-7 native repairs
+
+Four repairs integrated from `codex/a3-7-native`:
+`750d0ce1` (R01-F11), `a3478c52` (R01-F12), `ad9d63f6` (R01-F13),
+`c7c4be4e`+`fb165891` (R01-F14 and the F12 follow-up). Review receipts are at
+`resume2/a37-review/REVIEW.md` and `F12-RECHECK.md`.
+
+R01-F11, R01-F13 and R01-F14 are ACCEPTED. R01-F12 was rejected as partial
+because a single global error slot gave concurrent callers each other's text;
+`fb165891` stores the error under the calling OS thread
+(`SYS_gettid`, 64-entry LRU, process-wide fallback), and the independent C2
+two-thread 2000-round case plus the A-after-B negative control now pass. ABI
+v1, signatures and JNI are unchanged. F12 is ACCEPTED on recheck. No device
+proof exists for the app chat path.
+
+### A3-9 installer, toolchain, CI and staged update
+
+`94542e87` (Q01-F03, R01-F17) and `6d818db6` (E02-F12) are ACCEPTED after
+review (`resume2/a39-review/REVIEW.md` and `F12-RECHECK.md`).
+
+Q01-F03 uses the persistent installed executable. R01-F17 validates every
+pinned toolchain identity or reports it unavailable. E02-F12 was first
+rejected: the CI step exec'd `nanobot/webui/build.py` without registering it
+in `sys.modules`, so fresh, stale and missing bundles all exited 1 with
+`AttributeError`. The fix imports the module and the test now executes the
+real workflow body: fresh exits 0, stale exits 1 with the stale message,
+missing exits 1 with the missing message, on Python 3.11/3.12/3.14.
+
+`2934b5e8` (Q01-F05) is ACCEPTED (`resume2/a39-deploy-review/REVIEW.md`). The
+update stages the candidate from `git archive`, verifies dependencies, bundle,
+config and candidate startup, switches only after verification, restores and
+rechecks the previous target on a post-switch failure, and writes an outcome
+receipt. The pre-change script reproduced a false success with the source
+advanced. 95/95 shell checks and 83/83 independent fixture checks pass.
+
+R01-F05 is PARTIAL. The real owner, `build_gateway_services` and WSS listener
+qualified a typed attach/read, a typed message reaching the bus, a clean
+disconnect, a revoke-then-frame 1008, and no-bearer/wrong-origin denials
+(9/9). No Tailscale tailnet/Serve mapping and no signed APK/device exist, and
+the isolated data server still differs on refresh, mutation replay and HTTP
+logout.
+
+### A3-8 evidence review and three repairs
+
+Nine of eleven reviewed findings were ACCEPTED at `6d818db6`
+(`resume2/a38-evidence/REVIEW.md`): A01-F04, K01-F13, M01-F01, M01-F02,
+M01-F04, E02-F03, E02-F04, E02-F05, E02-F09. Two were rejected:
+
+- A01-F01: retained-result reads and startup recovery blocked the event loop.
+  `2bd6db9b` adds `aresult()` and `astart()` and moves the closed-lane
+  inspection read off the caller thread. The probe shows 0.180 s lane waits
+  with 0.011 s and 0.006 s maximum loop gaps.
+- E02-F07: a crash after segment publication before the tail duplicated turns
+  (9 rows for 5). `1fb61ff0` writes a rotation intent with source active,
+  target tail and committed ids, and recovery keeps the source authoritative
+  while dropping uncommitted segments. The probe now reads each turn once.
+- A01-F05: settled delivery dispatches accumulated for the store lifetime.
+  `ef315ec1` evicts the terminal registry entry and completed task after the
+  last waiter settles, keeps durable receipts readable, and never evicts
+  unsettled work. The growth probe returns to a live size of 0 after 40
+  completions.
+
+The three repairs are READY_FOR_REVIEW; a combined review is in progress.
+
+### A3-8 durability review and repairs
+
+`resume2/a38-durability/REVIEW.md` reviewed eight findings at `ef315ec1`.
+M01-F03 is ACCEPTED: speech duration is measured by the server with a bounded
+5 s ffprobe before dispatch and fails closed. Seven were NOT_ACCEPTED with
+probes: H02-CAP-SOURCE64 (an existing oversize source denies the namespace and
+has no export/quarantine path), H02-CAP-JOURNAL4096 (no read-path rollover or
+operator export above the enumeration bound), H02-IO (every cache get
+re-resolves), A01-F03 (cron persistence blocks the loop), A01-F06 (no cron
+creator/admin isolation), A01-F08 (unconditional processing requeue) and
+A01-F09 (a local trigger obtains approval and effect authority).
+Requirements-only cases are in `resume2/req-a38-cap`, `req-a38-cron` and
+`req-h03f5`; isolation writers own each path.
+
+`resume2/a38-review/REVIEW.md` then ACCEPTED the three earlier repairs.
+A01-F01: against a real SQLite EXCLUSIVE lock the base blocks three paths for
+~0.33 s while the candidate keeps 0.002-0.003 s gaps with no blocked path.
+E02-F07: three independent routes into the segment-only crash window recover
+each turn exactly once with one manifest and unique segment ids; the base
+returns nine rows for five turns. A01-F05: the live registry stays 0 across 60
+and 120 completions, receipts stay readable, and one unsettled delivery stays
+until it settles.
+
+### A3-8 late repair group
+
+`8fd03e4b` repairs the source, journal and cache-IO findings. An existing
+67 MB source no longer denies `list_modes` or an unrelated reset; export
+returns the exact bytes with a receipt, and a new oversize publication is still
+refused. An over-bound journal namespace acquires by rolling terminal journals,
+with 9/9 retained reads and a documented archive. Cache gets use one
+process-local binding: two gets perform one resolution and one inventory
+instead of three and three. All three are ACCEPTED in
+`resume2/a38-caps-review/REVIEW.md`.
+
+`132609d1` repairs cron liveness and isolation. The durable poll runs on a
+worker thread, so a 0.3 s injected store/inspection delay produces a 0.015 s
+maximum unrelated gap instead of 0.618 s, with identical state and fired order.
+Cron list/remove is creator/admin scoped; a foreign id returns `not_found`
+without mutation. Both ACCEPTED in `resume2/a38-cron-review/REVIEW.md`; the
+admin key is not yet config-wired.
+
+`ab2f0002` repairs approval provenance and trigger recovery. Approval admission
+now requires an explicit provenance; local trigger, automation, subagent, cron
+ingress and admin-text claims are denied without consuming the pending approval
+or issuing effect authority, while trusted foreground still grants once. A
+started trigger attempt is quarantined as unknown on restart, with a settlement
+id and owner resolution, and is not replayed; only a proven-absent claim
+requeues once. Both are READY_FOR_REVIEW after 116 focused tests and a 0/546
+strict run.
+
+### A3-8 approval and recovery review
+
+`resume2/a38-approval-review/REVIEW.md` ACCEPTED both repairs. A01-F09:
+ApprovalProvenance permits a decision only for TRUSTED_FOREGROUND;
+`snapshot_decision` denies every other provenance before alias matching and
+`consume` refuses denied snapshots before any grant. All six untrusted sources
+are denied with the pending intact and zero executor calls; trusted foreground
+grants once and executes once; the legacy text baseline is unchanged. A01-F08:
+the settlement id is fsynced before submit, a started attempt is quarantined as
+unknown with the same id and one attempt, and only settlement-less claims
+requeue once. The crash probe gives requeued=0, unknown=1, effects=1 versus
+base redelivered=2/effects=2. The unknown state has a store API but no shipped
+CLI/WebUI resolution action yet; the consumer is default-off.
+
+### A3-9 R01-F05 partial and app-receipt dispute
+
+`resume2/a39-r01f05-review/REVIEW.md` confirms the real Serve TLS host path:
+typed attach/read, typed mutation on the real bus, clean disconnect, revoke
+1008, bearer/origin denials and `/remote/v1/refresh` 200. It does not accept
+the finding. `websockets 15.0.1` rejects non-GET before routing, so legacy
+`POST /mobile/v1/refresh` and `/logout` return 502 through Serve and zero bytes
+on loopback; WS logout is `scope_denied` and leaves the token valid; app logout
+is local-only; refresh rotation never replays an old token; and the app receipt
+runs at `1b3b7fc7` rather than the `ef315ec1` artifact.
+
+The first app receipt was disputed for provenance. The cleaned re-run at
+`ef315ec1` resolves it: run id `1f1f3e39` is consistent across state, the
+redacted deep link, logs, draft and dumps; the retained tee log records a host
+`401 missing_access` and a paired app `200` with `Tailscale-User-Login` and
+`X-Forwarded-For: 100.100.117.64`; logcat is complete; the APK hashes to
+`f6505ecf`; and the same `@kevu` parent, read-only child, draft and 7.6 KB
+attachment survive System Back. The UI clause is accepted. R01-F05 stays
+partial because at launch 6 of 10 requests are rejected as
+`native request was not admitted`, the broker reason is masked at
+`NativeRequestCorrelator.kt:23`, and a read succeeds only after a devtools
+refresh. A bounded native admission-recovery repair is in progress.
+
+### A3-1 and A3-9 residual review
+
+`resume2/a3-residual-review/REVIEW.md` accepted X01-F01 as a dormant activation
+gate: a real composition with `cli_apps.enable=True` registers 24 tools and no
+`run_cli_app`, and the fixed manifest omits the tool. S02-F03, Q01-F01 and
+R01-F20 are confirmed deferrals with exact contract lines: the A3-2 packet keeps
+lock-scope cleanup separate, the implementation plan excludes Windows, and the
+v1 contract excludes the two-version APK upgrade rehearsal. H01-F6 and H01-F7
+are source-confirmed P2 structural debt with no acceptance criterion; they are
+recorded as DEFERRED_STRUCTURAL to the turn/loop and runner owners rather than
+normalized late in the audit. H03-F5 is NOT_ACCEPTED: Azure compaction fallback
+records 0 attempts for 2 dispatches, OpenAI-compat 1 for 2, and xAI never calls
+the observer.
+
+### A3-7 launch admission and A3-9 rotation
+
+`resume2/a37-admission/` and `resume2/a37-admission-review/REVIEW.md` close the
+launch clause. The broker reserved four terminal slots at the app's 8 MiB
+ceiling, so a ten-read launch admitted four and refused six with "bounded queue
+is full"; the correlator threw a generic "not admitted" before reading
+`lastError` and never retried. `7ec42d55` (integrated `30f8cd4c`) records the
+per-thread reason, retries only transient failures within 8 attempts and a 10 s
+deadline, refuses origin/revoke/scope/invalid/closed immediately, reuses
+identical bytes so a mutation keeps its replay identity, and cancels backoffs on
+close. The reviewer drove the production `ScheduledRetryTimer`: queue-full
+recovers in 416 ms over four attempts, a ten-thread burst admits all, close
+cancels with no pending timer, the deadline stops at one attempt, and all six
+permanent diagnostics refuse. The launch log has 23 request ids for 14 terminal
+results, nine refusals, zero not-admitted and no CDP refresh. Receipt
+corrections: the 21 http_response events double-count seven WebView echoes
+(native 14); the 401/200 proxy evidence is from an earlier run; screenshots
+predate the hashed APK.
+
+`resume2/a39-rotation/RESULT.md` qualifies the rotation clause for
+`/remote/v1` over real Serve TLS, 18/18: refresh rotates both tokens, the old
+access token is 401, an old refresh replay is 401 with zero durable rotations
+and an unchanged hash, the new token reads 200, and a five-way concurrent
+refresh yields exactly one 200 and four 401 with one rotation. Traversal and
+cleanup are proved. The worker also found a latent defect: `TokenService.refresh`
+issues `AccessGrant(device_generation=0)` while `validate_access` compares the
+proof generation, so a proof-bound device would be refused after a successful
+rotation. It is unreachable today because v2 pairing issues an empty refresh
+token; it is recorded as a residual.
+
+### A3-10 dispositions and A3-6 C00-F06
+
+`resume2/a310/A3-10-DISPOSITIONS.md` traces all eight candidates, and
+`resume2/a310-review/REVIEW.md` accepted all six reviewable dispositions.
+A01-F02 and A01-F07 are active/gated. C00-F04 and C00-F05 are isolated by an
+unconditional migration guard that runs first in the onboarding command;
+`--wizard` and `--refresh` exit 1 and the truncating writer and secret UI are
+unreachable. The v1 contract selects a first release without legacy migration,
+so isolation is the accepted disposition; retire-or-repair is a future
+activation decision, not a release blocker. S01-F02, H02-ART-SOURCE,
+H02-LEGACY-ISOLATE and H02-IDLE-DORMANT are retained with named owners.
+AC10.1 remains partial until the six R18 durability findings are accepted;
+AC10.2 needs A3-5 evidence; AC10.3 needs A3-9 acceptance plus an artifact
+digest.
+
+C00-F06 first repair `c90f85b9` binds `read_file` to the request instance media
+root through `RequestContext.media_root`, `current_media_read_root()` and the
+loop's four request contexts. Instance artifacts read byte-for-byte, ambient
+media is refused under an instance context, the no-instance legacy read still
+works, and outside/credential paths stay refused. `6145a6cf` binds the policy
+media exemption to the same request root for read/list only, so the
+loop-registered restricted-instance read now returns the exact artifact bytes.
+Review at `6145a6cf` (`resume2/a36-review/REVIEW.md`) ACCEPTED: C7 fails on
+`c90f85b9` and passes now; the differential probe is 20/20 against 18/20 on the
+base, with ambient, outside, sibling, symlink and credential refusals
+unchanged; 1528 tools, 295 context/security and 45 owner tests pass. Two
+admin-only loop/delegation contexts still omit `media_root`, and memory
+custody and WebUI asset readers remain ambient.
+
+### A3-9 real Serve transport
+
+The earlier R01-F05 report wrongly stated that this host has no tailnet
+identity or Serve mapping. `resume2/a39-serve/RESULT.md` corrects it:
+`https://fedora.taila1e707.ts.net` terminates TLS at tailscaled with a valid
+Let's Encrypt chain and proxies `/mobile/v1` to `127.0.0.1:8767`, and
+`/remote/v1` to `18791`. With no live listener on either port, a disposable
+production composition passed 11 of 16 cases: typed attach/read, typed
+mutation to the real bus, clean disconnect, revoke-then-1008, missing-bearer
+401, wrong-origin 403, and `/remote/v1/refresh` 200 with rotated tokens. The
+five failures are legacy `/mobile/v1` POST refresh/logout routes: the
+WebSocket listener rejects non-GET before routing and the data server that
+implements them is synthetic staging. R01-F05 therefore remains partial for
+the device-only APK, keystore, custody and phone transport, and for those
+legacy POST semantics.
+
+## Second repair wave 2026-11-14
+
+The second wave added these repairs. Each one has a named review or is recorded
+in the ledger with its exact evidence.
+
+| Area | Commit | Result |
+| --- | --- | --- |
+| A3-6a skill identity, any-of bins and no-query ceiling | `95a3e2d5` | K01-F03, K01-F07, E02-F23 accepted. |
+| A3-4 P6 folder-grant instance scope | `42025e03`, `456b77b5` | E02-F15 accepted after the test stub fix. |
+| A3-4 P7 search/read contract | `6969f45b` | E02-F08 accepted; display-only rows are excluded. |
+| A3-8 image and PDF bounds | `af4437de`, `69bc255e` | M01-F05, M01-F06 accepted. |
+| A3-8 delete completeness and tombstones | `cdd5ce27` | E02-F06, E02-F10 accepted. |
+| A3-9 readiness and systemd outcomes | `f26a61c3` | C00-F07, R01-F06 accepted. |
+| A3-4 P4 client completion fences | `c9b94a4f` | U01-F03, U01-F04, U01-F06 accepted. |
+| A3-6b MCP loader and readiness | `735f3aa7` | T01-F01, T01-F02, T01-F03 accepted. |
+| A3-6b provider route and login | `38e35dd0`, `9f1d74cf` | H03-F2, H03-F6, H03-F7 accepted. |
+| A3-4 P3 queue admission, Stop and TUI context | `069cdaf6`, `e57bfe53` | U01-F01, D01-F01, D01-F02 accepted. |
+| A3-6c instance stores and repo confinement | `6b798c27`, `55502ccb` | E02-F11, E02-F13, E02-F18, K01-F01 accepted. |
+
+The ledger now has 76 accepted findings, 0 ready for review, and 60 unverified.
+The full suite at the corrected candidate passed 18,441 tests with 22 skips and
+6 subtests. Strict BasedPyright reports 0 diagnostics in 546 files. The
+receipts are in `a3-evidence/a3-reconciliation-2026-11-14/final/`.
+
+The 30 cross-cutting test-double failures found by the first final suite were
+mechanical signature breaks from the new instance-root and private-helper
+parameters. The owners fixed them in `55502ccb`, `9c647427` and `9f1d74cf`.
+The full suite was rerun after those fixes and is green.
+
+## W1 A3-7 review 2026-11-14
+
+Reviewer W1 used the exact model `commandcode/deepseek/deepseek-v4.1-flash` and
+accepted E02-F02, E02-F17 and E02-F22.
+
+E02-F02: a non-loopback host without a token, token-issue secret or trusted
+proxy assertion is refused at config validation. A validation-bypassing
+handshake returns 401. Issuance without a secret returns 403 and stores no
+token. A valid issued token is accepted. Loopback behavior is unchanged.
+
+E02-F17: the remote-access root, owner socket, store and service plan take the
+explicit instance root. Two instances resolve distinct sockets and state. An
+owner live at A is unavailable at B, and A's pairing leaves B byte-identical.
+Out-of-root sockets are refused.
+
+E02-F22: desktop notification is an authenticated same-origin WebSocket
+mutation. A direct GET is 405, an unauthenticated request is 401, a cross-origin
+request is 403, and every refusal spawns no notifier. A same-origin
+authenticated request returns 200 with exactly one notifier call. The client
+removed the GET.
+
+The independent probe passed 58 checks. The new tests pass 10, the remote suite
+226, the WebSocket suite 421, the mixed suite 63, and the client notification
+tests 6. The parity inventory now classifies `desktop.notify` as the mutation
+(commit `cd7c8e09`). The review has no blocking missing proof. The ledger now
+has 49 accepted findings and 87 unverified.
+
+## A3-7 authority repair 2026-11-14
+
+Commit `ab994c3b` closes the three Python and WebUI A3-7 gaps. A non-loopback
+listener with no token, token-issue secret or trusted proxy assertion is refused
+at configuration validation. A handshake that bypasses validation returns 401,
+and token issuance without a secret returns 403 and issues nothing. Loopback
+local behavior is unchanged.
+
+Remote-access owner sockets and state now resolve from the explicit instance
+root. Two instances resolve distinct sockets under their own roots. The desktop
+notification is an authenticated local WebSocket mutation with a same-origin
+check; an unauthenticated or cross-origin request is refused and spawns no
+notifier. The client sends the mutation instead of an unauthenticated GET.
+
+The probes show the before defects and the after behavior. The focused run
+passed 226 tests, and the integration target files pass 32. Strict BasedPyright
+is 0/546 before and after. W1 accepted E02-F02, E02-F17 and E02-F22. The native
+media-logging and broker-bound findings remain blocked without the native
+toolchain.
+
+## A3-9 and A3-10 inventory 2026-11-14
+
+W22 mapped the A3-9 release and A3-10 retirement findings at the candidate.
+The focused suites passed 270 tests. The probes separate five satisfied items
+from the remaining defects.
+
+A3-9 is not ready. Q01-F02, Q01-F06 and Q01-F07 are accepted. R01-F20 is
+outside the selected first-release scope. These need bounded repairs: the CLI
+and gateway health parsers still disagree and the CLI crashes on non-object
+JSON (C00-F07); systemd supervision reports applied before running and ignores
+failures (R01-F06); the installer still uses `pipx run` (Q01-F03); toolchain
+checks do not verify the pinned Bun version (R01-F17); the update path advances
+source before success (Q01-F05); the release switch is not wired (E02-F12); the
+mobile data server still uses a fixture chat path (R01-F05). The Windows
+crawler stays out of this host scope.
+
+A3-10 has no absent goal or trigger runtime. The goal mutation tools are
+registered and `/goal` grants turn-scoped permission. The local-trigger consumer
+is owned by the gateway behind `gateway.localTriggers`, which defaults false, and
+both commands report the inactive state truthfully. A01-F02 and A01-F07 are
+accepted. The gated onboarding paths C00-F04 and C00-F05 stay isolated until a
+retire-or-repair decision. H02-ART-SOURCE, H02-IDLE-DORMANT, H02-LEGACY-ISOLATE
+and S01-F02 are retained by disposition.
+
+Neither stage is accepted. A3-9 needs the repairs above and an artifact digest.
+A3-10 needs the two onboarding decisions and A3-9.
+
+## AR4 acceptance 2026-11-14
+
+W18 read the captured-binding path and ran the 34 request-binding tests. An
+admitted call uses its original wrapper and schema. A same-name replacement is
+revoked at unregister and the call is refused; it is never dispatched to the
+replacement. The executor count stays zero and the old resource closes once. A
+failed replacement keeps the authorized old connection usable. AR4 is accepted
+with the refuse-on-replacement choice. The concurrent initial-caller race stays
+a separate partial finding under T01-F03.
+
+## A3-6a guidance repair 2026-11-14
+
+Commit `4b5c95a2` aligns three shipped skill guidance files with the runtime.
+The cron skill now says every job starts an agent turn and uses the configured
+agent timezone, not a server-local default. The clawhub skill uses the effective
+agent workspace instead of four hardcoded paths. The webapp-testing skill names
+the operator-owned browser connection settings and lists the caller CDP flags
+that the wrapper blocks. K01-F04, K01-F05 and K01-F09 are accepted.
+
+The guidance tests pass 34 cases and the stale-claim grep finds no match. The
+remaining A3-6a items need code or a decision: skill metadata validation,
+alternative binary requirements, and the no-query projection ceiling.
+
+## Linux stage acceptance 2026-11-14
+
+The coordinator accepted A3-0, A3-1, A3-2 and A3-3 for the Linux scope. Each
+acceptance names its gaps, and none claims macOS, Windows, physical Android or
+an installed release artifact.
+
+A3-0 has a local qualification report. The candidate passed 18,357 tests with
+22 skips and 6 subtests. Strict BasedPyright is 0 diagnostics in 546 files. The
+frozen comparator reports `PASS_NO_NEW_DIAGNOSTICS` with 0 introduced. The
+WebUI suite passed 1,550 tests and lint, and the bundle rebuild is
+byte-identical.
+
+A3-1 met AC1a through AC6b. The AC1a probe writes the image and sidecar under
+the explicit instance media root, leaves the ambient root without an artifact,
+and keeps that root after reload. H01-F1, H01-F2, H01-F4, H01-F3, K01-F10,
+K01-F12, H03-F3, T01-F10 and K01-F11 are accepted. The structural findings
+H01-F6 and H01-F7 stay unverified. C5 remains: the built-in `read_file` does not
+yet resolve the instance media root.
+
+A3-2 met AC2.1 through AC2.5. S01-F01, S01-F03, T01-F07, S02-F02, C00-F01,
+C00-F02, C00-F03, E02-F14, T01-F09 and X01-F03 are accepted. X01-F01 stays a
+gated gap because `run_cli_app` is not registered and restricted activation
+needs qualified confinement. S02-F03 stays deferred because no contention
+measurement exists. Windows and macOS confinement claims remain unverified.
+
+A3-3 met AC3.1 through AC3.3. The review passed 145 tests in five named suites
+and 126 in each of two related groups. Its gaps are recorded: no single fixture
+holds completed, interrupted and uncertain together; a persisted RUNNING run
+record has no terminal projection; the unqualified platform is simulated; the
+`bc850a91` source-reader rollback leg is no longer reproducible; and the lost
+save-acknowledgement path is outside AC3.3.
+
+A3-4 remains in progress. A3-5 through A3-10 remain unverified.
+
+## W21 named review 2026-11-14
+
+Reviewer W21 used the exact model `commandcode/deepseek/deepseek-v4.1-flash`
+and reviewed the integrated P1 code at `19e95d33`. It accepted AR1, AR2 and
+T01-F08.
+
+AR1: one consent yields one effect in duplicate batches and later iterations.
+Racing, stale, expired, revoked and changed-target decisions start none. The new
+deny case uses an instrumented risky tool and observes zero calls. Chat text
+cannot grant.
+
+AR2: the real child path waits, the file stays unchanged, and one approval
+applies one bulk edit. A later identical effect needs fresh approval. Parent
+revocation and a stale child generation refuse.
+
+T01-F08: `desktop_use` is risky. The read-only allowlist is exactly `info`,
+`screenshot`, `cursor_position` and `wait`. Every other, unknown or non-string
+action requires one exact-effect approval. Changed coordinates, action or text
+return approval required with a different effect id and zero backend calls.
+
+The author cases C1-C9 are preserved. The C4 `wait` and C6 `edit_file`
+adaptations do not change the required outcome.
+
+## Candidate verification 2026-11-14
+
+The integrated candidate at `8355e614` passed the full Linux suite: 18,357
+passed, 22 skipped, 6 subtests passed. Strict BasedPyright reported 0
+diagnostics in 546 files. The A3-1 AC1a direct probe passed: the explicit
+instance writes its image and sidecar under its own media root, the ambient
+root receives no artifact, the instance asset reader resolves the artifact, and
+a reload keeps the same media root. The default caller still writes ambient
+media and a denied output path is refused.
+
+A3-6b and A3-6c inventories found several partial or missing items: MCP plugin
+schema validation and disposer, waiter cancellation, route capabilities,
+Codex/xAI login generations, transport attempt totals, CLI-apps/MCP/usage
+instance roots, credential profiles, and repo entrypoint confinement. A3-7
+found the listener, owner-instance and notification issues plus native media
+logging and broker bounds; native and physical checks are blocked on this host.
+
+A3-1 stage acceptance remains held on the AC1a `read_file` media-root residual
+(C5), and on the retained structural findings H01-F6 and H01-F7. A3-2 remains
+held on E02-F14 review. A3-3 criteria pass but depend on A3-1. A3-4 stays in
+progress.
+
+## E02-F14 installer cleanup 2026-11-14
+
+A direct probe closes the AC2.5 kill-and-join clause. The probe calls the real
+`install_marketplace_skill` path with a fixture `npx` that records its own PID
+and a spawned child PID. On timeout the call returns `SkillsMarketplaceError`
+with status 504. On cancellation it re-raises `CancelledError`. In both cases
+neither recorded process exists before the call returns. The installer already
+uses the owned process path.
+
+The captured installer output is still unbounded because `communicate()`
+buffers it. That observation is outside the packet's timeout and cancellation
+clause. It remains open for the shared process owner. W1 accepted E02-F14 for
+the AC2.5 cleanup clause.
+
+## H01-F1 lost-response acceptance 2026-11-14
+
+W1 reassessed H01-F1 at the integrated candidate. The existing test
+`tests/session/test_canonical_followups.py::test_admission_and_atomic_consumption_are_idempotent_and_bound`
+proves the clause the earlier review could not find. Admission is idempotent
+for a server-minted identifier. Consumption writes the input exactly once and
+drops the journal row in the same write. A repeated consume after a lost
+response returns the same committed event. An altered projection, a different
+writer or a replaced binding is refused.
+
+W1 also ran a direct post-commit response-loss probe with a second writer on the
+same owner. The retry returned the same event id, the event count stayed at one,
+the journal was absent and the content did not change. H01-F1 is accepted. The
+residual is a design note: a binding re-created by a different writer is
+rejected by design, so at-most-once holds and at-least-once is not promised.
+
+## P1 approval effect 2026-11-14
+
+W17 made `desktop_use` a risky tool. Only `info`, `screenshot`,
+`cursor_position` and `wait` are read-only. Every other, unknown or non-string
+action requires one exact-effect approval bound to the full argument
+fingerprint. The existing sealed one-use authority and dispatch consume are
+reused; no second approval mechanism was added.
+
+The same commit covers the two AR residuals. A typed deny with an instrumented
+risky tool starts no call. After a child approval is consumed, a later identical
+risky child effect requires fresh approval and applies nothing. The author cases
+C1-C9 pass, including the four-action read-only matrix.
+
+The repair commit is `bf80569a`, cherry-picked as `19e95d33`. The six required
+suites passed 164 tests at the repair and 146 at integration HEAD. Strict
+BasedPyright is 0/546 before and after. W21 accepted AR1, AR2 and T01-F08.
+Documented limits: C4 `wait` is a local timer; C6 repeats an `edit_file` bulk
+replace; desktop screenshot is read-only under the author contract; delegated
+roles cannot use `desktop_use`.
+
+## Desktop and narrow client evidence 2026-11-14
+
+W4 ran the current WebUI source, not the older 7d96468c overlay. The full
+suite passed 101 files and 1,550 tests. Lint passed with no diagnostics. A
+fresh build is byte-identical to the shipped bundle; only the manifest
+node_modules path prefix differs. The shipped index and bundle hashes bind the
+receipt.
+
+On a 1000x700 desktop viewport, W4 passed the real-UI checks. The parent draft
+and attachment survive opening subagent activity, switching siblings, opening
+the shared file tab, and returning. The panel docks beside the composer and
+never covers it. Child detail is read-only. Stop stays available while
+background work is active. Focus returns to the child row.
+
+W13 then used a genuine 390x760 Playwright viewport on a fresh `client`
+fixture. The activity dialog fills the viewport. The icon-only Back control sits
+beside the title, has zero text nodes and one svg, and exposes the accessible
+name "Back to parent chat". The parent composer is covered, inert and hidden
+from the accessibility tree. The detail has no composer. Back restores the
+draft and attachment.
+
+The corrected run scrolled the thread to 1790, opened the detail from the child
+row, and returned with scrollTop still 1790, against a bottom position of 4190.
+`document.hasFocus()` was true and `document.activeElement` was the exact
+originating child row button. The earlier iframe run could not separate
+preservation from re-application; the fresh top-level viewport run settles the
+measurement. Android system Back and touch/IME behavior remain unproven because
+this host has no SDK or emulator.
+
+## A3-3 stage review 2026-11-14
+
+Reviewer W16 used the exact model `commandcode/deepseek/deepseek-v4.1-flash`
+and reran the A3-3 evidence at the integrated candidate `2ca0deb8`. It reused
+no receipt because the earlier inputs do not match the current candidate.
+
+AC3.1 passes. One session key and incarnation survive restart. The SDK
+continues the legacy transcript without a duplicate. The child keeps its
+parent key and incarnation, its delegated profile, depth 1 and native kind. A
+stale parent cannot take over a recreated child.
+
+AC3.2 passes. A completed turn stays readable. An interrupted recovery waits
+for confirmation. An uncertain tool is never replayed. A stale lease or
+generation cannot mutate the session. A platform without the lease primitive
+refuses a managed writer and creates no state.
+
+AC3.3 passes. A valid prefix followed by an invalid message leaves no partial
+message or metadata after flush and reopen. Valid unmanaged ingest works and
+managed import still refuses.
+
+The focused run passed 145 tests in five named suites and 126 in each of two
+related groups. Six probes exited 0.
+
+The A3-3 stage is not accepted yet. Its packet depends on A3-1, and A3-1 is
+open on the H01-F1 lost-commit-response test and the structural H01-F6/H01-F7
+claims. The Linux review also names these gaps: no single fixture holds a
+completed turn, an interrupted run and an uncertain effect together; a
+persisted RUNNING run record has no terminal projection; the unqualified
+platform is simulated; the `bc850a91` source-reader rollback leg is no longer
+reproducible; and the lost save-acknowledgement path is outside the AC3.3
+sentence.
+
+## W15 named review 2026-11-14
+
+Reviewer W15 used the exact model `commandcode/deepseek/deepseek-v4.1-flash`.
+It reviewed the integrated code at `2ca0deb8` and confirmed the five changed
+files are byte-identical to the repair commits.
+
+W15 accepted S01-F01, E02-F19 and E02-F21. The Once/task projection now agrees
+with the live policy for read, write and command eligibility, including the
+managed-repository exclusion. Every non-boolean remote-access value returns 400
+without a mutation. The pairing-renew action resolves, is classified as a
+mutation, and a same-request-id replay does not renew twice.
+
+The ledger now has 35 accepted findings, 0 ready for review, and 101 unverified.
+
+## A3-8 durability and retention inventory 2026-11-14
+
+Two read-only workers mapped the A3-8 findings at `ceaf8fb8`. Stage acceptance
+is not granted because A3-6 and A3-7 remain open.
+
+W8 covered source, journal, transcript, scheduler, continuation and Dream.
+Four findings are satisfied: A01-F01 ordered asynchronous journal writes,
+A01-F04 scheduler rollover, E02-F07 transcript rotation, and K01-F13 skill-only
+Dream custody. Four are partial: both source and journal capacity limits,
+cron polling, and automation approval provenance. Five are not implemented or
+conditional: H02-IO caching cost, delivery-registry retention, cron
+administration scope, local-trigger settlement, and the typed-decision
+provenance gate. The focused read-only run passed 491 tests.
+
+W9 covered retention, media, parsers and the asset index. Seven findings are
+satisfied: retired attachment migration, sidecar generation deletion, audio
+duration measurement, complete-evidence pruning, Windows path retention, stable
+asset pagination, and transcript identity. M01-F06 is partial: the PDF limit
+runs after decoding. Three are not implemented: image reference budget,
+session-delete completeness, and Temporary Chat tombstone retirement. The
+focused read-only run passed 324 tests.
+
+RR1 and RR3 remain open. The repair slices are recorded in
+`w8-a38a/REPAIRS.md` and `w9-a38b/REPAIRS.md`. Each behavioral slice needs a
+requirements-only author before its test changes.
+
+## P5 settings route repair 2026-11-14
+
+W14 repaired two A3-4 findings. Commit `7f20e78d` makes the remote-access
+mutation require an actual JSON boolean. A string, number, null, array or
+object now returns 400 before any setting change. A missing field also returns
+400. Real booleans still succeed.
+
+The same commit registers `settings.remote_access.pairing.renew` in the route
+table, the mutation path map and the local-only allowlist. The action reaches
+the existing domain handler once and no longer returns 404. The author cases
+C1-C5 run at the real WebSocket mutation boundary; C4 and C5 send a pending
+pairing id because the domain requires one. The focused set passes 53 tests at
+the repair and 37 at integration HEAD. Strict BasedPyright is 0/546 before and
+after. W15 accepted E02-F19 and E02-F21.
+
+## S01-F01 Once projection repair 2026-11-14
+
+W1 demonstrated that only the Full branch asked the live path policy. A live
+Once/task root over a configured protected directory reported read and write
+true while the policy denied the path. The repair commits `107fecb6` and
+`a6131d0c` make the Once/task branch ask the same predicate for read, write and
+exec. Command eligibility now also requires the task command mask and a target
+outside every managed configured-repository root.
+
+The W1 probe now reports read false and write false with no drift. The matrix
+probe moved from 11 disagreements to full agreement. The requirements-only
+cases C1-C6 preserve the Once, Full, normal, proposal and managed-repository
+scopes. The repair passes 19 focused tests at its commit and 63 at integration
+HEAD. Strict BasedPyright reports 0 diagnostics in 546 files before and after,
+with no new signatures. W15 accepted S01-F01.
+
+## W1 named review 2026-11-14
+
+Reviewer W1 used the exact model `commandcode/deepseek/deepseek-v4.1-flash`.
+The reviewer read the pinned receipts and the current source at
+`ceaf8fb88faf5cd8162a34236c52d7789127b181` (tree
+`4234c655970a85da3d0ac5aa603c89ca0a9b827b`). The reviewer reran the closest
+focused checks. Every receipt input matches the current source bytes.
+
+The ledger now has 32 accepted findings, 0 ready for review, and 104
+unverified. W1 accepted 11 entries:
+
+| Finding | Proof |
+| --- | --- |
+| H01-F2 | AC3b continuation and later-error outcomes. |
+| T01-F10, K01-F11 | AC5 default guidance and scoped guidance. |
+| S01-F03 | AC2.1 one shared native owner count. |
+| T01-F07 | Restricted browser and device launch refusal. |
+| S02-F02 | Linux/POSIX exec ownership and reservation release. |
+| C00-F01 | Interactive setup cleanup after a failure. |
+| C00-F02 | Concurrent SDK close joins one attempt. |
+| C00-F03 | Grouped rollback retains owned work. |
+| X01-F03 | Bounded CLI Apps output. |
+| T01-F09 | Linux/POSIX descendant quiescence. |
+
+W1 did not accept three entries. The exact missing proof is below.
+
+| Finding | Missing proof |
+| --- | --- |
+| H01-F1 | AC3a clause 3: a lost commit response must recover with the original source identity and apply the input at most once. The A3-8 retained-evidence batch owns this test. |
+| S01-F01 | W1 demonstrated a residual defect. The Once/task branch of `workspace_focus.py` still returns read from directory existence and write from root access. A live Once projection reported read and write true while the path policy denied a configured protected directory. |
+| E02-F14 | No focused test cancels or times out `install_marketplace_skill` and shows that the installer and its descendants are killed and joined. The captured install output is also unbounded. |
+
+W1 confirmed that H01-F6 and H01-F7 stay unverified. A3-1 proves the concrete
+F1 and F2 defects, not the structural projection or dispatch deduplication.
+S02-F03 stays deferred because no contention measurement exists. X01-F01 stays
+unverified and dormant: the real composition registers 24 tools without
+`run_cli_app`.
+
+The repair owner for S01-F01 started from the W1 probe. A same-model
+requirements-only author prepared C1-C5 for the Once/task, Full, normal and
+proposal scopes. The owner integrates those cases and runs the frozen strict
+comparison.
+
+## RR2 explicit refusal 2026-11-14
+
+W2 determined that an older reader must keep process continuations disabled.
+In that mode the reader starts and never opens the journal. A probe with an
+unreadable journal started cleanly. With continuations enabled, the reader
+refuses the whole journal at `source_state` with `extra_forbidden` and
+dispatches nothing. Both older readers reject the current record.
+
+A compatible inspect-only export is unsafe. It would remove the `source_state`
+fence, and the older reader would resume work by session key. The selected
+first-release contract permits an explicit refusal when the older reader
+cannot read the state safely. The journal, terminal, unknown and originless
+rows, and device revocations stay readable with the current reader. No row was
+downgraded and the journal bytes did not change.
+
+Commit `b6000cef` records this behavior in the rollback procedure. No product
+code changed. Receipts are in
+`a3-evidence/a3-reconciliation-2026-11-14/w2-rr2/`. The coordinator readback
+accepted RR2 on 2026-11-14 for the identity fence, the non-replay disposition,
+and the explicit-refusal rollback path. The controlled refusal message and a
+CLI export stay with the CLI owner.
+
+## A3-4 inventory and A3-6 preparation
+
+W3 mapped the 14 A3-4 findings and AR1/AR2 to current owners and tests. Four
+findings are satisfied, five are partial, and five are not implemented. AR1 is
+proved except for an instrumented deny case at the loop boundary. AR2 is proved
+except for a second identical child effect in a later iteration. The package
+order is in `w3-a34/PACKAGES.md`. A requirements-only author produced nine
+cases for the missing authority tests.
+
+W5 mapped the A3-6a findings. T01-F11 and U01-F02 are satisfied. K01-F03,
+K01-F04, and E02-F23 are partial. K01-F05, K01-F07, and K01-F09 are not
+implemented. The repair slices and proof-only gaps are in
+`w5-a36a/REPAIRS.md`.
+
+This host has no Android SDK, emulator, Go toolchain, or Playwright browser.
+Android, native broker, and physical-device checks remain outside this run.
+The in-app browser and the frozen Python environment supply the Linux checks.
+
+## A3-3 child history and rollback review
+
+The Linux review at `cfb72439` passed 290 focused tests across three runs.
+The original-chat Stop probe stopped a background child after its fixture
+read. After restart, child detail showed the same call and result. The child
+list showed `stopped`. The session metadata retained its interrupted
+disposition, parent key and incarnation, profile, depth, and execution kind.
+The parent history had no child tool rows. The restarted runtime made no
+model calls. This review accepts AR3.
+
+The process tests verified that a reset or replacement blocks stale
+completion. A current completion delivers once. A record without source
+identity remains inspectable and cannot resume. RR2 remains open. Both older
+readers reject a current process record that contains `source_state`.
+Keep process continuations disabled when you roll back to either reader.
+Keep the new journal for inspection with the current reader.
+
+The current CLI prepared a stopped copy with both session histories. The
+installed previous reader and the source reader at `bc850a91` read the
+session keys, ordered messages, and metadata. The current reader also read
+the metadata after restart. The pre-metadata reader refused an unprepared
+copy at a different workspace path. It read the pre-upgrade snapshot after
+restore at the original path. The source and snapshot hashes matched before
+and after the copied-state checks. [Rollback procedure](../../migration/a3-release-rollback.md)
+
+The SDK ingest and legacy continuation receipts cover AC3.3 and the legacy
+part of AC3.1. The current tests cover child recovery, stale writers, and
+uncertain effects on Linux. The session rollback check passed. This review
+accepts E02-F01. The ledger now has 21 accepted findings, 14 ready for review,
+and 101 unverified.
+
+The A3-2 Linux prerequisite run passed 115 tests. It covered native admission,
+deadlines, confinement, composition cleanup, and the CLI Apps and skill
+installer adapters. The foreground runtime still withholds `run_cli_app`.
+The Settings Test action has its own owner scope and runs a fixed `--help`
+command. Review the remaining A3-2 findings and the process-journal gap
+before accepting A3-4.
+
+Receipts are in `a3-evidence/a3-reconciliation-2026-11-14/a33-review/` beside
+the worktree.
+
+## A3-2 browser and device workspace access
+
+Commit `6e2c7761` connects the browser and device tools to the shared resource
+policy. Restricted turns refuse host automation before browser setup or
+launcher startup. A working directory inside the workspace cannot constrain
+the external command's file output. Unrestricted native calls can still
+launch the tools with the requested directory. The managed WebUI tool set
+excludes both tools.
+
+On Linux, a fixture launcher recorded four restricted launches before the
+repair. The same calls now report `policy_blocked` and create no receipt.
+The unrestricted calls launch with the requested directory and arguments.
+The check uses a fixture in place of the browser and device packages.
+
+The focused run passed 77 tests. The full run passed 18,319 tests and six
+subtests, with 22 skips. Strict BasedPyright found zero diagnostics in 546
+files before and after the repair. The dependency pins matched. The diagnostic
+comparison and Ruff passed. The receipts are in
+`a3-evidence/a3-reconciliation-2026-11-14/t01-f07/` beside the worktree.
+
+The [ledger](evidence.json) has 20 accepted findings, 15 ready for review, and
+101 unverified. T01-F07 is ready for review. Review the A3-2 and A3-3
+prerequisites before accepting A3-4. Keep restricted CLI Apps activation
+gated on qualified confinement. S02-F03 remains deferred under the A3-2
+packet.
+
+### A3-3 SDK continuation after restart
+
+A Linux probe opened a saved legacy transcript through the SDK. After
+restart, the same key returned the original messages in order. An SDK turn
+appended one exchange. A third runtime read all four messages from the same
+key. The session list held one entry throughout the probe.
+
+This covers legacy SDK continuation under AC3.1. The probe uses a scripted
+provider. Its receipt is in
+`a3-evidence/a3-reconciliation-2026-11-14/a33-restart/` beside the worktree.
+The later [A3-3 review](#a3-3-child-history-and-rollback-review) records the
+child-source and rollback results.
+
+## Audit continuation after OpenCode
+
+Continue on `codex/a3-audit-reconciliation` in
+`/home/jaden/Documents/Utilities/nanobot-a3-reconciliation`. The worktree contains
+OpenCode's 17 commits through `5e1bc17c` and the rollback repair at `3492ac30`.
+The branch includes the current audit implementation base `722bd8ec`.
+
+At this checkpoint, the [ledger](evidence.json) had 20 accepted findings,
+14 ready for review, and 102 unverified. Codex reviewed and accepted four
+OpenCode findings in A3-1.
+They cover archive provenance, prepared provider fallback, and input validation.
+
+| Finding | Current result |
+| --- | --- |
+| C00-F03 | The composition retains dependencies when a grouped cleanup error reports owned work. Retry closes only the remaining resources. The new cases passed after the repair. Two grouped cases failed on the baseline. |
+| E02-F01 | A malformed import leaves the existing transcript and metadata intact after flush and reopen. A missing session stays absent. Valid unmanaged import and managed refusal pass. |
+| S02-F03 | The manager lock still covers process waits. The packet defers this change until a measured need justifies it. |
+| X01-F01 | The current foreground runtime leaves `run_cli_app` out of the tool registry even when CLI Apps is enabled. Keep restricted activation gated on qualified confinement. Review the settings test action separately. |
+| T01-F07 | Route browser and device cwd and output paths through the shared resource policy or restrict the supported forms. |
+
+On Linux, the OpenCode baseline passed 18,310 tests. The rollback repair passed
+18,313 tests, with 22 skips and six passing subtests. Strict BasedPyright found
+zero diagnostics in 546 files before and after the repair. Both runs used the
+same 211 dependency pins and the project Python interpreter. The comparator and
+Ruff passed. These results satisfy the local strict and full-suite checks at
+this checkpoint. Formal P6 and A3 release acceptance remain open.
+
+The earlier diagnostic totals apply to the earlier checker invocations. Use
+the current receipt with the explicit project interpreter for comparison.
+Receipts are in `a3-evidence/a3-reconciliation-2026-11-14/resume-5e1bc17c/`
+beside the worktree.
+
+Start the next batch with T01-F07. Check working directories and output paths
+against the existing workspace owner. Review the remaining A3-1 and A3-3
+evidence before closing the prerequisites for A3-4. Keep H01-F6 and H01-F7 in
+the structural work queue. The SDK import evidence covers AC3.3. Ninety
+focused tests passed for session identity and restart. Review the broader
+AC3.1 and AC3.2 criteria before stage acceptance.
+
+## OpenCode checkpoint before continuation
+
+**Branch:** `codex/a3-audit-reconciliation`, worktree
+`/home/jaden/Documents/Utilities/nanobot-a3-reconciliation`, 15 commits ahead of
+`origin/codex/staging-audit-implementation`. Base
+`722bd8ec6cbc5c223ee2b4b22c03950071ccd1ef`. `origin/staging` is still
+`f1a6bb85`, unchanged since the snapshot. Working tree clean.
+
+**Ledger state:** 16 accepted, 16 ready-for-review, 104 unverified, of the 136
+original findings. `docs/architecture/a3/evidence.json` holds 26 evidence rows.
+Every ready-for-review entry still needs a named reviewer; this pass did not
+self-accept any finding.
+
+**Completed in this pass:**
+
+| Stage | Findings | State |
+| --- | --- | --- |
+| A3-1 R05 | K01-F12 | ready for review |
+| A3-1 R06 | H01-F1, H01-F2 | ready for review |
+| A3-1 R06 | H01-F6, H01-F7 | unverified: structural claims outside AC3a/AC3b |
+| A3-1 R08 | H03-F3 | ready for review |
+| A3-1 R15 | T01-F10, K01-F11 | ready for review |
+| A3-1 R22 | H01-F3, K01-F10 | ready for review |
+| A3-2 R01 | S01-F01 | **repaired** `c485a88c`, ready for review |
+| A3-2 R01 | S01-F03 | **repaired** `6ebc184b`, ready for review |
+| A3-2 R01 | T01-F07 | blocked, source-confirmed |
+| A3-2 R01 | X01-F01 | blocked, source-confirmed |
+| A3-2 R09 | C00-F01 | **repaired** `4f68e2ec`, ready for review |
+| A3-2 R09 | S02-F02, C00-F02, E02-F14, T01-F09, X01-F03 | Linux verified, ready for review |
+| A3-2 R09 | S02-F03, C00-F03 | unverified |
+
+**Repairs on this branch (all with requirements-only tests that fail before and
+pass after, plus a P6 before/after comparator pass):**
+
+1. `6ebc184b` `fix(security)` — one shared native owner aggregate per chat
+   epoch. S01-F03.
+2. `4f68e2ec` `fix(cli)` — close the acquired graph when interactive setup
+   fails. C00-F01.
+3. `c485a88c` `fix(focus)` — ask the path policy before advertising Full read or
+   write. S01-F01.
+
+**Blocked items and the condition to resume:**
+
+1. **X01-F01** `run_cli_app` in restricted turns executes an unconfined child
+   with host rights; `cli_apps.enable` defaults true. Needs a D2/D4 decision plus
+   a qualified confinement backend, or disable the tool in restricted and
+   managed turns. See `a32/DISPOSITION-x01f01-blocked.md`.
+2. **T01-F07** browser and device tools accept a caller `working_dir` outside the
+   resource policy; both default enabled. Needs the shared resource-policy owner
+   decision. See `a32/DISPOSITION-t01f07-blocked.md`.
+3. **Windows and macOS** exec, Job Object, and confinement claims are unverified.
+   Six Windows platform tests skip on Linux.
+
+**Test environment (important):** run the full suite with a short `--basetemp` on
+`/tmp`, after cleaning stale trees. `/home` is btrfs and breaks `st_nlink == 2`
+memory-recovery assertions; a long base path breaks Unix-socket IPC tests;
+`/tmp` is inode-limited; `/dev/shm` is a device path the read policy blocks; a
+fresh worktree needs `nanobot/web/dist` copied in or built, or 12 desktop adapter
+tests fail. See the note below.
+
+**Full-suite status:** the last complete run reached **18,298 passed, 22
+skipped, 6 subtests passed, 12 failed**, where all 12 were the missing WebUI
+bundle. With the bundle copied in, `tests/desktop/test_adapter.py` passes 17 of
+17. A subsequent complete run was blocked by tmpfs inode exhaustion at 17,673
+passed. A clean full run with the bundle present has **not** been recorded yet,
+so P6 stage completion is not claimed. Run it before closing P6.
+
+**Next batches in dependency order:** finish A3-2 (S02-F03, C00-F03, then the
+two blocked decisions), then A3-3 (E02-F01, durable session identity), then
+A3-4 (14 findings).
+
+## Test-environment note (read before the full suite)
+
+Run the full local suite with `--basetemp` on a tmpfs path such as `/tmp`.
+`/home` is btrfs on this machine, and several memory-recovery suites assert
+`st_nlink == 2` on published records. Hard-link accounting on btrfs fails those
+assertions, which produced 423 false failures and 65 false errors in one run.
+The same suites pass 267 of 267 on `/tmp`. Also keep the base path short:
+`nanobot/remote/ipc.py` binds a Unix socket and fails with `AF_UNIX path too
+long` on a long base path. `/tmp` is inode-limited, so clean
+`/tmp/pytest-of-jaden` before a full run.
+
+A fresh worktree also has no `nanobot/web/dist` bundle. Without it,
+`tests/desktop/test_adapter.py` fails 12 of 17 with
+`DesktopError: webui_assets_unavailable`, identically on the untouched base.
+Copy the bundle from a worktree built at the same source or run
+`cd webui && bun run build`. The directory is gitignored.
+
+## A3-2 reconciliation batch (2026-11-14, Linux)
+
+Branch `codex/a3-audit-reconciliation`, base
+`722bd8ec6cbc5c223ee2b4b22c03950071ccd1ef`. `origin/staging` is still
+`f1a6bb85`, unchanged. Linux x86_64, Python 3.14.10, bwrap 0.12.0.
+
+### Demonstrated defect and repair — S01-F03
+
+Two request-derived Full references for one chat and epoch produce the same
+durable `chat_full` owner tag, and `native_process.py` registered the same
+aggregate count provider once per reference. `_counts_for_reference_unlocked`
+summed every related provider, so one live launch was counted once per
+reference.
+
+Observed through the public `owner.projection(...)` retirement projection:
+
+| Case | Before | After |
+| --- | --- | --- |
+| Two related references, one shared launch | `active_processes: 2` | `1` |
+| Two related references, two shared launches | `active_processes: 4` | `2` |
+| Two distinct bindings, one launch each | `1` | `1` |
+
+Repair `6ebc184b` reads each shared owner aggregate once, keyed by the durable
+owner identity. Per-handle stdin closers stay per reference and the
+unknown-on-error barrier is unchanged. It is an accounting and retirement
+gating defect, not an authority widening.
+
+Checks: a requirements-only test authored in an isolated session fails 2 of 7
+before the repair and passes 7 of 7 after; 252 affected tests pass; Ruff passes;
+the P6 comparator reports `PASS_NO_NEW_DIAGNOSTICS`, 0 introduced and 0
+resolved against 9,173 pre-existing strict diagnostics.
+
+### Verified on Linux
+
+| Finding | Result |
+| --- | --- |
+| S02-F02, T01-F09 | 128 passed with 6 Windows-only skips; 27 real detached-descendant and bwrap quiescence tests passed |
+| C00-F01, C00-F02 | Live managed bwrap probe passed: workspace read/write worked, an outside file was masked, no secret leaked |
+| E02-F14 | 66 composition and shutdown tests passed |
+| X01-F03 | Bounded per-stream readers retain 50,000 characters each and report over 390,000 truncated |
+| S01-F03 | Repaired and verified as above |
+
+### Open items from this batch
+
+1. Windows Job Object ownership, macOS native qualification, and the six
+   Windows/PowerShell platform tests were not run. They stay unverified.
+2. `S01-F01`, `S02-F03`, `T01-F07`, and `X01-F01` remain unverified.
+3. The P6 strict checker is not clean. 9,173 pre-existing diagnostics remain.
+   This repair introduces none. Full strict-clean and the required full local
+   suite remain open P6 gates.
+4. Named reviewer acceptance is required for every `READY_FOR_REVIEW` entry.
+
+Receipts are in `a3-evidence/a3-reconciliation-2026-11-14/a32/`.
+
+## A3-1 reconciliation pass (2026-11-14, Linux)
+
+Worktree `../nanobot-a3-reconciliation`, branch `codex/a3-audit-reconciliation`
+from `origin/codex/staging-audit-implementation`. Base
+`722bd8ec6cbc5c223ee2b4b22c03950071ccd1ef` (tree
+`868c41e575c5ded943215d1dcb5e5fe3cfa981a5`). `origin/staging` is still
+`f1a6bb85588ba044fc2ca50e3e9f41eb2f13b6f9`, unchanged since the snapshot, so no
+new staging change affects these batches. Checks ran on Linux with Python
+3.14.10 and the unchanged dependency inventory. No product code changed; this
+pass added evidence only.
+
+| Batch | Findings | Disposition | Checks |
+| --- | --- | --- | --- |
+| A3-1 R05 archive provenance | K01-F12 | ready for review | 155 focused tests; 3-entry probe |
+| A3-1 R06 source writes | H01-F1, H01-F2 | ready for review | 93 focused tests; 4-entry probe |
+| A3-1 R06 structural | H01-F6, H01-F7 | still unverified | structural claims outside AC3a/AC3b |
+| A3-1 R08 prepared route | H03-F3 | ready for review | 203 focused tests |
+| A3-1 R15 core guidance | T01-F10, K01-F11 | ready for review | 62 focused tests; default-prompt assertion |
+| A3-1 R22 input validation | H01-F3, K01-F10 | ready for review | 34 focused tests |
+
+A3-1 now has no unowned finding. Eight of its ten entries are ready for named
+reviewer acceptance. K01-F12 reached that state in this pass; H01-F1, H01-F2,
+H03-F3, T01-F10, K01-F11, H01-F3, and K01-F10 also did. H01-F6 and H01-F7 remain
+unverified because the packet criteria cover the concrete F1/F2 defects, not
+their structural deduplication claims. A named reviewer must accept the eight
+ready entries; this pass does not self-accept.
+
+Open items from this pass:
+1. `nanobot/templates/agent/consolidator_archive.md:3` still says
+   `[Archived Context Summary]` appears "in the system prompt". The summary is
+   now assistant historical context. This is prompt wording drift only.
+2. `nanobot/templates/AGENTS.md:28` names `apply_patch`. It is a copied
+   workspace starter asset, not active built-in `agent/` guidance. A reviewer
+   must confirm that AC5's built-in-claim scope excludes it.
+3. The lost-commit-response at-most-once recovery for H01-F1 was confirmed by
+   source inspection only. It belongs with the A3-8 retained-evidence batch.
+
+Receipts are in
+`/home/jaden/Documents/Utilities/nanobot-custom-worktrees/a3-evidence/a3-reconciliation-2026-11-14/`
+as `k01-f12/`, `r06/`, `r08/`, `r15/`, and `r22/`. Each has a `DISPOSITION.md`,
+the raw command logs, and source hashes.
+
+The next stage in dependency order is A3-2, runtime and process ownership.
+
+## Desktop and mobile subagent activity
+
+At `7d96468c`, the original chat shows compact subagent status rows. A row
+opens read-only activity beside the chat on desktop and full screen on a phone.
+The original chat retains the draft, attachments, approvals, and Stop.
+
+All 1,550 WebUI tests, lint, and eight installed browser scenarios passed.
+The browser checked live status, sibling selection, keyboard access, and return
+to the original draft, attachments, scroll position, and focus. On the Android
+emulator, system Back and the in-app Back button returned to the parent draft.
+The emulator used a debug APK and a loopback TLS fixture. The wheel and APK
+matched on 525 uncompressed WebUI assets. Local receipts and screenshots are
+in `a3-evidence/linux-android-2026-11-13/subagent-ui/` beside the worktree.
+
+The [OpenCode handoff](opencode-handoff.md) covers the 120 unverified findings.
+
+## Pairing cancellation and Linux verification
+
+The branch includes staging `f1a6bb855`. The current verified source is
+`484a1476618946377db7906dcb449a01fae4eb67` (tree
+`46f2064bd432892765a2493371f15bc2eb743597`). It contains the Android pairing
+repair and the process journal startup repair in `20ffe0de`. Android event
+delivery was verified at `6faec5774e510aa33f177ab53633482d9fb97266`.
+That commit changes the native transport and JNI bridge.
+
+| Check | Result |
+| --- | --- |
+| Linux | 18,297 tests passed, 22 skipped, and six subtests passed. Strict BasedPyright reported zero diagnostics across 546 files before and after the changes. Ruff passed. A single startup failure in the first full run led to the journal repair. The final full run passed. |
+| Android 16 x86_64 | The emulator held a native proof response before the WebView saw approval. After an owner restart, Cancel revoked the issued device. The late response and an app restart left chat closed. Fresh proof restored chat after loss of the initial response and after loss of a renewal. A manual code attempt resumed across both restarts without re-entry. |
+| Android build and tests | The signed APK passed signature and alignment checks, installed, and launched on the emulator. The race tests used a separate debug build with the same app code, a fixed loopback dialer, and a fixture TLS certificate. The 20 JVM tests passed. The instrumentation runner discovered 39 cases. It completed 29 and skipped ten that require live credentials. |
+| Android event delivery | The old bridge returned no binary events. The repaired bridge delivered a 36 MiB binary message and the following 11-byte message on one authorized WebSocket. Both payload hashes matched. The Go suite, C ABI smoke test, and signed APK build, install, and launch passed. |
+| Installed WebSocket | The mobile socket accepted an authorized attachment. After the owner reduced its scope to chat read, the same socket rejected a second attachment. The attachment store kept the same bytes. |
+| WebUI | All 1,550 tests passed. The installed Linux browser replay passed all seven scenarios after the harness waited for canonical Stop settlement before checking the button. |
+| Artifacts | The installed Linux wheel passed its dependency check. It matched 546 Python sources and 590 WebUI files. The APK included the current bootstrap and matched 534 shared WebUI files. |
+
+The Android fixture proves cancellation and recovery for the tested transport.
+The [earlier verification](#linux-and-android-emulator-verification) records live
+Tailscale pairing, renewal, and revocation. Local receipts and artifacts are in
+`a3-evidence/linux-android-2026-11-13/` beside the worktree. See the
+`ar5-pairing-lifetime/` and `android-event-bound/` subdirectories.
+
+Hosted Linux Python 3.11 and 3.14 passed at `484a1476`. The broad Windows
+job failed. [Test suite run](https://github.com/JadenChun/nanobot-custom/actions/runs/43502303978)
+
+| Artifact | SHA-256 |
+| --- | --- |
+| Linux wheel | `e8a1a72996db6b0e96834d893f1ff4a0474ae21def72c8f0a4c83195d33f69ed` |
+| Source archive | `66ff3b7624f80491c70d6b821db709fd64e34b91ec900ac2150cdcf4f567e0c5` |
+| Signed Android APK at `6faec577` | `b3120900ed519f60c09cdb8e11aaaa9bd6293de93ac4016f4b00df684dbdb6ac` |
+
+### Remaining acceptance work
+
+1. The [current review](review.md#pairing-lifetime-and-live-websocket-checks)
+   records the AR5 and AR6 repairs and their verification. The live Tailscale
+   delivery race on the new signed APK remains unverified.
+2. The [frozen ledger](evidence.json) has acceptance evidence for 16 of its
+   136 findings. Review the 120 remaining entries against the source and their
+   acceptance criteria. An unverified entry can still have an implementation.
+3. Complete the A3 stage reviews and P6 release decision using the current
+   qualification evidence. [A3 release and rollback criteria](implementation-plan.md#rollback-and-requalification)
+   · [P6 completion checklist](../../migration/p6-completion-checklist.md)
+
+## Linux and Android emulator verification
+
+The Linux release build source is `f40c229c25a1aaa2ef03336bd255614297dfbece` (tree
+`2a844815b1fae9f30e9593494c8e95c489bcba94`). The Android build uses `3d8df881`.
+The last Linux commit changes only cron artifact reads and their regression test.
+The branch includes staging `f1a6bb85588ba044fc2ca50e3e9f41eb2f13b6f9`.
+The user selected Linux and the
+Android emulator for this pass. The A3 plan and its release acceptance criteria
+remain in the [implementation plan](implementation-plan.md).
+
+The branch now makes concurrent SDK close calls wait for the same cleanup.
+Child approvals publish activity to the original chat. The WebUI hides the
+parent composer during child inspection and restores the draft on return.
+Background results follow the original parent source through queueing and restart.
+Android renews access with its device key. The native app clears custody once
+after confirmed revocation and checks the pairing again before it reloads.
+Hatch uses the frontend lockfile when it rebuilds the bundle. The Gradle wrapper
+checks the distribution against the release toolchain checksum.
+Cron reconciliation accepts ordinary access-time changes during artifact reads.
+The reader still checks file permissions, size, content digest, and modification metadata.
+
+### Verification results
+
+| Check | Result |
+| --- | --- |
+| Linux source | The final full run passed **18,286 tests**, with 22 skips and six passing subtests. Ruff passed. BasedPyright reported zero diagnostics across 546 files. The global diagnostic comparison passed with the same Python dependency inventory. A public plan-read regression reproduced the access-time failure before the repair. All 23 focused cron reconciliation tests passed after it. |
+| WebUI | 1,550 tests passed across 101 files. Coverage was 88.73% statements, 81.67% branches, and 85.87% functions. Coverage, lint, and build passed. The configured TypeScript build reported the same 103 diagnostics as `93b21895`. |
+| Installed Linux gateway | Seven browser scenarios covered sibling results, read-only child history, draft/attachment/scroll/focus restoration, narrow layout, reconnect and restart, nested Stop, and exact approval and denial. With both children released together, the old build left one result pending. The final installed build integrated both once after one parent message. Three consecutive full runs of the corrected qualification harness passed all seven scenarios. The earlier harness raced the main and background Stop controls and a new-topic transition. The correction waits for the post-reply background Stop and an idle thread. No product code changed. |
+| TUI, native execution, and mobile protocol | TUI passed 238 tests and type checking. Go broker tests and the 131-row route parity check passed. Linux exercised the native supervisor and managed bubblewrap with real descendant processes. The installed `5e3c51d6` CLI read a fixture through `read_file` with the local Qwen3.8 model. |
+| Android 16 x86_64 emulator | The signed `93b21895` build paired and read canonical child history. A proof renewal reopened the socket after seven minutes. The app sent a new message 659 seconds after launch, after the initial ten-minute lease. The revocation correction and matching Linux owner returned `403 device_revoked` and opened the pairing screen. The final native bridge rejected stale starts with custody still absent. The signed `3d8df881` build installed and opened the pairing screen. The JVM suite passed 20 tests. The Android runner passed 39 cases and skipped ten that require live fixture credentials. The AR5 run used a debug build with the repaired cancel path. It overlapped approval with Cancel, created no device or proof, paired a fresh attempt, and returned to pairing after owner revoke and app restart. The JVM suite passed after that change. |
+| Artifact and rollback checks | The installed wheel matched all 546 packaged Python files and 590 WebUI files. The APK shared 534 files byte for byte with the WebUI bundle. The wheel, source archive, and service unit passed inspection. The signed APK passed alignment and signature checks. On disposable copies, rollback retained five histories, four archives, and revoked device state. The earlier development executable read both scheduler exports. It retained prior receipts and ran the next due occurrence once. |
+| Release build inputs | Forced wheel builds passed with the committed Bun and npm lockfiles. Both builds refused a manifest that disagreed with its lockfile. Each lockfile kept its original bytes. The editable install passed without a frontend build. The Gradle wrapper refused an archive with a different checksum. |
+
+The emulator renewal, revocation, and final update used successive signed builds.
+The independent delta review passed the final custody and transport changes.
+Artifact SHA-256 values for the tested source are below.
+
+| Artifact | SHA-256 |
+| --- | --- |
+| Linux wheel | `d838690c1ac2336c08d5eb35a44a27f69faab7208e9faf1c82d24bb79aa06b76` |
+| Source archive | `2fb2aa55171ff0ee7dcb02b32bca2139ab62415050dafea8ee0a7ac60d858864` |
+| Signed Android APK | `b7d9feff54a32faae3a6ff31928308a4863537a9f8d3329a49ee1f79ec866926` |
+| Signing certificate | `8c30d04957e9724d1668e585890913b0581676c9460789f658c4ed9f84ba0c81` |
+| Mobile operation contract | `2cc8ba5ceb27ab9334de2b06f6a2e13b8655b556813c8d12bc3f3542d11b47cc` |
+
+The hosted Linux Python 3.11 and 3.14 jobs, WebUI, TUI, Docker, and Windows
+process-compatibility jobs passed on `f40c229c`. The broad Windows Python 3.14
+job failed 22 CLI command tests with `SessionModeError: session authority lease
+is unavailable`. That job is outside this Linux and Android pass and remains a
+release check.
+[Runtime CI](https://github.com/JadenChun/nanobot-custom/actions/runs/43448353028)
+· [Current code CI](https://github.com/JadenChun/nanobot-custom/actions/runs/43453527871)
+
+Local receipts and artifacts are in the
+`a3-evidence/linux-android-2026-11-13/` directory beside the implementation
+worktree. The `final-f40c229c/` subdirectory holds the corrected qualification
+harness, its three passing logs, and the final browser evidence.
+The earlier handoffs below retain their original scope and results.
+
+### Earlier release acceptance notes
+
+The [current acceptance work](#remaining-acceptance-work) supersedes these notes.
+
+1. AR5 has a verified repair on this branch. The owner now revokes an issued
+   device and its access grant when a collector cancels the attempt. The edge
+   route, native broker policy, and Android cancel are wired to it. The Linux
+   probe and a native emulator run confirmed that no authority survives Cancel,
+   that a fresh attempt pairs, and that owner revoke returns the app to pairing
+   after restart. Nine requirements-only tests cover the cancel contract. A
+   release review must still decide whether to accept the repair. AR6 remains
+   open for implementation review.
+2. Continue the [136-finding ledger](evidence.json) from the 11 entries with
+   current acceptance evidence. The
+   [current review dispositions](review.md#current-candidate-dispositions)
+   record the six staging repairs and the later authority and recovery findings.
+3. The strict and full local test gates now pass. Formal A3 stage acceptance and
+   P6 release acceptance still need the remaining evidence and a release decision.
+   [A3 release and rollback criteria](implementation-plan.md#rollback-and-requalification)
+   · [P6 completion checklist](../../migration/p6-completion-checklist.md)
+
+## Paused after client-control corrections (2026-11-13)
+
+**Implementation is paused at the user's request, after the current GUI worker
+finished.** Resume on `codex/staging-audit-implementation` from code checkpoint
+`9da0f514dbfe77b433ef78945d35bf89ad6f9a95` (tree
+`92cc6d85976b8307c9778aaa5c3e652b283c45fb`). The documentation checkpoint immediately
+after it records this handoff. The previous origin head was
+`000dde873caa6b84e17d083f0460d61ae014b0c3`; a fresh fetch found no remote advancement.
+Staging remains separate at `f1a6bb85588ba044fc2ca50e3e9f41eb2f13b6f9`.
+
+The plan remains frozen as `A3-PLAN-2026-11-11`. Original-chat control, optional
+read-only child detail, and session-based future SuperAgent coordination retain
+their accepted boundaries. This checkpoint does not establish final integrated
+acceptance, P6 completion, or release readiness. Keep the implementation merge on
+HOLD. All delegated writers released ownership; all disposable qualification
+gateways/providers/proxies were stopped with clean shutdown records.
+
+### Code completed in this checkpoint
+
+- Canonical child activity, results, replay, paginated hydration and history now
+  carry source/run identities across the backend, GUI, TUI and authorized mobile
+  read routes. Genuine summary-only children remain readable without invented
+  canonical provenance or control authority. Unavailable message timestamps are
+  omitted. Remote operations and broker policies retain explicit scope checks.
+- Original-chat Stop uses a versioned exact snapshot of the root source, current
+  invocation, descendants and pending-work inventory. Stale requests refuse before
+  cancellation effects. The omitted-expectation compatibility path is restricted
+  to verified root-only work. Explicit null modern targets cannot fall back to
+  legacy Stop. Refresh restores eligibility without automatically sending Stop.
+- Typed child approvals pass through real ingress, bus and canonical child owners
+  independently of a streaming parent. Controls do not become parent input or
+  replace its run, permissions, queue or lifecycle. The public decision requires
+  approval ID, decision, child session/incarnation/run/generation. Private effect
+  and inner-turn echoes are optional corroboration; supplied values must match.
+  The server still requires a valid canonical effect fingerprint matching the
+  child and rechecks source, run, capability and Stop state after scheduling.
+- GUI and TUI expose original-chat activity and independent approvals, plus
+  read-only canonical detail and return navigation. TUI message frames no longer
+  include forbidden cached per-message workspace scope. Its delayed HTTP
+  hydration is discarded before mutation when a newer live target, attachment or
+  connection supersedes the request. Refusal/reconnect recovery keeps attempts
+  separate and requires a new explicit action.
+- The final GUI correction removes one passive `setStopNotice("unavailable")`
+  assignment from accepted `stop_target: null` handling. Normal successful child
+  settlement no longer creates a failure banner. Target clearing, pending-state
+  settlement, projection refresh, genuine refusal notices and control fences
+  remain intact. Three event-order regressions and a rendered refresh regression
+  cover this repair.
+
+The earlier broad review returned **CORRECT**. Its findings were addressed in the
+code and focused tests, but the final narrow integrated recheck is still open.
+In particular, recheck the public approval guard, TUI hydration ordering and GUI
+passive-null notice correction together. Do not infer final acceptance from a
+worker's completion report or from the test totals below.
+
+### Verification available at handoff
+
+Python evidence uses the unchanged 183-distribution runtime at
+`/Users/jaden/Documents/github/nanobot/.venv/bin/python` (Python 3.13.2,
+BasedPyright 1.40.1). WebUI uses Bun 1.3.10, Node 22.14.0 and TypeScript 5.9.3;
+TUI checks use pinned Bun 1.3.13. No dependency, lockfile, checker-policy or baseline
+refresh was included; no formatter was run.
+
+| Boundary | Evidence and limit |
+| --- | --- |
+| Final approval guard | Worker: **55 focused + 444 affected tests passed**, including public client-shaped controls, held parent/child, independent sibling denial, Stop and negative identity/revocation cases. |
+| Independent Python critical set | **260 passed** on `control-recovery-python`; full Ruff over `nanobot tests conftest.py` passed. |
+| Last full Python run | Earlier `combined-final`: **17,758 passed, 78 skipped, 1 failed**, 81 warnings and 6 subtests passed. This precedes the last approval/TUI/GUI corrections; the final full run remains open. |
+| Known full-suite failure | `tests/test_nanobot_facade.py::test_aclose_concurrent_callers_join_the_same_cleanup_attempt` expects one cleanup and observes two. Independently reproduced on origin. It remains an open gate, not a passing full suite. Seven introduced fixture/event-expectation failures were repaired; missing generated-asset failures disappeared after a fresh WebUI build. |
+| Configured Python strict check | **962 diagnostics / 546 files; exit 1.** Global comparisons against origin and the immutable accepted integration both report **zero introduced, zero resolved**. This is regression attribution, not strict-clean/P6 acceptance. |
+| TUI | Independent frozen full run: **238 passed / 1,177 assertions**, type check passed. Exact TUI/package input hashes match the final handoff. |
+| GUI tests | Worker full suite: **1,550 passed / 101 files**, exit 0. After final fixture typing corrections, the two affected modules passed **208 tests**; root independently repeated those **208** on the immutable `control-recovery` snapshot, exit 0 with source parity. |
+| GUI coverage | Retained output reports the same 1,550 passing tests and **88.73% statements / 81.69% branches / 85.88% functions**. The final coverage-process exit was not retained. Capture a fresh final coverage receipt before closing this check. |
+| GUI lint/build | Passed; the existing Vite chunk-size warning remains. Final installed GUI proof is still open. |
+| Configured GUI TypeScript | `node_modules/.bin/tsc -b --force --pretty false`: **104 inherited diagnostics, exit 1**. Full multiline diagnostic/signature comparison against origin: **zero introduced, zero resolved**. |
+| Go broker/mobile parity | Passed on unchanged relevant inputs; hash-based reuse is recorded in `control-recovery-reused-checks.json`. No new physical-device qualification was performed. |
+| Actual TUI/gateway crossing | Real PTY, real installed gateway, scripted provider: distinct completed results, read-only canonical tool/result history and Escape return; original-chat Stop settles two siblings plus a nested child with provider gates unreleased; public approve changes only the build file, independent deny leaves the test-plan file unchanged under the same held parent. A stale Stop refuses; refreshed attachment sends nothing until another explicit Stop settles remaining work. Controls do not become parent user input. |
+| Installed macOS evidence | Previous wheel `0a35e3dd732cc5122a86f72ca303f01beaf36e6a65fdd5c5721b83706014dd41`: 546 packaged Python files, bounded ordinary selected-execution smoke, **36 owner/state tests**, public CLI gateway health/static/authenticated request and same-state restart passed. Native supervisor is unavailable; Full correctly refuses `supervisor_unavailable` without issuing authority. This wheel contains the older GUI bundle. |
+
+Nanobot's qualification model is **`custom/qualification-offline`**, a scripted
+loopback OpenAI-compatible provider. No paid or real external LLM was called.
+Implementation workers used Luna Max for the bounded client work and Sol Max for
+the backend authority correction; these are separate from Nanobot's test model.
+
+Source evidence is immutable: `control-recovery` contains 2,730 files, manifest
+SHA-256 `b3cb970c499e0d9073983aa1dfb12ec836653baab0b760084a5ce7714ae47c99`.
+Its Python inputs match `control-recovery-python`, and its TUI inputs match
+`control-recovery-tui`. During staging, the new-file whitespace check found one
+extra EOF newline in `nanobot/agent/stop_target.py`; only that byte was removed,
+with unchanged Python AST. The committed `handoff-final` snapshot has manifest
+SHA-256 `58b3676e9119bda143e4a7fe7556a0a5105a8b2f9874bd13a149216a3307c089`.
+`handoff-eof-normalization.json` records the exact before/after hashes. Earlier
+reports and artifacts retain their original source pins; final full-source and
+artifact checks must use the committed bytes. Staged whitespace checking passed.
+
+### Remaining work, in order
+
+1. Fetch origin, verify this checkpoint on the implementation branch and compare
+   with latest staging. Read the frozen plan/product contract and this latest
+   section before historical handoffs. Finish one bounded integrated recheck of
+   the three latest corrections and their affected criteria. Existing broad
+   review findings and correction contracts are in the local QA archive; do not
+   restart the entire historical audit as a substitute for this recheck.
+2. Freeze the resumed source/environment and capture final check receipts. Build
+   matching WebUI assets **before** the final full Python suite. Capture the
+   coverage exit code, configured full TypeScript report and full Python strict
+   report. Use `scripts/check_type_regressions.py` and the P6 attribution rules
+   without refreshing a baseline to absorb new diagnostics. Reproduce/dispose of
+   the inherited facade cleanup failure separately. P6 remains open until unchanged
+   strict checking exits zero and the required local full suite passes.
+3. Build and install a **new matching wheel** containing the final Python bytes,
+   GUI bundle and operation contract. Recheck package/bundle parity, installed
+   owner/state behavior and ordinary macOS CLI startup/restart. The old wheel can
+   supply only its stated earlier evidence; it cannot attest the final GUI fix
+   or the post-verification EOF normalization.
+4. On that wheel, complete the actual GUI scenarios: two distinct background
+   completions; canonical tool/result detail and return preserving the parent
+   draft/attachments/scroll/focus; replay/reconnect without duplication; narrow
+   layout; parent-already-replied Stop of siblings plus nested work with gates
+   held and **no false banner after settlement/Refresh**; and sibling approve,
+   deny and Stop while the **same parent and approved child remain held**.
+   Record actual public request/response frames, canonical state and file effects.
+   The earlier `browser-recorded` approval run timed out its parent before the
+   second decision, so it is partial evidence only. The fixture now explicitly
+   sets provider timeout 600 and emits valid nonterminal SSE keepalives; its child
+   task budget remains 300 seconds, so complete held-child interactions promptly.
+5. Record the bounded acceptance verdict and remaining release gates. Native
+   Full/whole-tree confinement, matching physical Android/device evidence,
+   real-model qualification where required, remaining A3 stage/finding acceptance
+   and full release qualification are not closed here. Linux/Android evidence
+   previously confirmed by the user retains its original scope. Keep staging
+   separate until the remaining gates are explicitly accepted.
+
+Useful commands from a prepared checkout (capture commands, source/dependency
+hashes, exit codes and raw outputs; use a fresh short `/tmp` pytest basetemp):
+
+```bash
+# webui/
+bun run build
+bun run test:coverage
+bun run lint
+node_modules/.bin/tsc -b --force --pretty false
+
+# repository root, same frozen Python environment
+python -m pytest -p no:cacheprovider -q -n 4 --dist loadfile
+python -m ruff check nanobot tests conftest.py
+python -m basedpyright --outputjson --pythonpath /path/to/the/frozen/python
+
+# tui/
+npm exec --yes --package bun@1.3.13 -- bun test
+npm exec --yes --package bun@1.3.13 -- bun run check
+```
+
+### Local QA archive for the next agent
+
+`/private/tmp/nb-a3-client-20261113-9ageutn4` contains the immutable snapshots,
+contracts, raw logs, manifests, installed artifacts and disposable fixture records.
+Important entries are:
+
+- `handoff-final-{context,hashes}.json`, `handoff-eof-normalization.json`,
+  `handoff-stop-record.json`, `handoff-webui-focused-receipt.json`,
+  `control-recovery-reused-checks.json`, and `control-recovery-*-receipt.json`.
+- `approval-wire-recovery/completion-report.md`,
+  `tui-refresh-round2/completion-report.md`, and
+  `QA/QA/gui-null-notice-recovery/{completion-report.md,manifest.json,validation-ledger.md}`.
+- `tui-actual-qualification-receipt.json`, `tui-accepted/`, `tui-completion/`,
+  `browser-recovery/`, `browser-recorded/`, and `artifact-control-recovery-python/`.
+- `control-recovery-replan.md`, the original four package contracts,
+  `integrated-review.md`, and the approval/Stop specialist analyses. Earlier
+  correction budgets were exhausted; the final repairs are explicit bounded
+  replans from new evidence. Use Sol Max for consequential analysis/review and
+  Luna Max for clear bounded follow-on fixes, as the user requested.
+
+Local QA artifacts are supplemental and are not committed. If this archive is
+unavailable to the next agent, regenerate the evidence from the committed tests
+and commands instead of treating a historical count as current acceptance. The
+following sections retain earlier checkpoints unchanged.
+
+## Combined backend review corrections (2026-11-13)
+
+Resume from `0a68f298` on `codex/staging-audit-implementation`. An independent
+combined review of `225ea3f9..8652b8b1` returned **CORRECT** with two P1 and four
+P2 findings. This checkpoint closes them, including the delta findings from the
+fix review. The final delta review returned **PASS**.
+
+- A cancelled follow-up claim before dispatch now settles the child as stopped and
+  releases capacity. Follow-up tool bindings also release when the backend task
+  settles.
+- Uncertain-child settlement is wired into startup and turn reconciliation. Valid
+  terminal runs settle; missing or mismatched evidence retains capacity.
+- Missing failed background results are rebuilt from a matching terminal run and
+  healthy source, not only completed runs.
+- Crawler override prompts skip runtime-context providers and task skill blocks, so
+  no ambient context reaches the crawler provider or source.
+- Hydration filters on the exact parent and child source lifetimes and orders rows
+  by numeric timestamps.
+- Background result disposition changes re-emit the child event. Reconcile does not
+  republish a result that already has a durable parent journal row.
+- Result reconciliation is serialized on the shared tree across AgentLoop instances.
+- A claimed follow-up that loses to Stop before activation or dispatch settles as
+  stopped. It does not leave an `uncertain` child with no run evidence.
+- An admitted but unpublished background result carries a durable published marker.
+  Reconciliation publishes it once and does not republish it.
+- Missing failed background results recover from matching terminal runs. Owner-stopped
+  cancelled runs are not replayed as a new parent result.
+
+Verification:
+
+| Check | Result |
+| --- | --- |
+| Affected follow-up, background, uncertain, crawler, hydration, projection suites | **146 passed**. |
+| Delta follow-up, background, uncertain, crawler, gateway, hydration set | **42 passed**. |
+| Full Ruff over `nanobot tests conftest.py` | **Passed**. |
+| Whitespace check | **Passed**. |
+| Configured strict check (`tool.basedpyright`, `nanobot`) | **0 errors / 545 files**, exit 0. |
+
+The remaining work is the combined release review, mobile/detail client work, and
+release qualification.
+
+## Crawler isolation and uncertain settlement checkpoint (2026-11-12)
+
+Resume from `20437dd3` on `codex/staging-audit-implementation`. This checkpoint
+closes the crawler prompt-isolation gap and adds an evidence-based uncertain-child
+settlement path. Staging is at `f1a6bb85`.
+
+- The crawler receives one self-contained system prompt. It no longer receives the
+  workspace path, context repository summary, long-term memory, skill catalog, or
+  task-triggered skill context.
+- The crawler still uses its own provider, model, token budget, iteration limit,
+  serialized browser gate, and role-owned `social_crawl` tool.
+- `ForegroundAgentManager.settle_uncertain_child` closes an uncertain child only
+  from a matching terminal `RunRecord`, a healthy closed child source, and no
+  unresolved execution links. Missing or mismatched evidence leaves the child
+  uncertain with its capacity retained.
+- Two `AgentLoop` instances with one `SessionManager` share one delegation tree and
+  one gateway-wide child budget.
+
+Verification:
+
+| Check | Result |
+| --- | --- |
+| Crawler, context, uncertain recovery, gateway, child session, foreground suites | **137 passed**. |
+| Uncertain-child recovery cases | **3 passed**. |
+| Full Ruff over `nanobot tests conftest.py` | **Passed**. |
+| Whitespace check | **Passed**. |
+| Configured strict check (`tool.basedpyright`, `nanobot`) | **0 errors / 545 files**, exit 0. |
+
+The fresh combined backend review, remaining mobile/detail client work, and release
+qualification remain open.
+
+## Canonical child projection checkpoint (2026-11-12)
+
+Resume from `b5119be1` on `codex/staging-audit-implementation`. This checkpoint
+completes the AC8 projection and history slice of `A3-PLAN-2026-11-11`. Staging is at
+`f1a6bb85`.
+
+- `DelegatedChildEvent` now carries the parent, root, and child source lifetimes;
+  parent and child run references; run and state sequence; control epoch; capacity;
+  stop eligibility; owned work; approval identity; and result disposition.
+- Nested child events route to the original root chat. They no longer target the
+  delegated child route.
+- The WebUI transcript persists and replays the complete event. The TUI and WebUI
+  clients merge the new fields and use `can_stop` for the Stop action.
+- The authorized child thread route reads canonical child history when the child
+  source lifetime matches. It rejects a stale child source and keeps summary-only
+  history read-only.
+- The parent exposes a delegated-children hydration endpoint. The WebUI fetches it
+  on reconnect and appends child rows that the transcript does not contain.
+
+Verification on the Linux worktree with Python 3.14.10, BasedPyright 1.40.2, and
+pytest 9.2.0:
+
+| Check | Result |
+| --- | --- |
+| Full `tests/webui` suite | **554 passed**. |
+| Child event, history, route, AC4, and AC5 set | **169 passed**. |
+| WebSocket HTTP route suite | **109 passed**. |
+| WebUI TypeScript suites | **167 passed**. |
+| TUI suite and type check | **80 passed**, type check pass. |
+| WebUI production build | **Passed**. |
+| Full Ruff over `nanobot tests conftest.py` | **Passed**. |
+| Whitespace check | **Passed**. |
+| Configured strict check (`tool.basedpyright`, `nanobot`) | **0 errors / 545 files**, exit 0. |
+
+The crawler admission and prompt isolation fix, uncertain-run recovery proof,
+combined backend review, the remaining mobile/detail client work, and release
+qualification remain open.
+
+## Background result delivery checkpoint (2026-11-12)
+
+Resume from `67524f1a` on `codex/staging-audit-implementation`. This checkpoint
+completes the AC5 background-result slice of `A3-PLAN-2026-11-11`. Staging is at
+`f1a6bb85`.
+
+- A background child records the exact parent source lifetime and original route
+  when it starts.
+- The child writes a bounded terminal result with a stable outbox identity before
+  it releases capacity. The result survives restart in the child admission.
+- The manager admits the result once into the parent's canonical pending journal
+  under the captured parent lifetime. It publishes the row to the captured route.
+- A temporary parent-journal failure leaves the result pending. A replaced or
+  deleted parent produces a durable stale disposition. The child run remains
+  intact and is not replayed.
+- A missing result is rebuilt from an exact completed RunRecord and a healthy
+  closed child source.
+- Foreground child turns keep channel-output suppression in the canonical bus
+  scope. The earlier scope overwrote that flag.
+
+Verification on the Linux worktree with Python 3.14.10, BasedPyright 1.40.2, and
+pytest 9.2.0:
+
+| Check | Result |
+| --- | --- |
+| AC5 background-result suite | **9 passed**. |
+| Delegation, AC4, AC5, crawler, and source suites | **208 passed**. |
+| Full `tests/session` suite | **1,940 passed**. |
+| Full Ruff over `nanobot tests conftest.py` | **Passed**. |
+| Whitespace check | **Passed**. |
+| Configured strict check (`tool.basedpyright`, `nanobot`) | **0 errors / 545 files**, exit 0. |
+
+Continue with AC8 projection, reconnect hydration, and canonical history access.
+The crawler admission and prompt isolation fix, uncertain-run recovery proof,
+combined backend review, clients, and release qualification remain open.
+
+## Ordered child follow-up checkpoint (2026-11-12)
+
+Resume from `0a1137444ae877fac299cd74d22fe0ccdcac11fe` on
+`codex/staging-audit-implementation`. This checkpoint completes the AC4
+follow-up slice of `A3-PLAN-2026-11-11`. Staging is at `f1a6bb85`.
+
+- The original chat calls `followup_child` through a recorded parent tool
+  intent. The active child owner writes ordered input to its canonical journal.
+  Identical retries reconcile. Conflicting input refuses.
+- A healthy idle child can start one run on the same source. Input that arrives
+  during settlement stays durable or enters a serialized run after settlement.
+  An unresolved effect fences the next model request.
+- Original-chat Stop fences consumption before cancellation. A persisted
+  control epoch also fences a retained row after restart. The next authorized
+  run discards that exact stale row and preserves other journal entries.
+- Idle worker continuation checks the originally resolved write targets and
+  recursion flags. A retargeted link or a historical record without that scope
+  evidence causes refusal. Crawler idle continuation remains fenced pending
+  the crawler provider and browser lifecycle correction.
+
+The frozen Linux candidate passed **397 affected tests**, including **eight
+AC4 integration cases**. Full Ruff and whitespace checks passed. BasedPyright
+1.40.2 with Python 3.14.10 reported **zero diagnostics across 545 files**.
+The full-source comparisons against `225ea3f9` and immutable integration
+`685bee92` introduced zero diagnostics under the same dependency inventory.
+The retarget regression fails on the frozen source before the scope fix.
+
+Local evidence is under
+`a3-evidence/ordered-followups-2026-11-12-225ea3f9.ayn119hr/` beside the
+implementation worktree. Use the `ac4-checkpoint-*` manifests, command receipts,
+comparison reports, and test logs. `requirements-only-cases.md` records the
+isolated acceptance cases.
+
+Continue with AC5 durable background result delivery to the exact original
+parent and route. Then finish AC8 projection, reconnect and canonical history.
+The crawler admission and prompt isolation fixes, uncertain-run recovery proof,
+combined backend review, clients, and release qualification remain open.
+
+## Continuation checkpoint: artifact handoff wired (2026-11-12)
+
+Resume from `751ea75c` on `codex/staging-audit-implementation`. Staging remains
+`f1a6bb85`. This checkpoint supersedes the artifact status and the known-red list in
+the stop record below. The plan stays frozen as `A3-PLAN-2026-11-11`.
+
+Completed in this checkpoint:
+
+- `CanonicalChildArtifactInput` now passes through `ChildTurnRequest`, `TurnContext`,
+  and `AgentRunSpec`.
+- An awaited worker receives a collector even when it has no parent artifact
+  references. This permits child-to-parent handoff for worker output.
+- The runner prepares the receipt while the child owner is live. `execute_child_turn`
+  seals it only after the exact completed run and healthy closed source.
+- `TurnResult` and `AgentRunResult` carry the receipt to the durable parent tool
+  result. Adoption stays one-shot.
+- Settlement accepts a second `SourceSessionStore` wrapper over the same backend.
+  It retains the admitted writer binding for later acceptance checks.
+- `nanobot/extensions/crawler.py` no longer passes the removed `runner` argument.
+- The crawler keeps its role-owned `social_crawl` tool. All other role tools remain
+  narrowed by the live parent binding.
+- The retired inline delegation tests now use canonical `AgentLoop` turns,
+  source-backed trees, or recorded `ChildTurnRequest` values. Two cases were retired
+  with named canonical coverage.
+
+Verification on the Linux worktree with Python 3.14.10, BasedPyright 1.40.2, and
+pytest 9.2.0:
+
+| Check | Result |
+| --- | --- |
+| Migrated delegation suite plus canonical child and artifact suites | **240 passed**. |
+| Artifact grant, handoff, reader, origin tests | **118 passed**. |
+| Canonical child authority, controls, sessions, capacity, events, config | **46 passed**. |
+| Child lifecycle and follow-up backend set | **68 passed**. |
+| Full Ruff over `nanobot tests conftest.py` | **Passed**. |
+| Whitespace check | **Passed**. |
+| Configured strict check (`tool.basedpyright`, `nanobot`) | **0 errors / 545 files**, exit 0. |
+
+The configured strict result is not the old full-source count in the stop record.
+Reproduce it with the recorded environment before treating P6 as closed.
+
+### Next work
+
+1. Continue AC4 ordered follow-up from the existing canonical journal and source owner.
+2. Implement AC5 durable background result delivery with restart reconciliation.
+3. Finish AC8 projection, hydration, and canonical history access.
+4. Then implement the client work and the remaining release gates.
+
+No staging merge, deployment, or release acceptance is claimed.
+
+## Latest handoff: stopped with unfinished backend work (2026-11-12)
+
+**User-requested stop; combined backend and A3 remain unaccepted.** This entry supersedes
+the earlier paused checkpoint and the later external `root-resume-state.md` instruction
+to finish the backend first. The next agent must continue the current unfinished child
+and artifact work before starting clients. The implementation graph is closed as
+`STOPPED_USER_REQUEST`, without an acceptance verdict. Implementation owners have stopped;
+no implementation, test, gateway or UI stage remains active.
+
+The plan remains frozen as **`A3-PLAN-2026-11-11`**. Use the
+[design](design.md), [product contract](v1-product-contract.md),
+[implementation plan](implementation-plan.md), and the canonical-child/client specifications
+later in this document. Architecture and product choices have not reopened. Future coding
+harness extension points remain required; SuperAgent coordinates normal sessions and does
+not redefine ordinary subagents.
+
+### Git checkpoint and scope
+
+Continue from the **WIP pause commit containing this entry** on
+`codex/staging-audit-implementation`. Its parent is
+`48684630ef1876f64531f70ffa0312bab4d1a063`. Staging was verified locally and remotely at
+`f1a6bb85588ba044fc2ca50e3e9f41eb2f13b6f9` and remains separate. This is a preservation
+checkpoint for all task-owned source, tests and documentation, including incomplete changes;
+it is not an accepted backend delivery or authorization to merge into staging.
+Verified author/committer: `Jaden <changherng.jc@gmail.com>`.
+
+The saved changes include the previously accepted authority/MCP/media/recovery foundations,
+the Dream correction, provisional canonical-child changes, and unfinished separate-owner
+artifact adaptation. Existing CI evidence-step ordering and attachment migration-retirement
+documentation belong to those foundations. No dependency, lockfile or checker-setting change
+was made for this handoff. Raw QA files and ignored build/cache files remain outside Git.
+The record below is sufficient to resume from the branch without the earlier chat; local
+QA paths provide additional raw evidence when available.
+
+### Latest frozen evidence
+
+QA root:
+`/private/var/folders/9f/pzdn55jj0gj7yrqrqx405lk80000gn/T/nanobot-a3-completion-20261112-iqd9sf_h`.
+Paths below are relative to that root. Candidate `handoff-paused-20261112-final` freezes
+**2,714 files**. All frozen bytes matched the live worktree before handoff-document edits.
+Python **3.13.2**, **183 unchanged distributions**, BasedPyright **1.40.1**; interpreter:
+`/Users/jaden/Documents/github/nanobot/.venv/bin/python`.
+
+| Check on the latest frozen combined source | Result |
+| --- | --- |
+| Python syntax | **1,468 files parsed**, no syntax failures; this does not qualify runtime behavior. |
+| Whitespace | `git diff --check` passed. |
+| Full Ruff | **FAIL: 21 findings**, exit 1: I001 × 7, F401 × 8, F811 × 6. |
+| Full-source strict | **FAIL: 1,078 errors / 545 files**, exit 1. |
+| Global signature comparison against accepted 962 baseline | **FAIL: 116 introduced, zero resolved**, across all files. |
+| Comparison against earlier paused source (1,010) | **98 introduced, 30 resolved**; this is diagnostic history, not a replacement baseline. |
+| Combined tests, installed artifact and fresh review | No new broad test suite, artifact qualification or fresh integrated review on this final combined checkpoint. |
+
+The 116 introduced signatures are distributed as follows; do not omit unchanged files
+from comparison merely because the current repair does not edit them.
+
+| File | Introduced signatures |
+| --- | ---: |
+| `nanobot/agent/child_sessions.py` | 8 |
+| `nanobot/agent/delegation.py` | 14 |
+| `nanobot/agent/turn.py` | 1 |
+| `nanobot/extensions/crawler.py` | 3 |
+| `nanobot/session/artifact_grants.py` | 88 |
+| `nanobot/session/artifact_reader.py` | 2 |
+
+Ruff findings are in `delegation.py` (7), `loop.py` (1), `turn.py` (2),
+`artifact_grants.py` (2), `test_delegated_child_events.py` (3), and
+`test_delegation_child_authority.py` (6). No repair was attempted during the handoff.
+Receipts: `handoff-paused-20261112-final-{context,hashes,check-summary,syntax}.json`,
+`handoff-paused-20261112-final-{strict,lint}-receipt.json`, and
+`handoff-paused-20261112-final-{integration,prior-pause}-comparison.json`.
+The matching patch and Git status are retained alongside them.
+
+The immutable 962-error report is
+`/private/tmp/nanobot-a3-resume-20261112-hovb2rb1/integration-strict.json`, with its
+`integration/` source in the same directory, originating from integration
+`685bee9279c0bbb962ef78344428afeaba121066`. Follow
+[the full-source regression rule](../../migration/p6-error-attribution.md) and
+`scripts/check_type_regressions.py`. Never absorb the 116 signatures into a refreshed
+baseline. On a different host, reproduce baseline and candidate under one recorded
+dependency environment; historical totals alone are insufficient.
+
+### Completed work and evidence limits
+
+**Foundations:** `foundations-corrected-2` retains its bounded **CLOSED_PASS**:
+13,849 tests passed, 41 skipped, six subtests; full Ruff/diff passed; strict 962 / 544
+files with zero introduced signatures. Acceptance covers AUTH-01, IR-MCP-01 and
+DR-F01/02/03/04/05/06 only. Preserve those owners and assertions. It does not accept the
+later child/artifact source, close P6, or qualify the release.
+
+**Dream:** correction round 1 is finished and independently verified **in isolation**.
+This round changed `nanobot/agent/memory.py`, `nanobot/utils/dream_operation.py`,
+`tests/agent/test_git_store.py`, and `tests/agent/test_memory_store.py`. All 19 introduced
+Dream diagnostics were repaired. New regressions cover directory obstruction and an
+actual issued `WriteFileTool` racing restore across distinct owners; the existing stale
+registry test remains. Root candidate `completion-dream-r1` passed **218 tests**, full
+Ruff/diff and unchanged-dependency global comparison: strict **962 / 545 files**, zero
+introduced, with 19 resolved against its correction input. This supersedes the older
+216-test/19-error Dream status below. Combined acceptance and fresh review remain pending.
+See `current-completion/dream-root-precheck.json`, `completion-dream-r1-*`, and
+`current-completion/dream/{checkpoint.md,commands.txt,source-hashes.json}`.
+
+### Canonical child backend: current partial state
+
+The actual canonical child session/run/history path is present. Exact original-chat
+approval resumes the same child source with a new run. Production 20-line overwrite,
+sibling approval isolation and duplicate refusal have focused positive evidence. Separate
+limits now default to depth 2, two immediate children, four descendants per root, and four
+children gateway-wide via `agents.defaults.delegation_tree`. Malformed recovery scans fence
+new admissions. Child Stop uses one bounded `asyncio.wait` deadline, retaining resistant
+task handles and uncertain capacity; awaited child tasks register under the parent
+ExecutionOwner while background children remain independent.
+
+| Acceptance criterion | Remaining work at stop |
+| --- | --- |
+| AC1 canonical source/run/history | Partial: custom-store refusal, adverse persistence and owner-close proofs remain. The nested planner test now verifies separate child history, permitting only delegated bootstrap while retaining the parent legacy-save prohibition. |
+| AC2 authority/private holds | Partial: complete live revocation, disabled-capability and captured-MCP lifetime barriers; preserve exact-effect admission and private parent task holds. |
+| AC3 original-chat exact approval | Partial: positive same-child/new-run and sibling cases pass; denial, stale source/ancestry, revocation, Stop and duplicate-dispatch races remain. |
+| AC4 ordered same-child follow-up | Open: no child control entrypoint is wired. Reuse `_SourceActivityAdmission.submit`, owner-registered `admit_pending_activity`, and the existing `PendingFollowupRecord`/writer admission-consumption journal. |
+| AC5 background result delivery | Open: implement durable completion outbox to the exact captured parent source lifetime and route, with restart/consume/stale-parent deduplication. |
+| AC6 finite budgets and recovery | Partial: three-root 2+2+1 capacity regression now passes. Valid uncertain records still need explicit owner-evidence settlement; list/read/persistence faults and shared gateway tree composition across AgentLoop instances need proofs. |
+| AC7 original-chat subtree Stop | Partial: root cancellation/join still precedes `stop_children`; fence subtree admission first. Durable stopping projection, control epoch/source-lifetime guard and resistant root-owner quiescence remain unfinished. |
+| AC8 typed projection and history | Partial/open: basic `DelegatedChildEvent` remains; complete source/run/state ordering, capacity/canStop/owned-work/epoch, durable-before-event delivery, reconnect hydration and canonical full-history accessor. |
+| AC9 artifact handoff | API adaptation is unfinished and not integrated into actual child writer/runner settlement; see below. |
+| AC10 regression and acceptance | Incomplete: production barriers, closest broad suite, full lint, global zero-new type ratchet and fresh combined review remain. |
+
+Child owner report: `QA/current-completion/children/worker-checkpoint.md`; ownership is
+released and its commands have exited. Focused evidence includes earlier **21 passing**
+cases, then **12 capacity/history cases**, **12 child Stop cases**, and the final **one-case
+parent task-registration probe**. Counts overlap and must not be summed. Root independently
+passed the exact approval probe on `completion-child-approval-interim`; that combined command
+also failed the then-stale planner fixture. The worker subsequently corrected that fixture
+and passed it, but root has not replayed the final combined package. Earlier failing runs
+remain recorded; no claim is made that every prior failure is now resolved.
+
+The worker used the fixed interpreter with `PYTHONDONTWRITEBYTECODE=1`, exact candidate
+`PYTHONPATH`, explicit `-c <source>/pyproject.toml` and short unique `/tmp` basetemp paths.
+Useful continuation targets are `tests/agent/test_delegation_child_authority.py`,
+`tests/agent/test_delegation_child_controls.py`, `tests/agent/test_delegation_child_sessions.py`,
+`tests/agent/test_delegation_gateway_capacity.py`, `tests/agent/test_delegated_child_events.py`,
+`tests/agent/test_migration_source_engine.py::test_source_nested_planner_stream_does_not_leak_into_root_history`,
+and `tests/config/test_delegation_tree_config.py`. These are starting points for the next
+agent, not tests run during this documentation handoff. The child checkpoint records exact
+commands/exits; its pytest output was in tool results rather than separate raw log files.
+
+### Separate-owner artifacts: unfinished API and integration seam
+
+Current WIP modifies only `nanobot/session/artifact_grants.py` and
+`nanobot/session/artifact_reader.py` in this package. No completed artifact regression
+evidence is available; these modules introduce **90** type signatures in the frozen source.
+Do not treat the API as accepted or the child runtime integration as present.
+The final artifact worker report was unavailable when its report-only turn was stopped;
+the status here comes from the frozen source and root receipts, without inferred test
+completion. Artifact write ownership is revoked and must be reassigned on continuation.
+
+The proposed API is:
+
+```python
+binding = ArtifactDirectChildBinding.capture(admission, parent_reader, child_writer)
+grants = ArtifactGrantSet.issue_downward(
+    parent_reader, child_writer, refs, child_binding=binding
+)
+collector = ArtifactHandoffCollector(child_reader, child_binding=binding)
+receipt = collector.prepare_after_completion(stop_reason=stop_reason)
+# Only after exact canonical run/source settlement, if a receipt was prepared:
+if receipt is not None:
+    receipt.seal_after_settlement(run_store=run_store, source_store=source_store)
+```
+
+Capture the actual live parent/child writers and durable direct-child relation, exact
+source/run/stream identities and private invocation nonce. A typed `ChildAdmission` alone
+is not live authority. Preserve private BLOB → SOURCE lock order and actual
+`ReadFileTool.verify_artifact_evidence` checks. Prepare the candidate before child owner
+close; carry it in a typed internal `TurnResult` field; seal in
+`AgentLoop.execute_child_turn` after `execute_turn` returns and the exact RunRecord is
+COMPLETED with a healthy closed source: no execution lease, recovery marker or unresolved
+execution links. Never validate an expired child owner as live. Upward acceptance is once
+only after the durable parent tool result. Approval resume cannot reuse the old expired
+parent reader/grants. Keep the explicit background-plus-artifact refusal.
+
+`runner.py` still relies on the inline `parent_stream_id` artifact path while the canonical
+child now owns a root writer of its own. No binding capture, typed candidate propagation,
+post-settlement seal or real positive/negative child integration test is wired. Give the
+artifact modules one owner and runtime/factory integration another owner only with an
+explicit API handoff; integrate against actual writers without mutual waiting. Relevant
+existing tests are `tests/session/test_artifact_{grants,handoff_boundary,reader}.py` and
+`tests/tools/test_artifact_origin_boundary.py`. Preserve inline same-owner behavior and
+sibling/transitive/forged/replaced-source/private-location/range/replay refusals.
+
+### Resume order and outstanding acceptance
+
+1. Sync and inspect the implementation branch, verify identity/refs, preserve this WIP,
+   and read this entry plus the canonical-child/client specifications below. The user's
+   implementation preference remains fresh-context **Luna Max workers through the
+   orchestrator**, with bounded ownership and independent evidence-based acceptance.
+2. Finish the unfinished backend: AC1/2/3 adverse paths, ordered input/outbox, recovery,
+   root Stop, typed projection/hydration/history, and artifact API plus runtime integration.
+   Fix the recorded lint/type regressions without weakening tests or accepted foundations.
+3. Freeze the combined source under the same dependencies; run affected child, artifact,
+   Dream and command suites, relevant broader regression coverage, full Ruff/diff and the
+   unchanged full-source global ratchet against the immutable baseline. Obtain one fresh
+   bounded Sol Max integrated review, then root PASS/CORRECT/REJECT. Dream isolation alone
+   cannot close the backend package.
+4. Only after backend protocol settlement, implement WebUI/TUI original-chat activity,
+   sibling approval, Stop, usable background composer and optional read-only detail/return
+   preserving parent draft/scroll/focus. Android uses the same responsive UI contract;
+   browser/PTY interaction evidence remains pending.
+5. Qualify the matching final installed macOS artifact and stopped-copy/restart behavior.
+   The earlier macOS wheel PASS applies only to `children-before` (wheel SHA-256
+   `d2e393faed74c31217bed8266d83570e19121a662c098fa997a25d2ac0e9df93`), not these changed
+   bytes. Linux/Android evidence retains its prior source scope. Whole-tree supervisor
+   qualification, full A3/P6, release and staging merge remain open.
+
+External continuation contracts: `current-completion/{child-contract,dream-contract,
+artifact-contract}.md` and original `contracts/{canonical-children,child-spec,child-client,
+dream-correction}.md`. `current-completion/graph.json` and `acceptance-ledger.json` record
+the stop. Their earlier complete-first instructions are superseded. Resume unfinished work
+only when the user starts the next task; no automatic continuation is requested.
+
+## Earlier paused checkpoint (2026-11-12; superseded)
+
+This historical record predates the latest child, artifact and Dream changes. Its counts,
+uncommitted-Git state and resume instructions do not describe the checkpoint above.
+
+**User-requested pause.** Both implementation owners are released; no implementation, test, gateway or UI stage is running. A3 remains
+unfinished and unaccepted; resume only when asked. Frozen `A3-PLAN-2026-11-11`, architecture and future coding-harness/session-based
+SuperAgent direction are unchanged.
+
+### Frozen candidate
+
+On `codex/staging-audit-implementation`, HEAD is `48684630ef1876f64531f70ffa0312bab4d1a063` and staging is
+`f1a6bb85588ba044fc2ca50e3e9f41eb2f13b6f9`; live remote refs match. Index is empty; corrections are local/uncommitted, with no commit,
+push or merge. Continue from this worktree or saved snapshot: remote HEAD alone lacks WIP.
+
+Verified identity: `Jaden <changherng.jc@gmail.com>`.
+
+`paused-current` freezes 2,712 files. Source/test/other-doc bytes matched frozen hashes before this handoff-only edit. Environment:
+Python 3.13.2, 183 distributions, BasedPyright 1.40.1; dependencies and checker settings unchanged. Root receipts/hashes are under
+`/private/var/folders/9f/pzdn55jj0gj7yrqrqx405lk80000gn/T/nanobot-a3-completion-20261112-iqd9sf_h/`.
+
+### Root evidence and accepted foundation
+
+Current critical replay passed **24 tests** (child-authority, permission-owner and five immutable child/Dream probes). No full 14k
+broad rerun occurred on the incomplete combined child package. Full Ruff fails with **14 child production/test findings**: I001 (4),
+F401 (7), F811 (3).
+
+Full-source strict exits 1 at **1,010 diagnostics/545 files**, vs baseline 962; global all-file ratchet fails at **48 introduced, zero
+resolved** (19 Dream, 29 child). Do not refresh the baseline or compare edited files alone. Strict/comparator receipts and Ruff reports
+are in the paused-current QA bundle.
+
+Frozen `foundations-corrected-2` remains **CLOSED_PASS** (13,849 passed, 41 skipped, six subtests; full Ruff/diff pass; strict 962/544,
+zero introduced/resolved vs immutable `685bee92`). Strict debt remains; P6 is incomplete. This does not accept paused-current or A3.
+AUTH-01, IR-MCP-01 and DR-F01/02/03/04/05/06 remain frozen dependencies.
+
+Root macOS PASS applies only to immutable `children-before` wheel (SHA-256
+`d2e393faed74c31217bed8266d83570e19121a662c098fa997a25d2ac0e9df93`): 544-file source/bundle parity, installed CLI/process checks, 36
+stopped-copy/restart/revocation checks, unpatched foreground gateway and static/model routes, offline SSE, and exact two-message
+history after clean restart passed. Requalify the matching final artifact/stopped-copy restart. Whole-tree supervisor was unavailable;
+Full refused authority. No Once/Full whole-tree, physical Android, changed-APK/device equivalence, signing, deployment or release
+claim. Linux/Android evidence retains its prior source scope.
+
+### Canonical child correction — partial
+
+Canonical AgentLoop child path/source/run and risky-write blocking are present, with private parent Once-task reference holds. The
+green 24-test replay does not establish AC1–AC10; AC2 is partial. Live revocation, disabled-capability and captured-MCP lifetime
+barriers remain open.
+
+AC3 is scaffolding only: `ChildApprovalResume` and tree/manager helpers are not wired to `AgentLoop.execute_turn` or initial
+settlement. Exact-parent typed approval, same-child/new-run resume, denial/stale/duplicate handling and retained `waiting_approval`
+capacity are unproven; blocked settlement may fail/release instead of waiting. Wire and validate this path before acceptance.
+
+Earlier focused child report: **41 passed/10 failed**, not rerun at pause. Worker attribution (nine direct-tree fixtures missing
+canonical parent owner; one synthetic event-path mismatch) is unaccepted; the resumed worker lacked the exact command. Keep failures
+visible. AC4–AC10 remain: ordered follow-up; durable exact-parent result outbox; global/root/depth limits and uncertain capacity;
+bounded subtree Stop; durable typed projection/hydration/full history; sealed cross-owner artifact handoff; integrated
+fault/barrier/regression coverage.
+
+### Dream correction — worker complete, root acceptance pending
+
+Isolated seven-file Dream overlay passed **216 tests** (212 focused plus four immutable root probes), full Ruff and source/dependency
+parity. Strict is **981 diagnostics/545 files** vs 962: 19 introduced, zero resolved; ratchet fails. Combined replay also passed
+Dream's four root probes. Repair 19 signatures and add the directory-obstruction and real write-vs-restore barrier regressions. Actual
+`cmd_dream` with production MemoryStore/GitStore persistence errors passed via offline `process_direct` adapter; live
+AgentLoop/provider cancellation and power-loss behavior remain unqualified.
+
+### Clients and resume order
+
+WebUI/TUI work has not started: original-chat task/result/sibling approval/Stop, background composer, read-only detail/return
+preserving draft/scroll/focus, typed TUI approval and shared responsive Android UI remain. Browser/PTY evidence is pending; offline
+provider fixture is prepared and wire-proven only.
+
+Resume from this worktree after checking refs and paused-current hashes; preserve WIP and accepted foundations. Continue fresh-context
+Luna Max owners: wire child AC2/AC3; address known failures, 14 Ruff findings and 29 type signatures; repair Dream's 19 signatures/two
+gaps. Finish backend AC4–AC10; freeze combined source and run affected broad/command suites, full Ruff/diff and unchanged-dependency
+global zero-new strict. Then implement clients and verify browser/PTY; qualify matching installed macOS artifact/stopped-copy restart;
+obtain fresh bounded Sol Max integrated review and root PASS/CORRECT/REJECT. No A3, merge-readiness or release acceptance is claimed.
+
+Resume evidence: `paused-current-{context,hashes,package-inventory}.json`; `evidence/canonical-children/pause/pause-checkpoint.md`;
+`dream-correction/root-pause-checkpoint.json`. `contracts/dream-resume-correction.md` is prepared but not dispatched; original
+`contracts/canonical-children.md`, `child-spec.md` and `child-client.md` remain authoritative.
+
+## Authority, MCP and media foundation checkpoint (2026-11-12)
+
+The prerequisite correction graph is closed with **PASS** under frozen
+`A3-PLAN-2026-11-11`. This checkpoint supersedes earlier pending statuses for
+**AUTH-01, IR-MCP-01 and DR-F02/03/04/06**. The implementation branch remains
+`codex/staging-audit-implementation` at `48684630e`; these latest corrections are
+local and uncommitted. Repo-local Git identity is `Jaden <changherng.jc@gmail.com>`.
+
+- Exact approval now issues sealed, volatile authority for one concrete dispatch
+  attempt. Repeated/concurrent effects cannot reuse it; failure does not refill it.
+  Independent sibling approval IDs retain their original-chat addresses. Child
+  integration must reuse this admission owner rather than invent another registry.
+- Each model request captures immutable concrete tool/schema bindings. Independent
+  child/background work borrows narrowed holds through settlement. Reload/revocation
+  never redirects an old request to a replacement; every visible replacement owns
+  its exact generation before the next await. Dream filters preserve live admission
+  without retaining their local issuing registry indefinitely.
+- Media retention shares strict owner-declared inventory and publication/deletion
+  fencing. Invalid or incomplete evidence blocks every destruction branch; exact
+  durable pending custody protects unpublished bytes. Canonical source publication
+  participates through both `JsonlSessionStore.persist_source_records` branches.
+  Valid retained display references protect bytes, real orphans can reclaim, and
+  trusted workspace moves retain inode-bound declarations. The first-release route
+  retires the advertised attachment migration instead of adding legacy rewriting.
+
+Root validated an immutable 2,710-file candidate under the unchanged Python 3.13.2
+environment with 183 distributions: **13,849 passed, 41 skipped**, six subtests and
+59 warnings; full Ruff and whitespace checks passed. Full-source BasedPyright
+reported **962 diagnostics across 544 files**, with **zero introduced or resolved
+diagnostic signatures** against immutable integration `685bee9279c0bbb962ef78344428afeaba121066`.
+This passes the bounded repair ratchet; strict checking remains nonzero and P6 is
+not complete. The recorded broad command covers the affected backend, CLI/utils
+and WebSocket suites, rather than every optional channel or device matrix.
+
+Independent review found four defects, all corrected and rechecked. Its 280-test
+replay and final 13-node gateway recheck passed. Additional compatibility fixes
+preserve existing assertions, including stale approval with no foreground activity,
+history budgeting, temporary-chat privacy and signed historical-media reads. The
+last correction restores the test directory accessor's real creation contract;
+it changes no production behavior or test assertions.
+
+Continue with **AUTH-02 and CHILD-01..06**, then **UI-01/02**, using the canonical
+child and client specifications below. Source identity, mutation uncertainty,
+sampled MCP ownership, exact approval and media publication are accepted dependencies
+and must survive that work. Backend projection/control schema precedes client edits.
+The user selected **GPT-6 Luna Max workers for subsequent implementation and
+corrections** to conserve quota; keep evidence-based independent Sol Max review.
+Two later fixture corrections have already used Luna Max successfully.
+
+No final child/client, macOS selected-mode/artifact, changed Android-artifact or
+release qualification is claimed. The overall correction task remains active;
+staging merge and Git publication are separate actions. Current raw snapshots,
+contracts, commands, hashes, final review and root acceptance remain outside Git at
+`/private/var/folders/9f/pzdn55jj0gj7yrqrqx405lk80000gn/T/nanobot-a3-completion-20261112-iqd9sf_h`,
+with `root-foundation-final-verdict.json` and `foundation-review/recheck-2/review.md`
+as the foundation acceptance records.
+
+## Recovery foundation checkpoint (2026-11-12)
+
+**DR-F01 and DR-F05 have a bounded implementation PASS. Full A3 acceptance remains
+open.** The accepted `A3-PLAN-2026-11-11` is unchanged. At this checkpoint the recovery
+changes are local and uncommitted on `codex/staging-audit-implementation`, above
+`48684630ef1876f64531f70ffa0312bab4d1a063`. Staging remains `f1a6bb85`; no merge or
+publication was performed. Repo-local Git identity is `Jaden <changherng.jc@gmail.com>`.
+
+- **DR-F01.** Concrete first-party write/edit/patch and binary-publication paths retain
+  bounded mutation evidence, including mkdir, cancellation and tracking failures.
+  Registry/result copies preserve trusted facts; plugins cannot supply them. Mandatory
+  result persistence atomically fences unresolved effects before the reconciliation
+  abort. Tests prove no tail mutation or next model request, and fencing after reopen.
+  Historical mutation errors without evidence remain uncertain. No readback proof is
+  claimed and no automatic replay or general reconciliation bypass was added.
+- **DR-F05.** Typed source state comes from the admitted execution owner and follows
+  delayed process work. Store/key/incarnation/generation are rechecked under final
+  acquisition locks before lease publication, without source creation or fallback.
+  Retained-result access checks the same origin; journal CAS compares original stored
+  bytes. Missing/stale origins refuse, originless records remain inspectable, and an
+  interrupted admitted continuation remains unknown. Revision advances remain valid.
+- **Integration corrections.** Admitted body/cleanup errors preserve their original
+  identity. Bus completion has one notifier; only a typed source rejection before the
+  bus scope receives early settlement. A valid origin can also require an existing
+  session. Definition-only SDK close, mandatory-close failure assertions and CI strict
+  evidence-step ordering now follow their existing contracts.
+
+### Verification
+
+All final checks used one frozen candidate, with 2,705 input-file hashes and the same
+183-distribution Python 3.13.2 environment. No dependencies or checker settings changed.
+
+| Boundary | Final evidence |
+| --- | --- |
+| Affected backend suite | **11,468 passed, 32 skipped, 55 warnings, 6 subtests passed** across agent/session/tools/migration/cron/triggers/WebUI/remote/context/scripts and SDK streaming. This is an affected-suite run, not full release qualification. |
+| Correction regressions | 70 focused tests passed. Independent review replayed 23 tests and found no remaining defects in the bounded correction. Existing lifecycle assertions were preserved; new regressions fail against frozen pre-correction production. |
+| Lint and source integrity | Full `ruff check nanobot tests conftest.py` and `git diff --check` passed. Final source/test bytes match the frozen tested candidate; the correction changed only its four assigned files. |
+| Full-source type comparison | Immutable integration `685bee92` to final: **962 to 962 diagnostics, zero introduced signatures**, 542 candidate files. Original WIP to final: **968 to 962**, six resolved and zero introduced. Strict checking still exits 1 in this environment; this is not strict-zero/P6 completion. |
+
+The initial broad run had nine failures: six notification ownership regressions and
+three fixtures needing the new source/admission condition. Those failures are repaired
+and covered by the final passing run. The independent review also caught admitted-error
+misclassification and the valid existing-session carrier conflict; both are corrected.
+The recovery review/correction graph is closed with **PASS** after one correction round.
+
+Raw reports, exact commands/environment, immutable source snapshots, hashes, red/green
+logs and `root-verdict.json` are retained outside Git at
+`/private/tmp/nanobot-a3-resume-20261112-hovb2rb1`. The final snapshot is
+`accepted-candidate`; use `final-broad-receipt.json`, `final-strict-receipt.json` and
+`final-integration-comparison.json` for the final evidence rather than earlier runs.
+
+### Continue from here
+
+Next implement **IR-MCP-01** using the sampled binding specification below. Then finish
+media retention/publication **DR-F02/03/04/06**, followed by canonical child authority
+and the original-chat WebUI/TUI behavior. These packages have not been accepted by this
+recovery review. Physical Android, final macOS selected-mode qualification and the other
+release gates below remain open. Keep implementation separate from staging.
+
+## Mobile correction checkpoint (2026-11-12)
+
+Resume from `codex/staging-audit-implementation` in the implementation worktree.
+The mobile source is in `8153953f40046499e66ff01324b111b049363bd3`.
+The correction follows the accepted `A3-PLAN-2026-11-11` on staging `f1a6bb85`.
+[Implementation plan](implementation-plan.md)
+
+- **PA-01.** Mobile commands require current scopes and the owner-bound Host and Origin.
+  Queued WebSocket delivery repeats the access check. Session deletion requires owner scope and `chat.write`.
+- **PA-02 and PA-03.** Cancel uses the durable native pairing fence. The bootstrap joins early handshake results.
+  The native broker restricts credential operations to native callers. The bridge exposes typed public status fields.
+- **PA-07 and PA-G01.** The server and Android use the fixed v2 proof corpus.
+  The loopback data-server test checks one-use recovery, mutation replay and revocation.
+
+### Verification
+
+| Boundary | Evidence |
+| --- | --- |
+| Python | 247 server compatibility tests and 213 WebSocket channel tests passed. The final import and type edits passed their affected 44 and 4 tests. Mobile-slice Ruff passed. |
+| WebUI and Go | 37 WebUI mobile tests passed. Go broker tests, Go vet and the shared WebUI build passed. |
+| Android | 20 host unit tests passed. Instrumented Kotlin compiled. The unsigned APK contains the corrected bootstrap and both native ABIs. Its manifest declares minSdk 24. |
+| Strict types | The mobile snapshot applies the mobile changes to `a8b3abf5`. It reports zero diagnostics across 541 files against frozen integration `685bee92`. The combined branch comparison resolved seven diagnostics and introduced zero across 542 files. |
+
+At the mobile checkpoint, the combined branch still reported six strict diagnostics and
+two Ruff findings in recovery files; the recovery checkpoint above resolves those findings.
+The Linux API 36 emulator crashed before boot. Android device execution remains pending.
+Full A3 acceptance remains open.
+
+Raw logs, dependency inventories, source hashes and the accepted test cases are under
+`/home/jaden/Documents/Utilities/nanobot-custom-worktrees/a3-evidence/mobile-correction-2026-11-12-c0f12f00`.
+
+### Next stage
+
+The recovery checkpoint above completes the next foundation package described here.
+Continue with its remaining work order and the specifications below.
+
+The November 11 pause record below describes `c0f12f00` and its evidence.
+
+## November 11 pause record
+
+**Paused by the user on 2026-11-11. This is an incomplete implementation checkpoint,
+not a merge-ready or release-qualified result.** Resume only when asked. All previous
+worker write ownership has been released; no validation or agent jobs remain running.
+
+Status and failure descriptions in this historical record are superseded by the
+November 12 checkpoints above. Its accepted requirements and remaining specifications
+still apply; do not repeat already completed mobile or recovery corrections.
+
+This record is self-contained for an agent continuing from the implementation branch.
+The architectural direction is settled. Continue the corrections below; do not reopen
+the plan merely because the implementation is incomplete.
+
+## Branches, authority and scope
+
+| Item | Identity / instruction |
+| --- | --- |
+| Implementation branch | `codex/staging-audit-implementation` |
+| Original implementation reviewed | `0518de5f5013b77cbc20d2c5b456e973f33c68f5` |
+| Frozen staging baseline | `f1a6bb85588ba044fc2ca50e3e9f41eb2f13b6f9` |
+| Local integration of staging into implementation | `685bee9279c0bbb962ef78344428afeaba121066` |
+| Verified lifecycle correction | `a8b3abf5f32760dd65d0865cfc3023d29be9afa2` |
+| Incomplete mobile/recovery changes | The WIP commit adding this handoff; inspect its diff against the lifecycle commit |
+| Git author and committer | `Jaden <changherng.jc@gmail.com>`; verify repo-local identity before further commits |
+| Existing implementation PR | [#27](https://github.com/JadenChun/nanobot-custom/pull/27); do not merge it |
+
+The user authorized corrections on the implementation branch, then explicitly requested
+a pause, Git synchronization and this handoff. Staging remains unchanged. Do not merge
+the implementation into staging, deploy, sign packages or operate physical devices as
+part of resuming ordinary correction work. A later publication request should be
+handled in its stated scope.
+
+Read [implementation-plan.md](implementation-plan.md),
+[v1-product-contract.md](v1-product-contract.md), [decisions.md](decisions.md),
+[design.md](design.md), [reference-design.md](reference-design.md),
+[future-harness-extension.md](future-harness-extension.md) and
+[plan-review.md](plan-review.md). **A3-PLAN-2026-11-11 is authoritative.** The archived
+implementation packets contain superseded requirements; apply the current plan's
+explicit decisions. Existing frozen architecture records and the historical 136-finding
+audit ledger were not edited to imply implementation acceptance.
+
+Key settled decisions:
+
+- Linux and macOS are executors; Android is a remote client. Linux/Android prior
+  qualification is user-confirmed and retains its original source/artifact scope.
+  macOS qualification remains. Windows is outside this selected matrix.
+- This is the first release. No legacy migration, forced re-pairing, historical executable
+  reader or two-APK upgrade requirement should be added.
+- Normal subagents use canonical sessions/runs. The original chat mediates follow-up,
+  approval and Stop. Awaited work is the default; explicit background work is allowed.
+  Optional child detail is read-only, with return to the original chat.
+- Full/Once consent is volatile. History, restart and saved metadata never restore it.
+  Uncertain effects retain logical ownership/capacity until reconciliation.
+- Future coding-harness extension must remain possible. Future SuperAgent coordinates
+  normal sessions, independently of subagent behavior; task associations consume no
+  child depth/capacity. Do not add a new router or all-provider semaphore now.
+
+## What has actually been verified
+
+| Work | Evidence and limits |
+| --- | --- |
+| Staging integration | Eight conflicts and one test adaptation resolved; latest staging behavior retained. Worker: 470 backend passes, 15 host/native skips, 60 frontend passes, scoped lint/type checks. Coordinator independently replayed 101 relevant backend tests. Frozen strict comparison: 962 to 962 diagnostics, 541 files, zero introduced signatures. Integration only. |
+| PA-05 / PA-06 cleanup | SDK callers join one shielded close attempt. Failure fences admission and permits retry; direct SDK and composition retain exact unfinished closers, skip settled resources and preserve failures. Coordinator: 109 lifecycle tests passed. Lifecycle-only frozen full-source comparison: 962 to 962 diagnostics, 541 files, zero introduced signatures. Saved separately in the lifecycle commit. |
+| Mobile scope boundary, intermediate snapshot | New production owner/IPC/edge/router/HTTP regression: 10 failures to 11 passes; coordinator independently replayed all 11. Later edge/proof encoding edits were **not** retested. Not final mobile acceptance. |
+| Proof format, intermediate snapshot | Python fixed-corpus plus existing proof tests: 47 passed. Initial red was a missing decoder API at collection. Kotlin consumption remains incomplete/unverified. |
+| Pairing restart, intermediate snapshot | Approved-but-unissued restart regression: 1 failure / 5 passes to 6 passes. Broader restart/store compatibility checks remain. |
+| Shared TypeScript mobile runtime | Correlation/disposal suite: 4 failures / 13 passes to 17 passes. Native/bootstrap correlation remains unfinished. |
+| Go broker baseline | Before native corrections, actual darwin/arm64 `GOTOOLCHAIN=go1.27.3 go test -mod=readonly ./internal/broker` passed in `mobile/native-network`. No Go source edits. |
+| TUI baseline | Before child-client edits, pinned Bun 1.3.13: type check passed; 211 tests passed, 0 failed, across 22 files. No TUI correction has started. |
+
+**These are snapshot-specific results. The final WIP tree has not passed an integrated
+test suite, strict diagnostic comparison, frontend build/lint, native build or fresh
+independent review.** Strict checking already has debt; a bounded repair PASS is not P6
+or release completion.
+
+## Immediate WIP hazards
+
+1. Android production compilation currently fails in
+   `mobile/android/app/src/main/java/ai/nanobot/mobile/network/CustodyStore.kt:577`:
+   unresolved `OsConstants.O_DIRECTORY`. No native tests ran green at the latest snapshot.
+   The local log named `native-green.log` is a **failed** prospective run, not a pass.
+2. `mobile/mobile-bootstrap.js` is unchanged. Its Cancel handler does not invoke the new
+   native `pairCancel` fence; its early handshake-result correlation is also unchanged.
+3. New `java.util.Base64` use in `DeviceProofCanonicalizer.kt` needs review against
+   Android minSdk 24. Do not raise minSdk or relax the proof encoding to avoid the issue.
+4. Filesystem recovery is partial and has no post-edit green run. The new fact acceptance
+   code accesses `.name` on an `object`, which likely needs a proper concrete type guard.
+   Patch/binary/notebook mutation coverage and trust/failure-path checks remain.
+5. DR-F05 process origin identity has not been implemented. Child/approval, sampled MCP,
+   media retention and client corrections have not started.
+
+Do not fix these while merely reviewing or syncing this paused checkpoint. A continuation
+request authorizes the next implementation work.
+
+## Progress and ready work order
+
+The review established 23 outstanding defects before these corrections: 17 P1 and 6 P2.
+PA-04 is a separate qualification/capability gate; PA-08 was already repaired by the
+staging integration. Do not count either as an outstanding newly reproduced defect.
+
+| Findings | Status at pause | Next package |
+| --- | --- | --- |
+| PA-05, PA-06 | Verified bounded correction | Preserve the separate lifecycle commit |
+| PA-01, PA-02, PA-03, PA-07; prerequisite PA-G01 | Partial mobile/native/server WIP | Finish mobile, then run final compatibility/ratchet checks |
+| DR-F01 | Partial effect/source WIP; no green validation | Finish recovery foundation |
+| DR-F05 | Not implemented | Same recovery foundation / shared admission owner |
+| IR-MCP-01 | Not implemented | Sampled registry/MCP binding ownership |
+| DR-F02, DR-F03, DR-F04, DR-F06 | Not implemented | Media retention/publication and migration retirement |
+| AUTH-01, AUTH-02; CHILD-01 through CHILD-06 | Not implemented | Canonical child execution and authority |
+| UI-01, UI-02; source-only LIMIT-01 through LIMIT-03 | Not implemented | Original-chat WebUI/TUI projections and navigation |
+
+Finish the mobile and recovery foundations first. Then sampled MCP and media ownership
+can proceed on disjoint files after shared source ownership is released. Canonical child
+work depends on source identity, effect fencing, MCP borrowing and safe source publication.
+Client work follows a settled child projection/control interface. Finish with integrated
+checks and one fresh independent review of the combined changed behavior.
+
+Use one writer for overlapping source/runner/registry/turn/context/gateway files.
+Previously active workers are stopped; do not assume an old worker still owns a file.
+If using the orchestration skill, route this resumed task afresh rather than reviving a
+closed graph implicitly. Keep the core small and use existing owners.
+
+## Mobile correction specification
+
+Current changed areas are `nanobot/remote/{auth,device_proof,edge,ipc,operations,pairing}.py`,
+the scope/origin gates in `nanobot/webui/{gateway_endpoint,inbound_commands,ws_http}.py`,
+`webui/src/lib/mobile-runtime.ts`, related tests, and the Android network/custody classes.
+New Android classes are `NativeRequestCorrelator.kt` and `PendingAttemptFence.kt` with
+host test files. `app/build.gradle` adds test-only `org.json:json:20240303`.
+
+- **PA-01:** Enforce required action scope and owner-bound Host/Origin at the actual
+  production shared dispatcher. A media.read-only grant cannot hydrate chat. chat.read
+  or media.read cannot mutate sidebar/session state. Require current grant checks at
+  admission, before effects and before private delivery; unknown operations refuse.
+  Preserve the current operation registry and newly added HTTP mobile revalidator.
+- **PA-02:** Cancel must durably fence the native pairing attempt before queued collect,
+  poll or token writes can finish, including when the operation executor is blocked.
+  Compare attempt generation atomically with custody writes; QR/manual restart must
+  share the fence. Persistence failures are explicit. Wire the existing JS Cancel UI
+  to this native boundary; token absence alone is not cancellation proof.
+- **PA-03:** TS/native must reserve or join early completions before a returned request
+  ID can be registered. Bounds include launch count, pending/tombstone count and bytes.
+  Keep native-only credential-response classification through timeout/cancel and late
+  terminal delivery. Unmatched/late raw credential bodies never reach WebView. Finish
+  bootstrap handshake correlation as well as the shared runtime and Kotlin correlator.
+- **PA-07:** Persist non-bearer approved-but-unissued device binding/expiry. Restart
+  requires fresh proof. Never persist/replay an issued bearer response. Cancel, expiry
+  and revocation must remain effective across restart and lost delivery.
+- **PA-G01:** The v2 schema/corpus was fixed before detailed proof work. Python and Kotlin
+  must consume the same independent expected bytes/signatures/rejections, not derive
+  expected data from the implementation being tested. Pin P256/ECDSA-SHA256, SPKI/DER,
+  exact typed sorted compact UTF-8 JSON, strict unpadded base64url, valid scalar Unicode,
+  and signed-long positive integer bounds. Existing padded-base64 test fixtures need
+  alignment; never relax production verification to preserve obsolete fixture encoding.
+
+Fixed artifacts, unchanged at pause:
+
+| File | Git blob | SHA-256 |
+| --- | --- | --- |
+| `mobile/contracts/device-proof-v2-schema.json` | `a13c2461d0762e33f1660f74edfa313f2eba6ca7` | `8afc76b8f2b75f3c23e0c19154734fd82c11a78ad3b116614c492a0700f0959c` |
+| `mobile/contracts/device-proof-v2-vectors.json` | `e55a0a97c0a2c127a66daa09fb1cce0b2e71105c` | `270d3d2715258bb161c97eba520e445068f8fed6f06c01bc57076e4e18d4abfd` |
+
+Finish full Kotlin verification/rejection/replay corpus consumption and the compatibility
+suites; test actual native producer behavior, not only a disconnected canonicalizer.
+Host JVM tests do not establish physical Android Keystore or device qualification.
+
+## Recovery foundation specification
+
+### DR-F01: preserve mutation uncertainty and stop execution
+
+Observed trigger: a real edit changes bytes, then file-state/touch tracking raises.
+Generic retry feedback lets a repeating offline provider edit again (`x` becomes `xxx`
+instead of `xx`), while source incorrectly appears settled. This is not unconditional
+runner replay.
+
+The partial WIP adds `tools/filesystem_effect.py`, write/edit instrumentation, private
+`ToolOutcome`/`KnownToolResult` propagation, source fields and an atomic recovery marker.
+It must still be finished and tested:
+
+- Only concrete first-party mutation tools can mint immutable bounded effect facts:
+  operation, resolved target, disposition, reconciliation flag, intended/observed hashes
+  and byte counts. Never duplicate whole file contents or accept plugin/text authority.
+- Mark effect entry before the first mutation, including mkdir. A write that raises
+  after entry is uncertain unless permitted readback proves the result. Tracking
+  failure retains an applied/uncertain fact. Instrument `apply_patch.py` too; attempted
+  rollback is not proof that partial effects vanished. Trace other concrete mutations,
+  including binary/notebook writes, before claiming full coverage.
+- Preserve facts through every registry envelope normalization and recorded-value copy.
+  SourceTurnWriter strips reserved fields from untrusted payloads, binds facts to the
+  execution ID and stores them alongside the unchanged raw result. Atomic source
+  publication sets recovery-required; matching call/result links do not settle an
+  unresolved fact.
+- After mandatory result persistence, set `owner.recovery_required` and raise a dedicated
+  reconciliation abort. Stop the remaining batch/runner: no retry hint, next model
+  request or normal synthetic final source append. Undispatched tail calls may remain
+  conservatively unresolved. Distinguish cancellation, policy denial and mandatory
+  persistence failure. A prior durable intent fences a failed result write; never retry
+  the effect or add a general revoked-write bypass.
+- Reopen keeps evidence inspectable and effect/model admission fenced. Existing mutation
+  error rows without enough evidence cannot silently become “never started.”
+
+New `tests/session/test_filesystem_effect_recovery.py` red run had five failures, including
+the `x -> xxx` behavior and missing mkdir evidence. Two fixture-attribute failures were
+corrected afterward but not rerun. `ast.parse` of the nine owned files passed at pause;
+that proves syntax only. Next test write-then-raise, record_write/touch failure, pre-effect
+denial, cancellation, mandatory result-write failure, tail-call refusal and reopen.
+
+### DR-F05: bind delayed work at final canonical admission
+
+Use existing `SourceState` with typed `RequestContext.source_state` and
+`TurnRequest.expected_source_state`, propagated by trusted inbound/deferred/local-turn
+construction. Populate only from the admitted ExecutionOwner snapshot. Persist process
+origin `(store_identity, session_key, incarnation, generation)`; revision/checkpoint
+advances do not invalidate an origin.
+
+Compare all four fields inside `acquire_execution(validate_snapshot=...)` under execution
+and namespace locks, **before publishing the lease**. A condition requires an existing
+canonical source: no create, alternate namespace or discarded precondition fallback.
+Preserve independent workspace/Full permission checks. Delete/recreate/reset barriers
+must produce zero replacement-source writes and zero provider calls.
+
+Stale completion remains inspectable with an explicit non-executable disposition; notify
+the automation waiter so it neither hangs nor records success. Interrupted dispatching
+remains unknown and is never replayed. Process JSON CAS must compare original stored
+bytes: adding Pydantic defaults changes serialization and otherwise breaks old rows.
+Originless rows remain readable/exportable but cannot continue; never infer their origin
+from today's session. Retained-result retrieval must compare origin too, not just key.
+
+## Sampled MCP binding specification: IR-MCP-01
+
+Observed trigger: runner captures an old schema, awaits the provider, MCP reload publishes
+a same-name replacement, then execution dispatches that replacement. Fix through current
+ToolRegistry, runner and generation lease owners.
+
+- `ToolRegistry.capture_request_tools()` should return owned `CapturedToolBindings` with
+  detached definitions, exact concrete captured registry/registrations, generation pins,
+  live dispatch/revocation guards and idempotent cancellation-safe release. Capture and
+  pin synchronously before preparation/provider awaits; preserve owning-loop atomicity.
+- Transfer capture with `RecordedResponse`; preparation, risk target resolution and
+  dispatch use it. Logical prepared/fallback/stream attempts use the same definitions.
+  Release after response/result/source settlement, including every non-tool/error/cancel
+  exit. Binding identity is independent of tool name and survives filtering.
+- Exact authorized old binding or explicit refusal is acceptable. Replacement-by-name
+  is not. Removal, disable, lost authorization and shutdown revoke immediately despite
+  pins; failed replacement preserves the authorized old registration.
+- Generation ownership includes sampled and active holds, tracks retired generations
+  through shutdown and closes exactly once after the final hold. Preserve refusal to
+  retry a terminated wrapper on a replacement.
+- Provide `ToolRegistry.borrow_filtered(names) -> CapturedToolBindings` with independent
+  narrowed holds before the parent capture releases. A background child needs ownership,
+  not raw wrapper references. Borrowing cannot restore disabled/revoked tools.
+
+Use real runner/provider barriers for reload, failed reload, removal/OAuth revocation,
+revocation after preparation, filtered/child borrowing, cancellation and shutdown.
+Replacement execution count must stay zero and no holds may leak.
+
+## Media retention/publication specification: DR-F02/03/04/06
+
+Observed defects: malformed/missing reference evidence is treated as complete; quota
+deletion bypasses incomplete evidence; generated GC sees only WebUI and deletes media
+referenced by canonical Telegram source; migration dry-run creates blobs/sidecars.
+
+Use current AttachmentStore/lifecycle and source/WebUI storage owners, not a new service:
+
+- One private `MediaReferenceEvidence` carries hashes, paths, completeness, reasons and
+  declared root identities. Evidence alone is not deletion authority: require a live
+  nonserializable AttachmentStore fence. Caller `evidence_complete=True` cannot authorize.
+- Runtime owners declare actual shared-media roots: every channel/child source and
+  workspace namespace; nested followups/reference metadata; retained source, staging,
+  rollback/interruption archives; WebUI transcripts/segments/manifests/display/thread
+  records; pending uploads/publications/temporary-cleanup retries; other supported
+  reference-bearing formats. Custom/pre-contract/unknown coverage refuses destruction.
+- Validate exact canonical bytes with the strict source parser; no repairing listings,
+  truncated/tolerant reader or regex-as-validation. Then extract known attachment/hash/
+  key/media/artifact references, including JSON producer results and platform paths.
+  Missing roots, unreadable/traversal/parse/nonobject/version errors, unsupported reference
+  forms, incomplete pagination or exhausted budget make the entire inventory incomplete.
+- Qualify all evidence before any retention/orphan/quota/blob/sidecar deletion. Every
+  branch shares one no-deletion gate and reports reasons/unmet quota.
+- Persist per-publication pending pins before commit/adoption/generated bytes are exposed.
+  Identical hashes need independent tokens. Release/transfer only the exact token after
+  durable source/display publication proof. Failure/uncertain cancellation retains it
+  across grace/restart; TTL and volatile UploadRegistry absence are not proof. Keep
+  read-only path-inspection helpers pure.
+- Lock order: existing leading migration/private-artifact/execution locks, ExecutionOwner
+  mutex, namespace files locks in stable order, then media publication/deletion fence.
+  Never media -> source, and never await network/model/queue while holding media fence.
+  Maintenance revalidates declarations/identities and inventories/deletes under those
+  protections; bounded busy/incomplete admission refuses. Publication validates new
+  references under the same order: missing asset after deletion must refuse publication.
+  WebUI publication/rotation and temporary shared-blob cleanup participate.
+- Validate containment/generation without following replacement symlinks. Durable bounded
+  deletion intent precedes unlink; blob failure preserves sidecar, sidecar failure retains
+  retry ownership. Reopen retries require fresh complete evidence and same asset generation.
+  Preview creates no intent.
+- **DR-F06 selected route:** retire advertised `attachments migrate` and its mutating
+  lifecycle implementation, updating only current attachment docs/tests. Optional retained
+  callable explicitly refuses without mutation. Do not build unnecessary legacy rewriting.
+  Whole-tree paths/modes/hashes must prove dry-run/declined/refused work writes nothing.
+
+Tests must cover canonical-only/raw-artifact/nested-followup/display/pending-upload roots,
+corruption across all branches, quota/grace, both publication/deletion race orders,
+namespace insertion, separate processes and partial unlink/reopen retry.
+
+## Canonical children and authority specification
+
+Findings: one exact approval dispatches an identical risky effect twice (AUTH-01);
+a scoped child overwrites a real 20-line file without approval (AUTH-02); children have
+only summary history and parent-owned tool events (CHILD-01); three roots can run six
+children despite gateway cap four (CHILD-02); uncertainty frees slots (CHILD-03); ordered
+same-child followup and durable background parent completion are missing (CHILD-04/05);
+governing AGENTS is absent (CHILD-06).
+
+- DelegationTree owns ancestry/attempts/reservations; NativeChildBackend is a shallow task
+  handle. Actual execution uses `AgentLoop.execute_turn -> _source_execution /
+  acquire_execution -> SourceTurnWriter -> AgentRunner -> RunStore`. Never duplicate this
+  owner path, use parent `child_stream` as child history, or append final-only exchanges
+  after a canonical run. Source/RunRecord must exist before provider/tool dispatch.
+- Bind a trusted typed internal delegation adapter with child source/key, new run ID,
+  expected SourceState, role tools/runtime/instructions/limits, hooks and narrowed live
+  authority. Inbound metadata cannot manufacture it. Normal ContextBuilder supplies
+  AGENTS/bootstrap independently of parent conversation, including nested and idle runs.
+  Unsupported nonpersistent/custom-store durable delegation refuses before persistence.
+- Intersect parent admitted disabled/current capabilities with child role. Read-only
+  full-batch denial remains. Worker scoped tools/FileLockRegistry and canonical risky
+  policy both apply, resolving targets through the actual child/captured registry.
+  Do not inherit parent reusable approval sets or establish a separate read-only MCP
+  connection generation. Child pins span background settlement and preserve revocation.
+- Root ordinary task-ended retirement must defer private volatile permission retirement
+  while descendants still own that task. Stop/replacement/revocation fences immediately;
+  final settled descendant retires the deferred hold. Never persist/revive consent.
+- ApprovalAdmission indexes exact opaque approval ID and authorized original-chat alias,
+  supports sibling requests, and issues sealed volatile single-use exact-effect authority.
+  Consume atomically at actual per-call dispatch after preparation/target/live checks;
+  duplicate/concurrent calls cannot share it and failure never replenishes it. Child
+  approval-required closes that invocation with APPROVAL_REQUIRED, retains waiting capacity
+  and projects to original chat without a second parent approval. A valid typed decision
+  resumes the same child with a new run, bound to the blocked run/source/current authority,
+  transferring the held reservation once. Never hold parent lock awaiting a human.
+- Internal parent-mediated send/followup/wait/cancel use a stable admitted tool-intent ID.
+  Existing PendingFollowupRecord journal owns ordered busy input before acknowledgment;
+  SourceInjectionBinding applies at a safe request boundary and only after model-request
+  acknowledgment. Duplicates reconcile, conflicts refuse. Terminal/idle races preserve one
+  serialized run or durable next input. Unresolved effects block continuation.
+- Awaited result is durable parent tool output only. Background completion uses a durable
+  child outbox with stable ID, exact captured parent source lifetime and original route,
+  then the parent canonical pending journal. Dedup `_pending_followup_id` before running
+  another provider request. Replaced/reset/deleted parent retains result/stale-delivery
+  evidence and is never recreated. Restart may reconcile delivery but never replay child.
+- Finite configurable defaults: root depth 0/max depth 2; two immediate child runs;
+  four root descendants; four gateway-wide child runs, excluding primary turns. Separate
+  `holds_capacity` from task/live/terminal flags. Reserved, joining, waiting approval,
+  stopping and uncertain work all count. Persist before exposing/releasing transitions;
+  unknown retains reservations across restore until explicit owner reconciliation.
+  Malformed unresolved scans fail closed; idle/settled history consumes no slot.
+- Original-chat Stop fences subtree admission first, through idle ancestors, invalidates
+  pending approval/input/launch, then cancels and joins. Use bounded `asyncio.wait` with
+  retained resistant handles/observers; `wait_for(gather)` can overrun under suppressed
+  cancellation. Unproven effects stay uncertain and keep logical capacity even if physical
+  OS/execution lease closes after quiescence. Preserve target-turn guard; children-only
+  Stop also binds source lifetime/control epoch and expected root presence or absence so
+  a delayed Stop cannot cancel unrelated later work.
+- Child metadata/projection needs exact parent/root/child source lifetimes and run refs,
+  monotonic run/state sequence, capacity/settlement/owned-work facts, task/result summary,
+  actionable approval and durable completion disposition. Persist before event delivery.
+- Existing summary-only children remain unchanged readable/exportable inspect-only.
+  Do not synthesize tool provenance/RunRecords/consent. Settled summaries use no capacity;
+  unresolved ones stay fenced. Executable followup requires newly admitted canonical child,
+  linked to retained historical context, not bulk migration.
+
+Artifact handoff is a required dependency, not optional cleanup. Existing grants/receipts
+assume the same ExecutionOwner. Adapt narrowly to sealed origin SourceState/stream/
+descriptor and exact target child writer/run plus private direct-child nonce. Preserve
+reader evidence verification, private-blob -> source lock order, current child read policy
+and both source lifetimes. Never rewrite provenance or revive expired/restarted authority.
+Seal upward receipt only after successful child source/owner settlement; accept once after
+durable parent tool result. Keep awaited downward/upward handoff and existing explicit
+background+artifact_refs refusal. Preserve sibling/transitive/forged/replaced/replay/range
+refusals; do not create a general cross-session artifact API.
+
+Acceptance needs real factory/loop/offline providers and barriers: canonical source/run
+before provider, tool rows only child, governing marker nested/idle, disabled/live revoked
+tools, real risky overwrite approval, one dispatch per grant, sibling approvals, three-root
+gateway cap, uncertainty across restore, ordered busy/idle followup, background delivery
+once/stale parent, launch/approval/resistant Stop, persistence failures and artifact positive
+and forgery/replay cases. Do not infer settlement merely from exception/task completion.
+
+## Client projection and behavior specification
+
+UI-01: Stop disappears after parent reply and cancellation lacks projection. UI-02:
+disconnected completion/hydration loses canonical child state and TUI history drops rows.
+Additional source gaps: writable child detail/no return, absent TUI typed approval, and
+activity without meaningful task/results.
+
+- Persist child activity with existing `turn_activity` even without subscribers; hydration
+  emits current canonical snapshots independently of goal-status handling. WebUI/TUI
+  compare source lifetime, then run_sequence and state_sequence. Identical duplicate is
+  idempotent; conflicting duplicate refuses; old run cannot overwrite newer state.
+  Disconnection means unavailable, not inferred completion.
+- Separate root streaming from `hasOwnedWork/canStop`: composer usable after parent reply,
+  background task label/status/result visible, original-chat Stop remains and is bound
+  to server-owned source/control epoch. Historical UI facts never authorize live control.
+- Multiple child approval requests stay actionable in original chat while root may be
+  active. TUI `MessageOptions`/send must carry typed ApprovalDecision; text is not consent.
+- Optional child detail uses full canonical history, explicit read-only state and parent
+  return; suppress composer/permission and independent lifecycle controls. Preserve parent
+  draft/scroll/focus on keyboard/touch return. Do not require public `/child steer/wait`
+  management. Use meaningful sibling labels/results without hover/color dependence.
+- Android shared UI has the same behavior and touch return. Preserve mobile scope/origin
+  checks; any new read/control operation must be explicitly registered with required scope,
+  not admitted by unknown action name.
+
+Relevant owners are `webui/src/App.tsx`, `hooks/useNanobotStream.ts`, `lib/types.ts`,
+`lib/activity-timeline.ts`, `components/MessageBubble.tsx`, `components/thread/*`,
+`tui/src/{app,protocol,transcript}.ts` and existing Python gateway/turn-delivery adapters.
+Settle backend event/control schema before client edits. Add deterministic reducer/protocol/
+navigation tests, then actual browser/host interaction proof; source/DOM assertions alone
+do not establish visual behavior.
+
+## Reproducible validation and environment notes
+
+Obey `AGENTS.md`, `.agent/{design,security,gotchas}.md`, `CONTRIBUTING.md` and
+`docs/migration/p6-error-attribution.md`. **Do not run `ruff format`.** Preserve unrelated
+work and current staging repairs, including opaque asset cursors, temporary-chat authority,
+goal tools, local triggers, clipboard/skills behavior, cancellation and Darwin IPC.
+
+The existing local Python interpreter is
+`/Users/jaden/Documents/github/nanobot/.venv/bin/python` (Python 3.13.2), with 183 frozen
+distributions, BasedPyright 1.40.1, pytest 9.1.1, cryptography 50.0.1 and Ruff 0.16.7.
+Optional `discord`/`olm` are absent: this environment is not full optional-channel CI.
+No Python dependencies were changed. Use `PYTHONDONTWRITEBYTECODE=1`, explicit
+`PYTHONPATH` pointing at the exact candidate/snapshot, pytest `-c <source>/pyproject.toml`,
+and short unique `/tmp` basetemp paths (long macOS Unix-socket paths cause false failures).
+
+Useful focused commands from the repository root, using that interpreter or an equivalent
+properly recorded environment:
+
+```sh
+python -m pytest -c pyproject.toml --basetemp=/tmp/nb-a3-mobile -q \
+  tests/remote/test_production_scope_boundary.py \
+  tests/remote/test_device_proof_corpus.py tests/remote/test_device_proof.py \
+  tests/remote/test_pairing_persistence.py
+python -m pytest -c pyproject.toml --basetemp=/tmp/nb-a3-effects -q \
+  tests/session/test_filesystem_effect_recovery.py
+python -m pytest -c pyproject.toml --basetemp=/tmp/nb-a3-origin -q \
+  tests/agent/test_process_completion_scope.py tests/tools/test_process_completion.py
+python -m pytest -c pyproject.toml --basetemp=/tmp/nb-a3-mcp -q \
+  tests/agent/test_mcp_generation_retention.py tests/agent/test_mcp_binding_refusal.py \
+  tests/agent/test_managed_mcp_access.py
+python -m pytest -c pyproject.toml --basetemp=/tmp/nb-a3-media -q \
+  tests/attachments tests/webui/test_media_maintenance.py
+python -m pytest -c pyproject.toml --basetemp=/tmp/nb-a3-source -q \
+  tests/session/test_source_turn_writer.py tests/session/test_source_store.py \
+  tests/session/test_execution_owner.py tests/session/test_artifact_grants.py
+```
+
+These are starting points, not a replacement for new acceptance tests, affected child/
+approval/gateway suites or final broader checks. Run meaningful red tests before behavior
+changes where practical, then green and relevant existing tests; do not weaken assertions.
+
+For Python repairs, freeze exact full-source before/after snapshots under the **same**
+dependency environment, retain hashes/commands/reports and run:
+
+```sh
+python -m basedpyright --outputjson --pythonpath /path/to/python > after.json
+python scripts/check_type_regressions.py before.json after.json \
+  --baseline-root /absolute/frozen/before --current-root /absolute/frozen/after
+```
+
+`before.json` and `after.json` are positional arguments. Enforce zero newly introduced
+signatures across all files; a lower total alone does not pass. Current correction baseline
+is immutable integration commit `685bee9279c0bbb962ef78344428afeaba121066`, not this WIP.
+Do not refresh a baseline to absorb WIP errors. On another environment, reproduce that
+immutable source and the candidate under the same recorded dependencies. Bounded repair
+PASS never closes P6 while unchanged strict checking is nonzero or required full tests fail.
+
+Frontend/tool setup already performed locally with lockfiles unchanged:
+
+- `webui`: `bun install --frozen-lockfile` with available Bun 1.3.10; focused runtime
+  command is `bun run test --run src/tests/mobile-runtime.test.ts`.
+- `tui`: pinned Bun 1.3.13. Use
+  `npm exec --yes --package bun@1.3.13 -- bun install --frozen-lockfile`, then the same
+  prefix for `bun run check` and `bun test`.
+- `mobile`: lock requires Bun 1.4.2; Bun 1.3.10 cannot parse it. Use
+  `npm exec --yes --package bun@1.4.2 -- bun install --frozen-lockfile`, then the same
+  prefix for `bun run build` and `bun run sync:android` when ignored Capacitor inputs
+  need regeneration. Verify tracked generated files/locks remain intentional.
+- `mobile/native-network`: `GOTOOLCHAIN=go1.27.3 go test -mod=readonly ./internal/broker`.
+  Automatic pinned Go download works on this darwin/arm64 host.
+
+Android SDK is `/Users/jaden/Library/Android/sdk`. Default JDK 17 and installed JDK 23 do
+not satisfy the Capacitor plugin's exact Java 21 selector. A temporary host Temurin
+21.0.13+9 is at `/tmp/nanobot-mobile-jdk21/jdk-21.0.13+9/Contents/Home`. It was downloaded
+from Adoptium's mac/aarch64 API; archive SHA-256 is
+`bf036b35b071bfb2f54f2c0af8ee8d88afa95ee6eb3dce02c0f94cfc2524d04a`.
+If absent, recreate an appropriate host toolchain; do not change the pinned Linux release
+tuple in `mobile/toolchain.lock.json` to fit the host.
+
+The last native command, from repository root, was:
+
+```sh
+JAVA_HOME=/tmp/nanobot-mobile-jdk21/jdk-21.0.13+9/Contents/Home \
+ANDROID_HOME=/Users/jaden/Library/Android/sdk \
+mobile/android/gradlew -p mobile/android :app:testDebugUnitTest --console=plain
+```
+
+It failed production compilation as described above. Gradle 8.14.3 and the declared
+NDK 29.0.14206865 were downloaded. Generated Capacitor/plugin/assets/build directories
+and caches are ignored; they are not Git delivery. No signer inputs or device operations
+were used. Task-owned idle Gradle/Kotlin daemons were stopped on pause.
+
+## Remaining acceptance and release limits
+
+PA-08 Darwin IPC is already repaired by integration; the actual positive Unix-domain
+socket proof passed. Do not regress it or report it as an outstanding candidate defect.
+
+PA-04 is an honest macOS selected-mode qualification/capability gate: ordinary POSIX
+execution works, while owner-backed Once/Full whole-tree proof is unavailable and correctly
+refuses. Do not flip a platform flag, equate a process-group result with whole-tree proof,
+or invent a Linux confinement port to label macOS qualified. Qualify selected modes and
+installed artifacts, or retain the explicit refusal/gap.
+
+Installed/current-state rollback, interrupted Dream restoration, complete asset pagination,
+matching source/bundle/toolchain artifacts and broader release qualification remain named
+gates. They were not established as additional live defects by the bounded correction
+analysis. Prior Linux/Android evidence does not automatically qualify changed candidate
+bytes. No full release, physical Android or final macOS qualification is claimed here.
+
+After all corrections, independently inspect the combined diff, replay critical production
+tests, enforce the frozen full-source ratchet, run relevant broader backend/frontend/native
+checks, and obtain a fresh bounded independent review because security, persistence,
+concurrency and protocol boundaries changed. Fix findings through their actual owners.
+Only then issue an implementation acceptance verdict; staging merge remains a separate step.
+
+## Local evidence retained outside Git
+
+The handoff above does not require these temporary directories, but raw reports, command
+receipts, source snapshots, accepted work contracts and recovery backups remain available
+on the current workstation:
+
+- Correction QA:
+  `/var/folders/9f/pzdn55jj0gj7yrqrqx405lk80000gn/T/nanobot-a3-corrections-20261111-iidnl2o5`
+- Original immutable-candidate review:
+  `/var/folders/9f/pzdn55jj0gj7yrqrqx405lk80000gn/T/nanobot-a3-implementation-review-20261111-i_7i4455`
+
+Correction QA contains `context.json`, `graph.json`, `progress.json`, `contracts/`,
+`evidence/`, `integrated-base/`, `lifecycle-after/` and `pause-backup/`. In particular,
+`contracts/child-spec.md` and `contracts/recovery-spec.md` retain the detailed read-only
+safety mappings. `pause-backup` preserves the original dirty tree, index state and hashes
+before checkpoint commits. Keep raw QA and ignored build/toolchain artifacts outside Git;
+do not commit a stack of logs or silently turn this status into architectural approval.
+
+## Earlier restored-queue implementation snapshot — historical evidence
+
+This snapshot was written before parent final validation. Its implementation notes
+remain useful; its acceptance status and test counts are superseded by the
+[final CUI-7 record above](#final-cui-7-restored-queue-anti-replay--2026-11-16).
+
+The WebUI implementation adds versioned per-row queue submission provenance,
+pre-send persistence of the original queued binding, and exact outcome joining through
+the existing `NanobotClient.pendingMessageSends` owner. New rows are `ready`; rows with
+missing/malformed provenance normalize to read-only `unknown`; submitted rows remain
+held across queue switches and same-client remounts. A client recreated by restarting
+the same app/device has no trusted owner record and leaves the restored row held. Exact
+admission removes one matching row after persistence; exact correlated `not_admitted`
+with a reason permits a manual-only retry. Generic failures, route acknowledgements,
+idle/history, storage failure and capacity exclusion do not authorize dispatch or replay.
+
+The queue remains its only content store and preserves its existing 20-row / 4,000-
+character limits. Storage denial, serialization failure, or a cap that would exclude a
+protected row blocks send/upload/frame dispatch and preserves every existing row. Null
+temporary queues remain in memory only. No backend, wire protocol, restart ledger,
+direct prompt/media storage, or general Retry behavior is added.
+
+Focused regressions cover actual-client A→B→A, exact admission after remount and while
+offscreen, exact offscreen refusal/manual-only recovery, same-app recreated-client
+holds, legacy/malformed quarantine, and storage quota/serialization/21-row protection.
+The pre-edit RED is
+`/private/tmp/nb-cui7-restored-20261116-f4f8t2qi/pre-edit-red.log`; the final focused
+run passed 156 tests across six files, with its raw log at
+`/private/tmp/nb-cui7-restored-20261116-f4f8t2qi/focused-green-final.log`. This is an
+earlier focused snapshot; final parent validation is recorded above. This scope targets
+single-device use and does not test simultaneous clients, cross-tab coordination,
+multiple devices or physical-device behavior. General safe Retry, authoritative recovery
+after process restart, A3 and release acceptance remain open.

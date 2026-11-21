@@ -5,7 +5,7 @@ type Role = "user" | "assistant" | "tool" | "system";
 
 /** "trace" rows are intermediate agent breadcrumbs (tool-call hints,
  * progress pings) that should not be rendered as conversational replies. */
-type MessageKind = "message" | "trace" | "compaction";
+type MessageKind = "message" | "trace" | "compaction" | "delegated_child";
 
 export interface UIContextCompaction extends ContextCompaction {
   /** Live wire transitions announce; hydrated transcript rows stay silent. */
@@ -13,11 +13,12 @@ export interface UIContextCompaction extends ContextCompaction {
 }
 
 export type UITurnPhase = "user" | "reasoning" | "activity" | "answer" | "complete";
-export type MessageDeliveryStatus = "sending" | "accepted" | "failed";
+export type MessageDeliveryStatus = "sending" | "accepted" | "failed" | "unknown";
 export type MessageDeliveryErrorKind =
   | "message_too_big"
   | "workspace_scope_rejected"
   | "connection_closed"
+  | "session_recovery_required"
   | "turn_rejected";
 
 /** One image attached to a UIMessage.
@@ -71,6 +72,140 @@ export interface RetryStatus extends WireRetryStatus {
   next_retry_at?: number;
   turn_id?: string;
 }
+
+export interface SourceOrigin {
+  store_identity: string;
+  session_key: string;
+  incarnation: string;
+  generation: number;
+}
+
+/** Optional v1 recovery provenance; never workspace or execution authority. */
+export interface InputAttemptCapability {
+  version: 1;
+  source: SourceOrigin;
+  source_token: string;
+  principal: string;
+}
+
+export interface InputAttemptBinding extends InputAttemptCapability {
+  turn_id: string;
+  fingerprint: string;
+}
+
+export type InputAttemptQuery = Omit<InputAttemptBinding, "principal">;
+export interface InputAttemptProof extends InputAttemptBinding {
+  event_id: string;
+  run_id: string;
+}
+export type InputAttemptResult =
+  | { version: 1; turn_id: string; disposition: "unknown" }
+  | { version: 1; turn_id: string; disposition: "admitted"; proof: InputAttemptProof };
+
+export interface StopExpectationChild {
+  child_id: string;
+  source: SourceOrigin;
+  child_run_id: string | null;
+  run_sequence: number;
+  control_epoch: number;
+}
+
+/** Live, server-derived snapshot echoed unchanged with an original-chat Stop. */
+export interface StopExpectation {
+  version: 1;
+  source: SourceOrigin;
+  control_epoch: number;
+  active_root_present: boolean;
+  active_turn_id: string | null;
+  active_root_run_ids: string[];
+  children: StopExpectationChild[];
+  pending_work_digest: string;
+}
+
+export interface DelegatedChildPayload {
+  history_kind?: "canonical";
+  parent_session_key?: string;
+  child_session_key: string;
+  child_id: string;
+  profile: string;
+  state: string;
+  task_label?: string;
+  task_label_truncated?: boolean;
+  result_summary?: string | null;
+  result_summary_truncated?: boolean;
+  outcome?: string | null;
+  runtime_generation: number;
+  turn_id?: string | null;
+  parent_run_id?: string | null;
+  child_run_id?: string | null;
+  parent_store_identity?: string;
+  parent_incarnation?: string;
+  parent_generation?: number;
+  root_key?: string;
+  root_store_identity?: string;
+  root_incarnation?: string;
+  root_generation?: number;
+  child_store_identity?: string;
+  child_incarnation?: string;
+  child_generation?: number;
+  run_sequence?: number;
+  state_sequence?: number;
+  control_epoch?: number;
+  holds_capacity?: boolean;
+  can_stop?: boolean;
+  owned_work?: boolean;
+  pending_approval_id?: string | null;
+  blocked_run_id?: string | null;
+  result_disposition?: string | null;
+}
+
+/** Explicit source-less history projection; it never carries client control authority. */
+export interface DelegatedChildSummaryPayload {
+  history_kind: "summary";
+  parent_session_key: string;
+  child_session_key: string;
+  child_id: string;
+  profile: string;
+  state: string;
+  task_label: string | null;
+  task_label_truncated: boolean;
+  result_summary: string | null;
+  result_summary_truncated: boolean;
+  outcome: string | null;
+  runtime_generation: number | null;
+  turn_id?: string | null;
+  parent_run_id: string | null;
+  child_run_id: string | null;
+  parent_store_identity: string | null;
+  parent_incarnation: string | null;
+  parent_generation: number | null;
+  root_key: string;
+  root_store_identity: string | null;
+  root_incarnation: string | null;
+  root_generation: number | null;
+  child_store_identity: string | null;
+  child_incarnation: string | null;
+  child_generation: number | null;
+  run_sequence: number | null;
+  state_sequence: number | null;
+  control_epoch: number | null;
+  can_stop: false;
+}
+
+export type DelegatedChildReference = DelegatedChildPayload | DelegatedChildSummaryPayload;
+
+export interface ContextUsageSnapshot {
+  context_tokens: number | null;
+  context_window_tokens: number | null;
+}
+
+export interface UIContextUsage {
+  contextTokens: number | null;
+  contextWindowTokens: number | null;
+  /** Anchor from turn_end, not the carrier row's older turnSeq. */
+  completionTurnSeq?: number;
+}
+
 export interface UIMessage {
   id: string;
   role: Role;
@@ -78,9 +213,15 @@ export interface UIMessage {
   kind?: MessageKind;
   isStreaming?: boolean;
   createdAt: number;
+  /** Explicit server timestamp availability for read-only delegated history. */
+  timestampAvailable?: boolean;
   /** For trace rows: each individual hint line, so consecutive hints can
    * render as a single collapsible group. */
   traces?: string[];
+  /** How many times each deduplicated trace line occurred, keyed by the
+   * canonical line. Lets a repeated call read as "Ran command · 5 calls"
+   * instead of five identical rows. */
+  traceRepeatCounts?: Record<string, number>;
   /** Structured tool events behind trace rows. Kept so activity cards can
    * distinguish running, completed, and failed tool phases. */
   toolEvents?: ToolProgressEvent[];
@@ -93,6 +234,8 @@ export interface UIMessage {
   activityKind?: "model";
   /** Context-compaction lifecycle rendered as a standalone channel notice. */
   compaction?: UIContextCompaction;
+  /** Typed delegated-child reference projected from the parent activity owner. */
+  delegatedChild?: DelegatedChildReference;
   /** Display-only localization marker for fixed /compact command replies. */
   compactReply?: "empty" | "failed";
   /** User turn: optimistic blob URLs for preview. Replay: placeholder chips. */
@@ -116,12 +259,14 @@ export interface UIMessage {
   latencyMs?: number;
   /** Client epoch milliseconds when the definitive ``turn_end`` was received. */
   completedAt?: number;
-  /** Additive model usage for this turn; context_tokens is the final request only. */
+  /** Additive model usage for this turn; not proof of current context after replacement. */
   usage?: TurnUsage;
   /** Logical model rounds in display order; runner-level recovery calls are aggregated. */
   roundUsages?: RoundUsage[];
   /** Configured context-window capacity for the model used by this turn. */
   contextWindowTokens?: number;
+  /** Completion-owned current context. Present null is an authoritative invalidation. */
+  contextUsage?: UIContextUsage;
   /** Lightweight provenance for proactive assistant messages. */
   source?: UIMessageSource;
   /** Structured provenance for a message delivered by another session. */
@@ -130,6 +275,16 @@ export interface UIMessage {
   turnId?: string;
   turnPhase?: UITurnPhase;
   turnSeq?: number;
+  /**
+   * Whole-session position of the turn this row belongs to.
+   *
+   * Sent for persisted user rows, so a navigator can place a turn even when
+   * only a window of the session is rendered. ``turnSeq`` is turn-local and
+   * cannot serve that purpose.
+   */
+  turnOrdinal?: number;
+  /** Stable server-assigned prompt identity for user rows across windows. */
+  promptId?: string;
   /** Ephemeral delivery lifecycle for optimistic user messages. */
   deliveryStatus?: MessageDeliveryStatus;
   /** Structured rejection reason shown with a failed optimistic message. */
@@ -270,6 +425,8 @@ export interface SessionGeneratedAssetsPayload {
   sessionsScanned?: number;
   groups: GeneratedAssetGroup[];
   next?: string | null;
+  nextSessionCursor?: string | null;
+  truncated?: boolean;
 }
 export interface AutomationUpdatePayload {
   name?: string;
@@ -405,7 +562,8 @@ export interface GoalStateWsPayload {
 
 export interface ToolProgressEvent {
   version?: number;
-  phase?: "start" | "end" | "error" | string;
+  /** `progress` frames are live-only updates for a running tool call. */
+  phase?: "start" | "end" | "error" | "progress" | string;
   call_id?: string;
   name?: string;
   arguments?: unknown;
@@ -414,6 +572,11 @@ export interface ToolProgressEvent {
   files?: unknown[];
   embeds?: unknown[];
   media_artifacts?: unknown[];
+  /** Live server-reported progress for the running call. */
+  progress?: number | null;
+  total?: number | null;
+  /** Live phase text for the running call, e.g. "Starting ComfyUI". */
+  message?: string | null;
 }
 
 export interface UIFileDiff {
@@ -453,6 +616,8 @@ export interface ChatSummary {
   preview: string;
   /** Model preset persisted for this session; null means it still follows the global default. */
   modelPreset?: string | null;
+  /** Chat-specific effort. An absent override uses the selected preset's effort. */
+  reasoningEffort?: string | null;
   /** Unix epoch seconds when this session currently has a turn in flight. */
   runStartedAt?: number | null;
   /** Durable recovery state that needs attention after an interrupted turn. */
@@ -766,22 +931,6 @@ export interface WorkspaceModeConflict {
 
 export type SidebarDensity = "comfortable" | "compact";
 export type SidebarSortMode = "updated_desc" | "created_desc" | "title_asc" | "manual";
-export type WorkbenchLayout = "columns" | "rows" | "grid" | "bsp" | "main-stack";
-
-export interface WorkbenchTabState {
-  explicit: boolean;
-  title: string | null;
-  paneKeys: string[];
-  layoutPaneKeys: string[];
-  layout: WorkbenchLayout;
-  splitRatios: number[];
-}
-
-export interface WorkbenchState {
-  version: 1;
-  tabs: Record<string, WorkbenchTabState>;
-}
-
 export interface SidebarViewState {
   density: SidebarDensity;
   show_previews: boolean;
@@ -799,7 +948,8 @@ export interface SidebarStatePayload {
   project_name_overrides: Record<string, string>;
   tags_by_key: Record<string, string[]>;
   collapsed_groups: Record<string, boolean>;
-  workbench: WorkbenchState;
+  /** Legacy pane-group state. The gateway still stores and validates it. */
+  workbench?: unknown;
   view: SidebarViewState;
   updated_at?: string | null;
 }
@@ -941,6 +1091,7 @@ export interface SettingsPayload {
     temperature: number;
     reasoning_effort: string | null;
     reasoning_effort_values?: string[];
+    chat_reasoning_effort?: boolean;
   }>;
   model_call_order: string[];
   model_call_order_editable: boolean;
@@ -1687,9 +1838,20 @@ export type InboundEvent =
   | {
       event: "attached";
       chat_id: string;
+      input_attempt_source?: InputAttemptCapability;
+      input_attempt_result?: InputAttemptResult;
       temporary?: boolean;
       recovery_state?: RecoveryState;
       usage?: TurnUsage;
+      stop_target?: StopExpectation | null;
+      /** Confirmed active model/effort from the session projection. */
+      model_preset?: string | null;
+      reasoning_effort?: string | null;
+      /** Detached next-turn choices from the same session projection. */
+      next_workspace_scope?: WorkspaceScopePayload | null;
+      next_model_preset?: string | null;
+      next_reasoning_effort?: string | null;
+      next_turn_revision?: number | null;
     }
   | {
       event: "message_accepted";
@@ -1698,6 +1860,60 @@ export type InboundEvent =
       starts_turn?: boolean;
       active_turn_id?: string;
       started_at?: number;
+    }
+  | {
+      event: "message_admitted";
+      chat_id: string;
+      input_attempt_proof?: InputAttemptProof;
+      turn_id?: string;
+      attempt_id?: string;
+      session_key?: string;
+      session_incarnation?: string;
+      active_turn_id?: string;
+      starts_turn?: boolean;
+      started_at?: number;
+    }
+  | {
+      event: "delegated_child";
+      chat_id: string;
+      parent_session_key: string;
+      child_session_key: string;
+      child_id: string;
+      profile: string;
+      state: string;
+      task_label: string;
+      task_label_truncated: boolean;
+      result_summary: string | null;
+      result_summary_truncated: boolean;
+      outcome?: string | null;
+      runtime_generation: number;
+      turn_id?: string | null;
+      parent_run_id?: string | null;
+      child_run_id?: string | null;
+      parent_store_identity?: string;
+      parent_incarnation?: string;
+      parent_generation?: number;
+      root_key?: string;
+      root_store_identity?: string;
+      root_incarnation?: string;
+      root_generation?: number;
+      child_store_identity?: string;
+      child_incarnation?: string;
+      child_generation?: number;
+      run_sequence?: number;
+      state_sequence?: number;
+      control_epoch?: number;
+      holds_capacity?: boolean;
+      can_stop?: boolean;
+      owned_work?: boolean;
+      pending_approval_id?: string | null;
+      blocked_run_id?: string | null;
+      result_disposition?: string | null;
+    }
+  | {
+      event: "stop_target";
+      chat_id: string;
+      stop_target: StopExpectation | null;
     }
   | {
       event: "user_message";
@@ -1720,7 +1936,7 @@ export type InboundEvent =
       text: string;
       reply_to?: string;
       media?: string[];
-      media_urls?: Array<{ url: string; name?: string }>;
+      media_urls?: Array<{ url: string; name?: string; kind?: UIMediaKind }>;
       tool_events?: ToolProgressEvent[];
       /** Present when the frame is an agent breadcrumb (e.g. tool hint,
        * generic progress line) rather than a conversational reply. */
@@ -1788,6 +2004,7 @@ export type InboundEvent =
       usage?: TurnUsage;
       round_usages?: RoundUsage[];
       context_window_tokens?: number;
+      context_usage?: ContextUsageSnapshot;
       /** Authoritative sustained-goal snapshot for this chat (same shape as ``goal_state`` events). */
       goal_state?: GoalStateWsPayload;
       outcome?: "completed" | "failed" | "cancelled" | "interrupted";
@@ -1800,7 +2017,7 @@ export type InboundEvent =
       event: "goal_status";
       chat_id: string;
       /** Turn executing (user message through agent loop). */
-      status: "running" | "idle";
+      status: "running" | "stopping" | "interrupted" | "idle";
       /** Server ``time.time()`` when ``status`` is ``running``. */
       started_at?: number;
     } & InboundTurnMetadata)
@@ -1814,6 +2031,9 @@ export type InboundEvent =
       chat_id: string;
       scope?: "metadata" | "thread" | string;
       workspace_scope?: WorkspaceScopePayload;
+      /** Pending next-turn scope; the active turn keeps `workspace_scope`. */
+      next_workspace_scope?: WorkspaceScopePayload | null;
+      next_turn_revision?: number | null;
       /** Local authenticated UI projection; absent on generic/remote notifications. */
       workspace_access_request?: FolderAccessRequest;
       /** Local authenticated UI projection; absent on generic/remote notifications. */
@@ -1844,6 +2064,7 @@ export type InboundEvent =
       request_id: string;
       ok: true;
       result: unknown;
+      outcome?: WebUIMutationOutcome;
     }
   | {
       event: "webui_response";
@@ -1854,7 +2075,14 @@ export type InboundEvent =
         message: string;
         workspace_scope?: WorkspaceScopePayload;
         workspace_permissions?: WorkspacePermissionProjection;
+        outcome?: WebUIMutationOutcome;
       };
+    }
+  | {
+      event: "projection_error";
+      request_id?: string;
+      action?: string;
+      reason?: string;
     }
   | {
       event: "error";
@@ -1905,15 +2133,106 @@ export interface OutboundMcpPresetMention {
 /** Response shape for ``GET .../webui-thread`` (server-built transcript replay). */
 interface WebuiThreadPagePayload {
   before_cursor?: string | null;
+  after_cursor?: string | null;
   has_more_before?: boolean;
+  has_more_after?: boolean;
   loaded_message_count?: number;
   total_known_message_count?: number;
   user_message_offset?: number;
+  /** Ordinal of the oldest turn included in this page. */
+  first_turn_ordinal?: number;
+  /** Ordinal of the newest turn included in this page. */
+  last_turn_ordinal?: number;
+  /** Turns included in this page. */
+  loaded_turn_count?: number;
+  /** Every turn in the session, loaded or not. */
+  total_turn_count?: number;
+  /** Every visible user prompt in the session, loaded or not. */
+  total_prompt_count?: number;
+  /** Index coverage state for this history window. */
+  coverage?: "indexed" | "tail_only" | string;
+  /** Exact target prompt id resolved by an ``around`` request. */
+  target_prompt_id?: string | null;
+}
+
+/** One entry of the whole-session turn index used by the left-hand navigator. */
+export interface SessionTurnSummary {
+  ordinal: number;
+  label: string;
+  created_at: number | null;
+  /** Page cursor whose window ends with this turn. */
+  cursor: string;
+}
+
+/** One visible user prompt entry returned by the seekable prompt index. */
+export interface SessionPromptSummary {
+  prompt_id: string;
+  turn_ordinal: number;
+  prompt_ordinal: number;
+  label: string;
+  created_at: number | null;
+  /** Opaque reveal locator bound to this session history origin. */
+  locator: string;
+}
+
+/** State of an in-flight, ready, or failed selective prompt reveal. */
+export interface PendingPromptReveal {
+  requestId: number;
+  promptId: string;
+  locator?: string | null;
+  cursor?: string | null;
+  status: "loading" | "ready" | "error";
+  errorCode?: "stale_history_cursor" | "prompt_not_found" | "network" | null;
+  errorMessage?: string | null;
+}
+
+/** Response shape for ``GET .../turns``. */
+export interface SessionTurnIndexPayload {
+  schemaVersion: number;
+  sessionKey?: string;
+  turns: SessionTurnSummary[];
+  prompts?: SessionPromptSummary[];
+  total_turn_count: number;
+  total_prompt_count?: number;
+  page?: {
+    before_cursor?: string | null;
+    has_more_before?: boolean;
+    loaded_turn_count?: number;
+    loaded_prompt_count?: number;
+  };
+}
+
+export type WebuiThreadSourcePayload = SourceOrigin;
+
+export interface WebuiDelegatedChildrenPayload {
+  schemaVersion: number;
+  parentSessionKey?: string;
+  children: DelegatedChildReference[];
+  page?: WebuiThreadPagePayload;
+  stop_target?: StopExpectation | null;
+}
+
+/** Detached next-turn choices; they never describe the admitted active turn. */
+export interface NextTurnPreferencesPayload {
+  revision: number;
+  workspace_scope?: WorkspaceScopePayload;
+  model_preset?: string;
+  reasoning_effort?: string;
+  permission_mode?: string;
+}
+
+/** Correlated acknowledgement for one next-turn settings mutation. */
+export interface NextTurnSettingsAcknowledgement {
+  workspace_scope?: WorkspaceScopePayload;
+  next_workspace_scope?: WorkspaceScopePayload | null;
+  next_turn_revision?: number | null;
+  source_token?: string;
 }
 
 export interface WebuiThreadPersistedPayload {
   schemaVersion: number;
   sessionKey?: string;
+  view?: "history";
   savedAt?: string;
   messages: UIMessage[];
   fork_boundary_message_count?: number;
@@ -1922,13 +2241,44 @@ export interface WebuiThreadPersistedPayload {
   has_pending_tool_calls?: boolean;
   /** Exact active turn when supplied by a current gateway. */
   active_turn_id?: string | null;
+  stop_target?: StopExpectation | null;
+  read_only?: boolean;
+  history_kind?: "canonical" | "summary";
+  parent_session_key?: string;
+  root_key?: string;
+  source?: WebuiThreadSourcePayload | null;
   page?: WebuiThreadPagePayload;
   workspace_scope?: WorkspaceScopePayload;
+  /** Pending next-turn scope set while the active turn keeps its own scope. */
+  next_workspace_scope?: WorkspaceScopePayload | null;
+  next_model_preset?: string | null;
+  next_reasoning_effort?: string | null;
+  next_turn_revision?: number | null;
+  next_turn_preferences?: NextTurnPreferencesPayload | null;
+  /** Confirmed active model/effort; `next_*` fields describe the pending turn. */
+  model_preset?: string | null;
+  reasoning_effort?: string | null;
   /** Local authenticated UI projection; absent on remote/temporary reads. */
   workspace_access_request?: FolderAccessRequest | null;
   /** Local authenticated UI projection; absent on remote/temporary reads and old gateways. */
   workspace_permissions?: WorkspacePermissionProjection | null;
 }
+
+export type WebuiThreadControlsPayload = Pick<
+  WebuiThreadPersistedPayload,
+  | "sessionKey"
+  | "stop_target"
+  | "workspace_access_request"
+  | "workspace_permissions"
+  | "workspace_scope"
+  | "next_workspace_scope"
+  | "next_model_preset"
+  | "next_reasoning_effort"
+  | "next_turn_revision"
+  | "next_turn_preferences"
+  | "model_preset"
+  | "reasoning_effort"
+>;
 
 export interface FilePreviewEntry {
   name: string;
@@ -1952,6 +2302,23 @@ export interface FilePreviewPayload {
   entries?: FilePreviewEntry[];
 }
 
+export type WebUIMutationOutcome =
+  | "applied"
+  | "not_applied"
+  | "uncertain"
+  | "partial";
+
+export interface ApprovalDecisionPayload {
+  approval_id: string;
+  decision: "approve" | "deny";
+  session_key?: string;
+  session_incarnation?: string;
+  run_id?: string;
+  turn_id?: string;
+  effect_id?: string;
+  generation?: number;
+}
+
 export type Outbound =
   | { type: "new_chat"; workspace_scope?: WorkspaceScopePayload }
   | { type: "new_temporary_chat" }
@@ -1962,10 +2329,17 @@ export type Outbound =
       payload: Record<string, unknown>;
     }
   | { type: "fork_chat"; source_chat_id: string; before_user_index: number; title?: string }
-  | { type: "attach"; chat_id: string }
+  | { type: "attach"; chat_id: string; input_attempt_query?: InputAttemptQuery }
   | { type: "set_sidebar_state"; state: SidebarStatePayload }
   | { type: "discard_temporary_chat"; chat_id: string }
   | { type: "set_workspace_scope"; chat_id: string; workspace_scope: WorkspaceScopePayload }
+  | {
+      /** Persist the choice for the next turn without changing the active turn. */
+      type: "set_workspace_scope";
+      chat_id: string;
+      next_turn: true;
+      next_workspace_scope: WorkspaceScopePayload;
+    }
   | { type: "transcribe_audio"; request_id: string; data_url: string; duration_ms?: number }
   | {
       type: "attachment";
@@ -1979,6 +2353,7 @@ export type Outbound =
   | {
       type: "message";
       chat_id: string;
+      input_attempt?: Omit<InputAttemptQuery, "turn_id">;
       content: string;
       media?: OutboundMedia[];
       cli_apps?: OutboundCliAppMention[];
@@ -1989,6 +2364,8 @@ export type Outbound =
       request_settings_version?: 1;
       request_intent?: "new" | "steer";
       target_turn_id?: string;
+      approval_decision?: ApprovalDecisionPayload;
+      stop_expectation?: StopExpectation;
       /** Marks messages sent by the embedded WebUI, without changing the
        * generic websocket protocol for other clients. */
       webui?: true;

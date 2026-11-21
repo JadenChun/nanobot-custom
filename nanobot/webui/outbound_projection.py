@@ -2,34 +2,41 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol, cast
 
 from loguru import logger
 
-from nanobot.bus.events import OutboundMessage
+from nanobot.bus.events import CommittedUserInput, OutboundMessage
 from nanobot.bus.outbound_events import (
     ContextCompactionEvent,
+    DelegatedChildEvent,
     GoalStateSyncEvent,
     GoalStatusEvent,
+    MessageAdmittedEvent,
     ProgressEvent,
     RetryStatusEvent,
     RetryWaitEvent,
     RuntimeModelUpdatedEvent,
     SessionUpdatedEvent,
+    StopTargetEvent,
     TurnEndEvent,
     TurnModelUpdatedEvent,
     UserInputEvent,
     WebUIAdmissionRejectedEvent,
 )
+from nanobot.session.source_store import SourceState
 from nanobot.session.webui_turns import clear_websocket_turn_if_current
 from nanobot.webui.metadata import (
     WEBSOCKET_TURN_OWNER_METADATA_KEY,
+    WEBUI_DISPLAY_SOURCE_KEY,
     WEBUI_SYSTEM_COMMAND_TURN_PREFIX,
     WEBUI_TURN_METADATA_KEY,
 )
 from nanobot.webui.outbound_wire import (
     WebUIWirePayload,
     WebUIWirePersistence,
+    encode_delegated_child,
+    encode_stop_target,
     encode_turn_end,
     project_notification,
 )
@@ -46,6 +53,13 @@ class WebUIOutboundTransport(Protocol):
     """Wire operations required by the outbound application projector."""
 
     def webui_subscribers(self, chat_id: str) -> tuple[ServerConnection, ...]: ...
+
+    def persist_committed_user_input(
+        self,
+        chat_id: str,
+        user_input: CommittedUserInput,
+        metadata: dict[str, Any],
+    ) -> None: ...
 
     async def send_runtime_model_updated(
         self,
@@ -127,6 +141,42 @@ class WebUIOutboundTransport(Protocol):
     ) -> None: ...
 
 
+def _delegated_display_metadata(
+    chat_id: str,
+    event: DelegatedChildEvent,
+    metadata: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    """Bind delegated activity archival to its typed root lifetime."""
+    session_key = webui_session_key(chat_id)
+    raw_source = (metadata or {}).get(WEBUI_DISPLAY_SOURCE_KEY)
+    source: SourceState | None = None
+    if isinstance(raw_source, SourceState) and raw_source.session_key == session_key:
+        source = raw_source
+    elif (
+        event.root_key == session_key
+        and isinstance(event.root_store_identity, str)
+        and event.root_store_identity
+        and isinstance(event.root_incarnation, str)
+        and event.root_incarnation
+    ):
+        source = SourceState(
+            store_identity=event.root_store_identity,
+            session_key=session_key,
+            incarnation=event.root_incarnation,
+            revision=0,
+            generation=event.root_generation,
+            checkpoint_id=None,
+            checkpoint_fingerprint="",
+        )
+    if source is None:
+        return None
+    out: dict[str, Any] = {WEBUI_DISPLAY_SOURCE_KEY: source}
+    turn_id = event.turn_id or (metadata or {}).get(WEBUI_TURN_METADATA_KEY)
+    if isinstance(turn_id, str) and turn_id:
+        out[WEBUI_TURN_METADATA_KEY] = turn_id
+    return out
+
+
 class WebUIOutboundProjector:
     """Interpret runtime events without coupling that state machine to the channel."""
 
@@ -146,6 +196,22 @@ class WebUIOutboundProjector:
         ):
             if event["event"] == "goal_state":
                 await self._transport.send_goal_state(chat_id, event["goal_state"])
+                continue
+            if event["event"] == "stop_target":
+                target = event.get("stop_target")
+                await self._transport.send_payload(
+                    chat_id,
+                    cast(WebUIWirePayload, encode_stop_target(
+                        chat_id,
+                        StopTargetEvent(
+                            stop_target=(
+                                cast(dict[str, object], target)
+                                if isinstance(target, dict) else None
+                            ),
+                        ),
+                    )),
+                    persistence="transient",
+                )
                 continue
             await self._transport.send_goal_status(
                 chat_id,
@@ -196,7 +262,66 @@ class WebUIOutboundProjector:
                     fallback=event.fallback,
                 )
             return
+        if isinstance(event, DelegatedChildEvent):
+            delegated_metadata = _delegated_display_metadata(msg.chat_id, event, msg.metadata)
+            payload = cast(WebUIWirePayload, encode_delegated_child(msg.chat_id, event))
+            if delegated_metadata is not None:
+                await self._transport.send_payload(
+                    msg.chat_id,
+                    payload,
+                    persistence="turn_activity",
+                    metadata=delegated_metadata,
+                )
+            else:
+                await self._transport.send_payload(
+                    msg.chat_id,
+                    payload,
+                    persistence="turn_activity",
+                )
+            return
+        if isinstance(event, StopTargetEvent):
+            await self._transport.send_payload(
+                msg.chat_id,
+                cast(WebUIWirePayload, encode_stop_target(msg.chat_id, event)),
+                persistence="transient",
+            )
+            return
+        if isinstance(event, MessageAdmittedEvent):
+            if event.input is not None:
+                self._transport.persist_committed_user_input(msg.chat_id, event.input, msg.metadata)
+            if conns:
+                await self._transport.send_payload(
+                    msg.chat_id,
+                    cast(WebUIWirePayload, {
+                        "event": "message_admitted",
+                        "chat_id": msg.chat_id,
+                        **({"turn_id": event.turn_id} if event.turn_id else {}),
+                        **({"attempt_id": event.attempt_id} if event.attempt_id else {}),
+                        **({"session_key": event.session_key} if event.session_key else {}),
+                        **(
+                            {"session_incarnation": event.session_incarnation}
+                            if event.session_incarnation else {}
+                        ),
+                        **(
+                            {"active_turn_id": event.active_turn_id}
+                            if event.active_turn_id else {}
+                        ),
+                        "starts_turn": event.starts_turn,
+                        **({"input_attempt_proof": event.input_attempt_proof.to_dict()}
+                           if event.input_attempt_proof is not None else {}),
+                    }),
+                    persistence="transient",
+                )
+            return
         if isinstance(event, UserInputEvent):
+            if event.input is not None:
+                input_metadata = dict(msg.metadata)
+                session_message = event.provenance.get("session_message")
+                if isinstance(session_message, dict):
+                    input_metadata["session_message"] = session_message
+                self._transport.persist_committed_user_input(
+                    msg.chat_id, event.input, input_metadata,
+                )
             if conns:
                 await self._transport.send_user_input(
                     msg.chat_id,
@@ -218,7 +343,9 @@ class WebUIOutboundProjector:
         if notification is not None:
             if conns or notification.deliver_offline:
                 kwargs: dict[str, Any] = (
-                    {"metadata": msg.metadata} if notification.attach_turn_metadata else {}
+                    {"metadata": {key: value for key, value in msg.metadata.items()
+                                  if key not in {"_webui_input_attempt", "_input_attempt"}}}
+                    if notification.attach_turn_metadata else {}
                 )
                 await self._transport.send_payload(
                     msg.chat_id, notification.payload,

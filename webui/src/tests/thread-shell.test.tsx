@@ -1,4 +1,5 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { flushSync } from "react-dom";
 import { StrictMode, type ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -7,13 +8,21 @@ import { ThreadCameraController } from "@/components/thread/thread-camera";
 import { ThreadShell } from "@/components/thread/ThreadShell";
 import i18n from "@/i18n";
 import { CLI_APPS_CHANGED_EVENT } from "@/lib/cli-app-events";
-import type { CanonicalRunSnapshot, StreamError } from "@/lib/nanobot-client";
+import type {
+  CanonicalRunSnapshot,
+  QueuedAttemptBinding,
+  QueuedAttemptOutcome,
+  StreamError,
+} from "@/lib/nanobot-client";
 import { ClientProvider } from "@/providers/ClientProvider";
 import type {
   CliAppsPayload,
   ConnectionStatus,
+  DelegatedChildPayload,
   FolderAccessRequest,
+  InboundEvent,
   SettingsPayload,
+  StopExpectation,
   UIMessage,
   WorkspacePermissionProjection,
   WorkspaceScopePayload,
@@ -27,6 +36,15 @@ import {
 
 const HERO_GREETING_PATTERN =
   /What should we work on\?|Where should we start\?|What are we building today\?|What should we tackle together\?/;
+
+// A reply can contain individual animated word spans. Assert the same exact
+// paragraph text, regardless of whether it is split across child elements.
+function replyText(expected: string) {
+  return (text: string, element: Element | null) => {
+    if (!element?.closest(".markdown-content")) return text === expected;
+    return element.matches("p") && element.textContent?.replace(/\s+/g, " ").trim() === expected;
+  };
+}
 
 function makeClient() {
   const errorHandlers = new Set<(err: StreamError) => void>();
@@ -47,7 +65,16 @@ function makeClient() {
   const runGenerationByChatId = new Map<string, number>();
   const latestRunTurnIdByChatId = new Map<string, string>();
   const completedTurnIdsByChatId = new Map<string, Set<string>>();
+  const queuedAttemptObservations = new Map<string, {
+    chatId: string;
+    binding: QueuedAttemptBinding;
+    outcome?: QueuedAttemptOutcome;
+    promise: Promise<QueuedAttemptOutcome>;
+    resolve: (outcome: QueuedAttemptOutcome) => void;
+    consumed: boolean;
+  }>();
   const goalStateByChatId = new Map<string, import("@/lib/types").GoalStateWsPayload>();
+  let approvalDecisionIndex = 0;
   let status: ConnectionStatus = "open";
   const advanceRunGeneration = (chatId: string, turnId?: string) => {
     runGenerationByChatId.set(chatId, (runGenerationByChatId.get(chatId) ?? 0) + 1);
@@ -64,6 +91,24 @@ function makeClient() {
       advanceRunGeneration(chatId, options.turnId);
     }
   });
+  const queuedAttemptKey = (chatId: string, binding: QueuedAttemptBinding) => (
+    `${chatId}\u0000${binding.turnId}`
+  );
+  const sameQueuedBinding = (left: QueuedAttemptBinding, right: QueuedAttemptBinding) => (
+    left.queueKey === right.queueKey
+    && left.promptId === right.promptId
+    && left.turnId === right.turnId
+  );
+  const recordQueuedOutcome = (
+    chatId: string,
+    turnId: string,
+    outcome: QueuedAttemptOutcome,
+  ) => {
+    const observation = queuedAttemptObservations.get(`${chatId}\u0000${turnId}`);
+    if (!observation || observation.outcome) return;
+    observation.outcome = outcome;
+    observation.resolve(outcome);
+  };
   const canReconcileCanonicalCompletion = vi.fn((
     chatId: string,
     expectedRunGeneration: number,
@@ -142,6 +187,7 @@ function makeClient() {
       latestRunTurnIdByChatId.delete(chatId);
     }),
     hasUnsettledRun: () => false,
+    hasUnknownMessageSend: () => false,
     getRunGeneration: (chatId: string) => runGenerationByChatId.get(chatId) ?? 0,
     canReconcileCanonicalCompletion,
     reconcileCanonicalCompletion,
@@ -183,7 +229,31 @@ function makeClient() {
     },
     _emitChat(chatId: string, ev: import("@/lib/types").InboundEvent) {
       const turnId = "turn_id" in ev && typeof ev.turn_id === "string" ? ev.turn_id : null;
-      if (turnId && completedTurnIdsByChatId.get(chatId)?.has(turnId)) return;
+      const completed = turnId !== null
+        && completedTurnIdsByChatId.get(chatId)?.has(turnId) === true;
+      if (turnId) {
+        if (ev.event === "message_admitted") {
+          recordQueuedOutcome(chatId, turnId, { kind: "admitted" });
+        } else if (
+          ev.event === "goal_status"
+          && ev.status === "running"
+          && typeof ev.started_at === "number"
+          && !completed
+        ) {
+          recordQueuedOutcome(chatId, turnId, { kind: "admitted" });
+        } else if (
+          ev.event === "error"
+          && ev.detail === "not_admitted"
+          && typeof ev.reason === "string"
+          && ev.reason.trim()
+        ) {
+          recordQueuedOutcome(chatId, turnId, {
+            kind: "not_admitted",
+            reason: ev.reason.trim(),
+          });
+        }
+      }
+      if (completed && ev.event !== "message_admitted" && ev.event !== "error") return;
       if (
         ev.event === "goal_status"
         && ev.status === "running"
@@ -221,8 +291,55 @@ function makeClient() {
       void payload;
       return {} as T;
     }),
+    prepareQueuedAttempt: vi.fn((chatId: string, binding: QueuedAttemptBinding) => {
+      if (
+        !chatId
+        || (binding.queueKey !== null && binding.queueKey !== chatId)
+        || !binding.promptId.trim()
+        || !binding.turnId.trim()
+      ) return false;
+      const key = queuedAttemptKey(chatId, binding);
+      if (queuedAttemptObservations.has(key)) return false;
+      let resolve!: (outcome: QueuedAttemptOutcome) => void;
+      const promise = new Promise<QueuedAttemptOutcome>((resolvePromise) => {
+        resolve = resolvePromise;
+      });
+      queuedAttemptObservations.set(key, {
+        chatId,
+        binding: { ...binding },
+        promise,
+        resolve,
+        consumed: false,
+      });
+      return true;
+    }),
+    waitForQueuedAttempt: vi.fn((chatId: string, binding: QueuedAttemptBinding) => {
+      if (binding.queueKey !== null && binding.queueKey !== chatId) return null;
+      const observation = queuedAttemptObservations.get(queuedAttemptKey(chatId, binding));
+      if (
+        !observation
+        || observation.consumed
+        || !sameQueuedBinding(observation.binding, binding)
+      ) return null;
+      return observation.promise;
+    }),
+    consumeQueuedAttempt: vi.fn((chatId: string, binding: QueuedAttemptBinding) => {
+      const key = queuedAttemptKey(chatId, binding);
+      const observation = queuedAttemptObservations.get(key);
+      if (
+        !observation
+        || observation.chatId !== chatId
+        || observation.consumed
+        || !observation.outcome
+        || !sameQueuedBinding(observation.binding, binding)
+      ) return false;
+      observation.consumed = true;
+      queuedAttemptObservations.delete(key);
+      return true;
+    }),
     sendMessage,
     sendSystemCommand: vi.fn().mockResolvedValue(undefined),
+    sendApprovalDecision: vi.fn(() => `approval-decision-${++approvalDecisionIndex}`),
     newChat: vi.fn(),
     forkChat: vi.fn(),
     attach: vi.fn(),
@@ -277,9 +394,11 @@ function session(chatId: string, modelPreset?: string | null) {
 
 function transcriptFromSimpleMessages(
   rows: Array<{ role: "user" | "assistant"; content: string; turnId?: string }>,
-): { schemaVersion: number; messages: UIMessage[] } {
+): { schemaVersion: number; messages: UIMessage[]; active_turn_id: null; has_pending_tool_calls: boolean } {
   return {
     schemaVersion: 3,
+    active_turn_id: null,
+    has_pending_tool_calls: false,
     messages: rows.map((m, i) => ({
       id: `m-${i}`,
       role: m.role,
@@ -287,6 +406,61 @@ function transcriptFromSimpleMessages(
       ...(m.turnId ? { turnId: m.turnId } : {}),
       createdAt: 1000 + i,
     })),
+  };
+}
+
+/**
+ * A minimal delegated-child row.
+ *
+ * The client only asks for delegated children when the rendered page actually
+ * contains one, so a test that exercises child loading must include a row.
+ */
+function delegatedChildRow(
+  parentKey: string,
+  childId: string,
+  label: string,
+): UIMessage {
+  return {
+    id: `delegated-child-${childId}`,
+    role: "assistant",
+    kind: "delegated_child",
+    content: "",
+    createdAt: 1000,
+    delegatedChild: {
+      history_kind: "row",
+      parent_session_key: parentKey,
+      root_key: parentKey,
+      child_session_key: `delegated:${childId}`,
+      child_id: childId,
+      profile: "worker",
+      state: "completed",
+      outcome: "completed",
+      task_label: label,
+      task_label_truncated: false,
+      result_summary: null,
+      result_summary_truncated: false,
+      runtime_generation: null,
+      parent_run_id: null,
+      child_run_id: null,
+      parent_store_identity: null,
+      parent_incarnation: null,
+      parent_generation: null,
+      root_store_identity: null,
+      root_incarnation: null,
+      root_generation: null,
+      child_store_identity: null,
+      child_incarnation: null,
+      child_generation: null,
+      run_sequence: null,
+      state_sequence: null,
+      control_epoch: null,
+      holds_capacity: false,
+      can_stop: false,
+      owned_work: false,
+      pending_approval_id: null,
+      blocked_run_id: null,
+      result_disposition: null,
+    } as never,
   };
 }
 
@@ -614,8 +788,729 @@ describe("ThreadShell", () => {
     );
   });
 
+  it("revokes a folder choice across the real idle-running-completed lifecycle", async () => {
+    const user = (await import("@testing-library/user-event")).default.setup();
+    const client = makeClient();
+    let resolveObsolete!: (path: string | null) => void;
+    let resolveFresh!: (path: string | null) => void;
+    const obsolete = new Promise<string | null>((resolve) => { resolveObsolete = resolve; });
+    const fresh = new Promise<string | null>((resolve) => { resolveFresh = resolve; });
+    const pickFolder = vi.fn().mockReturnValueOnce(obsolete).mockReturnValueOnce(fresh);
+    Object.defineProperty(window, "nanobotHost", {
+      configurable: true,
+      value: { getRuntimeInfo: vi.fn(), pickFolder, openLogs: vi.fn() },
+    });
+    const scope: WorkspaceScopePayload = {
+      project_path: "/agent/home",
+      project_name: "Agent home",
+      access_mode: "restricted",
+      restrict_to_workspace: true,
+    };
+    const workspaces: WorkspacesPayload = {
+      schema_version: 2,
+      default_access_mode: "restricted",
+      default_scope: scope,
+      managed_access: false,
+      management: null,
+      controls: {
+        can_change_project: true,
+        can_use_full_access: true,
+        can_pick_folder: true,
+      },
+    };
+    const onWorkspaceScopeChange = vi.fn();
+
+    render(wrap(client, <ThreadShell
+      session={{ ...session("folder-lifecycle"), workspaceScope: scope }}
+      title="Folder lifecycle"
+      onToggleSidebar={() => {}}
+      workspaceScope={scope}
+      workspaceDefaultScope={scope}
+      workspaceControls={workspaces.controls}
+      workspaces={workspaces}
+      onWorkspaceScopeChange={onWorkspaceScopeChange}
+    />));
+
+    await user.click(await screen.findByRole("button", { name: "Choose project folder" }));
+    await user.click(await screen.findByRole("button", { name: "Browse…" }));
+    await waitFor(() => expect(pickFolder).toHaveBeenCalledTimes(1));
+
+    const workspaceTrigger = screen.getByRole("button", { name: "Choose project folder" });
+    act(() => client._emitChat("folder-lifecycle", {
+      event: "goal_status",
+      chat_id: "folder-lifecycle",
+      status: "running",
+      started_at: 1_700_000_000,
+      turn_id: "folder-turn",
+    }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Stop response" })).toBeInTheDocument());
+
+    act(() => client._emitChat("folder-lifecycle", {
+      event: "turn_end",
+      chat_id: "folder-lifecycle",
+      turn_id: "folder-turn",
+    }));
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Stop response" })).not.toBeInTheDocument());
+    await act(async () => { resolveObsolete("/projects/obsolete"); });
+
+    expect(onWorkspaceScopeChange).not.toHaveBeenCalled();
+    expect(workspaceTrigger).toBeEnabled();
+    await user.click(screen.getByRole("button", { name: "Choose project folder" }));
+    await user.click(await screen.findByRole("button", { name: "Browse…" }));
+    await waitFor(() => expect(pickFolder).toHaveBeenCalledTimes(2));
+    await act(async () => { resolveFresh("/projects/current"); });
+    expect(onWorkspaceScopeChange).toHaveBeenCalledTimes(1);
+    expect(onWorkspaceScopeChange).toHaveBeenCalledWith(expect.objectContaining({
+      project_path: "/projects/current",
+      project_name: "current",
+    }));
+  });
+
+  it("paints saved text while controls are pending and withdraws it only when read access is refused", async () => {
+    const client = makeClient();
+    const chatId = "separate-controls";
+    const key = `websocket:${chatId}`;
+    let releaseControls!: () => void;
+    const controls = new Promise<Response>((resolve) => {
+      releaseControls = () => resolve(new Response("", { status: 503 }));
+    });
+    let readFailure: "offline" | "refused" | null = null;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = new URL(String(input), "https://example.test");
+      if (!url.pathname.endsWith("/webui-thread")) return new Response(null, { status: 404 });
+      if (url.searchParams.get("view") === "controls") return controls;
+      if (readFailure === "offline") throw new TypeError("offline");
+      if (readFailure === "refused") return new Response(null, { status: 403 });
+      return Response.json({
+        view: "history",
+        sessionKey: key,
+        schemaVersion: 3,
+        active_turn_id: "running-turn",
+        has_pending_tool_calls: true,
+        messages: [{ id: "saved", role: "assistant", content: "Saved before the run", createdAt: 1 }],
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const showThread = (resolved: boolean) => wrap(client, <ThreadShell
+      session={resolved ? session(chatId) : null}
+      routeSessionKey={key}
+      openingConversation={!resolved}
+      title="Separate controls"
+      onToggleSidebar={() => {}}
+    />);
+    const { rerender } = render(showThread(false));
+
+    expect(await screen.findByText(replyText("Saved before the run"))).toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledWith(
+      expect.stringContaining("/webui-thread?view=controls"),
+      expect.anything(),
+    );
+    rerender(showThread(true));
+    act(() => client._emitChat(chatId, {
+      event: "goal_status",
+      chat_id: chatId,
+      status: "running",
+      started_at: 1_700_000_000,
+      turn_id: "running-turn",
+    }));
+    const stopButton = await screen.findByRole("button", { name: "Stop response" });
+    expect(stopButton).toBeDisabled();
+    await act(async () => releaseControls());
+    expect(screen.getByText(replyText("Saved before the run"))).toBeInTheDocument();
+    expect(stopButton).toBeDisabled();
+    expect(client.finishRunLocally).not.toHaveBeenCalled();
+
+    readFailure = "offline";
+    await act(async () => { client._emitSessionUpdate(chatId, "thread"); });
+    expect(screen.getByText(replyText("Saved before the run"))).toBeInTheDocument();
+
+    readFailure = "refused";
+    act(() => client._emitSessionUpdate(chatId, "thread"));
+    await waitFor(() => expect(screen.queryByText(replyText("Saved before the run"))).toBeNull());
+  });
+
+  it("does not enable legacy Stop after authenticated history reports stop_target null", async () => {
+    const client = makeClient();
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
+      if (String(input).includes("/api/sessions/websocket%3Amodern-null-stop/webui-thread")) {
+        return Promise.resolve(httpJson({
+          schemaVersion: 3,
+          stop_target: null,
+          messages: [],
+        }));
+      }
+      return Promise.resolve({ ok: false, status: 404, json: async () => ({}) });
+    }));
+
+    render(wrap(client, <ThreadShell
+      session={session("modern-null-stop")}
+      title="Modern Stop target"
+      onToggleSidebar={() => {}}
+    />));
+
+    expect(await screen.findByRole("textbox", { name: "Message input" })).toBeEnabled();
+    act(() => client._emitChat("modern-null-stop", {
+      event: "goal_status",
+      chat_id: "modern-null-stop",
+      status: "running",
+      started_at: 1_700_000_000,
+      turn_id: "modern-turn",
+    }));
+
+    const stopButton = await screen.findByRole("button", { name: "Stop response" });
+    expect(stopButton).toBeDisabled();
+    expect(client.sendMessage).not.toHaveBeenCalled();
+    expect(client.finishRunLocally).not.toHaveBeenCalled();
+  });
+
+  it("keeps settled child activity visible without a Stop notice after canonical refresh", async () => {
+    const client = makeClient();
+    const chatId = "gui-null-notice";
+    const parentKey = `websocket:${chatId}`;
+    const root = {
+      store_identity: "root-store",
+      session_key: parentKey,
+      incarnation: "root-incarnation",
+      generation: 0,
+    };
+    const child = {
+      history_kind: "canonical" as const,
+      parent_session_key: parentKey,
+      child_session_key: "delegated:child-gui",
+      child_id: "child-gui",
+      profile: "delegated",
+      state: "active",
+      task_label: "Inspect GUI child",
+      task_label_truncated: false,
+      result_summary: null,
+      result_summary_truncated: false,
+      outcome: null,
+      runtime_generation: 0,
+      turn_id: null,
+      parent_run_id: "parent-run",
+      child_run_id: "child-run",
+      parent_store_identity: root.store_identity,
+      parent_incarnation: root.incarnation,
+      parent_generation: root.generation,
+      root_key: parentKey,
+      root_store_identity: root.store_identity,
+      root_incarnation: root.incarnation,
+      root_generation: root.generation,
+      child_store_identity: "child-store",
+      child_incarnation: "child-incarnation",
+      child_generation: 0,
+      run_sequence: 1,
+      state_sequence: 1,
+      control_epoch: 1,
+      holds_capacity: true,
+      can_stop: true,
+      owned_work: true,
+      pending_approval_id: null,
+      blocked_run_id: null,
+      result_disposition: "pending",
+    } satisfies DelegatedChildPayload;
+    const stoppedChild = {
+      ...child,
+      state: "stopped",
+      outcome: "stopped",
+      state_sequence: 2,
+      holds_capacity: false,
+      can_stop: false,
+      owned_work: false,
+      result_disposition: "cancelled",
+    } satisfies DelegatedChildPayload;
+    const stopTarget: StopExpectation = {
+      version: 1,
+      source: root,
+      control_epoch: 1,
+      active_root_present: false,
+      active_turn_id: null,
+      active_root_run_ids: [],
+      children: [{
+        child_id: child.child_id,
+        source: {
+          store_identity: child.child_store_identity!,
+          session_key: child.child_session_key,
+          incarnation: child.child_incarnation!,
+          generation: child.child_generation!,
+        },
+        child_run_id: child.child_run_id!,
+        run_sequence: child.run_sequence!,
+        control_epoch: child.control_epoch!,
+      }],
+      pending_work_digest: "b".repeat(64),
+    };
+    const childMessage = (delegatedChild: DelegatedChildPayload): UIMessage => ({
+      id: `delegated-child-${delegatedChild.child_id}`,
+      role: "assistant",
+      kind: "delegated_child",
+      content: "",
+      createdAt: 1_700_000_000_000,
+      delegatedChild,
+    });
+    const terminalEvent: Extract<InboundEvent, { event: "delegated_child" }> = {
+      event: "delegated_child",
+      chat_id: chatId,
+      ...stoppedChild,
+    };
+    let threadRequests = 0;
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes(`/api/sessions/${encodeURIComponent(parentKey)}/webui-thread`)) {
+        threadRequests += 1;
+        return Promise.resolve(httpJson({
+          schemaVersion: 3,
+          stop_target: threadRequests === 1 ? stopTarget : null,
+          messages: [childMessage(threadRequests === 1 ? child : stoppedChild)],
+        }));
+      }
+      if (url.includes(`/api/sessions/${encodeURIComponent(parentKey)}/delegated-children`)) {
+        return Promise.resolve({ ok: false, status: 404, json: async () => ({}) });
+      }
+      return Promise.resolve({ ok: false, status: 404, json: async () => ({}) });
+    }));
+
+    render(wrap(client, <ThreadShell
+      session={session(chatId)}
+      title="GUI null recovery"
+      onToggleSidebar={() => {}}
+    />));
+
+    expect(await screen.findByLabelText("Inspect GUI child")).toBeInTheDocument();
+    expect(await screen.findByText("Working")).toBeInTheDocument();
+    const stopButton = await screen.findByRole("button", { name: "Stop response" });
+    expect(stopButton).toBeEnabled();
+    fireEvent.click(stopButton);
+    expect(client.sendMessage).toHaveBeenCalledTimes(1);
+    expect(client.sendMessage).toHaveBeenLastCalledWith(
+      chatId,
+      "/stop",
+      undefined,
+      { stopExpectation: stopTarget },
+    );
+
+    act(() => {
+      client._emitChat(chatId, terminalEvent);
+      client._emitChat(chatId, {
+        event: "stop_target",
+        chat_id: chatId,
+        stop_target: null,
+      });
+    });
+
+    await waitFor(() => expect(threadRequests).toBeGreaterThan(1));
+    expect(await screen.findByText("Stopped")).toBeInTheDocument();
+    expect(screen.queryByText(
+      "Stop is unavailable until the current owned-work identity can be verified.",
+    )).not.toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(client.sendMessage).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps both exact child approvals actionable while the parent is streaming", async () => {
+    const client = makeClient();
+    const parentKey = "websocket:approval-parent";
+    const children = [
+      { id: "child-a", label: "Inspect red", approvalId: "a".repeat(32), generation: 3 },
+      { id: "child-b", label: "Inspect blue", approvalId: "b".repeat(32), generation: 5 },
+      { id: "child-c", label: "Inspect green", approvalId: "c".repeat(32), generation: 7 },
+      { id: "child-d", label: "Inspect amber", approvalId: "e".repeat(32), generation: 8 },
+    ];
+    const source = {
+      store_identity: "root-store",
+      session_key: parentKey,
+      incarnation: "root-incarnation",
+      generation: 0,
+    };
+    const stopTarget = {
+      version: 1 as const,
+      source,
+      control_epoch: 2,
+      active_root_present: false,
+      active_turn_id: null,
+      active_root_run_ids: [],
+      children: children.map((child) => ({
+        child_id: child.id,
+        source: {
+          store_identity: `store-${child.id}`,
+          session_key: `delegated:${child.id}`,
+          incarnation: `incarnation-${child.id}`,
+          generation: child.generation,
+        },
+        child_run_id: `run-${child.id}`,
+        run_sequence: 1,
+        control_epoch: 2,
+      })),
+      pending_work_digest: "c".repeat(64),
+    };
+    const makeChild = (child: (typeof children)[number]) => ({
+      event: "delegated_child" as const,
+      chat_id: "approval-parent",
+      parent_session_key: parentKey,
+      child_session_key: `delegated:${child.id}`,
+      child_id: child.id,
+      profile: "delegated",
+      state: "waiting_approval",
+      task_label: child.label,
+      task_label_truncated: false,
+      result_summary: null,
+      result_summary_truncated: false,
+      outcome: null,
+      runtime_generation: 0,
+      turn_id: null,
+      parent_run_id: "parent-run",
+      child_run_id: `run-${child.id}`,
+      parent_store_identity: source.store_identity,
+      parent_incarnation: source.incarnation,
+      parent_generation: source.generation,
+      root_key: parentKey,
+      root_store_identity: source.store_identity,
+      root_incarnation: source.incarnation,
+      root_generation: source.generation,
+      child_store_identity: `store-${child.id}`,
+      child_incarnation: `incarnation-${child.id}`,
+      child_generation: child.generation,
+      run_sequence: 1,
+      state_sequence: 1,
+      control_epoch: 2,
+      holds_capacity: true,
+      can_stop: true,
+      owned_work: true,
+      pending_approval_id: child.approvalId,
+      blocked_run_id: `run-${child.id}`,
+      result_disposition: null,
+    });
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
+      const url = String(input);
+      const child = children.find((candidate) => (
+        url.includes(encodeURIComponent(`delegated:${candidate.id}`))
+      ));
+      if (child && url.includes("/webui-thread")) {
+        return Promise.resolve(httpJson({
+          schemaVersion: 3,
+          read_only: true,
+          history_kind: "canonical",
+          parent_session_key: parentKey,
+          root_key: parentKey,
+          source: {
+            store_identity: `store-${child.id}`,
+            session_key: `delegated:${child.id}`,
+            incarnation: `incarnation-${child.id}`,
+            generation: child.generation,
+          },
+          page: { before_cursor: null, has_more_before: false, loaded_message_count: 1 },
+          messages: [{
+            id: `approval-${child.id}`,
+            role: "assistant",
+            content: `I'm about to take a risky action and want your approval first. Planned action: write /tmp/${child.id}. Approval ID: ${child.approvalId}. Reply with the approval control to continue or deny.`,
+            createdAt: 10,
+            turnId: `turn-${child.id}`,
+          }],
+        }));
+      }
+      return Promise.resolve({ ok: false, status: 404, json: async () => ({}) });
+    }));
+
+    render(wrap(client, <ThreadShell
+      session={session("approval-parent")}
+      title="Approval parent"
+      onToggleSidebar={() => {}}
+    />));
+
+    act(() => client._emitChat("approval-parent", {
+      event: "goal_status",
+      chat_id: "approval-parent",
+      status: "running",
+      started_at: 1_700_000_000,
+    }));
+    act(() => client._emitChat("approval-parent", {
+      event: "stop_target",
+      chat_id: "approval-parent",
+      stop_target: stopTarget,
+    }));
+    for (const child of children) {
+      act(() => client._emitChat("approval-parent", makeChild(child)));
+    }
+
+    await screen.findByLabelText("Approval for Inspect red");
+    await screen.findByLabelText("Approval for Inspect blue");
+    await screen.findByLabelText("Approval for Inspect green");
+    await screen.findByLabelText("Approval for Inspect amber");
+    await waitFor(() => {
+      expect(within(screen.getByLabelText("Approval for Inspect red"))
+        .getByRole("button", { name: "Approve and continue" })).toBeEnabled();
+      expect(within(screen.getByLabelText("Approval for Inspect blue"))
+        .getByRole("button", { name: "Approve and continue" })).toBeEnabled();
+      expect(within(screen.getByLabelText("Approval for Inspect green"))
+        .getByRole("button", { name: "Approve and continue" })).toBeEnabled();
+      expect(within(screen.getByLabelText("Approval for Inspect amber"))
+        .getByRole("button", { name: "Approve and continue" })).toBeEnabled();
+    });
+
+    fireEvent.click(within(screen.getByLabelText("Approval for Inspect red"))
+      .getByRole("button", { name: "Approve and continue" }));
+    fireEvent.click(within(screen.getByLabelText("Approval for Inspect blue"))
+      .getByRole("button", { name: "Cancel" }));
+    fireEvent.click(within(screen.getByLabelText("Approval for Inspect green"))
+      .getByRole("button", { name: "Approve and continue" }));
+
+    expect(client.sendApprovalDecision).toHaveBeenNthCalledWith(
+      1,
+      "approval-parent",
+      children[0]!.approvalId,
+      "approve",
+      {
+        sessionKey: "delegated:child-a",
+        sessionIncarnation: "incarnation-child-a",
+        runId: "run-child-a",
+        generation: 3,
+      },
+    );
+    expect(client.sendApprovalDecision).toHaveBeenNthCalledWith(
+      2,
+      "approval-parent",
+      children[1]!.approvalId,
+      "deny",
+      {
+        sessionKey: "delegated:child-b",
+        sessionIncarnation: "incarnation-child-b",
+        runId: "run-child-b",
+        generation: 5,
+      },
+    );
+    expect(client.sendApprovalDecision).toHaveBeenNthCalledWith(
+      3,
+      "approval-parent",
+      children[2]!.approvalId,
+      "approve",
+      {
+        sessionKey: "delegated:child-c",
+        sessionIncarnation: "incarnation-child-c",
+        runId: "run-child-c",
+        generation: 7,
+      },
+    );
+
+    act(() => client._emitChat("approval-parent", {
+      event: "message_admitted",
+      chat_id: "approval-parent",
+      turn_id: "approval-decision-1",
+      starts_turn: false,
+    }));
+    expect(within(screen.getByLabelText("Approval for Inspect red"))
+      .getByRole("button", { name: "Approve and continue" })).toBeDisabled();
+
+    act(() => client._emitChat("approval-parent", {
+      event: "error",
+      chat_id: "approval-parent",
+      turn_id: "approval-decision-2",
+      detail: "not_admitted",
+      reason: "invalid_approval_decision",
+    }));
+    expect(await screen.findByText(
+      "The approval decision was refused. Refresh the parent chat before deciding again.",
+    )).toBeInTheDocument();
+    expect(within(screen.getByLabelText("Approval for Inspect blue"))
+      .getByRole("button", { name: "Approve and continue" })).toBeDisabled();
+
+    act(() => client._emitStatus("reconnecting"));
+    expect(await screen.findAllByText(
+      "Approval outcome is unknown after disconnect. Refresh status before deciding again.",
+    )).toHaveLength(2);
+    act(() => client._emitStatus("open"));
+
+    act(() => client._emitChat("approval-parent", {
+      event: "turn_end",
+      chat_id: "approval-parent",
+      turn_id: "parent-turn",
+    }));
+    await waitFor(() => {
+      expect(screen.getByRole("textbox", { name: "Message input" })).toBeEnabled();
+      expect(screen.getByRole("button", { name: "Stop response" })).toBeEnabled();
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Stop response" }));
+    expect(client.sendMessage).toHaveBeenLastCalledWith(
+      "approval-parent",
+      "/stop",
+      undefined,
+      { stopExpectation: stopTarget },
+    );
+    expect(screen.getByRole("button", { name: "Stopping" })).toBeDisabled();
+    expect(screen.getByLabelText("Approval for Inspect red")).toBeInTheDocument();
+    expect(screen.getByLabelText("Approval for Inspect blue")).toBeInTheDocument();
+    expect(screen.getByLabelText("Approval for Inspect green")).toBeInTheDocument();
+
+    const staleAmberDecision = within(screen.getByLabelText("Approval for Inspect amber"))
+      .getByRole("button", { name: "Approve and continue" });
+    const replacedAmberApproval = {
+      ...makeChild(children[3]!),
+      pending_approval_id: "f".repeat(32),
+      state_sequence: 2,
+    };
+    act(() => {
+      flushSync(() => client._emitChat("approval-parent", replacedAmberApproval));
+      expect(staleAmberDecision).toBeEnabled();
+      fireEvent.click(staleAmberDecision);
+    });
+    expect(client.sendApprovalDecision).toHaveBeenCalledTimes(3);
+  });
+
+  it("returns from read-only child history with the parent draft, attachment, position and focus", async () => {
+    const client = makeClient();
+    const parentKey = "websocket:inspect-parent";
+    const rootSource = {
+      store_identity: "root-store",
+      session_key: parentKey,
+      incarnation: "root-incarnation",
+      generation: 0,
+    };
+    const child = {
+      event: "delegated_child" as const,
+      chat_id: "inspect-parent",
+      parent_session_key: parentKey,
+      child_session_key: "delegated:inspect-child",
+      child_id: "inspect-child",
+      profile: "worker",
+      state: "completed",
+      task_label: "Inspect the migration",
+      task_label_truncated: false,
+      result_summary: "The migration notes were checked.",
+      result_summary_truncated: false,
+      outcome: "completed",
+      runtime_generation: 0,
+      turn_id: "parent-turn",
+      parent_run_id: "parent-run",
+      child_run_id: "child-run",
+      parent_store_identity: rootSource.store_identity,
+      parent_incarnation: rootSource.incarnation,
+      parent_generation: rootSource.generation,
+      root_key: parentKey,
+      root_store_identity: rootSource.store_identity,
+      root_incarnation: rootSource.incarnation,
+      root_generation: rootSource.generation,
+      child_store_identity: "child-store",
+      child_incarnation: "child-incarnation",
+      child_generation: 0,
+      run_sequence: 1,
+      state_sequence: 3,
+      control_epoch: 0,
+      holds_capacity: false,
+      can_stop: false,
+      owned_work: false,
+      pending_approval_id: null,
+      blocked_run_id: null,
+      result_disposition: "delivered",
+    };
+    Object.defineProperty(URL, "createObjectURL", {
+      configurable: true,
+      value: vi.fn(() => "blob:thread-shell-inspection"),
+    });
+    Object.defineProperty(URL, "revokeObjectURL", {
+      configurable: true,
+      value: vi.fn(),
+    });
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/api/sessions/delegated%3Ainspect-child/webui-thread")) {
+        const older = url.includes("before=older-child-page");
+        const messages: UIMessage[] = older
+          ? [{
+              id: "child-tool-event",
+              role: "tool",
+              kind: "trace",
+              content: 'read_file({"path":"README.md"})',
+              traces: ['read_file({"path":"README.md"})'],
+              createdAt: 1_000,
+            }]
+          : [{
+              id: "child-answer",
+              role: "assistant",
+              content: "Newest child reply with complete details.",
+              createdAt: 2_000,
+            }];
+        return Promise.resolve(httpJson({
+          schemaVersion: 3,
+          read_only: true,
+          history_kind: "canonical",
+          parent_session_key: parentKey,
+          root_key: parentKey,
+          source: {
+            store_identity: "child-store",
+            session_key: "delegated:inspect-child",
+            incarnation: "child-incarnation",
+            generation: 0,
+          },
+          page: {
+            before_cursor: older ? null : "older-child-page",
+            has_more_before: !older,
+            loaded_message_count: messages.length,
+          },
+          messages,
+        }));
+      }
+      if (url.includes("/api/sessions/websocket%3Ainspect-parent/webui-thread")) {
+        return Promise.resolve(httpJson({
+          schemaVersion: 3,
+          messages: [
+            { id: "parent-user", role: "user", content: "Parent prompt", createdAt: 1 },
+            { id: "parent-answer", role: "assistant", content: "Parent answer", createdAt: 2 },
+          ],
+        }));
+      }
+      return Promise.resolve({ ok: false, status: 404, json: async () => ({}) });
+    }));
+
+    const { container } = render(wrap(client, <ThreadShell
+      session={session("inspect-parent")}
+      title="Inspection parent"
+      onToggleSidebar={() => {}}
+    />));
+    expect(await screen.findByText(replyText("Parent answer"))).toBeInTheDocument();
+    const composer = screen.getByRole("textbox", { name: "Message input" });
+    fireEvent.change(composer, { target: { value: "Keep this parent draft" } });
+    const fileInput = container.querySelector<HTMLInputElement>('input[type="file"]');
+    expect(fileInput).toBeTruthy();
+    fireEvent.change(fileInput!, {
+      target: { files: [new File(["image"], "parent-draft.png", { type: "image/png" })] },
+    });
+    await screen.findByText("parent-draft.png");
+
+    act(() => client._emitChat("inspect-parent", child));
+    const inspect = await screen.findByRole("button", {
+      name: "Inspect Inspect the migration activity",
+    });
+    const parentScroller = screen.getByTestId("thread-message-region");
+    Object.defineProperty(parentScroller, "scrollHeight", { configurable: true, value: 400 });
+    Object.defineProperty(parentScroller, "clientHeight", { configurable: true, value: 100 });
+    parentScroller.scrollTop = 120;
+    fireEvent.wheel(parentScroller, { deltaY: -30 });
+    fireEvent.scroll(parentScroller);
+    inspect.focus();
+    fireEvent.click(inspect);
+
+    const dialog = await screen.findByRole("dialog", { name: "Inspect the migration" });
+    expect(within(dialog).getByText("Newest child reply with complete details.")).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "Load earlier activity" })).toBeInTheDocument();
+    expect(screen.queryByRole("textbox", { name: "Message input" })).not.toBeInTheDocument();
+    expect(within(dialog).queryByRole("button", { name: /Stop|Approve|Cancel/ })).not.toBeInTheDocument();
+
+    fireEvent.click(within(dialog).getByRole("button", { name: "Load earlier activity" }));
+    fireEvent.click(await within(dialog).findByRole("button", { name: /^Worked(?: for .+)?$/ }));
+    expect(await within(dialog).findByText("Read file README.md")).toBeInTheDocument();
+    fireEvent.keyDown(window, { key: "Escape" });
+
+    await waitFor(() => expect(screen.getByRole("button", {
+      name: "Inspect Inspect the migration activity",
+    })).toHaveFocus());
+    expect(screen.getByRole("textbox", { name: "Message input" })).toHaveValue("Keep this parent draft");
+    expect(screen.getByText("parent-draft.png")).toBeInTheDocument();
+    expect(parentScroller.scrollTop).toBe(120);
+  });
+
   it("renders each logical round in a completed turn as its own usage bar", async () => {
     const client = makeClient();
+    const settings = modelSettings("openai-codex/gpt-5.5", "openai_codex");
+    settings.model_presets[0]!.context_window_tokens = 32_000;
     vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
       if (String(input).includes("websocket%3Ausage-chart/webui-thread")) {
         return Promise.resolve(httpJson({
@@ -644,7 +1539,7 @@ describe("ThreadShell", () => {
               content: "Second response",
               turnId: "turn-2",
               createdAt: 2_000,
-              contextWindowTokens: 65_536,
+              contextWindowTokens: 200_000,
               usage: {
                 prompt_tokens: 29_400,
                 completion_tokens: 416,
@@ -673,19 +1568,28 @@ describe("ThreadShell", () => {
         session={session("usage-chart")}
         title="Usage chart"
         onToggleSidebar={() => {}}
-        settingsSnapshot={modelSettings("openai-codex/gpt-5.5", "openai_codex")}
+        settingsSnapshot={settings}
       />,
       "openai-codex/gpt-5.5",
     ));
 
     const trigger = await screen.findByTestId("composer-context-usage");
     fireEvent.click(trigger);
-    expect(await screen.findAllByTestId("round-usage-bar")).toHaveLength(4);
+    const usage = within(await screen.findByRole("dialog", { name: "Context usage" }));
+    expect(usage.getByText("Last known request")).toBeInTheDocument();
+    expect(usage.getByText("14.7K / 200K")).toBeInTheDocument();
+    expect(usage.getByRole("progressbar", { name: "Context 7%" })).toBeInTheDocument();
+    expect(usage.getByText("Recent rounds")).toBeInTheDocument();
+    expect(usage.getAllByTestId("round-usage-bar")).toHaveLength(4);
+    expect(usage.queryByText("Configured model")).not.toBeInTheDocument();
+    expect(usage.queryByText("Configured window")).not.toBeInTheDocument();
+    expect(usage.queryByText("openai-codex/gpt-5.5")).not.toBeInTheDocument();
+    expect(usage.queryByText("32K")).not.toBeInTheDocument();
     expect(screen.getByRole("img", {
       name: /input tokens 16,400.*KV cache hit rate 99%.*output tokens 236/i,
     })).toBeInTheDocument();
     expect(screen.getByTestId("composer-context-meter")).toBeInTheDocument();
-    for (const phase of ["started", "failed"] as const) {
+    for (const phase of ["started", "failed", "cancelled"] as const) {
       act(() => client._emitChat("usage-chart", {
         event: "context_compaction", chat_id: "usage-chart", compaction_id: "failed", phase,
       }));
@@ -699,7 +1603,7 @@ describe("ThreadShell", () => {
     expect(screen.getAllByTestId("round-usage-bar")).toHaveLength(4);
   });
 
-  it.each([false, true])("restores context after compaction only with newer usage (%s)", async (newReply) => {
+  it.each([false, true])("restores context after compaction only with certified completion usage (%s)", async (newReply) => {
     const client = makeClient();
     const messages: UIMessage[] = [
       {
@@ -708,13 +1612,14 @@ describe("ThreadShell", () => {
         roundUsages: [{ prompt_tokens: 170_000 }],
       },
       {
-        id: "compact", role: "assistant", kind: "compaction", content: "", createdAt: 2_000,
+        turnId: "current", turnSeq: 2, id: "compact", role: "assistant", kind: "compaction", content: "", createdAt: 2_000,
         compaction: { id: "compact", phase: "succeeded" },
       },
     ];
     if (newReply) messages.push({
-      id: "new", role: "assistant", content: "After compact", createdAt: 3_000,
+      turnId: "current", id: "new", role: "assistant", content: "After compact", createdAt: 3_000,
       contextWindowTokens: 1_000_000, usage: { context_tokens: 20_700 },
+      contextUsage: { contextTokens: 20_700, contextWindowTokens: 1_000_000, completionTurnSeq: 4 },
     });
     vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => Promise.resolve(
       String(input).includes("websocket%3Acompact-usage/webui-thread")
@@ -725,13 +1630,265 @@ describe("ThreadShell", () => {
       session={session("compact-usage")} title="Compact usage" onToggleSidebar={() => {}}
       settingsSnapshot={modelSettings("test-model", "deepseek")}
     />));
-    const trigger = await screen.findByTestId("composer-context-usage");
+    await screen.findByText(replyText(newReply ? "After compact" : "Before compact"));
+    const trigger = newReply
+      ? await screen.findByRole("button", { name: "Context 2%. Open context usage" })
+      : await screen.findByTestId("composer-context-usage");
     if (newReply) {
       expect(trigger).toHaveAccessibleName("Context 2%. Open context usage");
     } else {
       expect(trigger).toHaveAccessibleName("Open context usage");
     }
   });
+
+  it.each([
+    { name: "cumulative carrier before notice", phase: "succeeded", count: 2000, window: 12000, seq: 4, expected: "17%", carrier: "answer" },
+    { name: "no observation is no update", noUpdate: true, count: null, window: null, seq: 4, expected: "42%", carrier: "user" },
+    { name: "missing completion owner", completionNoOwner: true, phase: "succeeded", count: 2000, window: 12000, seq: 4, expected: null, carrier: "notice" },
+    { name: "success owner mismatch", boundaryOtherOwner: true, phase: "succeeded", count: 2000, window: 12000, seq: 4, expected: null, carrier: "answer" },
+    { name: "invalid completion sequence", phase: "succeeded", count: 2000, window: 12000, seq: 1.5, expected: null, carrier: "notice" },
+    { name: "notice carrier", phase: "succeeded", count: 2000, window: 12000, seq: 4, expected: "17%", carrier: "notice" },
+    { name: "no new answer user carrier", count: 2000, window: 12000, seq: 4, expected: "17%", carrier: "user" },
+    { name: "silent invalidation user carrier", count: null, window: null, seq: 4, expected: null, carrier: "user" },
+    { name: "null without notice blocks aggregate and older history", count: null, window: null, seq: 4, expected: null, carrier: "answer" },
+    { name: "unknown route capacity never borrows primary", count: 2000, window: null, seq: 4, expected: null, carrier: "answer" },
+    { name: "genuine zero", count: 0, window: 12000, seq: 4, expected: "0%", carrier: "answer" },
+    { name: "same sequence cannot cross success", phase: "succeeded", count: 2000, window: 12000, seq: 2, expected: null, carrier: "notice" },
+    { name: "missing completion sequence", phase: "succeeded", count: 2000, window: 12000, expected: null, carrier: "notice" },
+    { name: "later success after completion", phase: "succeeded", count: 2000, window: 12000, seq: 4, laterSuccess: true, expected: null, carrier: "answer" },
+    { name: "failed attempt preserves valid observation", phase: "failed", count: 2000, window: 12000, seq: 4, expected: "17%", carrier: "notice" },
+  ] as const)("qualifies completion context live+reload: $name", async (testCase) => {
+    const snapshot = {
+      contextTokens: testCase.count, contextWindowTokens: testCase.window,
+      ...("seq" in testCase ? { completionTurnSeq: testCase.seq } : {}),
+    };
+    const old: UIMessage[] = [
+      { id: "old-user", role: "user", content: "Old question", createdAt: 1000, turnId: "old" },
+      { id: "old-answer", role: "assistant", content: "Old answer", createdAt: 1100, turnId: "old",
+        contextUsage: { contextTokens: 5000, contextWindowTokens: 12000, completionTurnSeq: 1 } },
+    ];
+    const rows: UIMessage[] = [
+      ...old, { id: "current-user", role: "user", content: "Current question", createdAt: 2000, turnId: "current", turnSeq: 0 },
+    ];
+    if (testCase.carrier !== "user") rows.push({
+      id: "answer", role: "assistant", content: "# Final canonical answer", createdAt: 2100, turnId: "current", turnSeq: 1,
+      usage: { prompt_tokens: 12000, context_tokens: 9000 }, contextWindowTokens: 12000,
+    });
+    if ("phase" in testCase) rows.push({
+      id: "notice", role: "assistant", content: "", kind: "compaction", createdAt: 2200,
+      turnId: "boundaryOtherOwner" in testCase ? "other" : "current", turnSeq: 2, compaction: { id: "notice", phase: testCase.phase },
+    });
+    // Live completion prefers last assistant/notice. Reload deliberately also
+    // exercises a canonical answer carrier *before* its compaction notice.
+    for (const replay of [false, true]) {
+      const client = makeClient();
+      const history = rows.map((row) => ({ ...row }));
+      if (replay && !("noUpdate" in testCase)) {
+        const id = testCase.carrier === "answer" ? "answer" : testCase.carrier === "notice" ? "notice" : "current-user";
+        history.find((row) => row.id === id)!.contextUsage = snapshot;
+        if ("completionNoOwner" in testCase) history.find((row) => row.id === id)!.turnId = undefined;
+        if ("laterSuccess" in testCase) history.push({
+          id: "later", role: "assistant", content: "", kind: "compaction", createdAt: 2300,
+          turnId: "current", turnSeq: 5, compaction: { id: "later", phase: "succeeded" },
+        });
+      }
+      vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => Promise.resolve(
+        String(input).includes("websocket%3Asnapshot-usage/webui-thread")
+          ? httpJson({ schemaVersion: 3, messages: history })
+          : { ok: false, status: 404, json: async () => ({}) },
+      )));
+      const mounted = render(wrap(client, <ThreadShell session={session("snapshot-usage")} title="Snapshot"
+        onToggleSidebar={() => {}} settingsSnapshot={modelSettings("synthetic-model", "deepseek")} />));
+      await screen.findByText("Current question");
+      if (!replay) {
+        act(() => client._emitChat("snapshot-usage", {
+          event: "turn_end", chat_id: "snapshot-usage",
+          ...("completionNoOwner" in testCase ? {} : { turn_id: "current" }),
+          ...("seq" in testCase ? { turn_seq: testCase.seq } : {}),
+          ...("noUpdate" in testCase ? {} : { context_usage: { context_tokens: testCase.count, context_window_tokens: testCase.window } }),
+          usage: { prompt_tokens: 12000, context_tokens: 9000 }, context_window_tokens: 12000,
+        }));
+        if ("laterSuccess" in testCase) act(() => client._emitChat("snapshot-usage", {
+          event: "context_compaction", chat_id: "snapshot-usage", turn_id: "current", turn_seq: 5,
+          compaction_id: "later", phase: "succeeded",
+        }));
+      }
+      expect(await screen.findByTestId("composer-context-usage")).toHaveAccessibleName(
+        testCase.expected ? `Context ${testCase.expected}. Open context usage` : "Open context usage",
+      );
+      mounted.unmount();
+    }
+  });
+
+  it.each([
+    { rounds: false, replay: false },
+    { rounds: false, replay: true },
+    { rounds: true, replay: false },
+    { rounds: true, replay: true },
+  ])("shows usage unavailable after successful compaction (rounds=$rounds, replay=$replay)", async ({
+    rounds,
+    replay,
+  }) => {
+    const client = makeClient();
+    const settings = modelSettings("global-model", "deepseek");
+    settings.agent.context_window_tokens = 1_000_000;
+    settings.model_presets[0] = {
+      ...settings.model_presets[0]!,
+      model: "global-model",
+      context_window_tokens: 1_000_000,
+    };
+    settings.model_presets.push({
+      ...settings.model_presets[0]!,
+      name: "selected",
+      label: "Selected",
+      active: false,
+      is_default: false,
+      model: "selected-model",
+      context_window_tokens: 65_536,
+    });
+    const messages: UIMessage[] = [{
+      id: "old",
+      role: "assistant",
+      content: "Before compact",
+      createdAt: 1_000,
+      contextWindowTokens: 1_000_000,
+      usage: { context_tokens: 170_000 },
+      ...(rounds ? { roundUsages: [{ prompt_tokens: 170_000 }] } : {}),
+    }];
+    if (replay) messages.push({
+      id: "compact",
+      role: "assistant",
+      kind: "compaction",
+      content: "",
+      createdAt: 2_000,
+      compaction: { id: "compact", phase: "succeeded" },
+    });
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => Promise.resolve(
+      String(input).includes("websocket%3Aselected-capacity/webui-thread")
+        ? httpJson({ schemaVersion: 3, messages })
+        : { ok: false, status: 404, json: async () => ({}) },
+    )));
+
+    render(wrap(client, <ThreadShell
+      session={session("selected-capacity", "selected")}
+      title="Selected capacity"
+      onToggleSidebar={() => {}}
+      settingsSnapshot={settings}
+    />));
+
+    if (!replay) {
+      await screen.findByText(replyText("Before compact"));
+      expect(await screen.findByRole("button", {
+        name: "Context 17%. Open context usage",
+      })).toBeInTheDocument();
+      act(() => client._emitChat("selected-capacity", {
+        event: "context_compaction",
+        chat_id: "selected-capacity",
+        compaction_id: "compact",
+        phase: "succeeded",
+      }));
+    }
+
+    if (replay) await screen.findByText(replyText("Before compact"));
+    const trigger = await screen.findByTestId("composer-context-usage");
+    expect(trigger).toHaveAccessibleName("Open context usage");
+    fireEvent.click(trigger);
+    const usage = within(await screen.findByRole("dialog", { name: "Context usage" }));
+    expect(usage.getByText("Usage unavailable")).toBeInTheDocument();
+    expect(usage.queryByText("Configured model")).not.toBeInTheDocument();
+    expect(usage.queryByText("Configured window")).not.toBeInTheDocument();
+    expect(usage.queryByText("selected-model")).not.toBeInTheDocument();
+    expect(usage.queryByText("65.5K")).not.toBeInTheDocument();
+    expect(screen.queryByText("170K")).not.toBeInTheDocument();
+    expect(screen.queryByText("1M")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("composer-context-meter")).not.toBeInTheDocument();
+    expect(screen.queryByRole("progressbar")).not.toBeInTheDocument();
+    if (rounds) expect(screen.getByText("Recent rounds")).toBeInTheDocument();
+    else expect(screen.queryByText("Recent rounds")).not.toBeInTheDocument();
+  });
+
+  it("does not borrow a global preset when the selected preset is missing", async () => {
+    const client = makeClient();
+    const settings = modelSettings("global-model", "deepseek");
+    settings.agent.context_window_tokens = 1_000_000;
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => Promise.resolve(
+      String(input).includes("websocket%3Aremoved-preset/webui-thread")
+        ? httpJson({ schemaVersion: 3, messages: [] })
+        : { ok: false, status: 404, json: async () => ({}) },
+    )));
+
+    render(wrap(client, <ThreadShell
+      session={session("removed-preset", "removed")}
+      title="Removed preset"
+      onToggleSidebar={() => {}}
+      settingsSnapshot={settings}
+    />));
+
+    await screen.findByRole("textbox", { name: "Message input" });
+    expect(screen.queryByTestId("composer-context-usage")).not.toBeInTheDocument();
+  });
+
+  it("keeps the context control hidden when the selected model is blank", async () => {
+    const client = makeClient();
+    const settings = modelSettings("global-model", "deepseek");
+    settings.model_presets.push({
+      ...settings.model_presets[0]!,
+      name: "blank-model",
+      active: false,
+      is_default: false,
+      model: "  ",
+    });
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => Promise.resolve(
+      String(input).includes("websocket%3Ablank-model/webui-thread")
+        ? httpJson({ schemaVersion: 3, messages: [] })
+        : { ok: false, status: 404, json: async () => ({}) },
+    )));
+
+    render(wrap(client, <ThreadShell
+      session={session("blank-model", "blank-model")}
+      title="Blank model"
+      onToggleSidebar={() => {}}
+      settingsSnapshot={settings}
+    />));
+
+    await screen.findByRole("textbox", { name: "Message input" });
+    expect(screen.queryByTestId("composer-context-usage")).not.toBeInTheDocument();
+  });
+
+  it.each([0, -1, Number.NaN, Number.POSITIVE_INFINITY, 65_536.5])(
+    "shows usage unavailable while the selected model's capacity is invalid (%s)",
+    async (contextWindowTokens) => {
+      const client = makeClient();
+      const settings = modelSettings("global-model", "deepseek");
+      settings.agent.context_window_tokens = 1_000_000;
+      settings.model_presets.push({
+        ...settings.model_presets[0]!,
+        name: "fractional",
+        label: "Fractional",
+        active: false,
+        is_default: false,
+        model: "selected-model",
+        context_window_tokens: contextWindowTokens,
+      });
+      vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => Promise.resolve(
+        String(input).includes("websocket%3Ainvalid-capacity/webui-thread")
+          ? httpJson({ schemaVersion: 3, messages: [] })
+          : { ok: false, status: 404, json: async () => ({}) },
+      )));
+
+      render(wrap(client, <ThreadShell
+        session={session("invalid-capacity", "fractional")}
+        title="Invalid capacity"
+        onToggleSidebar={() => {}}
+        settingsSnapshot={settings}
+      />));
+
+      fireEvent.click(await screen.findByTestId("composer-context-usage"));
+      expect(await screen.findByText("Usage unavailable")).toBeInTheDocument();
+      expect(screen.queryByText("1M")).not.toBeInTheDocument();
+      expect(screen.queryByRole("progressbar")).not.toBeInTheDocument();
+    },
+  );
 
   it("moves the session handle into the pane only when the workbench is split", () => {
     const client = makeClient();
@@ -1066,6 +2223,7 @@ describe("ThreadShell", () => {
       label: "Extra",
       model: "deepseek/extra",
       provider: "deepseek",
+      context_window_tokens: 88_888,
       active: false,
       is_default: false,
     });
@@ -1098,6 +2256,10 @@ describe("ThreadShell", () => {
       "/model extra",
     );
     expect(await screen.findByText("extra")).toBeInTheDocument();
+    const contextTrigger = await screen.findByTestId("composer-context-usage");
+    fireEvent.click(contextTrigger);
+    expect(await screen.findByText("Usage unavailable")).toBeInTheDocument();
+    fireEvent.click(contextTrigger);
 
     rerender(view("fast"));
     expect(await screen.findByText("fast")).toBeInTheDocument();
@@ -1609,7 +2771,6 @@ describe("ThreadShell", () => {
     await user.type(screen.getByLabelText("Message input"), draft);
     await user.click(screen.getByRole("button", { name: "Workspace access mode: Sandbox" }));
     await user.click(screen.getByRole("menuitem", { name: /Full access/ }));
-    await user.click(screen.getByRole("button", { name: "Enable Full access" }));
 
     await waitFor(() => expect(onCreateChat).toHaveBeenCalledWith(
       workspaces.default_scope, draft, null, { fullAccess: true },
@@ -1653,7 +2814,6 @@ describe("ThreadShell", () => {
     await user.type(screen.getByLabelText("Message input"), draft);
     await user.click(screen.getByRole("button", { name: "Workspace access mode: Sandbox" }));
     await user.click(screen.getByRole("menuitem", { name: /Full access/ }));
-    await user.click(screen.getByRole("button", { name: "Enable Full access" }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent("Access could not be updated");
     expect((screen.getByLabelText("Message input") as HTMLTextAreaElement).value).toBe(draft);
@@ -1931,7 +3091,7 @@ describe("ThreadShell", () => {
       ),
     );
 
-    await waitFor(() => expect(screen.getByText("old answer")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText(replyText("old answer"))).toBeInTheDocument());
 
     await act(async () => {
       rerender(
@@ -1948,13 +3108,13 @@ describe("ThreadShell", () => {
       );
     });
 
-    expect(screen.queryByText("old answer")).not.toBeInTheDocument();
+    expect(screen.queryByText(replyText("old answer"))).not.toBeInTheDocument();
     await waitFor(() =>
       expect(screen.getByPlaceholderText("Ask anything...")).toBeInTheDocument(),
     );
     const input = screen.getByPlaceholderText("Ask anything...");
     expect(input.className).toContain("min-h-[78px]");
-    expect(screen.queryByText("old answer")).not.toBeInTheDocument();
+    expect(screen.queryByText(replyText("old answer"))).not.toBeInTheDocument();
   });
 
   it("forks assistant replies using the global user message index rather than the visible window index", async () => {
@@ -1999,7 +3159,7 @@ describe("ThreadShell", () => {
       ),
     );
 
-    const targetText = await screen.findByText("answer 100");
+    const targetText = await screen.findByText(replyText("answer 100"));
     fireEvent.click(within(targetText.closest(".w-full") as HTMLElement).getByRole("button", {
       name: "Fork",
     }));
@@ -2129,7 +3289,7 @@ describe("ThreadShell", () => {
         text: "live assistant reply",
       });
     });
-    expect(screen.getByText("live assistant reply")).toBeInTheDocument();
+    expect(screen.getByText(replyText("live assistant reply"))).toBeInTheDocument();
 
     await act(async () => {
       rerender(
@@ -2145,7 +3305,7 @@ describe("ThreadShell", () => {
       );
     });
 
-    expect(screen.queryByText("live assistant reply")).not.toBeInTheDocument();
+    expect(screen.queryByText(replyText("live assistant reply"))).not.toBeInTheDocument();
     expect(screen.getByText(HERO_GREETING_PATTERN)).toBeInTheDocument();
 
     await act(async () => {
@@ -2162,7 +3322,7 @@ describe("ThreadShell", () => {
       );
     });
 
-    await waitFor(() => expect(screen.getByText("live assistant reply")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText(replyText("live assistant reply"))).toBeInTheDocument());
   });
 
   it("restores the stop control when returning to a running chat", async () => {
@@ -2419,7 +3579,7 @@ describe("ThreadShell", () => {
                     },
                   ],
             ),
-            has_pending_tool_calls: false,
+            active_turn_id: null, has_pending_tool_calls: false,
           });
         }
         return {
@@ -2443,7 +3603,7 @@ describe("ThreadShell", () => {
     );
 
     await waitFor(() =>
-      expect(screen.getByText("row from the expired latest window")).toBeInTheDocument(),
+      expect(screen.getByText(replyText("row from the expired latest window"))).toBeInTheDocument(),
     );
 
     act(() => client._emitSessionUpdate("window-reset-chat", "thread"));
@@ -2451,13 +3611,14 @@ describe("ThreadShell", () => {
     await waitFor(() =>
       expect(screen.getByText("answer in the new latest window")).toBeInTheDocument(),
     );
-    expect(screen.queryByText("row from the expired latest window")).not.toBeInTheDocument();
+    expect(screen.queryByText(replyText("row from the expired latest window"))).not.toBeInTheDocument();
     expect(client.reconcileCanonicalCompletion).toHaveBeenCalledWith(
       "window-reset-chat",
       expect.any(Number),
       expect.arrayContaining([canonicalTurnId]),
       {
         observedTurnIds: [canonicalTurnId],
+        activitySnapshotAvailable: true,
         hasPendingToolCalls: false,
         activeTurnId: null,
       },
@@ -2479,7 +3640,7 @@ describe("ThreadShell", () => {
                 ? [{ role: "assistant", content: "committed old lineage" }]
                 : [{ role: "assistant", content: "disjoint new lineage" }],
             ),
-            has_pending_tool_calls: false,
+            active_turn_id: null, has_pending_tool_calls: false,
           });
         }
         if (url.includes("websocket%3Alineage-chat-b/webui-thread")) {
@@ -2505,20 +3666,20 @@ describe("ThreadShell", () => {
     );
     const { rerender } = render(view("lineage-chat-a"));
 
-    await waitFor(() => expect(screen.getByText("committed old lineage")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText(replyText("committed old lineage"))).toBeInTheDocument());
     rerender(view("lineage-chat-b"));
-    await waitFor(() => expect(screen.getByText("other lineage chat")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText(replyText("other lineage chat"))).toBeInTheDocument());
     rerender(view("lineage-chat-a"));
     await waitFor(() => expect(chatACalls).toBe(2));
 
-    expect(screen.getByText("committed old lineage")).toBeInTheDocument();
-    expect(screen.queryByText("disjoint new lineage")).not.toBeInTheDocument();
+    expect(screen.getByText(replyText("committed old lineage"))).toBeInTheDocument();
+    expect(screen.queryByText(replyText("disjoint new lineage"))).not.toBeInTheDocument();
 
     act(() => client._emitSessionUpdate("lineage-chat-a", "thread"));
 
     await waitFor(() => expect(chatACalls).toBe(3));
-    await waitFor(() => expect(screen.getByText("disjoint new lineage")).toBeInTheDocument());
-    expect(screen.queryByText("committed old lineage")).not.toBeInTheDocument();
+    await waitFor(() => expect(screen.getByText(replyText("disjoint new lineage"))).toBeInTheDocument());
+    expect(screen.queryByText(replyText("committed old lineage"))).not.toBeInTheDocument();
   });
 
   it("does not reset away a durable UI tail that arrives after the request", async () => {
@@ -2561,7 +3722,7 @@ describe("ThreadShell", () => {
       ),
     );
 
-    await waitFor(() => expect(screen.getByText("old canonical row")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText(replyText("old canonical row"))).toBeInTheDocument());
     act(() => client._emitSessionUpdate("reset-tail-race", "thread"));
     await waitFor(() => expect(historyCalls).toBe(2));
 
@@ -2581,14 +3742,14 @@ describe("ThreadShell", () => {
         ...transcriptFromSimpleMessages([
           { role: "assistant", content: "disjoint canonical reset row" },
         ]),
-        has_pending_tool_calls: false,
+        active_turn_id: null, has_pending_tool_calls: false,
       }));
       await Promise.resolve();
     });
 
-    expect(screen.getByText("old canonical row")).toBeInTheDocument();
+    expect(screen.getByText(replyText("old canonical row"))).toBeInTheDocument();
     expect(screen.getByText("local durable row after request")).toBeInTheDocument();
-    expect(screen.queryByText("disjoint canonical reset row")).not.toBeInTheDocument();
+    expect(screen.queryByText(replyText("disjoint canonical reset row"))).not.toBeInTheDocument();
   });
 
   it("safely commits an empty canonical reset for a rejected local turn", async () => {
@@ -2599,6 +3760,7 @@ describe("ThreadShell", () => {
       vi.fn(async (input: RequestInfo | URL) => {
         if (String(input).includes("websocket%3Aempty-reset-chat/webui-thread")) {
           historyCalls += 1;
+          return httpJson(transcriptFromSimpleMessages([]));
         }
         return {
           ok: false,
@@ -2626,7 +3788,12 @@ describe("ThreadShell", () => {
     fireEvent.click(screen.getByRole("button", { name: "Send message" }));
     await waitFor(() => expect(screen.getByText("rejected local turn")).toBeInTheDocument());
 
-    act(() => client._emitSessionUpdate("empty-reset-chat", "thread"));
+    act(() => {
+      const turnId = client.sendMessage.mock.calls[0]![3]!.turnId!;
+      client._emitChat("empty-reset-chat", { event: "error", chat_id: "empty-reset-chat",
+        turn_id: turnId, detail: "not_admitted", reason: "stale_turn" });
+      client._emitSessionUpdate("empty-reset-chat", "thread");
+    });
 
     await waitFor(() => expect(historyCalls).toBe(2));
     await waitFor(() =>
@@ -2638,6 +3805,7 @@ describe("ThreadShell", () => {
       [],
       {
         observedTurnIds: [],
+        activitySnapshotAvailable: true,
         hasPendingToolCalls: false,
         activeTurnId: null,
       },
@@ -2828,7 +3996,7 @@ describe("ThreadShell", () => {
               ];
           return httpJson({
             ...transcriptFromSimpleMessages(rows),
-            has_pending_tool_calls: false,
+            active_turn_id: null, has_pending_tool_calls: false,
           });
         }
         if (url.includes("websocket%3Achat-version-b/webui-thread")) {
@@ -2854,7 +4022,7 @@ describe("ThreadShell", () => {
     );
     const { rerender } = render(view("chat-version-a"));
 
-    await waitFor(() => expect(screen.getByText("old answer")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText(replyText("old answer"))).toBeInTheDocument());
     act(() => client._emitSessionUpdate("chat-version-a"));
     await waitFor(() => expect(chatACalls).toBe(2));
 
@@ -2945,7 +4113,7 @@ describe("ThreadShell", () => {
       ),
     );
 
-    await waitFor(() => expect(screen.getByText("old answer")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText(replyText("old answer"))).toBeInTheDocument());
     act(() => client._emitSessionUpdate("run-generation-chat", "thread"));
     await waitFor(() => expect(historyCalls).toBe(2));
 
@@ -2970,7 +4138,7 @@ describe("ThreadShell", () => {
           { role: "user", content: "old question", turnId: oldTurnId },
           { role: "assistant", content: "old answer", turnId: oldTurnId },
         ]),
-        has_pending_tool_calls: false,
+        active_turn_id: null, has_pending_tool_calls: false,
       }));
       await Promise.resolve();
     });
@@ -2998,7 +4166,7 @@ describe("ThreadShell", () => {
                     { role: "assistant", content: "canonical complete answer", turnId },
                   ],
             ),
-            has_pending_tool_calls: false,
+            active_turn_id: null, has_pending_tool_calls: false,
           });
         }
         return {
@@ -3085,7 +4253,7 @@ describe("ThreadShell", () => {
                     { role: "assistant", content: "completed while hidden", turnId },
                   ],
             ),
-            has_pending_tool_calls: false,
+            active_turn_id: null, has_pending_tool_calls: false,
           });
         }
         if (url.includes("websocket%3Avisibility-complete-b/webui-thread")) {
@@ -3124,14 +4292,14 @@ describe("ThreadShell", () => {
     expect(screen.getByRole("button", { name: "Stop response" })).toBeInTheDocument();
 
     act(() => client._emitSessionUpdate("visibility-complete-a", "thread"));
-    await waitFor(() => expect(screen.getByText("completed while hidden")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText(replyText("completed while hidden"))).toBeInTheDocument());
     expect(screen.queryByRole("button", { name: "Stop response" })).not.toBeInTheDocument();
     expect(client.getRunStartedAt("visibility-complete-a")).toBeNull();
 
     rerender(view("visibility-complete-b"));
     await waitFor(() => expect(screen.getByText("other thread")).toBeInTheDocument());
     rerender(view("visibility-complete-a"));
-    await waitFor(() => expect(screen.getByText("completed while hidden")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText(replyText("completed while hidden"))).toBeInTheDocument());
     expect(screen.queryByRole("button", { name: "Stop response" })).not.toBeInTheDocument();
   });
 
@@ -3287,11 +4455,8 @@ describe("ThreadShell", () => {
       expect(screen.getByText("missed prefix resumed suffix")).toBeInTheDocument(),
     );
     expect(screen.queryByText("resumed suffix")).not.toBeInTheDocument();
-    await waitFor(() => expectSendMessageWithTurn(
-      client,
-      "before-delta-chat",
-      "queued guidance",
-    ));
+    expect(client.sendMessage).not.toHaveBeenCalled();
+    expect(screen.getByText("queued guidance")).toBeInTheDocument();
   });
 
   it("keeps the live answer cursor when a resumed turn is still running", async () => {
@@ -3395,11 +4560,8 @@ describe("ThreadShell", () => {
       expect(screen.getByText("partial answer missed resumed")).toBeInTheDocument(),
     );
     expect(screen.queryByText("partial answer resumed")).not.toBeInTheDocument();
-    await waitFor(() => expectSendMessageWithTurn(
-      client,
-      "active-resume-chat",
-      "queued guidance",
-    ));
+    expect(client.sendMessage).not.toHaveBeenCalled();
+    expect(screen.getByText("queued guidance")).toBeInTheDocument();
   });
 
   it("keeps active-run timing attached to the original turn after guidance", async () => {
@@ -3461,9 +4623,34 @@ describe("ThreadShell", () => {
     fireEvent.change(input, { target: { value: "How is it going?" } });
     fireEvent.keyDown(input, { key: "Enter" });
     fireEvent.keyDown(input, { key: "Enter" });
+    expect(client.sendMessage).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Steer", exact: true }));
 
-    await waitFor(() => expect(screen.getByText("How is it going?")).toBeInTheDocument());
-    expect(screen.getByRole("button", { name: /^Working for / })).toBeInTheDocument();
+    // The queued guidance leaves the queue only when its own owner receipt
+    // arrives; the row is still visible as guidance before that.
+    const queuedRow = () => document.querySelector("[data-queued-prompt-row='true']");
+    expect(queuedRow()?.textContent).toContain("How is it going?");
+
+    await waitFor(() => expect(client.sendMessage).toHaveBeenCalledWith(
+      "timing-chat",
+      "How is it going?",
+      undefined,
+      expect.objectContaining({ requestIntent: "steer", targetTurnId: turnId }),
+    ));
+    const steerTurnId = client.sendMessage.mock.calls.at(-1)?.[3]?.turnId;
+    expect(typeof steerTurnId).toBe("string");
+    act(() => client._emitChat("timing-chat", {
+      event: "message_admitted",
+      chat_id: "timing-chat",
+      turn_id: steerTurnId,
+      attempt_id: steerTurnId,
+      active_turn_id: turnId,
+      starts_turn: false,
+    }));
+
+    await waitFor(() => expect(queuedRow()).toBeNull());
+    expect(screen.getByText("How is it going?")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^Working(?: · |$)/ })).toBeInTheDocument();
     expect(screen.queryByText("Worked for 1s")).not.toBeInTheDocument();
     expect(screen.queryByRole("status", { name: /^Thinking for / })).not.toBeInTheDocument();
   });
@@ -3580,7 +4767,7 @@ describe("ThreadShell", () => {
           />,
         ),
       );
-      await waitFor(() => expect(screen.getByText("settled answer")).toBeInTheDocument());
+      await waitFor(() => expect(screen.getByText(replyText("settled answer"))).toBeInTheDocument());
 
       act(() => document.dispatchEvent(new Event("visibilitychange")));
       act(() => {
@@ -3712,6 +4899,67 @@ describe("ThreadShell", () => {
     expect(historyCalls).toBe(1);
   });
 
+  it("keeps one uncertain user row and its details when canonical history echoes the attempt", async () => {
+    const client = makeClient();
+    const content = "check uncertain history";
+    let historyCalls = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        if (String(input).includes("websocket%3Auncertain-history/webui-thread")) {
+          historyCalls += 1;
+          return httpJson(transcriptFromSimpleMessages(
+            historyCalls === 1
+              ? []
+              : [{ role: "user", content, turnId: String(client.sendMessage.mock.calls[0]?.[3]?.turnId ?? "") }],
+          ));
+        }
+        return { ok: false, status: 404, json: async () => ({}) };
+      }),
+    );
+
+    render(
+      wrap(
+        client,
+        <ThreadShell
+          session={session("uncertain-history")}
+          title="Uncertain history"
+          onToggleSidebar={() => {}}
+          onNewChat={() => {}}
+        />,
+      ),
+    );
+
+    await waitFor(() => expect(historyCalls).toBe(1));
+    fireEvent.change(screen.getByLabelText("Message input"), { target: { value: content } });
+    fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+    await waitFor(() => expectSendMessageWithTurn(client, "uncertain-history", content));
+    const sendOptions = client.sendMessage.mock.calls[0]?.[3] as { turnId?: string } | undefined;
+    expect(sendOptions?.turnId).toBeTruthy();
+
+    act(() => client._emitError({
+      kind: "connection_closed",
+      chatId: "uncertain-history",
+      turnId: sendOptions!.turnId!,
+    }));
+    const status = screen.getByRole("button", { name: /Awaiting confirmation/ });
+    expect(status).toBeInTheDocument();
+
+    act(() => client._emitSessionUpdate("uncertain-history", "thread"));
+    await waitFor(() => expect(historyCalls).toBe(2));
+    await waitFor(() => expect(screen.getAllByText(content)).toHaveLength(1));
+
+    const retainedStatus = screen.getByRole("button", {
+      name: "Awaiting confirmation",
+    });
+    fireEvent.focus(retainedStatus);
+    expect(await screen.findByRole("tooltip")).toHaveTextContent(
+      "The server may already have received this message",
+    );
+    expect(client.sendMessage).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
   it("keeps rendered media mounted for metadata-only session updates", async () => {
     const client = makeClient();
     let historyCalls = 0;
@@ -3794,7 +5042,7 @@ describe("ThreadShell", () => {
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
       if (!url.includes("websocket%3Achat-title/webui-thread")) return { ok: false, status: 404, json: async () => ({}) };
-      if (replySent && url.includes("?limit=1&direction=latest")) {
+      if (replySent && url.includes("?view=controls")) {
         owningReads += 1;
         if (owningReads === 2) readsStarted();
         await readsGate;
@@ -4066,7 +5314,7 @@ describe("ThreadShell", () => {
           workspace_access_request: latestRequest,
           workspace_permissions: latestPermissions,
         };
-        if (deferOwningReads && url.includes("?limit=1&direction=latest")) {
+        if (deferOwningReads && url.includes("?view=controls")) {
           const index = owningReadCount++;
           if (owningReadCount >= 2) resolveOwningReadsStarted?.();
           if (index < 2) {
@@ -4204,7 +5452,7 @@ describe("ThreadShell", () => {
           workspace_access_request: latestRequest,
           workspace_permissions: latestPermissions,
         };
-        if (deferOwningReads && url.includes("?limit=1&direction=latest")) {
+        if (deferOwningReads && url.includes("?view=controls")) {
           const index = owningReadCount++;
           if (owningReadCount >= 2) resolveOwningReadsStarted?.();
           if (index < 2) {
@@ -4636,7 +5884,7 @@ describe("ThreadShell", () => {
     fireEvent.click(screen.getByRole("button", { name: "Save access and use folder" }));
 
     expect(await screen.findByText(
-      "Nanobot could not confirm which folder this task should use. Refresh the task before trying again.",
+      "Kohaku could not confirm which folder this task should use. Refresh the task before trying again.",
     )).toBeInTheDocument();
     expect(screen.getByText(
       "Folder access was saved, but this task is still waiting for you to use the folder.",
@@ -5384,7 +6632,7 @@ describe("ThreadShell", () => {
         ),
       );
 
-      await waitFor(() => expect(screen.getByText("old answer")).toBeInTheDocument());
+      await waitFor(() => expect(screen.getByText(replyText("old answer"))).toBeInTheDocument());
       const scroller = container.querySelector(".thread-viewport-scrollbar") as HTMLElement;
       Object.defineProperties(scroller, {
         scrollHeight: { configurable: true, value: 2_000 },
@@ -5504,7 +6752,7 @@ describe("ThreadShell", () => {
       );
     });
 
-    await waitFor(() => expect(screen.getByText("loaded answer")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText(replyText("loaded answer"))).toBeInTheDocument());
     await waitFor(() => expect(scroller.scrollTop).toBe(1800));
   });
 
@@ -5848,7 +7096,7 @@ describe("ThreadShell", () => {
       ),
     );
 
-    await waitFor(() => expect(screen.getByText("from chat a")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText(replyText("from chat a"))).toBeInTheDocument());
 
     await act(async () => {
       rerender(
@@ -5865,7 +7113,7 @@ describe("ThreadShell", () => {
       );
     });
 
-    expect(screen.queryByText("from chat a")).not.toBeInTheDocument();
+    expect(screen.queryByText(replyText("from chat a"))).not.toBeInTheDocument();
     expect(screen.getByText("Loading conversation…")).toBeInTheDocument();
 
     await act(async () => {
@@ -5874,8 +7122,145 @@ describe("ThreadShell", () => {
       );
     });
 
-    await waitFor(() => expect(screen.getByText("from chat b")).toBeInTheDocument());
-    expect(screen.queryByText("from chat a")).not.toBeInTheDocument();
+    await waitFor(() => expect(screen.getByText(replyText("from chat b"))).toBeInTheDocument());
+    expect(screen.queryByText(replyText("from chat a"))).not.toBeInTheDocument();
+  });
+
+  it("shows newly persisted replies when returning to a chat with loaded child rows", async () => {
+    const client = makeClient();
+    const firstKey = "websocket:with-children";
+    let added = false;
+    const children = ["a", "b"].map((id) => ({
+      history_kind: "summary",
+      parent_session_key: firstKey,
+      root_key: firstKey,
+      child_session_key: `delegated:probe-${id}`,
+      child_id: `probe-${id}`,
+      profile: "worker",
+      state: "completed",
+      outcome: "completed",
+      task_label: `Finished child ${id}`,
+      task_label_truncated: false,
+      result_summary: null,
+      result_summary_truncated: false,
+      runtime_generation: null, parent_run_id: null, child_run_id: null,
+      parent_store_identity: null, parent_incarnation: null, parent_generation: null,
+      root_store_identity: null, root_incarnation: null, root_generation: null,
+      child_store_identity: null, child_incarnation: null, child_generation: null,
+      run_sequence: null, state_sequence: null, control_epoch: null, can_stop: false,
+    }));
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes(encodeURIComponent(firstKey) + "/delegated-children")) {
+        if (added) return { ok: false, status: 503, json: async () => ({}) };
+        return httpJson({ schemaVersion: 3, parentSessionKey: firstKey, children });
+      }
+      if (url.includes(encodeURIComponent(firstKey) + "/webui-thread")) {
+        const replies = added ? ["First saved reply", "Later saved reply"] : ["First saved reply"];
+        const base = transcriptFromSimpleMessages(
+          replies.map((content) => ({ role: "assistant", content })),
+        );
+        return httpJson({
+          ...base,
+          // The child row is what triggers the delegated-children request.
+          messages: [
+            ...base.messages,
+            delegatedChildRow(firstKey, "probe-anchor", "Loaded child anchor"),
+          ],
+        });
+      }
+      if (url.includes("websocket%3Aaway/webui-thread")) {
+        return httpJson(transcriptFromSimpleMessages([{ role: "assistant", content: "Other chat" }]));
+      }
+      return { ok: false, status: 404, json: async () => ({}) };
+    }));
+    const open = (id: string) => wrap(client, (
+      <ThreadShell session={session(id)} title={id} onToggleSidebar={() => {}} />
+    ));
+    const { rerender } = render(open("with-children"));
+    expect(await screen.findByLabelText("Finished child b")).toBeVisible();
+
+    rerender(open("away"));
+    expect(await screen.findByText(replyText("Other chat"))).toBeVisible();
+
+    added = true;
+    rerender(open("with-children"));
+    expect(await screen.findByText(replyText("Later saved reply"))).toBeVisible();
+    expect(screen.getByLabelText("Finished child b")).toBeVisible();
+    expect(await screen.findByText(/Delegated activity could not be fully verified/)).toBeVisible();
+  });
+
+  it("shows the transcript while delegated activity loads and ignores the old chat's reply", async () => {
+    const client = makeClient();
+    const childRequests = new Map<string, (response: ReturnType<typeof httpJson>) => void>();
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
+      const url = String(input);
+      for (const chat of ["a", "b"]) {
+        const path = `websocket%3Aopening-${chat}/`;
+        if (url.includes(path + "webui-thread")) {
+          return Promise.resolve(httpJson({
+            ...transcriptFromSimpleMessages([
+              { role: "assistant", content: `Saved reply in chat ${chat}` },
+            ]),
+            messages: [
+              ...transcriptFromSimpleMessages([
+                { role: "assistant", content: `Saved reply in chat ${chat}` },
+              ]).messages,
+              // A child row is what makes the client request delegated
+              // children; the assertion below proves the transcript still
+              // renders while that request is outstanding.
+              delegatedChildRow(`websocket:opening-${chat}`, `opening-${chat}-child`,
+                `Child in chat ${chat}`),
+            ],
+          }));
+        }
+        if (url.includes(path + "delegated-children")) {
+          return new Promise<ReturnType<typeof httpJson>>((resolve) => {
+            childRequests.set(chat, resolve);
+          });
+        }
+      }
+      return Promise.resolve({ ok: false, status: 404, json: async () => ({}) });
+    }));
+
+    const open = (chat: string) => wrap(client, (
+      <ThreadShell session={session(`opening-${chat}`)} title={`Chat ${chat}`} onToggleSidebar={() => {}} />
+    ));
+    const { rerender } = render(open("a"));
+    expect(await screen.findByText(replyText("Saved reply in chat a"))).toBeVisible();
+    expect(childRequests.has("a")).toBe(true);
+    expect(screen.queryByText("Loading conversation…")).not.toBeInTheDocument();
+
+    rerender(open("b"));
+    expect(await screen.findByText(replyText("Saved reply in chat b"))).toBeVisible();
+    expect(childRequests.has("b")).toBe(true);
+    expect(screen.queryByText(replyText("Saved reply in chat a"))).not.toBeInTheDocument();
+
+    await act(async () => {
+      childRequests.get("a")?.(httpJson({
+        schemaVersion: 1,
+        parentSessionKey: "websocket:opening-a",
+        children: [{
+          history_kind: "summary",
+          parent_session_key: "websocket:opening-a",
+          root_key: "websocket:opening-a",
+          child_session_key: "delegated:late", child_id: "late",
+          profile: "worker", state: "completed", outcome: "completed",
+          task_label: "Late activity from chat a", task_label_truncated: false,
+          result_summary: null, result_summary_truncated: false,
+          runtime_generation: null, parent_run_id: null, child_run_id: null,
+          parent_store_identity: null, parent_incarnation: null, parent_generation: null,
+          root_store_identity: null, root_incarnation: null, root_generation: null,
+          child_store_identity: null, child_incarnation: null, child_generation: null,
+          run_sequence: null, state_sequence: null, control_epoch: null, can_stop: false,
+        }],
+      }));
+      childRequests.get("b")?.({ ok: false, status: 503, json: async () => ({}) });
+    });
+
+    expect(await screen.findByText(/Delegated activity could not be fully verified/)).toBeVisible();
+    expect(screen.getByText(replyText("Saved reply in chat b"))).toBeVisible();
+    expect(screen.queryByLabelText("Late activity from chat a")).not.toBeInTheDocument();
   });
 
   it("updates @ CLI app suggestions when settings broadcasts an install", async () => {
@@ -6123,4 +7508,557 @@ describe("ThreadShell", () => {
     expect(screen.getByRole("button", { name: "Stop response" })).toBeInTheDocument();
   });
 
+  it("reveals an unloaded multi-prompt Steer target end-to-end and isolates live streaming while away from tail", async () => {
+    const client = makeClient();
+    const chatId = "long-reveal-chat";
+    const key = `websocket:${chatId}`;
+    const origin = {
+      store_identity: "store-long",
+      session_key: key,
+      incarnation: "inc-long",
+      generation: 0,
+    };
+    const latestMessages: UIMessage[] = [
+      { id: "u-119", promptId: "evt-u-119", role: "user", content: "Prompt 119", createdAt: 119_000, turnOrdinal: 119 },
+      { id: "a-119", role: "assistant", content: "Reply 119", createdAt: 119_500 },
+    ];
+    const aroundSteer15Messages: UIMessage[] = [
+      { id: "u-15", promptId: "evt-u-15", role: "user", content: "Prompt 15", createdAt: 15_000, turnOrdinal: 15 },
+      { id: "a-15a", role: "assistant", content: "Reply before steer mentioning turn_end", createdAt: 15_200 },
+      { id: "u-steer-15", promptId: "evt-steer-15", role: "user", content: "Steer 15 exact target", createdAt: 15_400, turnOrdinal: 15 },
+      { id: "a-15b", role: "assistant", content: "Reply after steer 15", createdAt: 15_600 },
+    ];
+
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
+      const url = new URL(String(input), "https://example.test");
+      if (url.pathname.endsWith("/webui-thread") && url.searchParams.get("view") === "controls") {
+        return Promise.resolve(httpJson({
+          sessionKey: key,
+          stop_target: null,
+          workspace_access_request: null,
+          workspace_permissions: null,
+        }));
+      }
+      if (url.pathname.endsWith("/webui-thread") && url.searchParams.get("direction") === "around") {
+        const around = url.searchParams.get("around");
+        if (around === "loc-steer-15") {
+          return Promise.resolve(httpJson({
+            schemaVersion: 3,
+            view: "history",
+            sessionKey: key,
+            source: origin,
+            messages: aroundSteer15Messages,
+            page: {
+              before_cursor: "b-14",
+              after_cursor: "a-16",
+              has_more_before: true,
+              has_more_after: true,
+              total_turn_count: 120,
+              total_prompt_count: 121,
+              target_prompt_id: "evt-steer-15",
+              coverage: "indexed",
+            },
+          }));
+        }
+        return Promise.resolve(new Response(JSON.stringify({ error: "stale_history_cursor" }), {
+          status: 409,
+          headers: { "content-type": "application/json" },
+        }));
+      }
+      if (url.pathname.endsWith("/webui-thread")) {
+        return Promise.resolve(httpJson({
+          schemaVersion: 3,
+          view: "history",
+          sessionKey: key,
+          source: origin,
+          messages: latestMessages,
+          page: {
+            before_cursor: "b-118",
+            after_cursor: null,
+            has_more_before: true,
+            has_more_after: false,
+            total_turn_count: 120,
+            total_prompt_count: 121,
+            coverage: "indexed",
+          },
+        }));
+      }
+      if (url.pathname.endsWith("/turns")) {
+        const before = url.searchParams.get("before");
+        if (before === "idx-page-1") {
+          return Promise.resolve(httpJson({
+            schemaVersion: 3,
+            sessionKey: key,
+            turns: [{ ordinal: 15, label: "Prompt 15", created_at: 15_000, cursor: "c-15" }],
+            prompts: [
+              {
+                prompt_id: "evt-u-15",
+                turn_ordinal: 15,
+                prompt_ordinal: 15,
+                label: "Prompt 15",
+                created_at: 15_000,
+                locator: "loc-u-15",
+              },
+              {
+                prompt_id: "evt-steer-15",
+                turn_ordinal: 15,
+                prompt_ordinal: 16,
+                label: "Steer 15 exact target",
+                created_at: 15_400,
+                locator: "loc-steer-15",
+              },
+            ],
+            total_turn_count: 120,
+            total_prompt_count: 121,
+            page: { before_cursor: null, has_more_before: false, loaded_prompt_count: 2 },
+          }));
+        }
+        return Promise.resolve(httpJson({
+          schemaVersion: 3,
+          sessionKey: key,
+          turns: [{ ordinal: 119, label: "Prompt 119", created_at: 119_000, cursor: "c-119" }],
+          prompts: [
+            {
+              prompt_id: "evt-u-119",
+              turn_ordinal: 119,
+              prompt_ordinal: 120,
+              label: "Prompt 119",
+              created_at: 119_000,
+              locator: "loc-u-119",
+            },
+          ],
+          total_turn_count: 120,
+          total_prompt_count: 121,
+          page: { before_cursor: "idx-page-1", has_more_before: true, loaded_prompt_count: 1 },
+        }));
+      }
+      return Promise.resolve(new Response(null, { status: 404 }));
+    }));
+
+    const { container } = render(wrap(
+      client,
+      <ThreadShell
+        session={session(chatId)}
+        title="Long chat"
+        onToggleSidebar={() => {}}
+      />,
+    ));
+
+    // 1. Latest window paints first.
+    expect(await screen.findByText("Prompt 119")).toBeInTheDocument();
+
+    // 2. Open navigator, load older summary range, select Steer 15 (not loaded or mounted).
+    fireEvent.click(screen.getByRole("button", { name: "Open prompt navigator" }));
+    const loadOlderSummary = await screen.findByTestId("prompt-navigator-load-older");
+    fireEvent.click(loadOlderSummary);
+    const steerChoice = await screen.findByRole("button", {
+      name: "Jump to prompt: Steer 15 exact target",
+    });
+    fireEvent.click(steerChoice);
+
+    // 3. Real fetch -> mount -> scroll + highlight lands on the exact Steer prompt.
+    expect(await screen.findByText("Steer 15 exact target")).toBeInTheDocument();
+    await waitFor(() => {
+      const targetEl = container.querySelector<HTMLElement>('[data-prompt-key="evt-steer-15"]');
+      expect(targetEl).toBeTruthy();
+      expect(targetEl?.dataset.promptHighlighted).toBe("true");
+    });
+
+    // 4. Live streaming at the tail must not splice into turn 15's window.
+    act(() => {
+      client._emitChat(chatId, {
+        event: "goal_status",
+        chat_id: chatId,
+        status: "running",
+        started_at: 1_700_000_500,
+        turn_id: "live-tail-turn",
+      });
+      client._emitChat(chatId, {
+        event: "delta",
+        chat_id: chatId,
+        turn_id: "live-tail-turn",
+        text: "Streaming tail token should not appear in turn 15",
+      });
+    });
+    expect(screen.getByText("Steer 15 exact target")).toBeInTheDocument();
+    expect(screen.queryByText(/Streaming tail token/)).not.toBeInTheDocument();
+
+    // 5. Go to latest shows live activity and restores the real tail on click.
+    const latestButton = screen.getByRole("button", { name: "Go to latest" });
+    expect(latestButton).toHaveAttribute("data-tail-activity", "true");
+    fireEvent.click(latestButton);
+    expect(await screen.findByText("Prompt 119")).toBeInTheDocument();
+  });
+
+
+  it("retains latest qualified context usage while viewing an older history window", async () => {
+    const client = makeClient();
+    const chatId = "context-window-independent";
+    const key = `websocket:${chatId}`;
+    const origin = {
+      store_identity: "store-ctx",
+      session_key: key,
+      incarnation: "inc-ctx",
+      generation: 0,
+    };
+    const latestMessages: UIMessage[] = [
+      { id: "u-119", turnId: "t-119", promptId: "evt-u-119", role: "user", content: "Prompt 119", createdAt: 119_000, turnOrdinal: 119 },
+      {
+        id: "a-119",
+        turnId: "t-119",
+        role: "assistant",
+        content: "Reply 119",
+        createdAt: 119_500,
+        contextUsage: { contextTokens: 40_000, contextWindowTokens: 100_000, completionTurnSeq: 2 },
+      },
+    ];
+    const olderWindowMessages: UIMessage[] = [
+      { id: "u-15", turnId: "t-15", promptId: "evt-u-15", role: "user", content: "Prompt 15", createdAt: 15_000, turnOrdinal: 15 },
+      {
+        id: "a-15",
+        turnId: "t-15",
+        role: "assistant",
+        content: "Reply 15",
+        createdAt: 15_200,
+        contextUsage: { contextTokens: 10_000, contextWindowTokens: 100_000, completionTurnSeq: 2 },
+      },
+    ];
+
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
+      const url = new URL(String(input), "https://example.test");
+      if (url.pathname.endsWith("/webui-thread") && url.searchParams.get("view") === "controls") {
+        return Promise.resolve(httpJson({
+          sessionKey: key,
+          stop_target: null,
+          workspace_access_request: null,
+          workspace_permissions: null,
+        }));
+      }
+      if (url.pathname.endsWith("/webui-thread") && url.searchParams.get("direction") === "around") {
+        return Promise.resolve(httpJson({
+          schemaVersion: 3,
+          view: "history",
+          sessionKey: key,
+          source: origin,
+          messages: olderWindowMessages,
+          page: {
+            before_cursor: "b-14",
+            after_cursor: "a-16",
+            has_more_before: true,
+            has_more_after: true,
+            total_turn_count: 120,
+            total_prompt_count: 120,
+            target_prompt_id: "evt-u-15",
+            coverage: "indexed",
+          },
+        }));
+      }
+      if (url.pathname.endsWith("/webui-thread")) {
+        return Promise.resolve(httpJson({
+          schemaVersion: 3,
+          view: "history",
+          sessionKey: key,
+          source: origin,
+          messages: latestMessages,
+          page: {
+            before_cursor: "b-118",
+            after_cursor: null,
+            has_more_before: true,
+            has_more_after: false,
+            total_turn_count: 120,
+            total_prompt_count: 120,
+            coverage: "indexed",
+          },
+        }));
+      }
+      if (url.pathname.endsWith("/turns")) {
+        return Promise.resolve(httpJson({
+          schemaVersion: 3,
+          sessionKey: key,
+          turns: [{ ordinal: 15, label: "Prompt 15", created_at: 15_000, cursor: "c-15" }],
+          prompts: [{
+            prompt_id: "evt-u-15",
+            turn_ordinal: 15,
+            prompt_ordinal: 15,
+            label: "Prompt 15",
+            created_at: 15_000,
+            locator: "loc-u-15",
+          }],
+          total_turn_count: 120,
+          total_prompt_count: 120,
+          page: { before_cursor: null, has_more_before: false, loaded_prompt_count: 1 },
+        }));
+      }
+      return Promise.resolve(new Response(null, { status: 404 }));
+    }));
+
+    render(wrap(
+      client,
+      <ThreadShell
+        session={session(chatId)}
+        title="Context usage chat"
+        onToggleSidebar={() => {}}
+        settingsSnapshot={modelSettings("test-model", "deepseek")}
+      />,
+    ));
+
+    expect(await screen.findByText("Prompt 119")).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Context 40%. Open context usage" })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Open prompt navigator" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Jump to prompt: Prompt 15" }));
+
+    expect(await screen.findByText("Prompt 15")).toBeInTheDocument();
+    // While viewing turn 15 (hasMoreAfter === true), the meter must keep the tail's 40%
+    // rather than reverting to turn 15's 10% or disappearing.
+    expect(screen.getByRole("button", { name: "Context 40%. Open context usage" })).toBeInTheDocument();
+  });
+
+  it("docks generated assets in the inspector from the header button", async () => {
+    const resizeObserver = stubThreadResizeObserver();
+    const client = makeClient();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.includes("websocket%3Aassets-dock/webui-thread")) {
+          return Promise.resolve(httpJson(transcriptFromSimpleMessages([
+            { role: "user", content: "paint a lighthouse" },
+            { role: "assistant", content: "Here are the candidates." },
+          ])));
+        }
+        if (url.includes("/generated-assets?")) {
+          return Promise.resolve({
+            ok: true,
+            headers: new Headers({ "content-type": "application/json" }),
+            json: async () => ({
+              schemaVersion: 1,
+              sessionKey: "websocket:assets-dock",
+              total: 1,
+              groups: [{
+                id: "turn-1|call-1",
+                turnId: "turn-1",
+                toolCallId: "call-1",
+                toolName: "mcp_comfy_generate_image",
+                sequence: 1,
+                startedAt: 1_793_438_338_000,
+                arguments: { prompt: "lighthouse at dusk" },
+                artifacts: [{
+                  id: "a1",
+                  kind: "image",
+                  mime: "image/png",
+                  name: "a1.png",
+                  url: "/api/media/sig/a1",
+                  bytes: 10,
+                }],
+              }],
+            }),
+          } as Response);
+        }
+        return Promise.resolve(new Response(null, { status: 404 }));
+      }),
+    );
+
+    try {
+      const { container } = render(wrap(
+        client,
+        <ThreadShell
+          session={session("assets-dock")}
+          title="Assets dock"
+          onToggleSidebar={() => {}}
+        />,
+      ));
+
+      await screen.findByText(replyText("Here are the candidates."));
+      const shell = container.querySelector("section") as HTMLElement;
+      Object.defineProperty(shell, "clientWidth", { configurable: true, value: 1_200 });
+      const observer = resizeObserver.observers.find((entry) => entry.elements.includes(shell));
+      expect(observer).toBeDefined();
+      act(() => {
+        observer!.callback([], observer as unknown as ResizeObserver);
+      });
+
+      const assetsButton = screen.getByRole("button", { name: "Open generated assets" });
+      expect(assetsButton).toHaveAttribute("aria-pressed", "false");
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+
+      fireEvent.click(assetsButton);
+
+      // Docked pane: a tab, not a dialog, and the thumbnails load in the pane.
+      expect(await screen.findByRole("tab", { name: "Generated assets" })).toHaveAttribute(
+        "aria-selected",
+        "true",
+      );
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+      expect(await screen.findByTestId("generated-assets-flat")).toBeInTheDocument();
+      expect(await screen.findByRole("button", { name: "Open a1.png" })).toBeInTheDocument();
+      expect(assetsButton).toHaveAttribute("aria-pressed", "true");
+
+      fireEvent.click(assetsButton);
+
+      await waitFor(() => {
+        expect(screen.queryByRole("tab", { name: "Generated assets" })).not.toBeInTheDocument();
+      });
+      expect(assetsButton).toHaveAttribute("aria-pressed", "false");
+    } finally {
+      resizeObserver.restore();
+    }
+  });
+
+  it("keeps the assets and file tabs open side by side in the inspector", async () => {
+    await preloadMarkdownText();
+    const resizeObserver = stubThreadResizeObserver();
+    const client = makeClient();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.includes("websocket%3Aassets-tabs/webui-thread")) {
+          return Promise.resolve(httpJson(transcriptFromSimpleMessages([
+            { role: "assistant", content: "Open `files/stream.txt`" },
+          ])));
+        }
+        if (url.includes("/file-preview?") && url.includes("probe=1")) {
+          return Promise.resolve(httpJson({ available: true }));
+        }
+        if (url.includes("/file-preview?")) {
+          return Promise.resolve(httpJson({
+            path: "/project/files/stream.txt",
+            display_path: "files/stream.txt",
+            project_path: "/project",
+            language: "text",
+            content: "stream-marker\n",
+            size: 14,
+            truncated: false,
+          }));
+        }
+        if (url.includes("/generated-assets?")) {
+          return Promise.resolve({
+            ok: true,
+            headers: new Headers({ "content-type": "application/json" }),
+            json: async () => ({
+              schemaVersion: 1,
+              sessionKey: "websocket:assets-tabs",
+              total: 1,
+              groups: [{
+                id: "turn-1|call-1",
+                turnId: "turn-1",
+                toolCallId: "call-1",
+                toolName: "mcp_comfy_generate_image",
+                sequence: 1,
+                startedAt: 1_793_438_338_000,
+                arguments: { prompt: "harbour at dawn" },
+                artifacts: [{
+                  id: "tab-a1",
+                  kind: "image",
+                  mime: "image/png",
+                  name: "tab-a1.png",
+                  url: "/api/media/sig/tab-a1",
+                  bytes: 10,
+                }],
+              }],
+            }),
+          } as Response);
+        }
+        return Promise.resolve(new Response(null, { status: 404 }));
+      }),
+    );
+
+    try {
+      const { container } = render(wrap(
+        client,
+        <ThreadShell
+          session={session("assets-tabs")}
+          title="Assets tabs"
+          onToggleSidebar={() => {}}
+        />,
+      ));
+
+      const fileReference = await screen.findByTestId("inline-file-path");
+      await waitFor(() => expect(fileReference).toHaveAttribute("role", "button"));
+      const shell = container.querySelector("section") as HTMLElement;
+      Object.defineProperty(shell, "clientWidth", { configurable: true, value: 1_200 });
+      const observer = resizeObserver.observers.find((entry) => entry.elements.includes(shell));
+      act(() => {
+        observer!.callback([], observer as unknown as ResizeObserver);
+      });
+
+      fireEvent.click(fileReference);
+      expect(await screen.findByTestId("file-preview-panel")).toHaveTextContent("stream-marker");
+
+      fireEvent.click(screen.getByRole("button", { name: "Open generated assets" }));
+
+      // Both tabs stay mounted; only the selected one is visible.
+      const assetsTab = screen.getByRole("tab", { name: "Generated assets" });
+      const fileTab = screen.getByRole("tab", { name: "stream.txt" });
+      expect(assetsTab).toHaveAttribute("aria-selected", "true");
+      expect(fileTab).toHaveAttribute("aria-selected", "false");
+      expect(await screen.findByTestId("generated-assets-flat")).toBeInTheDocument();
+
+      fireEvent.click(fileTab);
+
+      expect(screen.getByRole("tab", { name: "Generated assets" })).toHaveAttribute(
+        "aria-selected",
+        "false",
+      );
+      expect(screen.getByTestId("file-preview-panel")).toHaveTextContent("stream-marker");
+      expect(screen.queryByTestId("generated-assets-flat")).not.toBeInTheDocument();
+    } finally {
+      resizeObserver.restore();
+    }
+  });
+
+  it("shows the prompt navigator only where the prompt rail is hidden", async () => {
+    const resizeObserver = stubThreadResizeObserver();
+    const client = makeClient();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.includes("websocket%3Anav-width/webui-thread")) {
+          return Promise.resolve(httpJson(transcriptFromSimpleMessages([
+            { role: "user", content: "first question" },
+            { role: "assistant", content: "first answer" },
+          ])));
+        }
+        return Promise.resolve(new Response(null, { status: 404 }));
+      }),
+    );
+
+    try {
+      const { container } = render(wrap(
+        client,
+        <ThreadShell
+          session={session("nav-width")}
+          title="Nav width"
+          onToggleSidebar={() => {}}
+        />,
+      ));
+
+      await screen.findByText(replyText("first answer"));
+      const shell = container.querySelector("section") as HTMLElement;
+      const observer = resizeObserver.observers.find((entry) => entry.elements.includes(shell));
+      const resize = (width: number) => {
+        Object.defineProperty(shell, "clientWidth", { configurable: true, value: width });
+        act(() => {
+          observer!.callback([], observer as unknown as ResizeObserver);
+        });
+      };
+
+      // Wide desktop shows the left rail, so the header duplicate is hidden.
+      resize(1_200);
+      await waitFor(() => {
+        expect(screen.queryByRole("button", { name: "Open prompt navigator" }))
+          .not.toBeInTheDocument();
+      });
+      expect(screen.getByRole("button", { name: "Open generated assets" })).toBeInTheDocument();
+
+      // Narrow and mobile widths hide the rail, so the header navigator returns.
+      resize(700);
+      expect(await screen.findByRole("button", { name: "Open prompt navigator" }))
+        .toBeInTheDocument();
+    } finally {
+      resizeObserver.restore();
+    }
+  });
 });

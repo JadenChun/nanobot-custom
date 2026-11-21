@@ -79,7 +79,7 @@ If the browser binary is missing, install it once and retry:
 agent_browser(args=["install"])
 ```
 
-If the user wants the agent to drive an existing Chrome session they can also inspect directly, prefer `--auto-connect` or `--cdp` over launching a new isolated browser.
+If the user wants the agent to drive an existing Chrome session they can also inspect directly, the shared browser session must be configured by the operator in nanobot config (`tools.agent_browser.cdp_url`, plus `tools.agent_browser.launch_command` when nanobot should start it). When `cdp_url` is reachable the wrapper attaches to it automatically and the shared profile sessions apply. Caller-supplied connection flags (`--cdp`, `--session`, `--pin-tab`, `--no-pin-tab`, `--executable-path`) are blocked; do not pass them.
 
 ## Standard Test Flow
 

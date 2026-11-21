@@ -174,6 +174,92 @@ def _claim_destination(runtime: CronDeliveryRuntime, record: object, index: int)
     return runtime.claim(record.outbox_id, destination.destination_id, record.record_revision, owner="sender")
 
 
+def _batch_prepared(
+    tmp_path: Path,
+    keys: list[str],
+) -> tuple[CronService, CronDeliveryRuntime, dict[str, object]]:
+    """Prepare one distinct completed occurrence and outbox record per key.
+
+    Definition stores are chunked under separate roots: the durable action store
+    has a fixed checkpoint byte bound, and this case needs more deliveries than
+    one definition checkpoint can hold.  All chunks share one occurrence store,
+    one outbox store, and therefore one delivery runtime.
+    """
+
+    root = tmp_path / "batch"
+    occurrence_store = CronOccurrenceStore(root / "occurrences", namespace=NAMESPACE)
+    completion_projector = CronCompletionProjector(occurrence_store, root / "runs")
+    outbox = CronDeliveryOutboxStore(root / "outbox", namespace=NAMESPACE)
+    runtime = CronDeliveryRuntime(outbox, occurrence_store=occurrence_store)
+    records: dict[str, object] = {}
+    service: CronService | None = None
+    chunk = 64
+    for index, key in enumerate(keys):
+        if index % chunk == 0:
+            chunk_root = root / "definitions" / str(index // chunk)
+            definition_store = CronDefinitionStore(
+                CronActionStore(chunk_root / "actions", namespace=NAMESPACE)
+            )
+            service = CronService(
+                chunk_root / "jobs.json",
+                definition_store=definition_store,
+                occurrence_store=occurrence_store,
+                completion_projector=completion_projector,
+                delivery_runtime=runtime,
+            )
+        assert service is not None
+        job = service.add_job(
+            key,
+            CronSchedule(kind="every", every_ms=60_000),
+            "computed",
+            deliver=True,
+            channel="cli",
+            to="room-1",
+        )
+        claim = service.claim_scheduled_occurrence(
+            job.id,
+            1_700_000_000_000 + index,
+            owner="worker",
+            expected_job_instance_id=job.job_instance_id,
+            expected_definition_revision=job.definition_revision,
+        )
+        _complete(
+            service,
+            claim,
+            {
+                "status": "ok",
+                "result": "computed",
+                "delivery": {
+                    "version": 1,
+                    "deliver": True,
+                    "messages": [{"content": key, "media": []}],
+                },
+            },
+        )
+        records[key] = runtime.prepare_completed(claim.occurrence_id)
+    assert service is not None
+    return service, runtime, records
+
+
+def _live_registry_size(runtime: CronDeliveryRuntime) -> int:
+    return len(runtime._dispatch_registry.entries)
+
+
+async def _dispatch_and_settle(
+    runtime: CronDeliveryRuntime,
+    record: object,
+    key: str,
+) -> object:
+    claim = _first_claim(runtime, record)
+    sender = FakeSender(ConfirmedDelivered({"marker": key}))
+    sender.release.set()
+    return await runtime.dispatch(claim, sender=sender)
+
+
+def _durable_receipt(runtime: CronDeliveryRuntime, record: object) -> object:
+    return runtime.get(record.outbox_id).destinations[0].attempts[-1].receipt
+
+
 @pytest.mark.parametrize(
     ("result", "status"),
     [
@@ -799,3 +885,67 @@ def test_runtime_has_no_channel_provider_or_bus_wiring() -> None:
     assert "nanobot.channels" not in source
     assert "nanobot.providers" not in source
     assert "nanobot.bus" not in source
+
+
+# Author cases C1-C2 from resume2/req-next/CASES.md (R1: bounded delivery registry).
+# The scenario, inputs, and expected outcomes are preserved; only the test-side
+# Harness seam names are bound to the real runtime/outbox interface.
+
+AUTHOR_CASE_N = 200
+
+
+async def test_c1_many_completions_evict_and_registry_stays_bounded(tmp_path: Path) -> None:
+    """C1 (U1/R1): settled entries are evicted, receipts remain, size stays bounded."""
+
+    keys = [f"c1-{index}" for index in range(2 * AUTHOR_CASE_N)]
+    _service_obj, runtime, records = _batch_prepared(tmp_path, keys)
+    baseline = _live_registry_size(runtime)
+
+    for key in keys[:AUTHOR_CASE_N]:
+        await _dispatch_and_settle(runtime, records[key], key)
+    size_after_first = _live_registry_size(runtime)
+
+    for key in keys[AUTHOR_CASE_N:]:
+        await _dispatch_and_settle(runtime, records[key], key)
+    size_after_second = _live_registry_size(runtime)
+
+    assert size_after_first == baseline, "C1.1 settled entries were not evicted"
+    assert size_after_second == size_after_first, "C1.2 registry grew with completions"
+    assert size_after_second == baseline, "C1.3 registry did not return to baseline"
+
+    observed: set[str] = set()
+    for key in keys:
+        durable = runtime.get(records[key].outbox_id)
+        receipt = durable.destinations[0].attempts[-1].receipt
+        assert receipt is not None, f"C1.4 receipt not readable after eviction: {key}"
+        assert receipt == {"marker": key}, f"C1.4 payload mismatch: {key}"
+        assert len(durable.destinations[0].attempts) == 1, f"C1.6 duplicate effect: {key}"
+        observed.add(key)
+    assert len(observed) == len(keys), "C1.5 duplicate receipt key"
+
+
+async def test_c2_unsettled_entry_is_retained_while_settled_siblings_evict(
+    tmp_path: Path,
+) -> None:
+    """C2 (U2/R1): the one unsettled delivery survives; settled siblings are evicted."""
+
+    keys = ["c2-pending", *(f"c2-{index}" for index in range(20))]
+    _service_obj, runtime, records = _batch_prepared(tmp_path, keys)
+    baseline = _live_registry_size(runtime)
+
+    pending_payload = {"marker": "c2-pending"}
+    pending_sender = FakeSender(ConfirmedDelivered(pending_payload))
+    pending_claim = _first_claim(runtime, records["c2-pending"])
+    pending = asyncio.create_task(runtime.dispatch(pending_claim, sender=pending_sender))
+    await pending_sender.started.wait()
+
+    for key in keys[1:]:
+        await _dispatch_and_settle(runtime, records[key], key)
+
+    assert _live_registry_size(runtime) == baseline + 1, "C2.1 unsettled work was evicted"
+
+    pending_sender.release.set()
+    assert await pending == ConfirmedDelivered(pending_payload), "C2.2 late settlement failed"
+
+    assert _live_registry_size(runtime) == baseline, "C2.3 eviction after late settlement"
+    assert _durable_receipt(runtime, records["c2-pending"]) == pending_payload, "C2.4"

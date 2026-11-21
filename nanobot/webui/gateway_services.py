@@ -26,12 +26,14 @@ from nanobot.webui.workspaces import WebUIWorkspaceController
 from nanobot.webui.ws_http import GatewayHTTPHandler
 
 if TYPE_CHECKING:
+    from nanobot.agent.stop_target import StopTargetReader
     from nanobot.bus.queue import MessageBus
     from nanobot.channels.websocket.runtime import WebSocketConfig
     from nanobot.config.schema import RemoteAccessConfig
     from nanobot.cron.service import CronService
     from nanobot.session.manager import SessionManager
     from nanobot.triggers.local_store import LocalTriggerStore
+    from nanobot.webui.remote_owner import GatewayRemoteOwner
 
 
 @dataclass(frozen=True)
@@ -49,10 +51,12 @@ class GatewayServices:
     temporary_chats: WebUITemporaryChats
     session_projection: WebUISessionProjection
     session_manager: SessionManager | None
+    child_control: Callable[[str, str, str, str | None], Awaitable[dict[str, Any]]] | None
     cron_service: CronService | None
     local_trigger_store: LocalTriggerStore | None
     cron_pending_job_ids: Callable[[str], set[str]] | None
     local_trigger_pending_ids: Callable[[str], set[str]] | None
+    remote_owner: GatewayRemoteOwner | None = None
 
 
 def build_gateway_services(
@@ -60,7 +64,9 @@ def build_gateway_services(
     config: WebSocketConfig,
     bus: MessageBus,
     session_manager: SessionManager | None,
-    static_dist_path: Path | None,
+    stop_target_for_key: StopTargetReader | None = None,
+    child_control: Callable[[str, str, str, str | None], Awaitable[dict[str, Any]]] | None = None,
+    static_dist_path: Path | None = None,
     workspace_path: Path,
     context_manager: ContextRepoManager | None = None,
     default_restrict_to_workspace: bool,
@@ -109,9 +115,19 @@ def build_gateway_services(
         logger=logger,
         attachment_limits=ingress.attachments,
     )
-    transcripts = WebUITranscriptRecorder(log=logger)
+    transcripts = WebUITranscriptRecorder(log=logger, sessions=session_manager)
     sessions_root = session_manager.sessions_root if session_manager is not None else None
-    grants = FolderGrantStore.for_workspace(workspace_path, sessions_root=sessions_root)
+    instance_root = (
+        config_path.expanduser().resolve(strict=False).parent
+        if config_path is not None
+        else None
+    )
+    grants = FolderGrantStore.for_workspace(
+        workspace_path,
+        sessions_root=sessions_root,
+        instance_root=instance_root,
+        config_path=config_path,
+    )
     catalog = RepositoryCatalog.for_workspace(workspace_path, sessions_root=sessions_root)
     managed_context = context_manager or ContextRepoManager()
     workspaces = WebUIWorkspaceController(
@@ -143,7 +159,11 @@ def build_gateway_services(
         binding=lambda chat_id: temporary_chats.binding(None, chat_id),
         set_mode=lambda chat_id, mode: temporary_chats.set_access_mode(chat_id, mode),
     )
-    session_projection = WebUISessionProjection(session_manager, log=logger)
+    session_projection = WebUISessionProjection(
+        session_manager,
+        stop_target_for_key=stop_target_for_key,
+        log=logger,
+    )
     http = GatewayHTTPHandler(
         config=config,
         session_manager=session_manager,
@@ -172,25 +192,37 @@ def build_gateway_services(
         mcp_reload=mcp_reload,
         skill_state_action=skill_state_action,
         recovery_action=recovery_action,
+        stop_target_for_key=stop_target_for_key,
         log=logger,
     )
-    if mobile_edge is None and remote_access is not None and remote_access.enabled:
-        from nanobot.remote.composition import build_mobile_edge
-
-        mobile_edge = build_mobile_edge(remote_access, http, media)
-    if remote_access is not None and remote_access.enabled:
+    remote_owner = None
+    if remote_access is not None:
         from nanobot.remote.client import RemoteAccessClient
-        from nanobot.remote.composition import owner_socket_path
+        from nanobot.remote.composition import build_mobile_edge, owner_socket_path
         from nanobot.remote.permissions import OwnerPermissionAdapter
+        from nanobot.webui.remote_owner import GatewayRemoteOwner
 
+        remote_owner = GatewayRemoteOwner(remote_access, settings.config)
+        settings.config.set_remote_access_enabled = remote_owner.set_enabled
+        if mobile_edge is None:
+            mobile_edge = build_mobile_edge(
+                remote_access,
+                http,
+                media,
+                instance_root=settings.config.path.parent,
+            )
         owner_client = RemoteAccessClient(
-            owner_socket_path(remote_access),
+            owner_socket_path(remote_access, instance_root=settings.config.path.parent),
             timeout=remote_access.owner_timeout_seconds,
         )
         http.owner_permission_adapter = OwnerPermissionAdapter(owner_client)
         http.owner_audit_client = owner_client
     endpoint = WebUIGatewayEndpoint(
-        config=config, http=http, tokens=tokens, mobile_edge=mobile_edge
+        config=config,
+        http=http,
+        tokens=tokens,
+        mobile_edge=mobile_edge,
+        mobile_enabled=remote_owner.is_enabled if remote_owner is not None else None,
     )
     return GatewayServices(
         http=http,
@@ -204,8 +236,10 @@ def build_gateway_services(
         temporary_chats=temporary_chats,
         session_projection=session_projection,
         session_manager=session_manager,
+        child_control=child_control,
         cron_service=cron_service,
         local_trigger_store=local_trigger_store,
         cron_pending_job_ids=cron_pending_job_ids,
         local_trigger_pending_ids=local_trigger_pending_ids,
+        remote_owner=remote_owner,
     )

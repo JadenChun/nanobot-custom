@@ -1,6 +1,277 @@
 {
   "cases": [
     {
+      "name": "media_then_distinct_final",
+      "chat_id": "fixture-media-distinct",
+      "initial_messages": [
+        {
+          "id": "fixture-user-distinct",
+          "role": "user",
+          "content": "Send the edited image.",
+          "turnId": "turn-media-distinct",
+          "turnPhase": "user",
+          "turnSeq": 1,
+          "createdAt": 1700000000000
+        }
+      ],
+      "live_events": [
+        {
+          "event": "message",
+          "chat_id": "fixture-media-distinct",
+          "text": "Edited image attached.",
+          "media_urls": [
+            {
+              "url": "/api/media/example.png",
+              "name": "example.png"
+            }
+          ],
+          "turn_id": "turn-media-distinct",
+          "turn_phase": "answer",
+          "turn_seq": 2
+        },
+        {
+          "event": "stream_end",
+          "chat_id": "fixture-media-distinct",
+          "text": "",
+          "turn_id": "turn-media-distinct",
+          "turn_phase": "answer",
+          "turn_seq": 3
+        },
+        {
+          "event": "delta",
+          "chat_id": "fixture-media-distinct",
+          "text": "The image edit is complete.",
+          "turn_id": "turn-media-distinct",
+          "turn_phase": "answer",
+          "turn_seq": 4
+        },
+        {
+          "event": "stream_end",
+          "chat_id": "fixture-media-distinct",
+          "turn_id": "turn-media-distinct",
+          "turn_phase": "answer",
+          "turn_seq": 5
+        },
+        {
+          "event": "turn_end",
+          "chat_id": "fixture-media-distinct",
+          "turn_id": "turn-media-distinct",
+          "turn_phase": "complete",
+          "turn_seq": 6
+        }
+      ],
+      "transcript": [
+        {
+          "event": "user",
+          "chat_id": "fixture-media-distinct",
+          "text": "Send the edited image.",
+          "created_at_ms": 1700000000000,
+          "turn_id": "turn-media-distinct",
+          "turn_phase": "user",
+          "turn_seq": 1
+        },
+        {
+          "event": "message",
+          "chat_id": "fixture-media-distinct",
+          "text": "Edited image attached.",
+          "media_urls": [
+            {
+              "url": "/api/media/example.png",
+              "name": "example.png"
+            }
+          ],
+          "turn_id": "turn-media-distinct",
+          "turn_phase": "answer",
+          "turn_seq": 2
+        },
+        {
+          "event": "stream_end",
+          "chat_id": "fixture-media-distinct",
+          "text": "",
+          "turn_id": "turn-media-distinct",
+          "turn_phase": "answer",
+          "turn_seq": 3
+        },
+        {
+          "event": "delta",
+          "chat_id": "fixture-media-distinct",
+          "text": "The image edit is complete.",
+          "turn_id": "turn-media-distinct",
+          "turn_phase": "answer",
+          "turn_seq": 4
+        },
+        {
+          "event": "stream_end",
+          "chat_id": "fixture-media-distinct",
+          "turn_id": "turn-media-distinct",
+          "turn_phase": "answer",
+          "turn_seq": 5
+        },
+        {
+          "event": "turn_end",
+          "chat_id": "fixture-media-distinct",
+          "turn_id": "turn-media-distinct",
+          "turn_phase": "complete",
+          "turn_seq": 6
+        }
+      ],
+      "expected": [
+        {
+          "role": "user",
+          "content": "Send the edited image.",
+          "turnId": "turn-media-distinct",
+          "turnPhase": "user",
+          "turnSeq": 1
+        },
+        {
+          "role": "assistant",
+          "content": "Edited image attached.",
+          "media": [
+            {
+              "kind": "image",
+              "url": "/api/media/example.png",
+              "name": "example.png"
+            }
+          ],
+          "turnId": "turn-media-distinct",
+          "turnPhase": "answer",
+          "turnSeq": 2
+        },
+        {
+          "role": "assistant",
+          "content": "The image edit is complete.",
+          "turnId": "turn-media-distinct",
+          "turnPhase": "answer",
+          "turnSeq": 5
+        }
+      ]
+    },
+    {
+      "name": "media_then_matching_final",
+      "chat_id": "fixture-media-matching",
+      "initial_messages": [
+        {
+          "id": "fixture-user-matching",
+          "role": "user",
+          "content": "Send the edited image.",
+          "turnId": "turn-media-matching",
+          "turnPhase": "user",
+          "turnSeq": 1,
+          "createdAt": 1700000000000
+        }
+      ],
+      "live_events": [
+        {
+          "event": "message",
+          "chat_id": "fixture-media-matching",
+          "text": "Edited image attached.",
+          "media_urls": [
+            {
+              "url": "/api/media/example.png",
+              "name": "example.png"
+            }
+          ],
+          "turn_id": "turn-media-matching",
+          "turn_phase": "answer",
+          "turn_seq": 2
+        },
+        {
+          "event": "stream_end",
+          "chat_id": "fixture-media-matching",
+          "text": "",
+          "turn_id": "turn-media-matching",
+          "turn_phase": "answer",
+          "turn_seq": 3
+        },
+        {
+          "event": "stream_end",
+          "chat_id": "fixture-media-matching",
+          "text": "Edited image attached.",
+          "turn_id": "turn-media-matching",
+          "turn_phase": "answer",
+          "turn_seq": 4
+        },
+        {
+          "event": "turn_end",
+          "chat_id": "fixture-media-matching",
+          "turn_id": "turn-media-matching",
+          "turn_phase": "complete",
+          "turn_seq": 5
+        }
+      ],
+      "transcript": [
+        {
+          "event": "user",
+          "chat_id": "fixture-media-matching",
+          "text": "Send the edited image.",
+          "created_at_ms": 1700000000000,
+          "turn_id": "turn-media-matching",
+          "turn_phase": "user",
+          "turn_seq": 1
+        },
+        {
+          "event": "message",
+          "chat_id": "fixture-media-matching",
+          "text": "Edited image attached.",
+          "media_urls": [
+            {
+              "url": "/api/media/example.png",
+              "name": "example.png"
+            }
+          ],
+          "turn_id": "turn-media-matching",
+          "turn_phase": "answer",
+          "turn_seq": 2
+        },
+        {
+          "event": "stream_end",
+          "chat_id": "fixture-media-matching",
+          "text": "",
+          "turn_id": "turn-media-matching",
+          "turn_phase": "answer",
+          "turn_seq": 3
+        },
+        {
+          "event": "stream_end",
+          "chat_id": "fixture-media-matching",
+          "text": "Edited image attached.",
+          "turn_id": "turn-media-matching",
+          "turn_phase": "answer",
+          "turn_seq": 4
+        },
+        {
+          "event": "turn_end",
+          "chat_id": "fixture-media-matching",
+          "turn_id": "turn-media-matching",
+          "turn_phase": "complete",
+          "turn_seq": 5
+        }
+      ],
+      "expected": [
+        {
+          "role": "user",
+          "content": "Send the edited image.",
+          "turnId": "turn-media-matching",
+          "turnPhase": "user",
+          "turnSeq": 1
+        },
+        {
+          "role": "assistant",
+          "content": "Edited image attached.",
+          "media": [
+            {
+              "kind": "image",
+              "url": "/api/media/example.png",
+              "name": "example.png"
+            }
+          ],
+          "turnId": "turn-media-matching",
+          "turnPhase": "answer",
+          "turnSeq": 2
+        }
+      ]
+    },
+    {
       "name": "reasoning_then_streamed_answer",
       "chat_id": "fixture-reasoning",
       "initial_messages": [

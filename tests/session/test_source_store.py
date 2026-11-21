@@ -838,3 +838,18 @@ async def test_source_artifact_binding_is_fresh_preserves_identity_and_prior_pub
                 configured.commit_artifact_descriptor(owner.key, committed.state, descriptor,
                     owner=owner, blobs=blobs)
         assert original.load_source_snapshot(owner.key) == committed
+
+
+def test_append_rejects_serialized_source_over_readable_limit(backend, monkeypatch):
+    snapshot = upgrade(backend, seed(backend))
+    path = backend.get_session_path(snapshot.state.session_key)
+    before = path.read_bytes()
+    monkeypatch.setattr("nanobot.session.source_store.MAX_SOURCE_SERIALIZED_BYTES", 600)
+    event = new_source_event({"role": "user", "content": "x" * 2000}, run_id="run")
+    with pytest.raises(SourceValidationError):
+        backend.source.append_source_events(snapshot.state.session_key, snapshot.state, [event])
+    assert path.read_bytes() == before
+    monkeypatch.setattr("nanobot.session.source_store.MAX_SOURCE_SERIALIZED_BYTES", 10_000_000)
+    committed = backend.source.append_source_events(snapshot.state.session_key, snapshot.state, [event])
+    assert committed.events[-1]["content"] == "x" * 2000
+    assert backend.source.load_source_snapshot(snapshot.state.session_key).events == committed.events

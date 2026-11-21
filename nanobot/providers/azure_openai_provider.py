@@ -35,6 +35,7 @@ from nanobot.providers.base import (
     ProviderCallContext,
     ProviderConversationState,
     ProviderConversationTransportReceipt,
+    record_transport_attempt,
 )
 from nanobot.providers.openai_responses import (
     ResponsesStreamCapture,
@@ -316,6 +317,7 @@ class AzureOpenAIProvider(LLMProvider):
                 body, transport="azure_openai_responses", model=str(body.get("model") or ""),
                 provider_context=provider_context,
             )
+            record_transport_attempt(provider_context)
             return cast(Any, await self._client.responses.create(**body))
         except Exception as exc:
             if (
@@ -334,6 +336,7 @@ class AzureOpenAIProvider(LLMProvider):
                 body, transport="azure_openai_responses", model=str(body.get("model") or ""),
                 provider_context=provider_context,
             )
+            record_transport_attempt(provider_context)
             return cast(Any, await self._client.responses.create(**body))
 
     @staticmethod

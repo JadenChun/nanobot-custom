@@ -1,0 +1,433 @@
+{
+  "version": 2,
+  "description": "Harmless public P-256 fixtures only. Fixed expected bytes and signatures; no runtime-generated expectations.",
+  "valid": [
+    {
+      "id": "ascii",
+      "claims": {
+        "version": 2,
+        "purpose": "remote.access",
+        "instance_id": "fixture-instance",
+        "origin": "https://fixture.example:8443",
+        "installation_id": "fixture-installation",
+        "device_fingerprint": "5cd252fb0ce8932436faf8ccd1040981b89ee4ad6b9fe9e2a2b7e71aacb27cd3",
+        "device_generation": 1,
+        "challenge_id": "fixture-challenge",
+        "nonce": "fixture-nonce",
+        "expires_at": 1800000120
+      },
+      "canonical_utf8_hex": "7b226368616c6c656e67655f6964223a22666978747572652d6368616c6c656e6765222c226465766963655f66696e6765727072696e74223a2235636432353266623063653839333234333666616638636364313034303938316238396565346164366239666539653261326237653731616163623237636433222c226465766963655f67656e65726174696f6e223a312c22657870697265735f6174223a313830303030303132302c22696e7374616c6c6174696f6e5f6964223a22666978747572652d696e7374616c6c6174696f6e222c22696e7374616e63655f6964223a22666978747572652d696e7374616e6365222c226e6f6e6365223a22666978747572652d6e6f6e6365222c226f726967696e223a2268747470733a2f2f666978747572652e6578616d706c653a38343433222c22707572706f7365223a2272656d6f74652e616363657373222c2276657273696f6e223a327d",
+      "public_key": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEaxfR8uEsQkf4vOblY6RA8ncDfYEt6zOg9KE5RdiYwpZP40Li_hp_m47n60p8D54WK84zV2sxXs7LtkBoN79R9Q",
+      "signature": "MEQCIH3KKfrfgm3yt4UxFwDpJgAaWpIHx_ja8OKBfyOTgD12AiBheIP0-e2kkFvcWx46bkbhSJ7TaCiaf92KOXRV8GZsnQ",
+      "now": 1800000000
+    },
+    {
+      "id": "unicode-controls",
+      "claims": {
+        "version": 2,
+        "purpose": "remote.access",
+        "instance_id": "\u5b9e\u4f8b\ud83d\ude00\b\f\n\r\t\u0000\u001f\"\\/\u2028",
+        "origin": "https://fixture.example:8443",
+        "installation_id": "fixture-installation",
+        "device_fingerprint": "5cd252fb0ce8932436faf8ccd1040981b89ee4ad6b9fe9e2a2b7e71aacb27cd3",
+        "device_generation": 1,
+        "challenge_id": "fixture-challenge",
+        "nonce": "caf\u00e9",
+        "expires_at": 1800000120
+      },
+      "canonical_utf8_hex": "7b226368616c6c656e67655f6964223a22666978747572652d6368616c6c656e6765222c226465766963655f66696e6765727072696e74223a2235636432353266623063653839333234333666616638636364313034303938316238396565346164366239666539653261326237653731616163623237636433222c226465766963655f67656e65726174696f6e223a312c22657870697265735f6174223a313830303030303132302c22696e7374616c6c6174696f6e5f6964223a22666978747572652d696e7374616c6c6174696f6e222c22696e7374616e63655f6964223a22e5ae9ee4be8bf09f98805c625c665c6e5c725c745c75303030305c75303031665c225c5c2fe280a8222c226e6f6e6365223a22636166c3a9222c226f726967696e223a2268747470733a2f2f666978747572652e6578616d706c653a38343433222c22707572706f7365223a2272656d6f74652e616363657373222c2276657273696f6e223a327d",
+      "public_key": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEaxfR8uEsQkf4vOblY6RA8ncDfYEt6zOg9KE5RdiYwpZP40Li_hp_m47n60p8D54WK84zV2sxXs7LtkBoN79R9Q",
+      "signature": "MEUCIE2Cx9QXGfjsBb4zkn_XqpDj1uYTKaXqp8Kol8c13GwTAiEAzB01QJkxcYGAtqkdBr8N7j0HsbhnjgqeIme2ZNRQvAU",
+      "now": 1800000000
+    },
+    {
+      "id": "integer-upper-bound",
+      "claims": {
+        "version": 2,
+        "purpose": "remote.access",
+        "instance_id": "fixture-instance",
+        "origin": "https://fixture.example:8443",
+        "installation_id": "fixture-installation",
+        "device_fingerprint": "5cd252fb0ce8932436faf8ccd1040981b89ee4ad6b9fe9e2a2b7e71aacb27cd3",
+        "device_generation": 9223372036854775807,
+        "challenge_id": "fixture-challenge",
+        "nonce": "fixture-nonce",
+        "expires_at": 9223372036854775807
+      },
+      "canonical_utf8_hex": "7b226368616c6c656e67655f6964223a22666978747572652d6368616c6c656e6765222c226465766963655f66696e6765727072696e74223a2235636432353266623063653839333234333666616638636364313034303938316238396565346164366239666539653261326237653731616163623237636433222c226465766963655f67656e65726174696f6e223a393232333337323033363835343737353830372c22657870697265735f6174223a393232333337323033363835343737353830372c22696e7374616c6c6174696f6e5f6964223a22666978747572652d696e7374616c6c6174696f6e222c22696e7374616e63655f6964223a22666978747572652d696e7374616e6365222c226e6f6e6365223a22666978747572652d6e6f6e6365222c226f726967696e223a2268747470733a2f2f666978747572652e6578616d706c653a38343433222c22707572706f7365223a2272656d6f74652e616363657373222c2276657273696f6e223a327d",
+      "public_key": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEaxfR8uEsQkf4vOblY6RA8ncDfYEt6zOg9KE5RdiYwpZP40Li_hp_m47n60p8D54WK84zV2sxXs7LtkBoN79R9Q",
+      "signature": "MEUCIQDBv1_fv19JV8u8pQFLWuYjJUKw2B13gnrRq_QWvUd2_AIgUNWw7Dv_bwN0F63s6eptDosaMO9CvC3WfZXHeeKGIDM",
+      "now": 1800000000
+    }
+  ],
+  "rejected_claims": [
+    {
+      "id": "bool",
+      "claims": {
+        "version": 2,
+        "purpose": "remote.access",
+        "instance_id": "fixture-instance",
+        "origin": "https://fixture.example:8443",
+        "installation_id": "fixture-installation",
+        "device_fingerprint": "5cd252fb0ce8932436faf8ccd1040981b89ee4ad6b9fe9e2a2b7e71aacb27cd3",
+        "device_generation": true,
+        "challenge_id": "fixture-challenge",
+        "nonce": "fixture-nonce",
+        "expires_at": 1800000120
+      }
+    },
+    {
+      "id": "float",
+      "claims": {
+        "version": 2,
+        "purpose": "remote.access",
+        "instance_id": "fixture-instance",
+        "origin": "https://fixture.example:8443",
+        "installation_id": "fixture-installation",
+        "device_fingerprint": "5cd252fb0ce8932436faf8ccd1040981b89ee4ad6b9fe9e2a2b7e71aacb27cd3",
+        "device_generation": 1.0,
+        "challenge_id": "fixture-challenge",
+        "nonce": "fixture-nonce",
+        "expires_at": 1800000120
+      }
+    },
+    {
+      "id": "null",
+      "claims": {
+        "version": 2,
+        "purpose": "remote.access",
+        "instance_id": "fixture-instance",
+        "origin": "https://fixture.example:8443",
+        "installation_id": "fixture-installation",
+        "device_fingerprint": "5cd252fb0ce8932436faf8ccd1040981b89ee4ad6b9fe9e2a2b7e71aacb27cd3",
+        "device_generation": 1,
+        "challenge_id": "fixture-challenge",
+        "nonce": null,
+        "expires_at": 1800000120
+      }
+    },
+    {
+      "id": "array",
+      "claims": {
+        "version": 2,
+        "purpose": "remote.access",
+        "instance_id": "fixture-instance",
+        "origin": "https://fixture.example:8443",
+        "installation_id": "fixture-installation",
+        "device_fingerprint": "5cd252fb0ce8932436faf8ccd1040981b89ee4ad6b9fe9e2a2b7e71aacb27cd3",
+        "device_generation": 1,
+        "challenge_id": "fixture-challenge",
+        "nonce": [],
+        "expires_at": 1800000120
+      }
+    },
+    {
+      "id": "object",
+      "claims": {
+        "version": 2,
+        "purpose": "remote.access",
+        "instance_id": "fixture-instance",
+        "origin": "https://fixture.example:8443",
+        "installation_id": "fixture-installation",
+        "device_fingerprint": "5cd252fb0ce8932436faf8ccd1040981b89ee4ad6b9fe9e2a2b7e71aacb27cd3",
+        "device_generation": 1,
+        "challenge_id": "fixture-challenge",
+        "nonce": {},
+        "expires_at": 1800000120
+      }
+    },
+    {
+      "id": "empty",
+      "claims": {
+        "version": 2,
+        "purpose": "remote.access",
+        "instance_id": "fixture-instance",
+        "origin": "https://fixture.example:8443",
+        "installation_id": "fixture-installation",
+        "device_fingerprint": "5cd252fb0ce8932436faf8ccd1040981b89ee4ad6b9fe9e2a2b7e71aacb27cd3",
+        "device_generation": 1,
+        "challenge_id": "fixture-challenge",
+        "nonce": "",
+        "expires_at": 1800000120
+      }
+    },
+    {
+      "id": "invalid-unicode",
+      "claims": {
+        "version": 2,
+        "purpose": "remote.access",
+        "instance_id": "fixture-instance",
+        "origin": "https://fixture.example:8443",
+        "installation_id": "fixture-installation",
+        "device_fingerprint": "5cd252fb0ce8932436faf8ccd1040981b89ee4ad6b9fe9e2a2b7e71aacb27cd3",
+        "device_generation": 1,
+        "challenge_id": "fixture-challenge",
+        "nonce": "\ud800",
+        "expires_at": 1800000120
+      }
+    },
+    {
+      "id": "integer-zero",
+      "claims": {
+        "version": 2,
+        "purpose": "remote.access",
+        "instance_id": "fixture-instance",
+        "origin": "https://fixture.example:8443",
+        "installation_id": "fixture-installation",
+        "device_fingerprint": "5cd252fb0ce8932436faf8ccd1040981b89ee4ad6b9fe9e2a2b7e71aacb27cd3",
+        "device_generation": 1,
+        "challenge_id": "fixture-challenge",
+        "nonce": "fixture-nonce",
+        "expires_at": 0
+      }
+    },
+    {
+      "id": "integer-negative",
+      "claims": {
+        "version": 2,
+        "purpose": "remote.access",
+        "instance_id": "fixture-instance",
+        "origin": "https://fixture.example:8443",
+        "installation_id": "fixture-installation",
+        "device_fingerprint": "5cd252fb0ce8932436faf8ccd1040981b89ee4ad6b9fe9e2a2b7e71aacb27cd3",
+        "device_generation": -1,
+        "challenge_id": "fixture-challenge",
+        "nonce": "fixture-nonce",
+        "expires_at": 1800000120
+      }
+    },
+    {
+      "id": "integer-overflow",
+      "claims": {
+        "version": 2,
+        "purpose": "remote.access",
+        "instance_id": "fixture-instance",
+        "origin": "https://fixture.example:8443",
+        "installation_id": "fixture-installation",
+        "device_fingerprint": "5cd252fb0ce8932436faf8ccd1040981b89ee4ad6b9fe9e2a2b7e71aacb27cd3",
+        "device_generation": 1,
+        "challenge_id": "fixture-challenge",
+        "nonce": "fixture-nonce",
+        "expires_at": 9223372036854775808
+      }
+    },
+    {
+      "id": "wrong-version",
+      "claims": {
+        "version": 3,
+        "purpose": "remote.access",
+        "instance_id": "fixture-instance",
+        "origin": "https://fixture.example:8443",
+        "installation_id": "fixture-installation",
+        "device_fingerprint": "5cd252fb0ce8932436faf8ccd1040981b89ee4ad6b9fe9e2a2b7e71aacb27cd3",
+        "device_generation": 1,
+        "challenge_id": "fixture-challenge",
+        "nonce": "fixture-nonce",
+        "expires_at": 1800000120
+      }
+    },
+    {
+      "id": "version-bool",
+      "claims": {
+        "version": true,
+        "purpose": "remote.access",
+        "instance_id": "fixture-instance",
+        "origin": "https://fixture.example:8443",
+        "installation_id": "fixture-installation",
+        "device_fingerprint": "5cd252fb0ce8932436faf8ccd1040981b89ee4ad6b9fe9e2a2b7e71aacb27cd3",
+        "device_generation": 1,
+        "challenge_id": "fixture-challenge",
+        "nonce": "fixture-nonce",
+        "expires_at": 1800000120
+      }
+    },
+    {
+      "id": "wrong-purpose",
+      "claims": {
+        "version": 2,
+        "purpose": "other",
+        "instance_id": "fixture-instance",
+        "origin": "https://fixture.example:8443",
+        "installation_id": "fixture-installation",
+        "device_fingerprint": "5cd252fb0ce8932436faf8ccd1040981b89ee4ad6b9fe9e2a2b7e71aacb27cd3",
+        "device_generation": 1,
+        "challenge_id": "fixture-challenge",
+        "nonce": "fixture-nonce",
+        "expires_at": 1800000120
+      }
+    },
+    {
+      "id": "unknown",
+      "claims": {
+        "version": 2,
+        "purpose": "remote.access",
+        "instance_id": "fixture-instance",
+        "origin": "https://fixture.example:8443",
+        "installation_id": "fixture-installation",
+        "device_fingerprint": "5cd252fb0ce8932436faf8ccd1040981b89ee4ad6b9fe9e2a2b7e71aacb27cd3",
+        "device_generation": 1,
+        "challenge_id": "fixture-challenge",
+        "nonce": "fixture-nonce",
+        "expires_at": 1800000120,
+        "extra": "bad"
+      }
+    },
+    {
+      "id": "missing",
+      "claims": {
+        "version": 2,
+        "purpose": "remote.access",
+        "instance_id": "fixture-instance",
+        "origin": "https://fixture.example:8443",
+        "installation_id": "fixture-installation",
+        "device_fingerprint": "5cd252fb0ce8932436faf8ccd1040981b89ee4ad6b9fe9e2a2b7e71aacb27cd3",
+        "device_generation": 1,
+        "challenge_id": "fixture-challenge",
+        "expires_at": 1800000120
+      }
+    }
+  ],
+  "rejected_verification": [
+    {
+      "id": "wrong-instance_id",
+      "claims": {
+        "version": 2,
+        "purpose": "remote.access",
+        "instance_id": "other",
+        "origin": "https://fixture.example:8443",
+        "installation_id": "fixture-installation",
+        "device_fingerprint": "5cd252fb0ce8932436faf8ccd1040981b89ee4ad6b9fe9e2a2b7e71aacb27cd3",
+        "device_generation": 1,
+        "challenge_id": "fixture-challenge",
+        "nonce": "fixture-nonce",
+        "expires_at": 1800000120
+      }
+    },
+    {
+      "id": "wrong-origin",
+      "claims": {
+        "version": 2,
+        "purpose": "remote.access",
+        "instance_id": "fixture-instance",
+        "origin": "https://other.example",
+        "installation_id": "fixture-installation",
+        "device_fingerprint": "5cd252fb0ce8932436faf8ccd1040981b89ee4ad6b9fe9e2a2b7e71aacb27cd3",
+        "device_generation": 1,
+        "challenge_id": "fixture-challenge",
+        "nonce": "fixture-nonce",
+        "expires_at": 1800000120
+      }
+    },
+    {
+      "id": "wrong-installation_id",
+      "claims": {
+        "version": 2,
+        "purpose": "remote.access",
+        "instance_id": "fixture-instance",
+        "origin": "https://fixture.example:8443",
+        "installation_id": "other",
+        "device_fingerprint": "5cd252fb0ce8932436faf8ccd1040981b89ee4ad6b9fe9e2a2b7e71aacb27cd3",
+        "device_generation": 1,
+        "challenge_id": "fixture-challenge",
+        "nonce": "fixture-nonce",
+        "expires_at": 1800000120
+      }
+    },
+    {
+      "id": "wrong-device_generation",
+      "claims": {
+        "version": 2,
+        "purpose": "remote.access",
+        "instance_id": "fixture-instance",
+        "origin": "https://fixture.example:8443",
+        "installation_id": "fixture-installation",
+        "device_fingerprint": "5cd252fb0ce8932436faf8ccd1040981b89ee4ad6b9fe9e2a2b7e71aacb27cd3",
+        "device_generation": 2,
+        "challenge_id": "fixture-challenge",
+        "nonce": "fixture-nonce",
+        "expires_at": 1800000120
+      }
+    },
+    {
+      "id": "wrong-challenge_id",
+      "claims": {
+        "version": 2,
+        "purpose": "remote.access",
+        "instance_id": "fixture-instance",
+        "origin": "https://fixture.example:8443",
+        "installation_id": "fixture-installation",
+        "device_fingerprint": "5cd252fb0ce8932436faf8ccd1040981b89ee4ad6b9fe9e2a2b7e71aacb27cd3",
+        "device_generation": 1,
+        "challenge_id": "other",
+        "nonce": "fixture-nonce",
+        "expires_at": 1800000120
+      }
+    },
+    {
+      "id": "wrong-nonce",
+      "claims": {
+        "version": 2,
+        "purpose": "remote.access",
+        "instance_id": "fixture-instance",
+        "origin": "https://fixture.example:8443",
+        "installation_id": "fixture-installation",
+        "device_fingerprint": "5cd252fb0ce8932436faf8ccd1040981b89ee4ad6b9fe9e2a2b7e71aacb27cd3",
+        "device_generation": 1,
+        "challenge_id": "fixture-challenge",
+        "nonce": "other",
+        "expires_at": 1800000120
+      }
+    },
+    {
+      "id": "wrong-device_fingerprint",
+      "claims": {
+        "version": 2,
+        "purpose": "remote.access",
+        "instance_id": "fixture-instance",
+        "origin": "https://fixture.example:8443",
+        "installation_id": "fixture-installation",
+        "device_fingerprint": "0000000000000000000000000000000000000000000000000000000000000000",
+        "device_generation": 1,
+        "challenge_id": "fixture-challenge",
+        "nonce": "fixture-nonce",
+        "expires_at": 1800000120
+      }
+    },
+    {
+      "id": "expired",
+      "now": 1800000120
+    },
+    {
+      "id": "wrong-key",
+      "public_key": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEfPJ7GI0DT36KUjgDBLUaw8CJaeJ38hs1pgtI_EdmmXgHd1UQ247QQCk9msafdDDbun2t5jzpgimeBLedInhz0Q"
+    },
+    {
+      "id": "malformed-signature",
+      "signature": "MAYCAQACAQA"
+    },
+    {
+      "id": "trailing-signature",
+      "signature": "MEQCIH3KKfrfgm3yt4UxFwDpJgAaWpIHx_ja8OKBfyOTgD12AiBheIP0-e2kkFvcWx46bkbhSJ7TaCiaf92KOXRV8GZsnQAA"
+    },
+    {
+      "id": "trailing-key",
+      "public_key": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEaxfR8uEsQkf4vOblY6RA8ncDfYEt6zOg9KE5RdiYwpZP40Li_hp_m47n60p8D54WK84zV2sxXs7LtkBoN79R9QA"
+    }
+  ],
+  "rejected_encodings": [
+    "",
+    "AA=",
+    "AA==",
+    "A",
+    "+A",
+    "/A",
+    "AA\n",
+    "AB",
+    "\u00e9"
+  ],
+  "replay": {
+    "vector": "ascii",
+    "first": "accept",
+    "second": "reject-consumed"
+  }
+}

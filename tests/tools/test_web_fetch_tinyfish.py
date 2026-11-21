@@ -13,6 +13,17 @@ from nanobot.agent.tools.web import WebFetchConfig, WebFetchTool
 from nanobot.config.schema import Config, ToolsConfig
 
 
+class _Stream:
+    def __init__(self, response):
+        self.response = response
+
+    async def __aenter__(self):
+        return self.response
+
+    async def __aexit__(self, *args):
+        return False
+
+
 class _FakeClient:
     """Minimal httpx.AsyncClient replacement that records outbound calls."""
 
@@ -29,13 +40,10 @@ class _FakeClient:
     async def __aexit__(self, *args):
         return False
 
-    async def get(self, url, **kwargs):
-        _FakeClient.calls.append(("GET", url))
-        payload = {"data": {"title": "Jina title", "content": "jina body", "url": url}}
-        return httpx.Response(200, json=payload, request=httpx.Request("GET", url))
-
-    async def post(self, url, **kwargs):
-        _FakeClient.calls.append(("POST", url))
+    def _response(self, method: str, url: str):
+        if method == "GET":
+            payload = {"data": {"title": "Jina title", "content": "jina body", "url": url}}
+            return httpx.Response(200, json=payload, request=httpx.Request("GET", url))
         payload = _FakeClient.post_payload or {
             "results": [
                 {
@@ -51,6 +59,18 @@ class _FakeClient:
         return httpx.Response(
             _FakeClient.post_status, json=payload, request=httpx.Request("POST", url)
         )
+
+    def stream(self, method, url, **kwargs):
+        _FakeClient.calls.append((method, url))
+        return _Stream(self._response(method, url))
+
+    async def get(self, url, **kwargs):
+        _FakeClient.calls.append(("GET", url))
+        return self._response("GET", url)
+
+    async def post(self, url, **kwargs):
+        _FakeClient.calls.append(("POST", url))
+        return self._response("POST", url)
 
 
 @pytest.fixture

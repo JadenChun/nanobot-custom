@@ -215,6 +215,7 @@ def reattach_runtime_context(
 def public_history_message(message: Mapping[str, Any]) -> dict[str, Any]:
     """Return a user-visible copy with trusted runtime context removed exactly."""
     cleaned = deepcopy(dict(message))
+    cleaned.pop("_input_attempt", None)
     marker = cleaned.pop(RUNTIME_CONTEXT_HISTORY_META, None)
     if not isinstance(marker, Mapping):
         return cleaned

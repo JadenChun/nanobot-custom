@@ -52,8 +52,13 @@ def test_run_cli_app_uses_installed_registry_app(
         lambda entry: resolved if entry == "cli-anything-gimp" else None,
     )
 
-    def fake_run(argv: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
-        assert "shell" not in kwargs or kwargs["shell"] is False
+    def fake_run_owned(
+        self,
+        argv: list[str],
+        *,
+        timeout: int,
+        cwd: str | None = None,
+    ) -> subprocess.CompletedProcess[str]:
         return subprocess.CompletedProcess(
             argv,
             0,
@@ -61,7 +66,7 @@ def test_run_cli_app_uses_installed_registry_app(
             stderr="",
         )
 
-    monkeypatch.setattr("nanobot.apps.cli.service.subprocess.run", fake_run)
+    monkeypatch.setattr(CliAppManager, "_run_owned_argv", fake_run_owned)
     monkeypatch.setattr("nanobot.apps.cli.service.get_runtime_subdir", lambda _name: data_dir)
 
     tool = CliAppsTool(

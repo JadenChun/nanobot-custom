@@ -363,6 +363,13 @@ By default, OpenAI uses `apiType: "auto"`: nanobot calls Chat Completions normal
 
 Valid `apiType` values are exactly `auto`, `chat_completions`, and `responses`.
 
+For an OpenAI-compatible proxy that serves Responses, set `providers.openai.apiBase`
+to its API URL, `apiType` to `responses`, and optionally `displayName` to the proxy's
+name. The model picker under **Settings → Models** reads the live `/models` list
+using that endpoint's configured API key and `extraHeaders` (including environment
+references). Save only the models you want as presets; those are the choices in
+the chat switcher.
+
 `extraBody` follows the selected OpenAI API surface. With Chat Completions, nanobot passes
 ordinary fields through as the SDK `extra_body` value; list-valued `extraBody.tools` is handled
 specially and appended after generated function tools. With Responses, configure it in Responses

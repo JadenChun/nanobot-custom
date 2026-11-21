@@ -21,6 +21,7 @@ from nanobot.runtime_composition import (
     inspect_session_modes,
     runtime_preflight,
 )
+from nanobot.runtime_errors import RuntimeOwnedWorkError
 from nanobot.session.runtime_authority import (
     SessionAuthorityLease,
     SessionAuthorityUnavailableError,
@@ -243,15 +244,22 @@ async def test_acquisition_failure_and_cleanup_failure_are_ordered(tmp_path: Pat
     factories = _factories(events)
 
     class MCP:
+        def __init__(self) -> None:
+            self.close_calls = 0
+
         async def aclose(self) -> None:
             events.append("mcp-close")
-            raise LookupError("cleanup")
+            self.close_calls += 1
+            if self.close_calls == 1:
+                raise OSError("cleanup")
+
+    mcp = MCP()
 
     def broken_agent(*_args):
         raise ValueError("acquisition")
 
     factories = RuntimeFactories(
-        factories.bus, factories.tools, lambda _config, _tools: MCP(),
+        factories.bus, factories.tools, lambda _config, _tools: mcp,
         factories.cron, broken_agent,
     )
     composition = RuntimeComposition.define(
@@ -262,15 +270,92 @@ async def test_acquisition_failure_and_cleanup_failure_are_ordered(tmp_path: Pat
         await composition.acquire()
     assert [str(error) for error in caught.value.exceptions] == ["acquisition", "cleanup"]
     assert composition.state is RuntimeState.FAILED
+    assert len(composition._closers) == 1
     with pytest.raises(ExceptionGroup) as replayed:
         await composition.acquire()
     assert replayed.value is caught.value
+    await composition.aclose()
+    assert mcp.close_calls == 2
+    assert composition._closers == []
+    assert composition.state is RuntimeState.CLOSED
 
 
-async def test_composition_close_aggregates_all_reverse_cleanup_failures_once(
+@pytest.mark.parametrize("failure_kind", ["direct", "nested", "mixed"])
+async def test_acquisition_rollback_retains_dependencies_of_owned_work(
+    tmp_path: Path, failure_kind: str,
+) -> None:
+    receipts: list[str] = []
+    startup_error = ValueError("late acquisition failed")
+    owned_work = RuntimeOwnedWorkError("worker has outstanding work")
+    ordinary_error = OSError("worker cleanup also failed")
+    sentinel = BaseException("worker cleanup stopped")
+    cleanup_error: BaseException = owned_work
+    if failure_kind != "direct":
+        nested = ExceptionGroup("nested cleanup", [owned_work, ordinary_error])
+        cleanup_error = ExceptionGroup("worker cleanup", [nested])
+        if failure_kind == "mixed":
+            cleanup_error = BaseExceptionGroup("worker cleanup", [nested, sentinel])
+    worker_closable = False
+    defaults = _factories([])
+
+    async def close_worker() -> None:
+        receipts.append("worker")
+        if not worker_closable:
+            raise cleanup_error
+
+    def reader(_config, bus, sessions, _tools, _worker, _cron, delivery):
+        async def close() -> None:
+            receipts.append("reader")
+
+        return SimpleNamespace(
+            bus=bus, sessions=sessions, turn_delivery_factory=delivery, aclose=close,
+        )
+
+    def fail_late(*_args, **_kwargs):
+        raise startup_error
+
+    composition = RuntimeComposition.define(
+        _config(tmp_path),
+        session_authority=Authority(object(), receipts, close=True),
+        factories=RuntimeFactories(
+            defaults.bus, defaults.tools, lambda *_: SimpleNamespace(aclose=close_worker),
+            defaults.cron, reader,
+        ),
+        channel_options=ChannelBuildOptions(factory=fail_late),
+        startup_receipt_admitted=True,
+    )
+
+    def exception_nodes(error: BaseException):
+        yield error
+        if isinstance(error, BaseExceptionGroup):
+            for child in error.exceptions:
+                yield from exception_nodes(child)
+
+    with pytest.raises(BaseExceptionGroup) as failure:
+        await composition.acquire()
+    assert receipts == ["authority", "reader", "worker"]
+    nodes = list(exception_nodes(failure.value))
+    assert startup_error in nodes and cleanup_error in nodes and owned_work in nodes
+    if failure_kind != "direct":
+        assert ordinary_error in nodes
+    if failure_kind == "mixed":
+        assert sentinel in nodes
+
+    worker_closable = True
+    await composition.aclose()
+    assert receipts == ["authority", "reader", "worker", "worker", "authority-close"]
+
+
+async def test_composition_close_retries_only_unsettled_resources_in_reverse(
     tmp_path: Path,
 ) -> None:
     events: list[str] = []
+    close_calls: dict[str, int] = {}
+
+    def fail_first_close(name: str) -> None:
+        close_calls[name] = close_calls.get(name, 0) + 1
+        if close_calls[name] == 1 and name != "authority":
+            raise LookupError(name)
 
     class OwnedAuthority(Authority):
         async def acquire(self):
@@ -278,14 +363,14 @@ async def test_composition_close_aggregates_all_reverse_cleanup_failures_once(
 
             async def close():
                 events.append("authority")
-                raise LookupError("authority")
+                fail_first_close("authority")
 
             return SessionAuthorityLease(self.manager, close)  # type: ignore[arg-type]
 
     class MCP:
         async def aclose(self):
             events.append("mcp")
-            raise LookupError("mcp")
+            fail_first_close("mcp")
 
     class Channels:
         def __init__(self, *_args, **_kwargs):
@@ -296,14 +381,14 @@ async def test_composition_close_aggregates_all_reverse_cleanup_failures_once(
 
         async def stop_all(self):
             events.append("channels")
-            raise LookupError("channels")
+            fail_first_close("channels")
 
     factories = _factories([])
 
     def agent(_config, bus, sessions, _tools, _mcp, _cron, delivery):
         async def close():
             events.append("agent")
-            raise LookupError("agent")
+            fail_first_close("agent")
 
         return SimpleNamespace(
             bus=bus,
@@ -333,10 +418,21 @@ async def test_composition_close_aggregates_all_reverse_cleanup_failures_once(
         "channels",
         "agent",
         "mcp",
-        "authority",
     ]
+    assert composition.state is RuntimeState.FAILED
+    assert len(composition._closers) == 3
+    with pytest.raises(ExceptionGroup):
+        await composition.acquire()
     await composition.aclose()
-    assert events == ["channels", "agent", "mcp", "authority"]
+    assert events == [
+        "channels", "agent", "mcp", "authority", "channels", "agent", "mcp",
+    ]
+    assert composition.state is RuntimeState.CLOSED
+    assert composition._closers == []
+    await composition.aclose()
+    assert events == [
+        "channels", "agent", "mcp", "authority", "channels", "agent", "mcp",
+    ]
 
 
 @pytest.mark.parametrize("failure_owner", ["authority", "bus"])
@@ -477,7 +573,7 @@ async def test_builder_cancellation_rolls_back_on_owner_loop(tmp_path: Path) -> 
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
         await task
-    assert events == [("agent", owner), ("mcp", owner)]
+    assert events == [("channels", owner), ("agent", owner), ("mcp", owner)]
     assert composition.state is RuntimeState.FAILED
 
 

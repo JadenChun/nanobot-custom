@@ -1,7 +1,10 @@
 from pathlib import Path
 
+import pytest
+
 from nanobot.session.execution_owner import acquire_execution
 from nanobot.session.runtime_authority import DurableSessionAuthority
+from nanobot.session.session_mode import SessionModeError
 from nanobot.session.source import new_source_event
 
 
@@ -78,3 +81,38 @@ async def test_new_canonical_session_is_immediately_usable_in_its_runtime(
     finally:
         assert reopened.close is not None
         await reopened.close()
+
+
+async def test_point_lookup_checks_selected_source_and_startup_still_checks_every_source(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    sessions_root = tmp_path / "sessions"
+    lease = await DurableSessionAuthority(workspace, sessions_root=sessions_root).acquire()
+    try:
+        manager = lease.manager
+        manager.admit_persistent_write("cli:healthy")
+        manager.admit_persistent_write("cli:damaged")
+        backend = manager.source_backend("cli:damaged")
+        assert backend is not None
+        source = backend.source
+        snapshot = source.load_source_snapshot("cli:damaged")
+        source.append_source_events("cli:damaged", snapshot.state, [
+            new_source_event(
+                {"role": "user", "content": "advances the source revision"}, run_id="fixture-run",
+            ),
+        ])
+        # Damage a newer source, so the transition digest alone cannot reject it.
+        with backend.get_session_path("cli:damaged").open("ab") as handle:
+            handle.write(b"not-json\n")
+
+        assert manager.resolve_session_mode("cli:healthy").mode == "canonical"
+        with pytest.raises(SessionModeError):
+            manager.resolve_session_mode("cli:damaged")
+    finally:
+        assert lease.close is not None
+        await lease.close()
+
+    with pytest.raises(SessionModeError):
+        await DurableSessionAuthority(workspace, sessions_root=sessions_root).acquire()

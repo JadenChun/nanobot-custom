@@ -15,6 +15,7 @@ from nanobot.agent.tools.base import Tool, ToolResult
 from nanobot.agent.tools.context import ToolContext
 from nanobot.agent.tools.filesystem import ReadFileTool, WriteFileTool
 from nanobot.context_repo.catalog import RepositoryCatalog, RepositoryEntry
+from nanobot.context_repo.manager import ContextRepoRuntimeConfig, ManagedContextRepo
 from nanobot.context_repo.policy import FolderAccessNeededError
 from nanobot.security.workspace_access import current_workspace_scope
 from nanobot.session.workspace_focus import WorkspaceFocusOwner
@@ -215,11 +216,49 @@ class SaveKnowledgeTool(Tool):
         root = ctx.sessions.sessions_root if ctx.sessions is not None else None
         return cls(RepositoryCatalog.for_workspace(Path(ctx.workspace), sessions_root=root), WriteFileTool.create(ctx))
 
+    @staticmethod
+    def _auto_push_enabled(root: Path) -> bool:
+        """Read the repository's autoPush setting through its owner.
+
+        Only the configured knowledge sync may push. A manifest that cannot be
+        read keeps the commit local instead of contacting the remote.
+        """
+        config = ContextRepoRuntimeConfig.from_raw({"path": str(root), "autoSync": True})
+        if config is None:
+            return False
+        try:
+            repo = ManagedContextRepo.load(config)
+        except (OSError, ValueError):
+            return False
+        return repo.auto_push_enabled()
+
     async def execute(self, repository: str, path: str, content: str, **kwargs: Any) -> str:
         try:
             entry = self.catalog.get(repository)
             if entry.kind != "knowledge":
                 raise ValueError("automatic knowledge writes require a designated knowledge repo")
+            from nanobot.security.workspace_access import current_workspace_scope
+
+            scope = current_workspace_scope()
+            if scope is not None:
+                project_path = Path(scope.project_path).expanduser().resolve(strict=False)
+                project_entry = next(
+                    (
+                        candidate
+                        for candidate in self.catalog.entries()
+                        if candidate.kind == "project"
+                        and Path(candidate.path).expanduser().resolve(strict=False)
+                        == project_path
+                    ),
+                    None,
+                )
+                if (
+                    project_entry is None
+                    or repository not in project_entry.knowledge_repos
+                ):
+                    raise ValueError(
+                        "knowledge repository is not associated with the selected project"
+                    )
             relative = Path(path)
             if not path or relative.is_absolute() or ".." in relative.parts or ".git" in relative.parts:
                 raise ValueError("knowledge path must stay within the selected repository")
@@ -257,9 +296,18 @@ class SaveKnowledgeTool(Tool):
                     destination_changed_error=lambda: ValueError("knowledge destination changed"),
                 )
                 synced: bool | None = None
+                sync_state = "not_enabled"
                 if entry.auto_sync and matches_sync_path(relative.as_posix(), entry.sync_paths):
-                    synced = await async_sync_context_repo(root, include_paths=entry.sync_paths)
+                    auto_push = self._auto_push_enabled(root)
+                    retained = await async_sync_context_repo(
+                        root, include_paths=entry.sync_paths, push=auto_push,
+                    )
+                    if retained and auto_push:
+                        synced, sync_state = True, "synced"
+                    else:
+                        # The local commit is retained for a later autoPush sync.
+                        synced, sync_state = False, "pending"
             return json.dumps({"saved": True, "path": str(destination), "synced": synced,
-                               "sync_state": "synced" if synced else "pending" if synced is False else "not_enabled"})
+                               "sync_state": sync_state})
         except (OSError, ValueError) as exc:
             return ToolResult.error(f"Knowledge save: {exc}")

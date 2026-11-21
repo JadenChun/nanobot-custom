@@ -21,6 +21,7 @@ from websockets.asyncio.server import Server, ServerConnection, serve, unix_serv
 from websockets.exceptions import ConnectionClosed
 from websockets.http11 import Request as WsRequest
 
+from nanobot.attachments._inventory import retained_markdown_media
 from nanobot.attachments.models import AttachmentRecord
 from nanobot.bus.events import (
     OUTBOUND_META_AGENT_UI,
@@ -37,6 +38,9 @@ from nanobot.session.webui_turns import (
     websocket_turn_transcript_persistence_failed,
 )
 from nanobot.webui.gateway_services import GatewayServices
+from nanobot.webui.http_utils import (
+    is_loopback_host,
+)
 from nanobot.webui.http_utils import (
     normalize_config_path as _normalize_config_path,
 )
@@ -58,6 +62,7 @@ from nanobot.webui.transcript import WEBUI_TRANSCRIPT_INCOMPLETE_KEY
 from nanobot.webui.websocket_logging import websockets_server_logger
 
 if TYPE_CHECKING:
+    from nanobot.bus.events import CommittedUserInput
     from nanobot.bus.outbound_events import ProgressEvent
     from nanobot.security.desktop_permissions import WorkspacePermissionProjection
     from nanobot.security.workspace_access import WorkspaceScope
@@ -68,6 +73,18 @@ _WEBUI_HTTP_OPEN_TIMEOUT_S = 360.0
 _LISTENER_CHECK_INTERVAL_S = 0.5
 _LISTENER_STABLE_AFTER_S = 30.0
 _LISTENER_RESTART_BACKOFF_S = (1.0, 2.0, 4.0, 8.0, 16.0, 30.0)
+
+
+def _is_live_progress_event(progress_event: "ProgressEvent | None") -> bool:
+    """True when a progress frame is live-only and must not be persisted.
+
+    ``phase: "progress"`` tool events describe a running call's incremental
+    state. They refresh the live row over WebSocket and are intentionally
+    excluded from the session transcript so replay never duplicates rows.
+    """
+    if progress_event is None or not progress_event.tool_events:
+        return False
+    return all(event.get("phase") == "progress" for event in progress_event.tool_events)
 
 # Outbound delivery is isolated per connection.  A bounded queue keeps a slow
 # or suspended terminal from retaining an unbounded stream in server memory.
@@ -284,14 +301,15 @@ class WebSocketConfig(Base):
         return self
 
     @model_validator(mode="after")
-    def wildcard_host_requires_auth(self) -> Self:
-        if self.host not in ("0.0.0.0", "::"):
+    def non_loopback_host_requires_auth(self) -> Self:
+        if self.unix_socket_path or is_loopback_host(self.host):
             return self
         if self.token.strip() or self.token_issue_secret.strip() or self.trusted_proxy_auth is not None:
             return self
         raise ValueError(
-            "host is 0.0.0.0 (all interfaces) but neither token, token_issue_secret, "
-            "nor trusted_proxy_auth is set — set one to prevent unauthenticated access"
+            f"host {self.host!r} is not a loopback address but neither token, "
+            "token_issue_secret, nor trusted_proxy_auth is set — set one to "
+            "prevent unauthenticated access"
         )
 
 
@@ -320,6 +338,19 @@ def _is_valid_chat_id(value: Any) -> TypeGuard[str]:  # pyright: ignore[reportUn
     return is_valid_webui_chat_id(value)
 
 
+class _ParsedJSONObject(dict[str, Any]):
+    """Retain duplicate JSON member names until the typed edge validates them."""
+
+    def __init__(self, pairs: list[tuple[str, Any]]) -> None:
+        super().__init__()
+        duplicates: set[str] = set()
+        for key, value in pairs:
+            if key in self:
+                duplicates.add(key)
+            self[key] = value
+        self.duplicate_keys = frozenset(duplicates)
+
+
 def _parse_envelope(raw: str) -> dict[str, Any] | None:
     """Return a typed envelope dict if the frame is a new-style JSON envelope, else None.
 
@@ -331,7 +362,7 @@ def _parse_envelope(raw: str) -> dict[str, Any] | None:
     if not text.startswith("{"):
         return None
     try:
-        data = cast(object, json.loads(text))
+        data = cast(object, json.loads(text, object_pairs_hook=_ParsedJSONObject))
     except json.JSONDecodeError:
         return None
     if not isinstance(data, dict):
@@ -436,14 +467,14 @@ class WebSocketChannel(BaseChannel):
         return await self.gateway.endpoint.revalidate_mobile_connection(connection)
 
     async def _revalidate_raw_mobile_frame(self, connection: ServerConnection) -> bool:
-        identity = getattr(connection, "mobile_identity", None)
-        if identity is None:
-            return True
-        if not isinstance(getattr(identity, "installation_id", None), str):
-            return True
-        if not isinstance(getattr(identity, "scopes", None), (tuple, list, set, frozenset)):
-            return True
         return await self.revalidate_mobile_connection(connection)
+
+    async def _mobile_delivery_allowed(self, connection: ServerConnection) -> bool:
+        """Revalidate mobile authority immediately before private delivery."""
+        try:
+            return await self.revalidate_mobile_connection(connection)
+        except Exception:
+            return False
 
     async def webui_send_event(
         self,
@@ -811,7 +842,27 @@ class WebSocketChannel(BaseChannel):
                     if self._server is server:
                         self._server = None
 
-        task = asyncio.create_task(runner())
+        async def run_with_remote_owner() -> None:
+            owner = self.gateway.remote_owner
+            if owner is None:
+                await runner()
+                return
+            startup = asyncio.create_task(asyncio.to_thread(owner.start))
+            watcher: asyncio.Task[None] | None = None
+            try:
+                await asyncio.shield(startup)
+                watcher = asyncio.create_task(owner.watch(stop_event))
+                await runner()
+            finally:
+                stop_event.set()
+                try:
+                    await asyncio.gather(startup, return_exceptions=True)
+                    if watcher is not None:
+                        await watcher
+                finally:
+                    await asyncio.to_thread(owner.stop)
+
+        task = asyncio.create_task(run_with_remote_owner())
         self._server_task = task
         try:
             await task
@@ -993,6 +1044,16 @@ class WebSocketChannel(BaseChannel):
                     return
                 try:
                     async with asyncio.timeout(_OUTBOUND_SEND_TIMEOUT_S):
+                        if not await self._mobile_delivery_allowed(connection):
+                            self.logger.debug("dropping outbound frame for stale mobile connection")
+                            self._schedule_connection_retirement(
+                                connection,
+                                state,
+                                close_connection=True,
+                                close_code=1008,
+                                close_reason="mobile access is no longer current",
+                            )
+                            return
                         await connection.send(frame.raw)
                 except asyncio.CancelledError:
                     raise
@@ -1166,7 +1227,7 @@ class WebSocketChannel(BaseChannel):
         metadata: dict[str, Any] | None,
         phase: str,
     ) -> bool:
-        if not persisted and phase in {"answer", "complete"} and (metadata or {}).get("webui") is True:
+        if not persisted and phase in {"user", "answer", "complete"} and (metadata or {}).get("webui") is True:
             owner = (metadata or {}).get(WEBSOCKET_TURN_OWNER_METADATA_KEY)
             mark_websocket_turn_transcript_persistence_failed(
                 chat_id,
@@ -1204,6 +1265,20 @@ class WebSocketChannel(BaseChannel):
 
     async def send(self, msg: OutboundMessage) -> None:
         await self._outbound.send(msg)
+
+    def persist_committed_user_input(
+        self,
+        chat_id: str,
+        user_input: CommittedUserInput,
+        metadata: dict[str, Any],
+    ) -> None:
+        if self._temporary_chats.should_persist_transcript(chat_id):
+            self._retain_turn_on_transcript_failure(
+                chat_id,
+                persisted=self._transcripts.append_committed_user_message(chat_id, user_input, metadata),
+                metadata=metadata,
+                phase="user",
+            )
 
     def _media_workspace(self, chat_id: str) -> tuple[Path, bool]:
         """Resolve acknowledged chat focus and its temporary-chat grant ceiling."""
@@ -1268,14 +1343,18 @@ class WebSocketChannel(BaseChannel):
         elif progress_event:
             payload["kind"] = "progress"
         phase = "activity" if payload.get("kind") in ("tool_hint", "progress") else "answer"
-        self._persist_turn_transcript_event(
-            msg.chat_id,
-            payload,
-            metadata=msg.metadata,
-            phase=phase,
-            include_source=True,
-            transcript_overrides={"text": text},
-        )
+        if not _is_live_progress_event(progress_event):
+            self._persist_turn_transcript_event(
+                msg.chat_id,
+                payload,
+                metadata=msg.metadata,
+                phase=phase,
+                include_source=True,
+                transcript_overrides={
+                    "text": text,
+                    "media_publications": retained_markdown_media(wire_text),
+                },
+            )
         raw = json.dumps(payload, ensure_ascii=False)
         if not conns:
             return

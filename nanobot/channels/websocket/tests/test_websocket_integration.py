@@ -7,8 +7,9 @@ multi-client scenarios, edge cases, and realistic usage patterns.
 from __future__ import annotations
 
 import asyncio
+import json
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -17,12 +18,20 @@ import websockets
 from nanobot.bus.events import OutboundMessage
 from nanobot.bus.outbound_events import ProgressEvent
 from nanobot.channels.websocket.runtime import WebSocketChannel, WebSocketConfig
+from nanobot.config.schema import RemoteAccessConfig
+from nanobot.remote.owner import RemoteAccessOwner
 from nanobot.webui.gateway_services import build_gateway_services
 
 from .ws_test_client import WsTestClient, issue_token, issue_token_ok
 
 
-def _ch(bus: Any, port: int, **kw: Any) -> WebSocketChannel:
+def _ch(
+    bus: Any,
+    port: int,
+    *,
+    remote_access: RemoteAccessConfig | None = None,
+    **kw: Any,
+) -> WebSocketChannel:
     cfg: dict[str, Any] = {
         "enabled": True,
         "allowFrom": ["*"],
@@ -43,6 +52,7 @@ def _ch(bus: Any, port: int, **kw: Any) -> WebSocketChannel:
         runtime_model_name=None,
         runtime_surface="browser",
         runtime_capabilities_overrides=None,
+        remote_access=remote_access,
     )
     return WebSocketChannel(cfg, bus, gateway=gateway)
 
@@ -202,6 +212,280 @@ async def test_server_send_message(bus: MagicMock) -> None:
     finally:
         await ch.stop()
         await t
+
+
+@pytest.mark.asyncio
+async def test_large_read_file_activity_keeps_websocket_connection_open(
+    bus: MagicMock,
+    tmp_path: Path,
+) -> None:
+    from nanobot.agent.hook import AgentHookContext
+    from nanobot.agent.tools.filesystem import ReadFileTool
+    from nanobot.providers.base import ToolCallRequest
+    from nanobot.utils.progress_events import build_tool_event_finish_payloads
+
+    reader = ReadFileTool(workspace=tmp_path, restrict_to_workspace=True)
+    tool_calls = [
+        ToolCallRequest(
+            id=f"read-image-{index}",
+            name="read_file",
+            arguments={"path": f"candidate-{index}.png"},
+        )
+        for index in range(4)
+    ]
+    results = []
+    source_bytes = b"\x89PNG\r\n\x1a\n" + b"x" * (1_600_000 - 8)
+    for index in range(4):
+        path = tmp_path / f"candidate-{index}.png"
+        path.write_bytes(source_bytes)
+        result = await reader.execute(path=path.name)
+        assert isinstance(result, list)
+        results.append(result)
+
+    context = AgentHookContext(
+        iteration=0,
+        messages=[],
+        tool_calls=tool_calls,
+        tool_results=results,
+        tool_events=cast(list[dict[str, str]], [
+            {
+                "name": "read_file",
+                "status": "ok",
+                "detail": "image read",
+                "media_artifacts": ([{
+                    "id": "artifact_fixture",
+                    "kind": "image",
+                    "mime": "image/png",
+                    "name": "candidate-0.png",
+                }] if index == 0 else []),
+            }
+            for index in range(4)
+        ]),
+    )
+    finish_events = build_tool_event_finish_payloads(context)
+    event_bytes = json.dumps(finish_events, ensure_ascii=False).encode("utf-8")
+    assert len(event_bytes) < 8 * 1024 * 1024
+    assert b"data:image/" not in event_bytes
+
+    ch = _ch(bus, port=0)
+    server = asyncio.create_task(ch.start())
+    try:
+        for _ in range(500):
+            if ch._server is not None:
+                break
+            if server.done():
+                await server
+            await asyncio.sleep(0.01)
+        assert ch._server is not None
+        port = ch._server.sockets[0].getsockname()[1]
+        async with WsTestClient(f"ws://127.0.0.1:{port}/", client_id="large-image") as client:
+            ready = await client.recv_ready()
+            await ch.send(OutboundMessage(
+                channel="websocket",
+                chat_id=ready.chat_id,
+                content="image activity",
+                event=ProgressEvent(tool_events=finish_events),
+            ))
+            received = await client.recv_message()
+            received_bytes = json.dumps(received.raw, ensure_ascii=False).encode("utf-8")
+            assert len(received_bytes) < 8 * 1024 * 1024
+            assert "data:image/" not in str(received.raw)
+            assert len(received.raw["tool_events"]) == 4
+            await ch.send(OutboundMessage(
+                channel="websocket",
+                chat_id=ready.chat_id,
+                content="still connected",
+            ))
+            assert (await client.recv_message()).text == "still connected"
+    finally:
+        await ch.stop()
+        await server
+
+
+@pytest.mark.asyncio
+async def test_revoked_mobile_client_does_not_receive_queued_private_message(
+    bus: MagicMock,
+    tmp_path: Path,
+) -> None:
+    owner = RemoteAccessOwner(tmp_path / "remote-access")
+    owner.start()
+    owner.store.set_enabled(True)
+    channel = _ch(
+        bus,
+        port=0,
+        allowFrom=["desktop"],
+        token="desktop-secret",
+        websocketRequiresToken=True,
+        remote_access=RemoteAccessConfig(
+            enabled=True,
+            state_dir=str(owner.store.root),
+            socket_path=str(owner.socket_path),
+        ),
+    )
+    server_task = asyncio.create_task(channel.start())
+    mobile = None
+    desktop = None
+    release_mobile_send = asyncio.Event()
+    mobile_send_held = asyncio.Event()
+    try:
+        for _ in range(500):
+            if channel._server is not None:
+                break
+            if server_task.done():
+                await server_task
+            await asyncio.sleep(0.01)
+        assert channel._server is not None
+        port = channel._server.sockets[0].getsockname()[1]
+        origin = f"https://127.0.0.1:{port}"
+        pair = owner.tokens.issue_device(
+            "install-mobile",
+            ("chat.read",),
+            device_fingerprint="a" * 64,
+            device_generation=1,
+            origin=origin,
+        )
+
+        mobile = await websockets.connect(
+            f"ws://127.0.0.1:{port}/mobile/v1/ws",
+            origin=origin,
+            additional_headers={"Authorization": f"Bearer {pair.access_token}"},
+        )
+        mobile_ready = json.loads(await asyncio.wait_for(mobile.recv(), timeout=2))
+        desktop = await websockets.connect(
+            f"ws://127.0.0.1:{port}/?client_id=desktop&token=desktop-secret"
+        )
+        await asyncio.wait_for(desktop.recv(), timeout=2)
+        await desktop.send(json.dumps({
+            "type": "attach",
+            "chat_id": mobile_ready["chat_id"],
+        }))
+        while True:
+            attached = json.loads(await asyncio.wait_for(desktop.recv(), timeout=2))
+            if (
+                attached.get("event") == "attached"
+                and attached.get("chat_id") == mobile_ready["chat_id"]
+            ):
+                break
+
+        original_revalidate = channel.revalidate_mobile_connection
+
+        async def hold_mobile_send(connection: Any) -> bool:
+            if getattr(connection, "mobile_identity", None) is not None:
+                mobile_send_held.set()
+                await release_mobile_send.wait()
+            return await original_revalidate(connection)
+
+        channel.revalidate_mobile_connection = hold_mobile_send
+        message = "queued-mobile-revocation-7d27b7"
+        await channel.send(OutboundMessage(
+            channel="websocket",
+            chat_id=mobile_ready["chat_id"],
+            content=message,
+        ))
+        await asyncio.wait_for(mobile_send_held.wait(), timeout=2)
+
+        while True:
+            delivered = json.loads(await asyncio.wait_for(desktop.recv(), timeout=2))
+            if delivered.get("text") == message:
+                break
+
+        owner.tokens.revoke("install-mobile")
+        release_mobile_send.set()
+        await asyncio.wait_for(mobile.wait_closed(), timeout=3)
+        with pytest.raises(websockets.exceptions.ConnectionClosed):
+            await asyncio.wait_for(mobile.recv(), timeout=1)
+    finally:
+        release_mobile_send.set()
+        if mobile is not None:
+            await mobile.close()
+        if desktop is not None:
+            await desktop.close()
+        await channel.stop()
+        await server_task
+        owner.stop()
+
+
+@pytest.mark.asyncio
+async def test_malformed_mobile_identity_blocks_raw_message_but_desktop_still_works(
+    bus: MagicMock,
+    tmp_path: Path,
+) -> None:
+    owner = RemoteAccessOwner(tmp_path / "remote-access")
+    owner.start()
+    owner.store.set_enabled(True)
+    channel = _ch(
+        bus,
+        port=0,
+        allowFrom=["desktop"],
+        token="desktop-secret",
+        websocketRequiresToken=True,
+        remote_access=RemoteAccessConfig(
+            enabled=True,
+            state_dir=str(owner.store.root),
+            socket_path=str(owner.socket_path),
+        ),
+    )
+    server_task = asyncio.create_task(channel.start())
+    mobile = None
+    desktop = None
+    try:
+        for _ in range(500):
+            if channel._server is not None:
+                break
+            if server_task.done():
+                await server_task
+            await asyncio.sleep(0.01)
+        assert channel._server is not None
+        port = channel._server.sockets[0].getsockname()[1]
+        origin = f"https://127.0.0.1:{port}"
+        pair = owner.tokens.issue_device(
+            "install-mobile",
+            ("chat.read", "chat.write"),
+            device_fingerprint="b" * 64,
+            device_generation=1,
+            origin=origin,
+        )
+        mobile = await websockets.connect(
+            f"ws://127.0.0.1:{port}/mobile/v1/ws",
+            origin=origin,
+            additional_headers={"Authorization": f"Bearer {pair.access_token}"},
+        )
+        await asyncio.wait_for(mobile.recv(), timeout=2)
+        mobile_connection = next(
+            connection
+            for connection in channel.gateway.endpoint.protocol_connections
+            if getattr(connection, "mobile_access_token", None) == pair.access_token
+        )
+        mobile_connection.mobile_identity = object()
+
+        desktop = await websockets.connect(
+            f"ws://127.0.0.1:{port}/?client_id=desktop&token=desktop-secret"
+        )
+        await asyncio.wait_for(desktop.recv(), timeout=2)
+
+        received: list[str] = []
+        desktop_processed = asyncio.Event()
+
+        async def record_inbound(message: Any) -> None:
+            received.append(message.content)
+            if message.content == "desktop-raw-message-6f5f8b":
+                desktop_processed.set()
+
+        bus.publish_inbound.side_effect = record_inbound
+        await mobile.send("mobile-raw-message-1135dd")
+        await asyncio.wait_for(mobile.wait_closed(), timeout=3)
+
+        await desktop.send("desktop-raw-message-6f5f8b")
+        await asyncio.wait_for(desktop_processed.wait(), timeout=3)
+        assert received == ["desktop-raw-message-6f5f8b"]
+    finally:
+        if mobile is not None:
+            await mobile.close()
+        if desktop is not None:
+            await desktop.close()
+        await channel.stop()
+        await server_task
+        owner.stop()
 
 
 @pytest.mark.asyncio

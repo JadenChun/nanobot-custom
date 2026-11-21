@@ -370,6 +370,33 @@ async def test_managed_fork_title_and_failure_rollback(tmp_path, monkeypatch):
         assert manager.resolve_session_mode("websocket:failure").state == "deleted"
 
 
+async def test_saved_ingest_valid_prefix_then_invalid_message_is_atomic(tmp_path):
+    async with managers(tmp_path, managed=False) as manager:
+        sdk, _loop = client(manager)
+        key = "websocket:atomic-ingest"
+        messages = [{"role": "user", "content": "valid"}, {"role": "assistant"}]
+
+        with pytest.raises(ValueError):
+            await sdk.ingest(key, messages, metadata={"title": "rejected"})
+        assert manager.read_session_snapshot(key) is None
+        assert key not in manager._cache
+
+        seed(manager, key)
+        snapshot = manager.read_session_snapshot(key)
+        rows = json.loads(json.dumps(snapshot.messages))
+        metadata = json.loads(json.dumps(manager.read_session_metadata(key)))
+        cached = manager.get_cached(key)
+        assert cached is not None and metadata is not None
+        with pytest.raises(ValueError):
+            await sdk.ingest(key, messages, metadata={"title": "rejected"})
+        assert manager.read_session_snapshot(key).messages == rows
+        assert manager.read_session_metadata(key) == metadata
+        assert manager.get_cached(key) is cached
+
+        await sdk.ingest(key, [{"role": "user", "content": "accepted"}])
+        assert manager.read_session_snapshot(key).messages[-1]["content"] == "accepted"
+
+
 async def test_workspace_draft_first_accepted_message_update_and_temporary(tmp_path):
     async with managers(tmp_path) as manager:
         controller = WebUIWorkspaceController(session_manager=manager, default_workspace=manager.workspace, default_restrict_to_workspace=True)

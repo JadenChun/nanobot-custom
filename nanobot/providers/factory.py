@@ -9,6 +9,7 @@ from nanobot.config.schema import Config, InlineFallbackConfig, ModelPresetConfi
 from nanobot.providers.base import GenerationSettings, LLMProvider
 from nanobot.providers.capabilities import ModelCapabilities
 from nanobot.providers.fallback_provider import FallbackProvider
+from nanobot.providers.oauth_credentials import CredentialOwner
 from nanobot.providers.provider_policy import ProviderPolicy, resolve_provider_policy
 from nanobot.providers.registry import ProviderSpec, create_dynamic_spec, find_by_name
 
@@ -63,10 +64,11 @@ def _resolve_model_preset(
     return preset if preset is not None else config.resolve_preset(preset_name)
 
 
-def _provider_extra_headers(
+def provider_extra_headers(
     spec: ProviderSpec | None,
     provider_config: ProviderConfig | None,
 ) -> dict[str, str] | None:
+    """Merge registry headers with the configured provider's overrides."""
     headers = dict(spec.default_extra_headers) if spec else {}
     if provider_config and provider_config.extra_headers:
         headers.update(provider_config.extra_headers)
@@ -191,6 +193,8 @@ def _make_provider_core(
     backend = setup.backend
     policy = setup.policy
     effective_key = p.effective_keys[0] if p and p.effective_keys else None
+    data_root = config.runtime_data_dir
+    credential_owner = None if data_root is None else CredentialOwner.from_data_root(data_root)
 
     if backend == "openai_codex":
         from nanobot.providers.openai_codex_provider import OpenAICodexProvider
@@ -200,6 +204,7 @@ def _make_provider_core(
             proxy=getattr(p, "proxy", None) if p else None,
             extra_body=p.extra_body if p else None,
             provider_name=provider_name,
+            credential_owner=credential_owner,
         )
     elif backend == "xai_grok":
         from nanobot.providers.xai_grok_provider import XAIGrokProvider
@@ -209,6 +214,7 @@ def _make_provider_core(
             proxy=getattr(p, "proxy", None) if p else None,
             extra_body=p.extra_body if p else None,
             provider_name=provider_name,
+            credential_owner=credential_owner,
         )
     elif backend == "azure_openai":
         from nanobot.providers.azure_openai_provider import AzureOpenAIProvider
@@ -224,7 +230,9 @@ def _make_provider_core(
     elif backend == "github_copilot":
         from nanobot.providers.github_copilot_provider import GitHubCopilotProvider
 
-        provider = GitHubCopilotProvider(default_model=model, provider_name=provider_name)
+        provider = GitHubCopilotProvider(
+            default_model=model, provider_name=provider_name, credential_owner=credential_owner,
+        )
     elif backend == "anthropic":
         from nanobot.providers.anthropic_provider import AnthropicProvider
 
@@ -232,7 +240,7 @@ def _make_provider_core(
             api_key=effective_key,
             api_base=config.get_api_base(model, preset=preset),
             default_model=model,
-            extra_headers=_provider_extra_headers(spec, p),
+            extra_headers=provider_extra_headers(spec, p),
             provider_name=provider_name,
         )
     elif backend == "bedrock":
@@ -246,6 +254,9 @@ def _make_provider_core(
             profile=getattr(p, "profile", None) if p else None,
             extra_body=p.extra_body if p else None,
             provider_name=provider_name,
+            allow_process_bearer=bool(
+                getattr(p, "allow_process_bearer", False) if p else False
+            ),
         )
     else:
         from nanobot.providers.openai_compat_provider import OpenAICompatProvider
@@ -255,7 +266,7 @@ def _make_provider_core(
                 api_key=key,
                 api_base=config.get_api_base(model, preset=preset),
                 default_model=model,
-                extra_headers=_provider_extra_headers(spec, p),
+                extra_headers=provider_extra_headers(spec, p),
                 spec=spec,
                 extra_body=p.extra_body if p else None,
                 api_type=p.api_type if p and provider_name == "openai" else "auto",
@@ -412,7 +423,7 @@ def provider_signature(
             provider_name,
             config.get_api_key(fallback.model, preset=fallback),
             config.get_api_base(fallback.model, preset=fallback),
-            _provider_extra_headers(spec, fp),
+            provider_extra_headers(spec, fp),
             fp.extra_body if fp else None,
             fp.api_type if fp else "auto",
             fp.extra_query if fp else None,
@@ -440,7 +451,7 @@ def provider_signature(
         provider_name,
         config.get_api_key(resolved.model, preset=resolved),
         config.get_api_base(resolved.model, preset=resolved),
-        _provider_extra_headers(primary_spec, p),
+        provider_extra_headers(primary_spec, p),
         p.extra_body if p else None,
         p.api_type if p else "auto",
         p.extra_query if p else None,

@@ -2,8 +2,10 @@ import { describe, expect, it } from "vitest";
 
 import {
   canonicalToolTrace,
+  mergeToolProgressEvents,
   mergeToolProgressTraceLines,
   mergeUniqueToolTraceLines,
+  toolTraceLinesFromEvents,
 } from "@/lib/tool-traces";
 
 describe("tool trace identity", () => {
@@ -40,5 +42,38 @@ describe("tool trace identity", () => {
         arguments: { query: "nanobot news" },
       }],
     )).toEqual(['web_search({"query":"nanobot news"})']);
+  });
+
+  it("treats a live progress frame as an update, not a new call row", () => {
+    const events = [
+      { phase: "start", call_id: "c1", name: "mcp_comfy_generate_video", arguments: { workflow: "wan" } },
+      { phase: "progress", call_id: "c1", name: "mcp_comfy_generate_video", progress: 62, total: 100, message: "Generating" },
+    ];
+
+    expect(toolTraceLinesFromEvents(events)).toEqual([
+      'mcp_comfy_generate_video({"workflow":"wan"})',
+    ]);
+  });
+
+  it("drops live progress detail once the call finishes", () => {
+    const merged = mergeToolProgressEvents(
+      [{
+        phase: "start",
+        call_id: "c1",
+        name: "mcp_comfy_generate_video",
+        arguments: { workflow: "wan" },
+      }],
+      [{ phase: "progress", call_id: "c1", name: "mcp_comfy_generate_video", progress: 62, total: 100, message: "Generating" }],
+    );
+    expect(merged?.[0]).toMatchObject({ progress: 62, message: "Generating" });
+
+    const finished = mergeToolProgressEvents(merged, [{
+      phase: "end",
+      call_id: "c1",
+      name: "mcp_comfy_generate_video",
+      arguments: { workflow: "wan" },
+    }]);
+    expect(finished?.[0].message).toBeUndefined();
+    expect(finished?.[0].progress).toBeUndefined();
   });
 });

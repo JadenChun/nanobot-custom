@@ -149,7 +149,7 @@ def test_payload_merges_catalog_and_marks_unsupported_installs(tmp_path: Path) -
         "suno",
     }
     assert apps["gimp"]["install_supported"] is True
-    assert apps["gimp"]["source"] == "harness+public"
+    assert apps["gimp"]["source"] == "harness"
     assert apps["gimp"]["description"] == "Public duplicate entry"
     assert apps["feishu"]["description"] == "Lark CLI"
     assert apps["feishu"]["manifest"]["description"] == "Lark CLI"
@@ -160,7 +160,7 @@ def test_payload_merges_catalog_and_marks_unsupported_installs(tmp_path: Path) -
     gimp_manifest = apps["gimp"]["manifest"]
     assert gimp_manifest["schema"] == "agent-app.v1"
     assert gimp_manifest["id"] == "gimp"
-    assert gimp_manifest["source"] == "cli-anything:harness+public"
+    assert gimp_manifest["source"] == "cli-anything:harness"
     assert gimp_manifest["capabilities"][0]["type"] == "cli"
     assert gimp_manifest["capabilities"][0]["entry_point"] == "cli-anything-gimp"
     assert gimp_manifest["install"]["verification"] == ["entry_point_available"]
@@ -434,27 +434,20 @@ def test_run_argv_logs_command_exit_and_output(
         def info(self, message: str, *args: object) -> None:
             records.append(message.format(*args))
 
+    env = {"PATH": "/usr/bin", "PYTHONUNBUFFERED": "1"}
+
     def fake_run(
         argv: list[str],
         *,
-        capture_output: bool,
-        text: bool,
-        encoding: str,
-        errors: str,
         timeout: int,
-        env: dict[str, str],
+        cwd: Path | None = None,
     ) -> subprocess.CompletedProcess[str]:
-        assert capture_output is True
-        assert text is True
-        assert encoding == "utf-8"
-        assert errors == "replace"
         assert timeout == 5
-        assert "OPENAI_API_KEY" not in env
-        assert env["PYTHONUNBUFFERED"] == "1"
         return subprocess.CompletedProcess(argv, 0, stdout="installed ok", stderr="")
 
     monkeypatch.setattr(cli_service, "logger", _Logger())
-    monkeypatch.setattr(cli_service.subprocess, "run", fake_run)
+    monkeypatch.setattr(manager, "_run_owned_argv", fake_run)
+    monkeypatch.setattr(manager, "_subprocess_env", lambda: env)
 
     result = manager._run_argv(["python", "-m", "pip", "install", "sample"], timeout=5)
 
@@ -462,6 +455,8 @@ def test_run_argv_logs_command_exit_and_output(
     assert any(record.startswith("CLI Apps: running ") for record in records)
     assert any("command exited with code 0" in record for record in records)
     assert any("installed ok" in record for record in records)
+    assert "OPENAI_API_KEY" not in env
+    assert env["PYTHONUNBUFFERED"] == "1"
 
 
 def test_run_argv_decodes_utf8_output(tmp_path: Path) -> None:
@@ -478,6 +473,25 @@ def test_run_argv_decodes_utf8_output(tmp_path: Path) -> None:
 
     assert result.returncode == 0
     assert result.stdout == "\u2713"
+
+
+def test_run_owned_argv_bounds_stdout_and_stderr_flood(tmp_path: Path) -> None:
+    manager = _manager(tmp_path)
+
+    result = manager._run_owned_argv(
+        [
+            sys.executable,
+            "-c",
+            "import sys; sys.stdout.write('x'*1000000); sys.stderr.write('y'*1000000)",
+        ],
+        timeout=10,
+    )
+
+    assert result.returncode == 0
+    assert len(result.stdout) < 100_000
+    assert "output truncated" in result.stdout
+    assert len(result.stderr) < 100_000
+    assert "output truncated" in result.stderr
 
 
 def test_install_records_available_cli_without_reinstalling(
@@ -944,11 +958,15 @@ def test_run_installed_cli_uses_argv_without_shell(
         lambda entry: resolved if entry == "cli-anything-gimp" else None,
     )
 
-    def fake_run(argv: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
-        assert "shell" not in kwargs or kwargs["shell"] is False
-        assert kwargs["text"] is True
-        assert kwargs["encoding"] == "utf-8"
-        assert kwargs["errors"] == "replace"
+    calls: list[list[str]] = []
+
+    def fake_run(
+        argv: list[str],
+        *,
+        timeout: int,
+        cwd: Path | None = None,
+    ) -> subprocess.CompletedProcess[str]:
+        calls.append(argv)
         return subprocess.CompletedProcess(
             argv,
             0,
@@ -956,7 +974,7 @@ def test_run_installed_cli_uses_argv_without_shell(
             stderr="",
         )
 
-    monkeypatch.setattr("nanobot.apps.cli.service.subprocess.run", fake_run)
+    monkeypatch.setattr(manager, "_run_owned_argv", fake_run)
     manager._save_installed(
         {
             "gimp": {
@@ -972,6 +990,7 @@ def test_run_installed_cli_uses_argv_without_shell(
 
     assert "CLI app 'gimp' exited 0" in result
     assert "['--json', 'project', 'list']" in result
+    assert calls[0][1:] == ["--json", "project", "list"]
 
 
 def test_run_reports_created_artifacts(
@@ -986,12 +1005,17 @@ def test_run_reports_created_artifacts(
         lambda entry: resolved if entry == "cli-anything-gimp" else None,
     )
 
-    def fake_run(argv: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
-        cwd = Path(str(kwargs["cwd"]))
+    def fake_run(
+        argv: list[str],
+        *,
+        timeout: int,
+        cwd: Path | None = None,
+    ) -> subprocess.CompletedProcess[str]:
+        assert cwd is not None
         (cwd / "diagram.png").write_bytes(b"\x89PNG\r\n\x1a\nimage")
         return subprocess.CompletedProcess(argv, 0, stdout="done", stderr="")
 
-    monkeypatch.setattr("nanobot.apps.cli.service.subprocess.run", fake_run)
+    monkeypatch.setattr(manager, "_run_owned_argv", fake_run)
     manager._save_installed({"gimp": {"entry_point": "cli-anything-gimp"}})
 
     result = manager.run("gimp", ["render"])

@@ -126,7 +126,14 @@ def test_preserve_nonempty_leaves_history_and_has_no_rows(tmp_path: Path) -> Non
 def test_marker_present_and_backup_collision(tmp_path: Path) -> None:
     memory, _ = _workspace(tmp_path, history=b"# Existing\n\n" + _FRAME)
     (memory / "HISTORY.md.bak").write_bytes(b"occupied")
-    before = (memory / "HISTORY.md").stat()
+    before_stat = (memory / "HISTORY.md").stat()
+    before = (
+        before_stat.st_ino,
+        before_stat.st_mtime_ns,
+        before_stat.st_size,
+        before_stat.st_mode,
+        before_stat.st_nlink,
+    )
     record = _prepare(tmp_path)
     assert record.payload["backup"] == {
         "basename": "HISTORY.md.bak.2",
@@ -135,7 +142,14 @@ def test_marker_present_and_backup_collision(tmp_path: Path) -> None:
             {"basename": "HISTORY.md.bak.2", "exists": False},
         ],
     }
-    assert (memory / "HISTORY.md").stat() == before
+    after_stat = (memory / "HISTORY.md").stat()
+    assert (
+        after_stat.st_ino,
+        after_stat.st_mtime_ns,
+        after_stat.st_size,
+        after_stat.st_mode,
+        after_stat.st_nlink,
+    ) == before
 
 
 def test_replay_after_marker_stage_crash(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

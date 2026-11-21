@@ -12,6 +12,7 @@ $InstallTarget = $Package
 $InstallSource = "PyPI"
 $script:NanobotRunner = $null
 $script:NanobotPython = $null
+$script:NanobotPipxBin = $null
 $script:LastInstallSucceeded = $false
 
 function Write-Info {
@@ -105,6 +106,35 @@ function Ensure-Pip {
     }
 }
 
+function Get-PipxBinDir {
+    try {
+        $Dir = & pipx environment --value PIPX_BIN_DIR 2>$null
+        if ($LASTEXITCODE -eq 0 -and $Dir) {
+            return ([string]($Dir | Select-Object -First 1)).Trim()
+        }
+    } catch {}
+    return $null
+}
+
+function Resolve-PipxNanobot {
+    $BinDir = Get-PipxBinDir
+    if ($BinDir) {
+        foreach ($Name in @("nanobot.exe", "nanobot")) {
+            $Candidate = Join-Path $BinDir $Name
+            if (Test-Path -LiteralPath $Candidate) {
+                return $Candidate
+            }
+        }
+        return $null
+    }
+
+    $Command = Get-Command nanobot -ErrorAction SilentlyContinue
+    if ($Command) {
+        return $Command.Source
+    }
+    return $null
+}
+
 function Invoke-Nanobot {
     param([string[]]$NanobotArgs)
 
@@ -113,7 +143,10 @@ function Invoke-Nanobot {
             & uv tool run --from $InstallTarget nanobot @NanobotArgs
         }
         "pipx" {
-            & pipx run --spec $InstallTarget nanobot @NanobotArgs
+            if (-not $script:NanobotPipxBin) {
+                Fail "the installed pipx executable for $InstallTarget was not found. Reinstall it with 'pipx install --force $InstallTarget' and check 'pipx environment --value PIPX_BIN_DIR'."
+            }
+            & $script:NanobotPipxBin @NanobotArgs
         }
         "python" {
             & $script:NanobotPython -m nanobot @NanobotArgs
@@ -127,7 +160,16 @@ function Invoke-Nanobot {
 function Get-NanobotCommand {
     switch ($script:NanobotRunner) {
         "uv" { return "uv tool run --from $InstallTarget nanobot" }
-        "pipx" { return "pipx run --spec $InstallTarget nanobot" }
+        "pipx" {
+            if ($script:NanobotPipxBin) {
+                return $script:NanobotPipxBin
+            }
+            $BinDir = Get-PipxBinDir
+            if ($BinDir) {
+                return (Join-Path $BinDir "nanobot")
+            }
+            return "the installed pipx nanobot executable"
+        }
         "python" { return "$script:NanobotPython -m nanobot" }
         default { return "nanobot" }
     }
@@ -183,6 +225,7 @@ function Install-WithPipx {
         return
     }
     $script:NanobotRunner = "pipx"
+    $script:NanobotPipxBin = Resolve-PipxNanobot
     $script:LastInstallSucceeded = $true
 }
 
@@ -262,7 +305,12 @@ if ($DryRun) {
         Write-Info "Dry run: would run nanobot as: uv tool run --from $InstallTarget nanobot"
     } elseif (Get-Command pipx -ErrorAction SilentlyContinue) {
         Write-Info "Dry run: would run: pipx install --python $Python --force $InstallTarget"
-        Write-Info "Dry run: would run nanobot as: pipx run --spec $InstallTarget nanobot"
+        $PipxDir = Get-PipxBinDir
+        if ($PipxDir) {
+            Write-Info "Dry run: would run nanobot as: $(Join-Path $PipxDir 'nanobot')"
+        } else {
+            Write-Info "Dry run: would run nanobot as: the installed pipx nanobot executable"
+        }
     } else {
         $HomeDir = if ($env:HOME) { $env:HOME } elseif ($env:USERPROFILE) { $env:USERPROFILE } else { "~" }
         $VenvDir = if ($env:NANOBOT_VENV) { $env:NANOBOT_VENV } else { Join-Path $HomeDir ".nanobot\venv" }
@@ -310,6 +358,9 @@ if (Test-VirtualEnv $Python) {
 }
 
 Write-Info "Installed nanobot:"
+if ($script:NanobotRunner -eq "pipx" -and $script:NanobotPipxBin) {
+    Write-Info "Using installed executable: $script:NanobotPipxBin"
+}
 Invoke-Nanobot @("--version")
 if ($LASTEXITCODE -ne 0) {
     Fail "nanobot was installed, but the command could not be started."

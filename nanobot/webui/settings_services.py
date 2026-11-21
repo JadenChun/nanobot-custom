@@ -12,9 +12,11 @@ from filelock import FileLock
 
 from nanobot.config.loader import load_config, save_config
 from nanobot.config.schema import Config
+from nanobot.providers.oauth_credentials import CredentialOwner
 
 _T = TypeVar("_T")
 _WEBUI_OAUTH_MAX_FLOWS = 8
+_OAuthFlowScope = str | tuple[CredentialOwner | None, str]
 
 
 class WebUISettingsConfig:
@@ -24,6 +26,7 @@ class WebUISettingsConfig:
         self.path = config_path.expanduser().resolve(strict=False)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.on_remote_device_revoked: Callable[[str], None] | None = None
+        self.set_remote_access_enabled: Callable[[bool], None] | None = None
         self._lock = threading.RLock()
         lock_path = self.path.with_suffix(f"{self.path.suffix}.lock")
         self._file_lock = FileLock(str(lock_path))
@@ -54,10 +57,10 @@ class WebUIOAuthFlowRegistry:
         if max_flows < 1:
             raise ValueError("max_flows must be at least one")
         self._max_flows = max_flows
-        self._flows: dict[str, tuple[str, Any]] = {}
+        self._flows: dict[str, tuple[_OAuthFlowScope, Any]] = {}
         self._lock = threading.Lock()
 
-    def register(self, provider_name: str, flow_id: str, flow: Any) -> None:
+    def register(self, provider_name: _OAuthFlowScope, flow_id: str, flow: Any) -> None:
         discarded: list[Any] = []
         with self._lock:
             for existing_id, (_provider_name, existing) in list(self._flows.items()):
@@ -70,7 +73,7 @@ class WebUIOAuthFlowRegistry:
         for existing in discarded:
             existing.cancel()
 
-    def get(self, provider_name: str, flow_id: str) -> Any | None:
+    def get(self, provider_name: _OAuthFlowScope, flow_id: str) -> Any | None:
         with self._lock:
             registered = self._flows.get(flow_id)
             if registered is None or registered[0] != provider_name:
@@ -84,7 +87,7 @@ class WebUIOAuthFlowRegistry:
 
     def remove(
         self,
-        provider_name: str,
+        provider_name: _OAuthFlowScope,
         flow_id: str,
         flow: Any,
         *,
@@ -101,7 +104,7 @@ class WebUIOAuthFlowRegistry:
         if cancel:
             flow.cancel()
 
-    def clear(self, provider_name: str) -> None:
+    def clear(self, provider_name: _OAuthFlowScope) -> None:
         with self._lock:
             flow_ids = [
                 flow_id

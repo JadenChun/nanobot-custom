@@ -469,25 +469,21 @@ async def _install_skills_sh_skill(
         "--yes",
     )
 
-    process = await asyncio.create_subprocess_exec(
-        *command,
+    from nanobot.agent.tools.process import run_owned_process
+
+    result = await run_owned_process(
+        command,
+        timeout=_INSTALL_TIMEOUT_SECONDS,
         cwd=str(workspace),
         env=env,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.STDOUT,
     )
-    try:
-        output, _ = await asyncio.wait_for(
-            process.communicate(),
-            timeout=_INSTALL_TIMEOUT_SECONDS,
-        )
-    except TimeoutError as exc:
-        process.kill()
-        await process.communicate()
-        raise SkillsMarketplaceError("skill installation timed out", status=504) from exc
+    if result.timed_out:
+        raise SkillsMarketplaceError("skill installation timed out", status=504)
 
-    if process.returncode != 0:
-        detail = _safe_output_tail(output)
+    if result.returncode != 0:
+        detail = _safe_output_tail(result.stdout)
         message = "skill installation failed"
         if detail:
             message = f"{message}: {detail}"

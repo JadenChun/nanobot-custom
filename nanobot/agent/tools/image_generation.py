@@ -31,8 +31,10 @@ from nanobot.bus.events import (
 from nanobot.bus.queue import MessageBus
 from nanobot.config_base import Base
 from nanobot.providers.image_generation import (
+    MAX_REFERENCE_IMAGES,
     ImageGenerationError,
     ImageGenerationProvider,
+    check_reference_image_budget,
     get_image_gen_provider,
     image_gen_provider_configs,
 )
@@ -74,6 +76,7 @@ class ImageGenerationToolConfig(Base):
         reference_images=ArraySchema(
             StringSchema("Local path of an existing image artifact or user-provided image to use as an edit reference."),
             description="Optional local image paths. Use generated artifact paths for iterative edits.",
+            max_items=MAX_REFERENCE_IMAGES,
         ),
         aspect_ratio=StringSchema(
             "Optional output aspect ratio, e.g. 1:1, 16:9, 9:16, 4:3.",
@@ -114,6 +117,7 @@ class ImageGenerationTool(Tool):
         return cls(
             workspace=ctx.workspace, config=effective.config, provider_configs=effective.providers,
             legacy_config=effective.legacy, write_tool=WriteFileTool.create(ctx),
+            media_root=ctx.media_root,
         )
 
     def __init__(
@@ -125,10 +129,14 @@ class ImageGenerationTool(Tool):
         provider_configs: dict[str, ProviderConfig] | None = None,
         legacy_config: ImageConfig | None = None,
         write_tool: WriteFileTool | None = None,
+        media_root: Path | None = None,
     ) -> None:
         self.workspace = Path(workspace).expanduser()
         self.config = config
         self.legacy_config = legacy_config
+        self.media_root = (
+            Path(media_root).expanduser() if media_root is not None else None
+        )
         self._write_tool = write_tool or WriteFileTool(workspace=self.workspace, allowed_dir=self.workspace)
         self.provider_configs = dict(provider_configs or {})
         if provider_config is not None and "openrouter" not in self.provider_configs:
@@ -143,13 +151,14 @@ class ImageGenerationTool(Tool):
         provider_configs: dict[str, ProviderConfig],
         legacy_config: ImageConfig | None,
         make_writer: Callable[[], WriteFileTool],
+        media_root: Path | None = None,
     ) -> ImageGenerationTool | None:
         """Construct the canonical reload replacement using the existing writer when present."""
         writer = previous._write_tool if previous else make_writer()
         return (
             ImageGenerationTool(
                 workspace=workspace, config=config, provider_configs=provider_configs,
-                legacy_config=legacy_config, write_tool=writer,
+                legacy_config=legacy_config, write_tool=writer, media_root=media_root,
             ) if config.enabled else None
         )
 
@@ -189,7 +198,8 @@ class ImageGenerationTool(Tool):
             kwargs["legacy_request"] = True
         return cls(**kwargs)
 
-    def _resolve_reference_image(self, value: str) -> str:
+    def _resolve_reference_path(self, value: str) -> str:
+        """Resolve one reference path without reading its content."""
         access = current_tool_workspace(self.workspace, restrict_to_workspace=True)
         workspace = access.project_path or self.workspace
         candidate = Path(value).expanduser()
@@ -204,15 +214,47 @@ class ImageGenerationTool(Tool):
             ) from exc
         if not resolved.is_file():
             raise ImageGenerationError(f"reference image not found: {value}")
-        raw = resolved.read_bytes()
-        if detect_image_mime(raw) is None:
-            raise ImageGenerationError(f"unsupported reference image: {value}")
         return str(resolved)
 
+    @staticmethod
+    def _check_reference_mime(value: str, path: str) -> None:
+        """Reject a non-image reference from its header bytes only."""
+        try:
+            with Path(path).open("rb") as handle:
+                header = handle.read(16)
+        except OSError as exc:
+            raise ImageGenerationError(f"reference image is not readable: {value}") from exc
+        if detect_image_mime(header) is None:
+            raise ImageGenerationError(f"unsupported reference image: {value}")
+
+    def _resolve_reference_image(self, value: str) -> str:
+        """Resolve one reference image through the bounded reference path."""
+        resolved = self._resolve_reference_images([value])
+        if not resolved:
+            raise ImageGenerationError(f"reference image not found: {value}")
+        return resolved[0]
+
     def _resolve_reference_images(self, values: list[str] | None) -> list[str]:
-        if not values:
+        """Resolve the reference set inside its count and byte budget.
+
+        The count limit applies to the supplied list before any path is
+        resolved, the byte budget applies to resolved files before any content
+        is read, and only then are image headers inspected.
+        """
+        supplied = [value for value in values or [] if value]
+        if not supplied:
             return []
-        return [self._resolve_reference_image(value) for value in values if value]
+        if len(supplied) > MAX_REFERENCE_IMAGES:
+            raise ImageGenerationError(
+                "reference_images exceeds the reference count limit of "
+                f"{MAX_REFERENCE_IMAGES} images"
+            )
+        resolved_by_value = [(value, self._resolve_reference_path(value)) for value in supplied]
+        resolved = list(dict.fromkeys(path for _value, path in resolved_by_value))
+        check_reference_image_budget(resolved)
+        for value, path in resolved_by_value:
+            self._check_reference_mime(value, path)
+        return resolved
 
     async def execute(  # pyright: ignore[reportIncompatibleMethodOverride]
         self,
@@ -255,6 +297,7 @@ class ImageGenerationTool(Tool):
                         source_images=refs,
                         save_dir=self.config.save_dir,
                         provider=self.config.provider,
+                        media_root=self.media_root,
                     )
                     artifacts.append(artifact)
                     if len(artifacts) >= requested:
@@ -312,7 +355,8 @@ async def reload_image_generation_tool(state: Any, registry: ToolRegistry) -> di
     try:
         from nanobot.config.loader import load_config, resolve_config_env_vars
 
-        config = resolve_config_env_vars(load_config())
+        config_path = getattr(state, "_config_path", None)
+        config = resolve_config_env_vars(load_config(config_path), config_path=config_path)
         effective = effective_image_configuration(config.tools, image_gen_provider_configs(config))
         tool_config = effective.config
         provider_configs = effective.providers
@@ -337,9 +381,11 @@ async def reload_image_generation_tool(state: Any, registry: ToolRegistry) -> di
     next_tool = ImageGenerationTool.replacement_for(
         previous, workspace=state.workspace, config=tool_config, provider_configs=provider_configs,
         legacy_config=effective.legacy,
+        media_root=getattr(state, "media_root", None),
         make_writer=lambda: WriteFileTool.create(ToolContext(
             config=config.tools, workspace=str(state.workspace), fork_dependencies=dependencies,
             file_state_store=getattr(state, "_file_state_store", None),
+            media_root=getattr(state, "media_root", None),
         )),
     )
 

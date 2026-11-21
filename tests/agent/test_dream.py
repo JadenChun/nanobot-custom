@@ -314,6 +314,32 @@ class TestDreamTools:
         assert target.read_text(encoding="utf-8").startswith("---\nname: demo")
 
     @pytest.mark.asyncio
+    async def test_dream_content_diff_includes_workspace_skill_changes(self, store):
+        assert store._git.init() is True
+        assert store._git.is_initialized()
+        tools = store.build_dream_tools()
+
+        result = await tools.execute(
+            "write_file",
+            {
+                "path": "skills/demo/SKILL.md",
+                "content": "---\nname: demo\ndescription: Demo skill.\n---\n\nUse when needed.\n",
+            },
+        )
+
+        assert "Successfully wrote" in result
+        assert (store.workspace / "skills" / "demo" / "SKILL.md").is_file()
+
+        diff = store.dream_content_diff()
+        assert "skills/demo/SKILL.md" in diff
+
+        message = store.build_dream_commit_message("dream: update", diff)
+        assert "skills/demo/SKILL.md" in message
+
+        assert store._git.auto_commit(message) is not None
+        assert store.dream_content_diff() == ""
+
+    @pytest.mark.asyncio
     async def test_dream_tools_keep_internal_write_scope_under_full_access(self, store):
         tools = store.build_dream_tools()
         scope = default_workspace_scope(store.workspace, restrict_to_workspace=False)
