@@ -1227,7 +1227,7 @@ export function ThreadShell({
     useState<ReadonlySet<NextTurnSettingKind>>(() => new Set());
   const nextTurnChatIdRef = useRef<string | null>(chatId);
   const nextTurnSettings = nextTurnTrackerRef.current;
-  const nextTurnSettingsPending = nextTurnPendingKinds.size > 0;
+  const workspaceNextTurnPending = nextTurnPendingKinds.has("workspace");
   // The gateway acknowledgement is authoritative; the local override only
   // displays the in-flight choice so the picker reacts immediately.
   const nextWorkspaceScope = liveNextWorkspaceScope ?? nextTurnScopeOverride;
@@ -2211,10 +2211,12 @@ export function ThreadShell({
     }
   }, [chatId, liveNextModelPreset, liveNextReasoningEffort, liveNextTurnRevision]);
   const handleReasoningChange = (effort: string | null) => {
-    if (reasoningPending || (effort && !reasoningOptions.includes(effort))) return;
+    if (effort && !reasoningOptions.includes(effort)) return;
     const selection = { chatId, preset: activeModelPreset, effort };
+    const previousReasoning = localReasoning;
+    setLocalReasoning(selection);
     if (!chatId) {
-      setLocalReasoning(selection);
+      setReasoningUpdate(null);
       return;
     }
     const ownerChatId = chatId;
@@ -2241,6 +2243,7 @@ export function ThreadShell({
       ) {
         return;
       }
+      setLocalReasoning(previousReasoning);
       setReasoningUpdate((current) => current === update ? { chatId: ownerChatId, pending: false } : current);
     });
   };
@@ -3652,7 +3655,7 @@ export function ThreadShell({
         onRefreshWorkspaces={onRefreshWorkspaces}
         workspaceScopeDisabled={workspaceScopeDisabled || hasUnknownMessageSend}
         nextWorkspaceScope={nextWorkspaceScope}
-        nextTurnSettingsPending={nextTurnSettingsPending}
+        nextTurnSettingsPending={workspaceNextTurnPending}
         nextTurnSettingsError={nextTurnSettingsError}
         onBeforeNewTurnSend={session || historyKey ? awaitNextTurnSettings : undefined}
         workspaceAccessModeUnknownBlocked={hasUnknownMessageSend}

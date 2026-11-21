@@ -944,15 +944,12 @@ describe("ThreadComposer", () => {
     expect(picker).toHaveClass("w-[min(18rem,calc(100vw-2rem))]");
     expect(badge).toHaveClass("w-fit");
     expect(badge.querySelector(".composer-model-pill")).not.toHaveClass("w-full");
-    expect(within(picker).getAllByRole("option")).toHaveLength(3);
+    expect(within(picker).getByTestId("model-picker-active")).toHaveTextContent("kimi");
+    expect(within(picker).getAllByRole("option")).toHaveLength(2);
     expect(within(picker).getByRole("option", { name: "dflash" })).toHaveTextContent(
       /dflash\s*deepseek-v4-flash/,
     );
-    expect(within(picker).getByRole("option", { name: "kimi" })).toHaveAttribute(
-      "aria-selected",
-      "true",
-    );
-    expect(document.activeElement).toBe(within(picker).getByRole("option", { name: "kimi" }));
+    expect(within(picker).queryByRole("option", { name: "kimi" })).not.toBeInTheDocument();
     fireEvent.click(within(picker).getByRole("option", { name: "dspro" }));
     expect(onPresetChange).toHaveBeenCalledWith("dspro");
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
@@ -1056,7 +1053,7 @@ describe("ThreadComposer", () => {
     fireEvent.click(badge);
     const picker = screen.getByRole("dialog", { name: "Switch model for this chat" });
     expect(within(picker).queryByTestId("model-picker-more")).toBeNull();
-    expect(within(picker).getAllByRole("option")).toHaveLength(MODEL_PRESETS.length);
+    expect(within(picker).getAllByRole("option")).toHaveLength(MODEL_PRESETS.length - 1);
   });
 
   it("uses the same click picker in hero mode", () => {

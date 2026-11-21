@@ -161,12 +161,11 @@ export function ModelPresetBadge({
   const opensSetup = Boolean(onClick);
   const canSwitch = !opensSetup && Boolean(onPresetChange) && activeName !== "" && presets.length > 1;
   const currentIndex = Math.max(0, presets.findIndex((preset) => preset.name === activeName));
-  const hasMoreModels = presets.length > QUICK_SWITCH_LIMIT + 1;
+  const otherPresets = presets.filter((preset) => preset.name !== activeName);
+  const hasMoreModels = otherPresets.length > QUICK_SWITCH_LIMIT;
   const quickSwitchPresets = hasMoreModels
-    ? presets
-        .filter((preset) => preset.name !== activeName)
-        .slice(0, QUICK_SWITCH_LIMIT)
-    : presets;
+    ? otherPresets.slice(0, QUICK_SWITCH_LIMIT)
+    : otherPresets;
   const query = modelQuery.trim().toLowerCase();
   const filteredPresets = query
     ? presets.filter((preset) =>
@@ -630,9 +629,8 @@ function ReasoningEffortPills({ control, labelFor }: ReasoningEffortPillsProps) 
               key={effort ?? "default"}
               type="button"
               aria-pressed={active}
-              aria-disabled={control.pending}
               onClick={() => {
-                if (control.pending || active) return;
+                if (active) return;
                 control.onChange(effort);
               }}
               className={cn(
@@ -641,7 +639,6 @@ function ReasoningEffortPills({ control, labelFor }: ReasoningEffortPillsProps) 
                 active
                   ? "border-foreground/25 bg-foreground text-background"
                   : "border-border/55 bg-card text-muted-foreground hover:text-foreground",
-                "aria-disabled:cursor-wait aria-disabled:opacity-60",
               )}
             >
               {effort ? labelFor(effort) : t("settings.values.default", { defaultValue: "Default" })}
@@ -650,7 +647,7 @@ function ReasoningEffortPills({ control, labelFor }: ReasoningEffortPillsProps) 
         })}
       </div>
       {control.failed ? (
-        <p role="status" className="px-1.5 text-xs text-destructive">
+        <p role="status" className="px-1.5 text-xs text-red-500 dark:text-red-400">
           {t("thread.composer.reasoningEffortFailed", { defaultValue: "Could not update reasoning effort. Try again." })}
         </p>
       ) : null}
@@ -692,10 +689,14 @@ function PresetOption({
         provider={preset.provider}
         isHero={false}
       />
-      <span className="flex min-w-0 flex-1 items-baseline gap-1.5 overflow-hidden whitespace-nowrap">
-        <span className="shrink-0 text-[13px] font-medium text-foreground">{preset.name}</span>
+      <span className="flex min-w-0 flex-1 flex-col">
+        <span className="truncate text-[13px] font-medium leading-snug text-foreground">
+          {preset.name}
+        </span>
         {detail && detail !== preset.name ? (
-          <span className="truncate text-[12px] text-muted-foreground">{detail}</span>
+          <span className="truncate text-[11px] leading-tight text-muted-foreground/80">
+            {detail}
+          </span>
         ) : null}
       </span>
       {selected ? <Check className="h-4 w-4 shrink-0 text-foreground/80" aria-hidden /> : null}

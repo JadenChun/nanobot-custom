@@ -1768,7 +1768,7 @@ export class NanobotClient {
     return turnId;
   }
 
-  sendSystemCommand(chatId: string, command: string, timeoutMs = 5_000): Promise<void> {
+  sendSystemCommand(chatId: string, command: string, timeoutMs = 15_000): Promise<void> {
     const normalized = command.trim();
     const turnId = `${SYSTEM_COMMAND_TURN_PREFIX}${crypto.randomUUID()}`;
     return new Promise<void>((resolve, reject) => {
