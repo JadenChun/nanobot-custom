@@ -11,7 +11,7 @@ const MIN_CHAT_WIDTH = 420;
 const MAX_INSPECTOR_WIDTH = 960;
 export const MIN_INSPECTOR_DOCK_WIDTH = MIN_CHAT_WIDTH + MIN_INSPECTOR_WIDTH;
 
-export type InspectorTabId = "subagents" | "file" | "assets";
+export type InspectorTabId = "subagents" | "file" | "assets" | "summary";
 
 export interface InspectorTab {
   id: InspectorTabId;

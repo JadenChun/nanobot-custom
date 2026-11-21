@@ -31,6 +31,96 @@ const RELATIVE_THRESHOLDS: [number, Intl.RelativeTimeFormatUnit][] = [
   [Number.POSITIVE_INFINITY, "year"],
 ];
 
+export interface SessionSummaryPanelProps {
+  sessionKey: string;
+  token: string;
+  title: string;
+  active: boolean;
+  modal?: boolean;
+  onClose?: () => void;
+}
+
+export function SessionSummaryPanel({
+  sessionKey,
+  token,
+  title,
+  active,
+  modal = false,
+  onClose,
+}: SessionSummaryPanelProps) {
+  const { t } = useTranslation("common");
+  const { jobs, loading, loadFailed, now } = useSessionAutomationJobs(active, token, sessionKey);
+  const automationContent = loading ? (
+    <div className="flex items-center gap-2 rounded-floating bg-muted/45 px-3 py-3 text-[12.5px] text-muted-foreground">
+      <RefreshCcw className="h-3.5 w-3.5 animate-spin" />
+      {t("thread.sessionInfo.loading")}
+    </div>
+  ) : loadFailed ? (
+    <div className="flex items-center gap-2 rounded-floating bg-destructive/10 px-3 py-3 text-[12.5px] text-destructive">
+      <CircleAlert className="h-3.5 w-3.5" />
+      {t("thread.sessionInfo.loadFailed")}
+    </div>
+  ) : jobs.length ? (
+    <div className="space-y-1.5">
+      {jobs.map((job) => (
+        <AutomationRow key={job.id} job={job} now={now} />
+      ))}
+    </div>
+  ) : (
+    <div className="rounded-floating bg-muted/35 px-3 py-3 text-[12.5px] leading-relaxed text-muted-foreground">
+      {t("thread.sessionInfo.empty")}
+    </div>
+  );
+
+  return (
+    <div
+      data-testid="session-summary-panel"
+      className="flex h-full min-h-0 w-full flex-col overflow-y-auto px-4 py-4"
+    >
+      <div className="space-y-3">
+        <div className="flex items-start justify-between gap-2">
+          <div className="min-w-0">
+            <div className="text-[12px] font-normal text-muted-foreground/75">
+              {t("thread.sessionInfo.title")}
+            </div>
+            <div className="mt-0.5 truncate text-[14px] font-medium text-foreground">
+              {title || t("thread.sessionInfo.untitled")}
+            </div>
+          </div>
+          {modal && onClose ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              aria-label={t("common.close", { defaultValue: "Close" })}
+              onClick={onClose}
+              className="-mr-1.5 -mt-1 h-7 w-7 shrink-0 rounded-full text-muted-foreground/80 hover:bg-accent/40 hover:text-foreground"
+            >
+              <X className="h-3.5 w-3.5" aria-hidden />
+            </Button>
+          ) : null}
+        </div>
+
+        <div className="h-px bg-border/45" />
+
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex min-w-0 items-center gap-2">
+            <CalendarClock className="h-3.5 w-3.5 shrink-0 text-muted-foreground/80" />
+            <span className="truncate text-[13px] font-medium text-foreground">
+              {t("thread.sessionInfo.automations")}
+            </span>
+          </div>
+          <span className="rounded-full bg-muted/70 px-2 py-0.5 text-[11px] text-muted-foreground">
+            {t("thread.sessionInfo.count", { count: jobs.length })}
+          </span>
+        </div>
+
+        {automationContent}
+      </div>
+    </div>
+  );
+}
+
 interface SessionInfoPopoverProps {
   sessionKey: string;
   token: string;

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { createPortal } from "react-dom";
-import { Bot, FileText, Images, PanelRight } from "lucide-react";
+import { Bot, FileText, Images, ListTodo, PanelRight } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import { FilePreviewAvailabilityProvider } from "@/components/FilePreviewAvailabilityContext";
@@ -25,7 +25,7 @@ import { GeneratedAssetsPanel } from "@/components/thread/GeneratedAssetsSheet";
 import { Button } from "@/components/ui/button";
 import { PromptNavigator } from "@/components/thread/PromptNavigator";
 import { RecoveryNotice } from "@/components/thread/RecoveryNotice";
-import { SessionInfoPopover } from "@/components/thread/SessionInfoPopover";
+import { SessionSummaryPanel } from "@/components/thread/SessionInfoPopover";
 import { resolveRetainedContextUsage } from "@/lib/context-usage-retention";
 import {
   clearComposerDraftsForSession,
@@ -1457,6 +1457,7 @@ export function ThreadShell({
   const filePreviewPath = filePreview?.parentKey === historyKey ? filePreview.path : null;
   const [filePreviewRefreshKey, setFilePreviewRefreshKey] = useState(0);
   const [assetsInspectorOpen, setAssetsInspectorOpen] = useState(false);
+  const [summaryInspectorOpen, setSummaryInspectorOpen] = useState(false);
   const [inspectorCollapsed, setInspectorCollapsed] = useState(false);
   const filePreviewEditKeysRef = useRef<Set<string>>(new Set());
   const draftNamespace = useMemo(() => draftNamespaceFor(token), [token]);
@@ -1782,21 +1783,29 @@ export function ThreadShell({
     ? childHistoryInspection
     : null;
   const assetsInspectorAvailable = Boolean(historyKey) && !temporary && assetsInspectorOpen;
+  const summaryInspectorAvailable = Boolean(historyKey) && summaryInspectorOpen;
   // Prefer the tab the user selected when it is still open. Otherwise fall back
   // to whatever remains open, in the same order the tabs are rendered.
   const inspectorTab = selectedInspector === "file" && filePreviewPath
     ? "file"
     : selectedInspector === "assets" && assetsInspectorAvailable
       ? "assets"
-      : selectedInspector === "subagents" && activeChildHistoryInspection
-        ? "subagents"
-        : filePreviewPath
-          ? "file"
-          : assetsInspectorAvailable
-            ? "assets"
-            : activeChildHistoryInspection ? "subagents" : null;
+      : selectedInspector === "summary" && summaryInspectorAvailable
+        ? "summary"
+        : selectedInspector === "subagents" && activeChildHistoryInspection
+          ? "subagents"
+          : filePreviewPath
+            ? "file"
+            : assetsInspectorAvailable
+              ? "assets"
+              : summaryInspectorAvailable
+                ? "summary"
+                : activeChildHistoryInspection ? "subagents" : null;
   const inspectorDocked = shellWidth >= MIN_INSPECTOR_DOCK_WIDTH;
-  const inspectorVisible = !inspectorCollapsed && (inspectorDocked || composerActive);
+  // Session summary only docks side-by-side when there is enough width for both
+  // the chat column and the side panel — it never floats over the chat window.
+  const summaryHiddenForWidth = inspectorTab === "summary" && !inspectorDocked;
+  const inspectorVisible = !inspectorCollapsed && !summaryHiddenForWidth && (inspectorDocked || composerActive);
   const inspectorOpen = inspectorVisible && inspectorTab !== null;
   const inspectorModal = inspectorVisible && inspectorTab !== null && !inspectorDocked;
   const childHistoryModal = inspectorModal && inspectorTab === "subagents";
@@ -3305,6 +3314,7 @@ export function ThreadShell({
   // the shell moves to a new or temporary chat so it cannot reappear later.
   useEffect(() => {
     if (!historyKey || temporary) setAssetsInspectorOpen(false);
+    if (!historyKey) setSummaryInspectorOpen(false);
   }, [historyKey, temporary]);
 
   useEffect(() => {
@@ -3334,11 +3344,15 @@ export function ThreadShell({
   const handleCloseAssets = useCallback(() => {
     setAssetsInspectorOpen(false);
   }, []);
+  const handleCloseSummary = useCallback(() => {
+    setSummaryInspectorOpen(false);
+  }, []);
   const handleCloseInspectorDialog = useCallback(() => {
     handleCloseChildHistory();
     handleCloseFilePreview();
     handleCloseAssets();
-  }, [handleCloseAssets, handleCloseChildHistory, handleCloseFilePreview]);
+    handleCloseSummary();
+  }, [handleCloseAssets, handleCloseChildHistory, handleCloseFilePreview, handleCloseSummary]);
 
   const handleToggleAssetsInspector = useCallback(() => {
     if (!historyKey || temporary) return;
@@ -3350,6 +3364,17 @@ export function ThreadShell({
     setAssetsInspectorOpen(true);
     setInspectorCollapsed(false);
   }, [assetsInspectorOpen, historyKey, inspectorCollapsed, inspectorTab, temporary]);
+
+  const handleToggleSummaryInspector = useCallback(() => {
+    if (!historyKey || !inspectorDocked) return;
+    if (summaryInspectorOpen && inspectorTab === "summary" && !inspectorCollapsed) {
+      setSummaryInspectorOpen(false);
+      return;
+    }
+    setSelectedInspector("summary");
+    setSummaryInspectorOpen(true);
+    setInspectorCollapsed(false);
+  }, [historyKey, inspectorCollapsed, inspectorDocked, inspectorTab, summaryInspectorOpen]);
 
   const handleToggleInspectorPanel = useCallback(() => {
     if (inspectorOpen) {
@@ -3723,8 +3748,23 @@ export function ThreadShell({
       </Button>
     </>
   ) : undefined;
-  const sessionInfoAction = historyKey ? (
-    <SessionInfoPopover sessionKey={historyKey} token={token} title={title} />
+  // Hide the session summary toggle when the viewport is too narrow to dock the
+  // side panel beside the chat column without overlapping messages.
+  const sessionInfoAction = historyKey && inspectorDocked ? (
+    <Button
+      type="button"
+      variant="ghost"
+      size="icon"
+      aria-label={t("thread.header.sessionInfo")}
+      aria-pressed={summaryInspectorAvailable && inspectorOpen && inspectorTab === "summary"}
+      onClick={handleToggleSummaryInspector}
+      className={cn(
+        "host-no-drag h-8 w-8 shrink-0 rounded-full text-muted-foreground/85 hover:bg-accent/40 hover:text-foreground",
+        summaryInspectorAvailable && inspectorOpen && inspectorTab === "summary" && "bg-accent/45 text-foreground",
+      )}
+    >
+      <ListTodo className="h-4 w-4 stroke-[1.75]" aria-hidden />
+    </Button>
   ) : undefined;
   // `shellWidth` starts at 0 before the resize observer measures the shell.
   // Both cases keep the navigator, which matches the hidden left rail.
@@ -3807,6 +3847,26 @@ export function ThreadShell({
           visible={inspectorVisible && inspectorTab === "assets"}
           active={composerActive && inspectorTab === "assets"}
           onClose={inspectorDocked ? handleCloseAssets : handleCloseInspectorDialog}
+        />
+      ),
+    });
+  }
+
+  if (summaryInspectorAvailable && historyKey && inspectorDocked) {
+    inspectorTabs.push({
+      id: "summary",
+      icon: ListTodo,
+      label: t("thread.sessionInfo.title", { defaultValue: "Session summary" }),
+      closeLabel: t("common.close", { defaultValue: "Close" }),
+      content: (
+        <SessionSummaryPanel
+          key={historyKey}
+          sessionKey={historyKey}
+          token={token}
+          title={title}
+          active={inspectorVisible && inspectorTab === "summary"}
+          modal={!inspectorDocked}
+          onClose={handleCloseSummary}
         />
       ),
     });
@@ -3924,6 +3984,7 @@ export function ThreadShell({
         onClose={(id) => {
           if (id === "file") handleCloseFilePreview();
           else if (id === "assets") handleCloseAssets();
+          else if (id === "summary") handleCloseSummary();
           else handleCloseChildHistory();
         }}
       />
