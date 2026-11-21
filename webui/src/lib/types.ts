@@ -283,6 +283,8 @@ export interface UIMessage {
    * cannot serve that purpose.
    */
   turnOrdinal?: number;
+  /** Stable server-assigned prompt identity for user rows across windows. */
+  promptId?: string;
   /** Ephemeral delivery lifecycle for optimistic user messages. */
   deliveryStatus?: MessageDeliveryStatus;
   /** Structured rejection reason shown with a failed optimistic message. */
@@ -560,7 +562,8 @@ export interface GoalStateWsPayload {
 
 export interface ToolProgressEvent {
   version?: number;
-  phase?: "start" | "end" | "error" | string;
+  /** `progress` frames are live-only updates for a running tool call. */
+  phase?: "start" | "end" | "error" | "progress" | string;
   call_id?: string;
   name?: string;
   arguments?: unknown;
@@ -569,6 +572,11 @@ export interface ToolProgressEvent {
   files?: unknown[];
   embeds?: unknown[];
   media_artifacts?: unknown[];
+  /** Live server-reported progress for the running call. */
+  progress?: number | null;
+  total?: number | null;
+  /** Live phase text for the running call, e.g. "Starting ComfyUI". */
+  message?: string | null;
 }
 
 export interface UIFileDiff {
@@ -1836,6 +1844,14 @@ export type InboundEvent =
       recovery_state?: RecoveryState;
       usage?: TurnUsage;
       stop_target?: StopExpectation | null;
+      /** Confirmed active model/effort from the session projection. */
+      model_preset?: string | null;
+      reasoning_effort?: string | null;
+      /** Detached next-turn choices from the same session projection. */
+      next_workspace_scope?: WorkspaceScopePayload | null;
+      next_model_preset?: string | null;
+      next_reasoning_effort?: string | null;
+      next_turn_revision?: number | null;
     }
   | {
       event: "message_accepted";
@@ -2015,6 +2031,9 @@ export type InboundEvent =
       chat_id: string;
       scope?: "metadata" | "thread" | string;
       workspace_scope?: WorkspaceScopePayload;
+      /** Pending next-turn scope; the active turn keeps `workspace_scope`. */
+      next_workspace_scope?: WorkspaceScopePayload | null;
+      next_turn_revision?: number | null;
       /** Local authenticated UI projection; absent on generic/remote notifications. */
       workspace_access_request?: FolderAccessRequest;
       /** Local authenticated UI projection; absent on generic/remote notifications. */
@@ -2114,16 +2133,26 @@ export interface OutboundMcpPresetMention {
 /** Response shape for ``GET .../webui-thread`` (server-built transcript replay). */
 interface WebuiThreadPagePayload {
   before_cursor?: string | null;
+  after_cursor?: string | null;
   has_more_before?: boolean;
+  has_more_after?: boolean;
   loaded_message_count?: number;
   total_known_message_count?: number;
   user_message_offset?: number;
   /** Ordinal of the oldest turn included in this page. */
   first_turn_ordinal?: number;
+  /** Ordinal of the newest turn included in this page. */
+  last_turn_ordinal?: number;
   /** Turns included in this page. */
   loaded_turn_count?: number;
   /** Every turn in the session, loaded or not. */
   total_turn_count?: number;
+  /** Every visible user prompt in the session, loaded or not. */
+  total_prompt_count?: number;
+  /** Index coverage state for this history window. */
+  coverage?: "indexed" | "tail_only" | string;
+  /** Exact target prompt id resolved by an ``around`` request. */
+  target_prompt_id?: string | null;
 }
 
 /** One entry of the whole-session turn index used by the left-hand navigator. */
@@ -2135,16 +2164,41 @@ export interface SessionTurnSummary {
   cursor: string;
 }
 
+/** One visible user prompt entry returned by the seekable prompt index. */
+export interface SessionPromptSummary {
+  prompt_id: string;
+  turn_ordinal: number;
+  prompt_ordinal: number;
+  label: string;
+  created_at: number | null;
+  /** Opaque reveal locator bound to this session history origin. */
+  locator: string;
+}
+
+/** State of an in-flight, ready, or failed selective prompt reveal. */
+export interface PendingPromptReveal {
+  requestId: number;
+  promptId: string;
+  locator?: string | null;
+  cursor?: string | null;
+  status: "loading" | "ready" | "error";
+  errorCode?: "stale_history_cursor" | "prompt_not_found" | "network" | null;
+  errorMessage?: string | null;
+}
+
 /** Response shape for ``GET .../turns``. */
 export interface SessionTurnIndexPayload {
   schemaVersion: number;
   sessionKey?: string;
   turns: SessionTurnSummary[];
+  prompts?: SessionPromptSummary[];
   total_turn_count: number;
+  total_prompt_count?: number;
   page?: {
     before_cursor?: string | null;
     has_more_before?: boolean;
     loaded_turn_count?: number;
+    loaded_prompt_count?: number;
   };
 }
 
@@ -2158,9 +2212,27 @@ export interface WebuiDelegatedChildrenPayload {
   stop_target?: StopExpectation | null;
 }
 
+/** Detached next-turn choices; they never describe the admitted active turn. */
+export interface NextTurnPreferencesPayload {
+  revision: number;
+  workspace_scope?: WorkspaceScopePayload;
+  model_preset?: string;
+  reasoning_effort?: string;
+  permission_mode?: string;
+}
+
+/** Correlated acknowledgement for one next-turn settings mutation. */
+export interface NextTurnSettingsAcknowledgement {
+  workspace_scope?: WorkspaceScopePayload;
+  next_workspace_scope?: WorkspaceScopePayload | null;
+  next_turn_revision?: number | null;
+  source_token?: string;
+}
+
 export interface WebuiThreadPersistedPayload {
   schemaVersion: number;
   sessionKey?: string;
+  view?: "history";
   savedAt?: string;
   messages: UIMessage[];
   fork_boundary_message_count?: number;
@@ -2177,11 +2249,36 @@ export interface WebuiThreadPersistedPayload {
   source?: WebuiThreadSourcePayload | null;
   page?: WebuiThreadPagePayload;
   workspace_scope?: WorkspaceScopePayload;
+  /** Pending next-turn scope set while the active turn keeps its own scope. */
+  next_workspace_scope?: WorkspaceScopePayload | null;
+  next_model_preset?: string | null;
+  next_reasoning_effort?: string | null;
+  next_turn_revision?: number | null;
+  next_turn_preferences?: NextTurnPreferencesPayload | null;
+  /** Confirmed active model/effort; `next_*` fields describe the pending turn. */
+  model_preset?: string | null;
+  reasoning_effort?: string | null;
   /** Local authenticated UI projection; absent on remote/temporary reads. */
   workspace_access_request?: FolderAccessRequest | null;
   /** Local authenticated UI projection; absent on remote/temporary reads and old gateways. */
   workspace_permissions?: WorkspacePermissionProjection | null;
 }
+
+export type WebuiThreadControlsPayload = Pick<
+  WebuiThreadPersistedPayload,
+  | "sessionKey"
+  | "stop_target"
+  | "workspace_access_request"
+  | "workspace_permissions"
+  | "workspace_scope"
+  | "next_workspace_scope"
+  | "next_model_preset"
+  | "next_reasoning_effort"
+  | "next_turn_revision"
+  | "next_turn_preferences"
+  | "model_preset"
+  | "reasoning_effort"
+>;
 
 export interface FilePreviewEntry {
   name: string;
@@ -2236,6 +2333,13 @@ export type Outbound =
   | { type: "set_sidebar_state"; state: SidebarStatePayload }
   | { type: "discard_temporary_chat"; chat_id: string }
   | { type: "set_workspace_scope"; chat_id: string; workspace_scope: WorkspaceScopePayload }
+  | {
+      /** Persist the choice for the next turn without changing the active turn. */
+      type: "set_workspace_scope";
+      chat_id: string;
+      next_turn: true;
+      next_workspace_scope: WorkspaceScopePayload;
+    }
   | { type: "transcribe_audio"; request_id: string; data_url: string; duration_ms?: number }
   | {
       type: "attachment";

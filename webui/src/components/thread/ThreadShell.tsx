@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { createPortal } from "react-dom";
-import { Bot, FileText } from "lucide-react";
+import { Bot, FileText, Images } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import { FilePreviewAvailabilityProvider } from "@/components/FilePreviewAvailabilityContext";
@@ -21,10 +21,19 @@ import {
   type FolderAccessResolveIntent,
 } from "@/components/thread/FolderAccessRequestCard";
 import { SessionHandleLabel } from "@/components/SessionHandleLabel";
-import { GeneratedAssetsSheet } from "@/components/thread/GeneratedAssetsSheet";
+import { GeneratedAssetsPanel } from "@/components/thread/GeneratedAssetsSheet";
+import { Button } from "@/components/ui/button";
 import { PromptNavigator } from "@/components/thread/PromptNavigator";
 import { RecoveryNotice } from "@/components/thread/RecoveryNotice";
 import { SessionInfoPopover } from "@/components/thread/SessionInfoPopover";
+import { resolveRetainedContextUsage } from "@/lib/context-usage-retention";
+import {
+  clearComposerDraftsForSession,
+  draftNamespaceFor,
+  handoffComposerDraft,
+  loadComposerDraft,
+  NEW_CHAT_DRAFT_KEY,
+} from "@/lib/composer-drafts";
 import { ThreadComposer } from "@/components/thread/ThreadComposer";
 import type {
   ComposerContextUsage,
@@ -40,13 +49,13 @@ import {
   type ThreadViewportState,
 } from "@/components/thread/ThreadViewport";
 import { useNanobotStream, type SendAttachment, type SendOptions } from "@/hooks/useNanobotStream";
-import { useSessionHistory } from "@/hooks/useSessions";
+import { useSessionHistory, type RevealPromptTarget } from "@/hooks/useSessions";
+import { NextTurnSettingsTracker, type NextTurnSettingKind } from "@/lib/next-turn-settings";
 import {
   ApiError,
   fetchFilePreviewAvailability,
   fetchInstalledCliApps,
   fetchMcpPresets,
-  fetchSettings,
   isCanonicalAbsolutePath,
   listSlashCommands,
   prepareWorkspaceFullAccess,
@@ -93,9 +102,17 @@ import type {
   WorkspacesPayload,
 } from "@/lib/types";
 import { projectWebuiThreadMessages } from "@/lib/thread-display-compat";
+import { cn } from "@/lib/utils";
 import { useClient } from "@/providers/ClientProvider";
 
 type MessageShape = Pick<UIMessage, "role" | "kind" | "content" | "isStreaming" | "turnId">;
+
+/**
+ * Matches the `@container thread-viewport (max-width: 59rem)` rule that hides
+ * the left prompt rail. Below this width the rail is hidden, so the header must
+ * offer the prompt navigator instead.
+ */
+const PROMPT_RAIL_MIN_WIDTH = 944;
 
 interface ChildHistoryInspection {
   parentKey: string;
@@ -1094,7 +1111,7 @@ export function ThreadShell({
   onToggleTheme = () => {},
   hideSidebarToggleForHostChrome = false,
   hideSidebarToggle = false,
-  hideThemeButton = false,
+  hideThemeButton = true,
   hideHeaderTitle = false,
   inlineHandle = false,
   hideHeader = false,
@@ -1143,9 +1160,15 @@ export function ThreadShell({
     messages: historical,
     loading,
     error: historyError,
+    historyAccessDenied,
+    sessionIncarnation,
     loadingOlder,
+    loadingNewer,
     loadOlder,
+    loadNewer,
     hasMoreBefore,
+    hasMoreAfter,
+    tailActivityPending,
     userMessageOffset,
     hasPendingToolCalls,
     completedTurnIds,
@@ -1164,20 +1187,98 @@ export function ThreadShell({
     workspacePermissions,
     workspacePermissionsLoading,
     workspacePermissionsError,
+    nextWorkspaceScope: liveNextWorkspaceScope,
+    nextModelPreset: liveNextModelPreset,
+    nextReasoningEffort: liveNextReasoningEffort,
+    nextTurnRevision: liveNextTurnRevision,
     markWorkspaceAccessRequestStale,
     updateWorkspaceAccessRequest,
     refreshWorkspaceAccessRequest,
     markWorkspacePermissionsStale,
     updateWorkspacePermissions,
     refreshWorkspacePermissions,
+    separateControls,
+    refreshLiveControls,
     refresh: refreshHistory,
     version: historyVersion,
     forkBoundaryMessageCount,
     turnIndex: sessionTurns,
+    promptIndex: sessionPrompts,
     totalTurnCount: sessionTurnTotal,
+    totalPromptCount: sessionPromptTotal,
+    promptIndexHasMoreBefore,
+    loadingPromptIndex,
     loadTurnIndex,
+    loadMorePromptIndex,
+    revealPrompt,
+    pendingReveal,
+    clearPendingReveal,
+    goToLatest,
     loadTurnAt,
   } = useSessionHistory(historyKey);
+  const viewingHistoricalWindow = historyKey !== null && hasMoreAfter;
+  const effectivePromptTotal = Math.max(sessionPromptTotal, sessionTurnTotal);
+  const refreshStopState = separateControls ? refreshLiveControls : refreshHistory;
+  const nextTurnTrackerRef = useRef(new NextTurnSettingsTracker());
+  const [nextTurnScopeOverride, setNextTurnScopeOverride] =
+    useState<WorkspaceScopePayload | null>(null);
+  const [nextTurnSettingsError, setNextTurnSettingsError] = useState<string | null>(null);
+  const [nextTurnPendingKinds, setNextTurnPendingKinds] =
+    useState<ReadonlySet<NextTurnSettingKind>>(() => new Set());
+  const nextTurnChatIdRef = useRef<string | null>(chatId);
+  const nextTurnSettings = nextTurnTrackerRef.current;
+  const nextTurnSettingsPending = nextTurnPendingKinds.size > 0;
+  // The gateway acknowledgement is authoritative; the local override only
+  // displays the in-flight choice so the picker reacts immediately.
+  const nextWorkspaceScope = liveNextWorkspaceScope ?? nextTurnScopeOverride;
+  const trackNextTurnSetting = useCallback((
+    ownerChatId: string,
+    kind: NextTurnSettingKind,
+    operation: Promise<unknown>,
+  ): number => {
+    const seq = nextTurnSettings.begin(ownerChatId, kind, operation);
+    if (nextTurnChatIdRef.current === ownerChatId) {
+      setNextTurnPendingKinds(nextTurnSettings.pendingKinds(ownerChatId));
+    }
+    const settle = () => {
+      if (nextTurnChatIdRef.current !== ownerChatId) return;
+      setNextTurnPendingKinds(nextTurnSettings.pendingKinds(ownerChatId));
+    };
+    void operation.then(settle, settle);
+    return seq;
+  }, [nextTurnSettings]);
+  useEffect(() => {
+    if (nextTurnChatIdRef.current === chatId) return;
+    nextTurnChatIdRef.current = chatId;
+    setNextTurnScopeOverride(null);
+    setNextTurnSettingsError(null);
+    setNextTurnPendingKinds(chatId ? nextTurnSettings.pendingKinds(chatId) : new Set());
+  }, [chatId, nextTurnSettings]);
+  useEffect(() => {
+    if (!chatId) return;
+    nextTurnSettings.bindIncarnation(chatId, sessionIncarnation);
+    setNextTurnPendingKinds(nextTurnSettings.pendingKinds(chatId));
+  }, [chatId, nextTurnSettings, sessionIncarnation]);
+  useEffect(() => {
+    if (!liveNextWorkspaceScope) return;
+    setNextTurnScopeOverride((current) => (
+      current && current.project_path === liveNextWorkspaceScope.project_path
+        && current.access_mode === liveNextWorkspaceScope.access_mode
+        ? null
+        : current
+    ));
+  }, [liveNextWorkspaceScope]);
+  useEffect(() => {
+    // A confirmed scope equal to the pending choice means admission consumed
+    // it; the picker now shows the active folder, not a pending one.
+    setNextTurnScopeOverride((current) => (
+      current && workspaceScope
+        && current.project_path === workspaceScope.project_path
+        && current.access_mode === workspaceScope.access_mode
+        ? null
+        : current
+    ));
+  }, [workspaceScope]);
   const [appliedHistoryVersion, setAppliedHistoryVersion] = useState(0);
   const pendingRecoveryInvalidationRef = useRef<PendingRecoveryInvalidation | null>(null);
   const pendingRecoveryResolveRef = useRef<PendingRecoveryResolve | null>(null);
@@ -1329,7 +1430,7 @@ export function ThreadShell({
     isPayload: isMcpPresetsPayload,
     selectItems: installedMcpPresetsFromPayload,
   });
-  const [settings, setSettings] = useState<SettingsPayload | null>(settingsSnapshot);
+  const settings = settingsSnapshot;
   const [heroGreetingKey, setHeroGreetingKey] = useState(randomHeroGreetingKey);
   const [submittedViewportTurnId, setSubmittedViewportTurnId] = useState<string | null>(null);
   const [childHistoryInspection, setChildHistoryInspection] =
@@ -1355,7 +1456,9 @@ export function ThreadShell({
   const [filePreview, setFilePreview] = useState<{ parentKey: string; path: string } | null>(null);
   const filePreviewPath = filePreview?.parentKey === historyKey ? filePreview.path : null;
   const [filePreviewRefreshKey, setFilePreviewRefreshKey] = useState(0);
+  const [assetsInspectorOpen, setAssetsInspectorOpen] = useState(false);
   const filePreviewEditKeysRef = useRef<Set<string>>(new Set());
+  const draftNamespace = useMemo(() => draftNamespaceFor(token), [token]);
   const [quotedContext, setQuotedContext] = useState<string | null>(null);
   const [composerFocusSignal, setComposerFocusSignal] = useState(0);
   const shellRef = useRef<HTMLElement | null>(null);
@@ -1445,6 +1548,7 @@ export function ThreadShell({
     messages,
     messagesReady,
     isStreaming,
+    queueCompletionTurnId,
     hasOwnedWork,
     stopCanBeSent,
     stopPending,
@@ -1475,8 +1579,9 @@ export function ThreadShell({
     handleTurnEnd,
     historyKey,
     historyStopTarget,
-    () => refreshHistory(),
+    refreshStopState,
     historyStopTargetSnapshotAvailable,
+    separateControls,
   );
 
   const admissionRejectedTurn = useMemo(() => {
@@ -1501,12 +1606,19 @@ export function ThreadShell({
   }, [chatId, messages]);
 
   useEffect(() => {
+    // Revoked read access invalidates device-local drafts for this session.
+    if (historyAccessDenied && historyKey) {
+      clearComposerDraftsForSession(draftNamespace, historyKey);
+    }
+  }, [draftNamespace, historyAccessDenied, historyKey]);
+
+  useEffect(() => {
     if (chatId && historyKey) sessionKeyByChatIdRef.current.set(chatId, historyKey);
   }, [chatId, historyKey]);
 
   useEffect(() => {
     setFilePreview(null);
-    setQuotedContext(null);
+    // The composer owns quote save/restore per chat; it resets or restores it.
     setSubmittedViewportTurnId(null);
   }, [historyKey]);
 
@@ -1635,10 +1747,22 @@ export function ThreadShell({
     historyKey,
     token,
   ]);
-  const composerContextUsage = useMemo(
-    () => latestComposerContextUsage(displayMessages),
-    [displayMessages],
-  );
+  // The meter follows the latest qualified completion observation, not the
+  // history window being viewed. While an older page is shown the window cannot
+  // see the tail, so keep the last tail-derived value (null if none yet).
+  const retainedContextUsageRef = useRef<{
+    key: string | null;
+    usage: ComposerContextUsage | null;
+  }>({ key: null, usage: null });
+  const composerContextUsage = useMemo(() => {
+    const resolved = resolveRetainedContextUsage(retainedContextUsageRef.current, {
+      key: historyKey,
+      viewingHistoricalWindow,
+      computeFresh: () => latestComposerContextUsage(displayMessages),
+    });
+    retainedContextUsageRef.current = resolved.retained;
+    return resolved.usage;
+  }, [displayMessages, historyKey, viewingHistoricalWindow]);
   const composerRoundUsage = useMemo(
     () => recentComposerRoundUsage(displayMessages),
     [displayMessages],
@@ -1656,9 +1780,20 @@ export function ThreadShell({
   const activeChildHistoryInspection = childHistoryInspection?.parentKey === historyKey
     ? childHistoryInspection
     : null;
+  const assetsInspectorAvailable = Boolean(historyKey) && !temporary && assetsInspectorOpen;
+  // Prefer the tab the user selected when it is still open. Otherwise fall back
+  // to whatever remains open, in the same order the tabs are rendered.
   const inspectorTab = selectedInspector === "file" && filePreviewPath
     ? "file"
-    : activeChildHistoryInspection ? "subagents" : filePreviewPath ? "file" : null;
+    : selectedInspector === "assets" && assetsInspectorAvailable
+      ? "assets"
+      : selectedInspector === "subagents" && activeChildHistoryInspection
+        ? "subagents"
+        : filePreviewPath
+          ? "file"
+          : assetsInspectorAvailable
+            ? "assets"
+            : activeChildHistoryInspection ? "subagents" : null;
   const inspectorDocked = shellWidth >= MIN_INSPECTOR_DOCK_WIDTH;
   const inspectorVisible = inspectorDocked || composerActive;
   const inspectorModal = inspectorVisible && inspectorTab !== null && !inspectorDocked;
@@ -1961,7 +2096,15 @@ export function ThreadShell({
     if (!showingOpeningPage) return [];
     return projectWebuiThreadMessages(historical);
   }, [historical, showingOpeningPage]);
-  const viewportMessages = showingOpeningPage || !messagesReady ? openingMessages : displayMessages;
+  const historicalWindowMessages = useMemo(() => {
+    if (!viewingHistoricalWindow) return [];
+    return projectWebuiThreadMessages(historical);
+  }, [historical, viewingHistoricalWindow]);
+  const viewportMessages = historyAccessDenied
+    ? []
+    : viewingHistoricalWindow
+      ? historicalWindowMessages
+      : showingOpeningPage || !messagesReady ? openingMessages : displayMessages;
   const conversationLoading = (openingConversation || historyIsPending) && viewportMessages.length === 0;
   const showHeroComposer = viewportMessages.length === 0 && !conversationLoading;
   const composerVariant = showHeroComposer ? emptyComposerVariant : "thread";
@@ -2016,10 +2159,24 @@ export function ThreadShell({
     setLocalModelPreset(name);
     setLocalReasoning((current) => current?.chatId === chatId ? null : current);
     setReasoningUpdate((current) => current?.chatId === chatId ? null : current);
-    if (chatId) {
-      void client.sendSystemCommand(chatId, `/model ${name}`).catch(() => {});
-    }
-  }, [chatId, client]);
+    setNextTurnSettingsError(null);
+    if (!chatId) return;
+    const ownerChatId = chatId;
+    const operation = client.sendSystemCommand(ownerChatId, `/model ${name}`).then(() => undefined);
+    const seq = trackNextTurnSetting(ownerChatId, "model", operation);
+    void operation.catch((error: unknown) => {
+      if (
+        nextTurnChatIdRef.current !== ownerChatId
+        || !nextTurnSettings.isCurrent(ownerChatId, "model", seq)
+      ) {
+        return;
+      }
+      setLocalModelPreset(null);
+      setNextTurnSettingsError(
+        error instanceof Error ? error.message : "model_preset_rejected",
+      );
+    });
+  }, [chatId, client, nextTurnSettings, trackNextTurnSetting]);
   const reasoningPreset = modelPresetForBadge(settings, activeModelPreset);
   const reasoningOptions = reasoningPreset?.reasoning_effort_values?.filter(Boolean) ?? [];
   const selectedReasoning = localReasoning?.chatId === chatId && localReasoning.preset === activeModelPreset
@@ -2028,6 +2185,19 @@ export function ThreadShell({
   const reasoningEffort = selectedReasoning && reasoningOptions.includes(selectedReasoning)
     ? selectedReasoning : null;
   const reasoningPending = reasoningUpdate?.chatId === chatId && reasoningUpdate.pending;
+  useEffect(() => {
+    // A detached next-turn model/effort choice is what the picker shows after a
+    // revisit, while the admitted turn keeps its confirmed pair.
+    if (liveNextTurnRevision === null) return;
+    if (liveNextModelPreset) setLocalModelPreset(liveNextModelPreset);
+    if (liveNextReasoningEffort && liveNextModelPreset) {
+      setLocalReasoning({
+        chatId,
+        preset: liveNextModelPreset,
+        effort: liveNextReasoningEffort,
+      });
+    }
+  }, [chatId, liveNextModelPreset, liveNextReasoningEffort, liveNextTurnRevision]);
   const handleReasoningChange = (effort: string | null) => {
     if (reasoningPending || (effort && !reasoningOptions.includes(effort))) return;
     const selection = { chatId, preset: activeModelPreset, effort };
@@ -2035,13 +2205,31 @@ export function ThreadShell({
       setLocalReasoning(selection);
       return;
     }
-    const update = { chatId, pending: true };
+    const ownerChatId = chatId;
+    const update = { chatId: ownerChatId, pending: true };
     setReasoningUpdate(update);
-    void client.sendSystemCommand(chatId, modelReasoningCommand(activeModelPreset, effort)).then(() => {
+    const rawOperation = client.sendSystemCommand(
+      ownerChatId,
+      modelReasoningCommand(activeModelPreset, effort),
+    );
+    const seq = trackNextTurnSetting(ownerChatId, "reasoning", rawOperation);
+    void rawOperation.then(() => {
+      if (
+        nextTurnChatIdRef.current !== ownerChatId
+        || !nextTurnSettings.isCurrent(ownerChatId, "reasoning", seq)
+      ) {
+        return;
+      }
       setLocalReasoning(selection);
       setReasoningUpdate((current) => current === update ? null : current);
     }).catch(() => {
-      setReasoningUpdate((current) => current === update ? { chatId, pending: false } : current);
+      if (
+        nextTurnChatIdRef.current !== ownerChatId
+        || !nextTurnSettings.isCurrent(ownerChatId, "reasoning", seq)
+      ) {
+        return;
+      }
+      setReasoningUpdate((current) => current === update ? { chatId: ownerChatId, pending: false } : current);
     });
   };
   const modelPresetOptions = useMemo(
@@ -2077,28 +2265,6 @@ export function ThreadShell({
     }
     wasShowingHeroComposerRef.current = showHeroComposer;
   }, [showHeroComposer]);
-
-  const refreshModelSettings = useCallback(async () => {
-    try {
-      setSettings(await fetchSettings(getToken()));
-    } catch {
-      if (!settingsSnapshot) setSettings(null);
-    }
-  }, [getToken, settingsSnapshot]);
-
-  useEffect(() => {
-    if (settingsSnapshot) {
-      setSettings(settingsSnapshot);
-      return;
-    }
-    void refreshModelSettings();
-  }, [refreshModelSettings, settingsSnapshot]);
-
-  useEffect(() => {
-    return client.onRuntimeModelUpdate(() => {
-      void refreshModelSettings();
-    });
-  }, [client, refreshModelSettings]);
 
   useEffect(() => {
     if (!chatId) {
@@ -2174,6 +2340,16 @@ export function ThreadShell({
   useEffect(() => {
     if (!historyKey || !chatId || loading) return;
     setAppliedHistoryVersion(historyVersion);
+    if (historyAccessDenied) {
+      messageCacheRef.current.delete(chatId);
+      pendingCanonicalHydrateRef.current.delete(chatId);
+      pendingCanonicalCommitRef.current.delete(chatId);
+      setMessages([]);
+      return;
+    }
+    // Keep detached historical windows isolated from the live stream owner so
+    // an active run at the tail never splices into or overwrites an older page.
+    if (viewingHistoricalWindow) return;
     const cached = messageCacheRef.current.get(chatId);
     const pendingCanonicalHydrate = pendingCanonicalHydrateRef.current.get(chatId);
     const hasNewCanonicalHistory = (
@@ -2312,6 +2488,7 @@ export function ThreadShell({
     client,
     completedTurnIds,
     historical,
+    historyAccessDenied,
     historyVersion,
     historyContinuity,
     historyLineage,
@@ -2320,6 +2497,7 @@ export function ThreadShell({
     historyActivitySnapshotAvailable,
     hasPendingToolCalls,
     historyKey,
+    viewingHistoricalWindow,
   ]);
 
   useEffect(() => {
@@ -2737,11 +2915,11 @@ export function ThreadShell({
       skipLayoutCacheRef.current = false;
       return;
     }
-    if (loading) {
+    if (loading || historyAccessDenied) {
       return;
     }
     messageCacheRef.current.set(chatId, displayMessages);
-  }, [chatId, displayMessages, loading]);
+  }, [chatId, displayMessages, historyAccessDenied, loading]);
 
   // The landing composer queues the first message while `new_chat` is in flight.
   // Only the chat created for that send may consume it; selecting another chat
@@ -2782,6 +2960,11 @@ export function ThreadShell({
     async (content: string, images?: SendAttachment[], options?: SendOptions) => {
       if (booting) return false;
       setBooting(true);
+      const snapshot = loadComposerDraft({
+        namespace: draftNamespace,
+        key: NEW_CHAT_DRAFT_KEY,
+        persist: false,
+      });
       pendingFirstRef.current = { content, images, options };
       setPendingFirstTargetChatId(null);
       const newId = await onCreateChat?.(workspaceScope, content, localModelPreset);
@@ -2797,6 +2980,7 @@ export function ThreadShell({
           setLocalReasoning({ chatId: newId, preset: activeModelPreset, effort: reasoningEffort });
         } catch {
           setReasoningUpdate({ chatId: newId, pending: false });
+          handoffComposerDraft(draftNamespace, `websocket:${newId}`, snapshot, content);
           setPendingFullDraft({ chatId: newId, text: content });
           pendingFirstRef.current = null;
           setBooting(false);
@@ -2808,13 +2992,18 @@ export function ThreadShell({
       setPendingFirstTargetChatId(newId);
       return true;
     },
-    [activeModelPreset, booting, client, localModelPreset, onCreateChat, reasoningEffort, workspaceScope],
+    [activeModelPreset, booting, client, draftNamespace, localModelPreset, onCreateChat, reasoningEffort, workspaceScope],
   );
 
   const handleDraftFullAccess = useCallback(async (draft: string) => {
     if (preparingFull || booting) return;
     setPreparingFull(true);
     setFullSetupError(null);
+    const snapshot = loadComposerDraft({
+      namespace: draftNamespace,
+      key: NEW_CHAT_DRAFT_KEY,
+      persist: false,
+    });
     const draftToTransfer = draft.trim() ? draft : null;
     try {
       const newId = await onCreateChat?.(workspaceScope, draft, localModelPreset, {
@@ -2829,6 +3018,7 @@ export function ThreadShell({
           await client.sendSystemCommand(newId, modelReasoningCommand(activeModelPreset, reasoningEffort));
           setLocalReasoning({ chatId: newId, preset: activeModelPreset, effort: reasoningEffort });
         }
+        handoffComposerDraft(draftNamespace, `websocket:${newId}`, snapshot, draftToTransfer);
         setPendingFullDraft(draftToTransfer ? { chatId: newId, text: draftToTransfer } : null);
       }
     } catch {
@@ -2838,35 +3028,93 @@ export function ThreadShell({
     } finally {
       setPreparingFull(false);
     }
-  }, [activeModelPreset, booting, client, localModelPreset, onCreateChat, preparingFull, reasoningEffort, t, workspaceScope]);
+  }, [activeModelPreset, booting, client, draftNamespace, localModelPreset, onCreateChat, preparingFull, reasoningEffort, t, workspaceScope]);
+
+  const awaitNextTurnSettings = useCallback(async (): Promise<void> => {
+    if (!chatId) return;
+    try {
+      await nextTurnTrackerRef.current.pending(chatId);
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : "next_turn_setting_failed";
+      setNextTurnSettingsError(reason);
+      throw error;
+    }
+  }, [chatId]);
+
+  const submitWithNextTurnSettings = useCallback((
+    chat: string,
+    submit: () => ReturnType<typeof send>,
+  ): ReturnType<typeof send> | Promise<ReturnType<typeof send>> => {
+    const tracker = nextTurnTrackerRef.current;
+    if (!tracker.hasPending(chat)) return submit();
+    // Order admission behind the latest setting acknowledgement. Stop and
+    // Steer never reach this path: they address the admitted turn directly.
+    return tracker.pending(chat).then(submit).catch((error: unknown) => {
+      const reason = error instanceof Error ? error.message : "next_turn_setting_failed";
+      setNextTurnSettingsError(reason);
+      // Never admit under the previous folder/model: the draft or queued row
+      // stays exactly as it was until the user retries. `null` means "not sent"
+      // for both the editor and a queued row.
+      return null;
+    });
+  }, []);
 
   const handleThreadSend = useCallback(
     (content: string, images?: SendAttachment[], options?: SendOptions) => {
-      setFallbackModelName(null);
-      const submitted = send(content, images, options);
-      if (
-        chatId
-        && submitted
-        && !submitted.sideChannel
-        && options?.continueActiveTurn !== true
-      ) {
-        if (workspaceAccessRequest) {
-          pendingRecoveryResolveRef.current = null;
-          pendingRecoveryInvalidationRef.current = {
-            kind: "input",
-            chatId,
-            turnId: submitted.turnId,
-            requestId: workspaceAccessRequest.access_request_id,
-            revision: workspaceAccessRequest.revision,
-          };
-          markWorkspaceAccessRequestStale();
-        }
-        activeViewportTurnByChatIdRef.current.set(chatId, submitted.turnId);
-        setSubmittedViewportTurnId(submitted.turnId);
+      if (options?.continueActiveTurn) {
+        // Steer addresses the admitted turn immediately; it never waits for a
+        // next-turn setting acknowledgement.
+        if (!canonicalRunTurnId) return null;
+        options = { ...options, steerTargetTurnId: canonicalRunTurnId };
       }
-      return submitted;
+      setFallbackModelName(null);
+      const submit = () => send(content, images, options);
+      const settleSubmitted = (submitted: ReturnType<typeof send>) => {
+        if (submitted && viewingHistoricalWindow) {
+          void goToLatest();
+        }
+        if (
+          chatId
+          && submitted
+          && !submitted.sideChannel
+          && options?.continueActiveTurn !== true
+        ) {
+          if (workspaceAccessRequest) {
+            pendingRecoveryResolveRef.current = null;
+            pendingRecoveryInvalidationRef.current = {
+              kind: "input",
+              chatId,
+              turnId: submitted.turnId,
+              requestId: workspaceAccessRequest.access_request_id,
+              revision: workspaceAccessRequest.revision,
+            };
+            markWorkspaceAccessRequestStale();
+          }
+          activeViewportTurnByChatIdRef.current.set(chatId, submitted.turnId);
+          setSubmittedViewportTurnId(submitted.turnId);
+        }
+        return submitted;
+      };
+      const isStopCommand = content.trim() === "/stop" && !(images && images.length > 0);
+      const waitForNextTurnSettings = (
+        Boolean(chatId)
+        && options?.continueActiveTurn !== true
+        && !isStopCommand
+      );
+      const outcome = waitForNextTurnSettings && chatId
+        ? submitWithNextTurnSettings(chatId, submit)
+        : submit();
+      if (outcome instanceof Promise) {
+        return outcome.then((submitted) => {
+          const settled = settleSubmitted(submitted);
+          return settled !== null;
+        });
+      }
+      return settleSubmitted(outcome);
     },
-    [chatId, markWorkspaceAccessRequestStale, pendingRecoveryInvalidationRef, pendingRecoveryResolveRef, send, workspaceAccessRequest],
+    [canonicalRunTurnId, chatId, goToLatest, markWorkspaceAccessRequestStale, pendingRecoveryInvalidationRef,
+      pendingRecoveryResolveRef, send, submitWithNextTurnSettings, viewingHistoricalWindow,
+      workspaceAccessRequest],
   );
 
   const handleAdmissionRejectedPromptRestored = useCallback((turnId: string) => {
@@ -2877,6 +3125,41 @@ export function ThreadShell({
   }, [dismissStreamError, setMessages]);
 
   const handleWorkspaceScopeChange = useCallback((scope: WorkspaceScopePayload) => {
+    if (turnActive && chatId && !temporary) {
+      const ownerChatId = chatId;
+      // The running turn keeps folder A. Persist B for the next turn through
+      // the detached preference owner; do not touch A's recovery card, Stop,
+      // Steer target, or the active scope projection.
+      setNextTurnScopeOverride(scope);
+      setNextTurnSettingsError(null);
+      const rawOperation = client.setNextTurnWorkspaceScope(ownerChatId, scope);
+      const seq = trackNextTurnSetting(ownerChatId, "workspace", rawOperation);
+      void rawOperation
+        .then((ack) => {
+          if (
+            nextTurnChatIdRef.current !== ownerChatId
+            || !nextTurnSettings.isCurrent(ownerChatId, "workspace", seq)
+          ) {
+            return;
+          }
+          if (ack.next_workspace_scope) {
+            setNextTurnScopeOverride(ack.next_workspace_scope);
+          }
+        })
+        .catch((error: unknown) => {
+          if (
+            nextTurnChatIdRef.current !== ownerChatId
+            || !nextTurnSettings.isCurrent(ownerChatId, "workspace", seq)
+          ) {
+            return;
+          }
+          const reason = error instanceof Error ? error.message : "workspace_scope_rejected";
+          // Restore the confirmed display; the draft and queue are untouched.
+          setNextTurnScopeOverride(null);
+          setNextTurnSettingsError(reason);
+        });
+      return;
+    }
     if (workspaceAccessRequest && chatId) {
       pendingRecoveryResolveRef.current = null;
       pendingRecoveryInvalidationRef.current = {
@@ -2888,7 +3171,9 @@ export function ThreadShell({
       markWorkspaceAccessRequestStale();
     }
     onWorkspaceScopeChange?.(scope);
-  }, [chatId, markWorkspaceAccessRequestStale, onWorkspaceScopeChange, pendingRecoveryInvalidationRef, pendingRecoveryResolveRef, workspaceAccessRequest]);
+  }, [chatId, client, markWorkspaceAccessRequestStale, nextTurnSettings, onWorkspaceScopeChange,
+    pendingRecoveryInvalidationRef, pendingRecoveryResolveRef, temporary, trackNextTurnSetting,
+    turnActive, workspaceAccessRequest]);
 
   const mutateWorkspaceAccessMode = useCallback(async (mode: WorkspaceAccessMode, retryRetirement = false) => {
     const ownerChatId = chatId;
@@ -2968,11 +3253,40 @@ export function ThreadShell({
     setFilePreview({ parentKey: historyKey, path });
   }, [historyKey]);
 
-  // The whole-session rail loads its index on first need and jumps by turn.
+  // The whole-session rail loads bounded prompt summaries on demand and
+  // reveals unloaded prompts by identity without clobbering the current view.
   const handleNeedSessionTurns = useCallback(() => {
     if (!historyKey) return;
     void loadTurnIndex();
   }, [historyKey, loadTurnIndex]);
+
+  const handleLoadMorePrompts = useCallback(() => {
+    if (!historyKey) return;
+    void loadMorePromptIndex();
+  }, [historyKey, loadMorePromptIndex]);
+
+  const handleRevealPrompt = useCallback((target: RevealPromptTarget) => {
+    if (!historyKey) return;
+    void revealPrompt(target);
+  }, [historyKey, revealPrompt]);
+
+  const handleRetryReveal = useCallback(() => {
+    if (!historyKey || !pendingReveal) return;
+    void revealPrompt({
+      promptId: pendingReveal.promptId,
+      locator: pendingReveal.locator ?? null,
+      cursor: pendingReveal.cursor ?? null,
+    });
+  }, [historyKey, pendingReveal, revealPrompt]);
+
+  const handleDismissRevealError = useCallback(() => {
+    clearPendingReveal();
+  }, [clearPendingReveal]);
+
+  const handleGoToLatest = useCallback(() => {
+    if (!historyKey) return Promise.resolve(false);
+    return goToLatest();
+  }, [goToLatest, historyKey]);
 
   const handleJumpToTurn = useCallback((cursor: string) => {
     if (!historyKey || !cursor) return;
@@ -2982,6 +3296,12 @@ export function ThreadShell({
   useEffect(() => {
     filePreviewEditKeysRef.current = new Set();
   }, [filePreviewPath]);
+
+  // The assets tab only exists inside a saved session. Drop the open flag when
+  // the shell moves to a new or temporary chat so it cannot reappear later.
+  useEffect(() => {
+    if (!historyKey || temporary) setAssetsInspectorOpen(false);
+  }, [historyKey, temporary]);
 
   useEffect(() => {
     if (!filePreviewPath) return;
@@ -3007,10 +3327,24 @@ export function ThreadShell({
   const handleCloseFilePreview = useCallback(() => {
     setFilePreview(null);
   }, []);
+  const handleCloseAssets = useCallback(() => {
+    setAssetsInspectorOpen(false);
+  }, []);
   const handleCloseInspectorDialog = useCallback(() => {
     handleCloseChildHistory();
     handleCloseFilePreview();
-  }, [handleCloseChildHistory, handleCloseFilePreview]);
+    handleCloseAssets();
+  }, [handleCloseAssets, handleCloseChildHistory, handleCloseFilePreview]);
+
+  const handleToggleAssetsInspector = useCallback(() => {
+    if (!historyKey || temporary) return;
+    if (assetsInspectorOpen && selectedInspector === "assets") {
+      setAssetsInspectorOpen(false);
+      return;
+    }
+    setSelectedInspector("assets");
+    setAssetsInspectorOpen(true);
+  }, [assetsInspectorOpen, historyKey, selectedInspector, temporary]);
 
   const handleForkFromMessage = useCallback(
     async (beforeUserIndex: number) => {
@@ -3052,7 +3386,7 @@ export function ThreadShell({
           <button
             type="button"
             className="shrink-0 rounded px-2 py-1 font-medium underline underline-offset-2"
-            onClick={() => void refreshHistory()}
+            onClick={refreshStopState}
           >
             {t("thread.stop.refresh", { defaultValue: "Refresh status" })}
           </button>
@@ -3078,7 +3412,7 @@ export function ThreadShell({
           {childHistoryError}
         </p>
       ) : null}
-      {session ? (
+      {session || historyKey ? (
         <>
         {riskyApproval ? (
           <ApprovalRequestCard
@@ -3176,80 +3510,6 @@ export function ThreadShell({
             onPickFolder={workspaceControls?.can_pick_folder ? pickWorkspaceFolder : undefined}
           />
         ) : null}
-        <ThreadComposer
-          onSend={handleThreadSend}
-          onJoinQueuedAttempt={joinQueuedAttempt}
-          onConsumeQueuedAttempt={consumeQueuedAttempt}
-          admissionRejectedTurn={admissionRejectedTurn}
-          onAdmissionRejectedPromptRestored={handleAdmissionRejectedPromptRestored}
-          disabled={!chatId || reasoningPending}
-          inputAriaLabel={composerInputAriaLabel}
-          isStreaming={turnActive}
-          automaticQueueSendBlocked={hasUnknownMessageSend || !connectionOpen}
-          stopAvailable={hasOwnedWork}
-          stopDisabled={!stopCanBeSent || (delegatedChildrenLoading && !stopTarget)}
-          stopPending={stopPending}
-          placeholder={
-            composerVariant === "hero"
-              ? t("thread.composer.placeholderHero")
-              : t("thread.composer.placeholderThread")
-          }
-          modelLabel={modelBadgeLabel}
-          modelDetail={modelBadge.model}
-          modelPreset={activeModelPreset}
-          modelPresets={modelPresetOptions}
-          onModelPresetChange={handleModelPresetChange}
-          modelReasoning={modelReasoning}
-          modelProvider={modelBadge.provider}
-          modelProviderLabel={modelBadge.providerLabel}
-          modelNeedsSetup={modelBadge.needsSetup}
-          fallbackModelName={fallbackModelName}
-          onModelBadgeClick={modelBadge.needsSetup ? onOpenModelSettings : undefined}
-          onManageModels={
-            isMobileRuntimeActive() && !mobileOwnerCapability() ? undefined : onOpenModelSettings
-          }
-          contextUsage={composerContextUsage}
-          hasConfiguredModel={hasConfiguredModel}
-          recentRoundUsage={composerRoundUsage}
-          variant={composerVariant}
-          slashCommands={availableSlashCommands}
-          cliApps={cliApps}
-          mcpPresets={mcpPresets}
-          sessions={mentionSessions}
-          skills={skills}
-          onStop={stop}
-          onTranscribeAudio={transcribeAudio}
-          goalState={currentGoalState}
-          workspaceScope={workspaceScope}
-          workspaceControlsHidden={temporary}
-          workspaceDefaultScope={workspaceDefaultScope}
-          workspaceControls={workspaceControls}
-          workspaces={workspaces}
-          onRefreshWorkspaces={onRefreshWorkspaces}
-          workspaceScopeDisabled={workspaceScopeDisabled || turnActive || hasUnknownMessageSend}
-          workspaceAccessModeUnknownBlocked={hasUnknownMessageSend}
-          workspaceError={workspaceError}
-          onPickWorkspaceFolder={
-            workspaceControls?.can_pick_folder ? pickWorkspaceFolder : undefined
-          }
-          onWorkspaceScopeChange={handleWorkspaceScopeChange}
-          workspacePermissions={workspacePermissions}
-          workspacePermissionsLoading={workspacePermissionsLoading}
-          workspacePermissionsError={workspacePermissionsError}
-          persistentWorkspaceChat={!temporary && !!chatId}
-          onWorkspaceAccessModeChange={handleWorkspaceAccessModeChange}
-          onRetryWorkspaceRestricted={retryWorkspaceRestricted}
-          initialDraft={pendingFullDraft?.chatId === chatId ? pendingFullDraft.text : null}
-          onInitialDraftConsumed={() => setPendingFullDraft((current) => (
-            current?.chatId === chatId ? null : current
-          ))}
-          pendingQueueKey={temporary ? null : chatId}
-          transcriptionProvider={settingsSnapshot?.transcription?.provider}
-          ingressLimits={ingressLimits}
-          quotedContext={quotedContext}
-          focusRequest={composerFocusSignal}
-          onQuotedContextChange={setQuotedContext}
-        />
         </>
       ) : (
         <>
@@ -3258,72 +3518,148 @@ export function ThreadShell({
             {fullSetupError}
           </p>
         ) : null}
-        <ThreadComposer
-          onSend={handleWelcomeSend}
-          disabled={openingConversation || booting || preparingFull}
-          inputAriaLabel={composerInputAriaLabel}
-          isStreaming={turnActive}
-          automaticQueueSendBlocked={hasUnknownMessageSend || !connectionOpen}
-          onDraftFullAccess={
-            temporary || (isMobileRuntimeActive() && !mobileOwnerCapability())
-              ? undefined
-              : handleDraftFullAccess
-          }
-          placeholder={
-            booting || preparingFull
+        </>
+      )}
+      <ThreadComposer
+        onSend={session || historyKey ? handleThreadSend : handleWelcomeSend}
+        onJoinQueuedAttempt={session || historyKey ? joinQueuedAttempt : undefined}
+        onConsumeQueuedAttempt={session || historyKey ? consumeQueuedAttempt : undefined}
+        admissionRejectedTurn={session || historyKey ? admissionRejectedTurn : undefined}
+        onAdmissionRejectedPromptRestored={
+          session || historyKey ? handleAdmissionRejectedPromptRestored : undefined
+        }
+        disabled={
+          session || historyKey
+            ? historyAccessDenied
+            : (openingConversation || booting || preparingFull)
+        }
+        newTurnBlocked={session || historyKey ? (!chatId || reasoningPending) : false}
+        steerDisabled={session || historyKey ? (!connectionOpen || !canonicalRunTurnId) : false}
+        inputAriaLabel={composerInputAriaLabel}
+        isStreaming={turnActive}
+        queueCompletionTurnId={session || historyKey ? queueCompletionTurnId : null}
+        automaticQueueSendBlocked={hasUnknownMessageSend || !connectionOpen}
+        stopAvailable={session || historyKey ? hasOwnedWork : false}
+        stopDisabled={
+          session || historyKey
+            ? (historyAccessDenied || !stopCanBeSent || (delegatedChildrenLoading && !stopTarget))
+            : false
+        }
+        stopPending={session || historyKey ? stopPending : false}
+        onDraftFullAccess={
+          session || historyKey || temporary || (isMobileRuntimeActive() && !mobileOwnerCapability())
+            ? undefined
+            : handleDraftFullAccess
+        }
+        placeholder={
+          session || historyKey
+            ? (composerVariant === "hero"
+              ? t("thread.composer.placeholderHero")
+              : t("thread.composer.placeholderThread"))
+            : (booting || preparingFull
               ? t("thread.composer.placeholderOpening")
               : t(openingConversation
                 ? "thread.composer.placeholderThread"
-                : "thread.composer.placeholderHero")
-          }
-          modelLabel={modelBadgeLabel}
-          modelDetail={modelBadge.model}
-          modelPreset={activeModelPreset}
-          modelPresets={modelPresetOptions}
-          onModelPresetChange={handleModelPresetChange}
-          modelReasoning={modelReasoning}
-          modelProvider={modelBadge.provider}
-          modelProviderLabel={modelBadge.providerLabel}
-          modelNeedsSetup={modelBadge.needsSetup}
-          fallbackModelName={fallbackModelName}
-          onModelBadgeClick={modelBadge.needsSetup ? onOpenModelSettings : undefined}
-          onManageModels={
-            isMobileRuntimeActive() && !mobileOwnerCapability() ? undefined : onOpenModelSettings
-          }
-          contextUsage={composerContextUsage}
-          hasConfiguredModel={hasConfiguredModel}
-          recentRoundUsage={composerRoundUsage}
-          variant={composerVariant}
-          slashCommands={availableSlashCommands}
-          cliApps={cliApps}
-          mcpPresets={mcpPresets}
-          sessions={mentionSessions}
-          skills={skills}
-          surfaceRef={composerSurfaceRef}
-          onTranscribeAudio={transcribeAudio}
-          goalState={currentGoalState}
-          workspaceScope={workspaceScope}
-          workspaceControlsHidden={temporary || openingConversation}
-          workspaceDefaultScope={workspaceDefaultScope}
-          workspaceControls={workspaceControls}
-          workspaces={workspaces}
-          onRefreshWorkspaces={onRefreshWorkspaces}
-          workspaceScopeDisabled={workspaceScopeDisabled || turnActive || hasUnknownMessageSend}
-          workspaceAccessModeUnknownBlocked={hasUnknownMessageSend}
-          workspaceError={workspaceError}
-          onPickWorkspaceFolder={
-            workspaceControls?.can_pick_folder ? pickWorkspaceFolder : undefined
-          }
-          onWorkspaceScopeChange={handleWorkspaceScopeChange}
-          transcriptionProvider={settingsSnapshot?.transcription?.provider}
-          ingressLimits={ingressLimits}
-        />
-        </>
-      )}
+                : "thread.composer.placeholderHero"))
+        }
+        modelLabel={modelBadgeLabel}
+        modelDetail={modelBadge.model}
+        modelPreset={activeModelPreset}
+        modelPresets={modelPresetOptions}
+        onModelPresetChange={
+          session || historyKey
+            ? (chatId ? handleModelPresetChange : undefined)
+            : handleModelPresetChange
+        }
+        modelReasoning={
+          session || historyKey
+            ? (chatId ? modelReasoning : undefined)
+            : modelReasoning
+        }
+        modelProvider={modelBadge.provider}
+        modelProviderLabel={modelBadge.providerLabel}
+        modelNeedsSetup={modelBadge.needsSetup}
+        fallbackModelName={fallbackModelName}
+        onModelBadgeClick={modelBadge.needsSetup ? onOpenModelSettings : undefined}
+        onManageModels={
+          isMobileRuntimeActive() && !mobileOwnerCapability() ? undefined : onOpenModelSettings
+        }
+        contextUsage={composerContextUsage}
+        hasConfiguredModel={hasConfiguredModel}
+        recentRoundUsage={composerRoundUsage}
+        variant={composerVariant}
+        slashCommands={availableSlashCommands}
+        cliApps={cliApps}
+        mcpPresets={mcpPresets}
+        sessions={mentionSessions}
+        skills={skills}
+        onStop={session || historyKey ? stop : undefined}
+        surfaceRef={session || historyKey ? undefined : composerSurfaceRef}
+        onTranscribeAudio={transcribeAudio}
+        goalState={currentGoalState}
+        workspaceScope={workspaceScope}
+        workspaceControlsHidden={
+          session || historyKey ? (temporary || !chatId) : (temporary || openingConversation)
+        }
+        workspaceDefaultScope={workspaceDefaultScope}
+        workspaceControls={workspaceControls}
+        workspaces={workspaces}
+        onRefreshWorkspaces={onRefreshWorkspaces}
+        workspaceScopeDisabled={workspaceScopeDisabled || hasUnknownMessageSend}
+        nextWorkspaceScope={nextWorkspaceScope}
+        nextTurnSettingsPending={nextTurnSettingsPending}
+        nextTurnSettingsError={nextTurnSettingsError}
+        onBeforeNewTurnSend={session || historyKey ? awaitNextTurnSettings : undefined}
+        workspaceAccessModeUnknownBlocked={hasUnknownMessageSend}
+        workspaceError={workspaceError}
+        onPickWorkspaceFolder={
+          workspaceControls?.can_pick_folder ? pickWorkspaceFolder : undefined
+        }
+        onWorkspaceScopeChange={handleWorkspaceScopeChange}
+        workspacePermissions={session || historyKey ? workspacePermissions : null}
+        workspacePermissionsLoading={session || historyKey ? workspacePermissionsLoading : false}
+        workspacePermissionsError={session || historyKey ? workspacePermissionsError : false}
+        persistentWorkspaceChat={Boolean((session || historyKey) && !temporary && chatId)}
+        onWorkspaceAccessModeChange={
+          session || historyKey ? handleWorkspaceAccessModeChange : undefined
+        }
+        onRetryWorkspaceRestricted={
+          session || historyKey ? retryWorkspaceRestricted : undefined
+        }
+        initialDraft={
+          (session || historyKey) && pendingFullDraft?.chatId === chatId
+            ? pendingFullDraft.text
+            : null
+        }
+        onInitialDraftConsumed={
+          session || historyKey
+            ? () => {
+                clearComposerDraftsForSession(draftNamespace, NEW_CHAT_DRAFT_KEY);
+                setPendingFullDraft((current) => (
+                  current?.chatId === chatId ? null : current
+                ));
+              }
+            : undefined
+        }
+        pendingQueueKey={(session || historyKey) && !temporary ? chatId : null}
+        draftKey={session || historyKey ? (historyKey ?? chatId) : null}
+        draftNamespace={draftNamespace}
+        draftRevoked={Boolean((session || historyKey) && historyAccessDenied)}
+        draftIncarnation={session || historyKey ? sessionIncarnation : null}
+        transcriptionProvider={settingsSnapshot?.transcription?.provider}
+        ingressLimits={ingressLimits}
+        quotedContext={quotedContext}
+        focusRequest={composerFocusSignal}
+        onQuotedContextChange={setQuotedContext}
+      />
     </>
   );
 
-  const emptyState = conversationLoading ? (
+  const emptyState = historyAccessDenied ? (
+    <div role="status" className="text-sm text-muted-foreground">
+      {t("thread.conversationUnavailable", { defaultValue: "This conversation is unavailable." })}
+    </div>
+  ) : conversationLoading ? (
     <div role="status" className="text-sm text-muted-foreground">
       {t("thread.loadingConversation")}
     </div>
@@ -3333,19 +3669,39 @@ export function ThreadShell({
     </div>
   );
   const generatedAssetsAction = historyKey && !temporary ? (
-    <GeneratedAssetsSheet
-      sessionKey={historyKey}
-      token={token}
-      refreshKey={turnActive ? "running" : "idle"}
-    />
+    <Button
+      type="button"
+      variant="ghost"
+      size="icon"
+      aria-label={t("thread.generatedAssets.open")}
+      aria-pressed={assetsInspectorAvailable && inspectorTab === "assets"}
+      onClick={handleToggleAssetsInspector}
+      className={cn(
+        "host-no-drag h-8 w-8 shrink-0 rounded-full text-muted-foreground/85 hover:bg-accent/40 hover:text-foreground",
+        assetsInspectorAvailable && inspectorTab === "assets" && "bg-accent/45 text-foreground",
+      )}
+    >
+      <Images className="h-4 w-4" aria-hidden />
+    </Button>
   ) : undefined;
   const sessionInfoAction = historyKey ? (
     <SessionInfoPopover sessionKey={historyKey} token={token} title={title} />
   ) : undefined;
-  const promptNavigatorAction = historyKey ? (
+  // `shellWidth` starts at 0 before the resize observer measures the shell.
+  // Both cases keep the navigator, which matches the hidden left rail.
+  const promptNavigatorAction = historyKey && shellWidth < PROMPT_RAIL_MIN_WIDTH ? (
     <PromptNavigator
-      messages={displayMessages}
+      messages={viewportMessages}
       onJumpToPrompt={(promptId) => viewportRef.current?.jumpToUserPrompt(promptId)}
+      sessionPrompts={sessionPrompts}
+      sessionTurns={sessionTurns}
+      totalPromptCount={effectivePromptTotal}
+      hasMoreBefore={hasMoreBefore}
+      hasMorePromptsBefore={promptIndexHasMoreBefore}
+      loadingMorePrompts={loadingPromptIndex}
+      onNeedSessionPrompts={handleNeedSessionTurns}
+      onLoadMorePrompts={handleLoadMorePrompts}
+      onRevealPrompt={handleRevealPrompt}
     />
   ) : undefined;
   const childHistoryOverlay = activeChildHistoryInspection ? (
@@ -3392,6 +3748,26 @@ export function ThreadShell({
           visible={inspectorVisible && inspectorTab === "file"}
           active={composerActive && inspectorTab === "file"}
           onClose={inspectorDocked ? handleCloseFilePreview : handleCloseInspectorDialog}
+        />
+      ),
+    });
+  }
+  if (assetsInspectorAvailable && historyKey) {
+    inspectorTabs.push({
+      id: "assets",
+      icon: Images,
+      label: t("thread.generatedAssets.title"),
+      closeLabel: t("thread.generatedAssets.close", { defaultValue: "Close generated assets" }),
+      content: (
+        <GeneratedAssetsPanel
+          key={historyKey}
+          sessionKey={historyKey}
+          token={token}
+          refreshKey={turnActive ? "running" : "idle"}
+          modal={!inspectorDocked}
+          visible={inspectorVisible && inspectorTab === "assets"}
+          active={composerActive && inspectorTab === "assets"}
+          onClose={inspectorDocked ? handleCloseAssets : handleCloseInspectorDialog}
         />
       ),
     });
@@ -3447,17 +3823,17 @@ export function ThreadShell({
             messages={viewportMessages}
             temporary={temporary}
             obscured={inspectorModal}
-            isStreaming={turnActive}
-            runStartedAt={currentRunStartedAt}
-            retryStatus={retryStatus}
+            isStreaming={viewingHistoricalWindow ? false : turnActive}
+            runStartedAt={viewingHistoricalWindow ? null : currentRunStartedAt}
+            retryStatus={viewingHistoricalWindow ? null : retryStatus}
             emptyState={emptyState}
             composer={(
               <div hidden={!composerActive} data-testid={composerActive ? "active-pane-composer" : undefined}>
                 {composer}
               </div>
             )}
-            activeTurnId={viewportTurnId}
-            activeTurnStartedHere={activeTurnStartedHere}
+            activeTurnId={viewingHistoricalWindow ? null : viewportTurnId}
+            activeTurnStartedHere={viewingHistoricalWindow ? false : activeTurnStartedHere}
             conversationKey={historyKey}
             conversationReady={messagesReady}
             conversationLoading={conversationLoading}
@@ -3468,8 +3844,23 @@ export function ThreadShell({
             forkBoundaryMessageCount={forkBoundaryMessageCount}
             hasMoreBefore={hasMoreBefore}
             loadingOlder={loadingOlder}
+            hasMoreAfter={hasMoreAfter}
+            loadingNewer={loadingNewer}
+            tailActivityPending={tailActivityPending || (viewingHistoricalWindow && turnActive)}
             userMessageOffset={userMessageOffset}
             onLoadOlder={loadOlder}
+            onLoadNewer={loadNewer}
+            onGoToLatest={handleGoToLatest}
+            sessionPrompts={sessionPrompts}
+            sessionPromptTotal={effectivePromptTotal}
+            hasMorePromptsBefore={promptIndexHasMoreBefore}
+            loadingMorePrompts={loadingPromptIndex}
+            onLoadMorePrompts={handleLoadMorePrompts}
+            onRevealPrompt={handleRevealPrompt}
+            pendingReveal={pendingReveal}
+            onPendingRevealHandled={clearPendingReveal}
+            onRetryReveal={handleRetryReveal}
+            onDismissRevealError={handleDismissRevealError}
             sessionTurns={sessionTurns}
             sessionTurnTotal={sessionTurnTotal}
             onNeedSessionTurns={handleNeedSessionTurns}
@@ -3493,6 +3884,7 @@ export function ThreadShell({
         onSelect={setSelectedInspector}
         onClose={(id) => {
           if (id === "file") handleCloseFilePreview();
+          else if (id === "assets") handleCloseAssets();
           else handleCloseChildHistory();
         }}
       />

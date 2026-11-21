@@ -1117,6 +1117,10 @@
     "error": "Lỗi kết nối"
   },
   "thread": {
+    "workingBar": {
+      "defaultStep": "Đang xử lý",
+      "ariaLabel": "Bước hiện tại"
+    },
     "compaction": {
       "cancelled": "Đã hủy nén ngữ cảnh",
       "empty": "Không có ngữ cảnh cần nén.",
@@ -1240,6 +1244,11 @@
       "configureModel": "Cấu hình mô hình",
       "chooseAI": "Chọn AI của bạn",
       "switchModel": "Chuyển mô hình cho cuộc trò chuyện này",
+      "back": "Quay lại",
+      "backToQuickModels": "Quay lại mô hình nhanh",
+      "searchModels": "Tìm mô hình",
+      "noMatchingModels": "Không có mô hình phù hợp",
+      "moreModels": "Thêm mô hình ({{count}})",
       "manageModels": "Quản lý mô hình",
       "context": {
         "tooltip": "Ngữ cảnh {{percent}}%",
@@ -1428,6 +1437,7 @@
     "forkedFromHistory": "Tách nhánh từ lịch sử",
     "generatedAssets": {
       "open": "Mở nội dung đã tạo",
+      "close": "Đóng nội dung đã tạo",
       "title": "Nội dung đã tạo",
       "refresh": "Làm mới nội dung đã tạo",
       "view": "Chế độ xem nội dung",
@@ -1513,6 +1523,7 @@
     "activityThoughtFor": "Đã suy nghĩ trong {{duration}}",
     "activityGroup": "Hoạt động",
     "activityWorking": "Đang xử lý",
+    "activityWorkingFor": "Đang xử lý · {{duration}}",
     "activityWorked": "Đã xử lý",
     "activityWorkedFor": "Đã xử lý trong {{duration}}",
     "retryConnection": "Kết nối thất bại",
@@ -1699,7 +1710,12 @@
     },
     "picker": {
       "chooseProject": "Chọn thư mục dự án",
-      "clearProject": "Bỏ chọn thư mục dự án"
+      "clearProject": "Bỏ chọn thư mục dự án",
+      "nextTurn": "Lượt tiếp theo: {{folder}}",
+      "nextTurnLabel": "Lượt tiếp theo",
+      "nextTurnHint": "Lượt đang chạy giữ nguyên thư mục. Lựa chọn này áp dụng cho lượt tiếp theo.",
+      "nextTurnPending": "Đang lưu thư mục tiếp theo…",
+      "nextTurnFailed": "Thay đổi thư mục chưa được lưu. Lựa chọn trước vẫn có hiệu lực; bản nháp của bạn vẫn nguyên vẹn."
     },
     "folders": {
       "saved": "Folder saved. The map and Sandbox rules are up to date.",

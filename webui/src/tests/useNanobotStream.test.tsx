@@ -1172,6 +1172,101 @@ describe("useNanobotStream", () => {
     ]);
   });
 
+  it("updates a running tool row from progress frames without adding rows", () => {
+    const fake = fakeClient();
+    const chatId = "chat-tool-progress";
+    const { result } = renderHook(() => useNanobotStream(chatId, EMPTY_MESSAGES), {
+      wrapper: wrap(fake.client),
+    });
+
+    act(() => {
+      fake.emit(chatId, {
+        event: "message",
+        chat_id: chatId,
+        text: 'mcp_comfy_generate_video({"workflow":"wan"})',
+        kind: "tool_hint",
+        tool_events: [{
+          phase: "start",
+          call_id: "comfy-1",
+          name: "mcp_comfy_generate_video",
+          arguments: { workflow: "wan" },
+        }],
+      });
+      fake.emit(chatId, {
+        event: "message",
+        chat_id: chatId,
+        text: "",
+        kind: "progress",
+        tool_events: [{
+          phase: "progress",
+          call_id: "comfy-1",
+          name: "mcp_comfy_generate_video",
+          progress: 35,
+          total: 100,
+          message: "Starting ComfyUI",
+        }],
+      });
+    });
+
+    expect(result.current.messages).toHaveLength(1);
+    expect(result.current.messages[0].toolEvents).toEqual([
+      expect.objectContaining({
+        phase: "progress",
+        call_id: "comfy-1",
+        progress: 35,
+        total: 100,
+        message: "Starting ComfyUI",
+      }),
+    ]);
+
+    act(() => {
+      fake.emit(chatId, {
+        event: "message",
+        chat_id: chatId,
+        text: "",
+        kind: "progress",
+        tool_events: [{
+          phase: "progress",
+          call_id: "comfy-1",
+          name: "mcp_comfy_generate_video",
+          progress: 62,
+          total: 100,
+          message: "ComfyUI is generating prompt...",
+        }],
+      });
+    });
+
+    expect(result.current.messages).toHaveLength(1);
+    expect(result.current.messages[0].toolEvents).toEqual([
+      expect.objectContaining({
+        call_id: "comfy-1",
+        progress: 62,
+        message: "ComfyUI is generating prompt...",
+      }),
+    ]);
+
+    act(() => {
+      fake.emit(chatId, {
+        event: "message",
+        chat_id: chatId,
+        text: "",
+        kind: "progress",
+        tool_events: [{
+          phase: "end",
+          call_id: "comfy-1",
+          name: "mcp_comfy_generate_video",
+          arguments: { workflow: "wan" },
+          result: { status: "completed" },
+        }],
+      });
+    });
+    expect(result.current.messages).toHaveLength(1);
+    expect(result.current.messages[0].toolEvents).toEqual([
+      expect.objectContaining({ phase: "end", call_id: "comfy-1" }),
+    ]);
+    expect(result.current.messages[0].toolEvents?.[0].message).toBeUndefined();
+  });
+
   it("replaces a hosted search placeholder when its query arrives", () => {
     const fake = fakeClient();
     const { result } = renderHook(() => useNanobotStream("chat-hosted-search", EMPTY_MESSAGES), {
@@ -4514,6 +4609,43 @@ describe("useNanobotStream", () => {
       });
     });
     expect(result.current.goalState).toEqual({ active: false });
+  });
+
+  it("keeps live delivery for the revisited chat after switching away and back", () => {
+    const fake = fakeClient();
+    const { result, rerender } = renderHook(
+      ({ chatId }: { chatId: string }) => useNanobotStream(chatId, EMPTY_MESSAGES),
+      {
+        wrapper: wrap(fake.client),
+        initialProps: { chatId: "chat-a" },
+      },
+    );
+
+    act(() => {
+      fake.emit("chat-a", {
+        event: "goal_status",
+        chat_id: "chat-a",
+        status: "running",
+        started_at: 777,
+        turn_id: "turn-a",
+      });
+    });
+    expect(result.current.isStreaming).toBe(true);
+
+    rerender({ chatId: "chat-b" });
+    rerender({ chatId: "chat-a" });
+
+    // The restarted stream still consumes live events for the revisited chat.
+    // A warm reconnect does not drop the subscription or leave a stale run.
+    act(() => {
+      fake.emit("chat-a", {
+        event: "turn_end",
+        chat_id: "chat-a",
+        turn_id: "turn-a",
+      });
+    });
+    expect(result.current.isStreaming).toBe(false);
+    expect(result.current.runStartedAt).toBeNull();
   });
 
   it("projects and updates a typed delegated child row", () => {

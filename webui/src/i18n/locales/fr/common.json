@@ -1117,6 +1117,10 @@
     "error": "Erreur de connexion"
   },
   "thread": {
+    "workingBar": {
+      "defaultStep": "Traitement en cours",
+      "ariaLabel": "Étape en cours"
+    },
     "compaction": {
       "cancelled": "Compression du contexte annulée",
       "empty": "Aucun contexte à compresser.",
@@ -1240,6 +1244,11 @@
       "configureModel": "Configurer le modèle",
       "chooseAI": "Choisissez votre IA",
       "switchModel": "Changer le modèle de cette conversation",
+      "back": "Retour",
+      "backToQuickModels": "Retour aux modèles rapides",
+      "searchModels": "Rechercher des modèles",
+      "noMatchingModels": "Aucun modèle correspondant",
+      "moreModels": "Plus de modèles ({{count}})",
       "manageModels": "Gérer les modèles",
       "context": {
         "tooltip": "Contexte {{percent}} %",
@@ -1428,6 +1437,7 @@
     "forkedFromHistory": "Bifurqué depuis l'historique",
     "generatedAssets": {
       "open": "Ouvrir les ressources générées",
+      "close": "Fermer les ressources générées",
       "title": "Ressources générées",
       "refresh": "Actualiser les ressources générées",
       "view": "Vue des ressources",
@@ -1513,6 +1523,7 @@
     "activityThoughtFor": "Réflexion terminée en {{duration}}",
     "activityGroup": "Activité",
     "activityWorking": "Traitement en cours",
+    "activityWorkingFor": "Traitement en cours · {{duration}}",
     "activityWorked": "Travail terminé",
     "activityWorkedFor": "Travail terminé en {{duration}}",
     "retryConnection": "Échec de la connexion",
@@ -1699,7 +1710,12 @@
     },
     "picker": {
       "chooseProject": "Choisir un dossier de projet",
-      "clearProject": "Effacer le dossier de projet"
+      "clearProject": "Effacer le dossier de projet",
+      "nextTurn": "Tour suivant : {{folder}}",
+      "nextTurnLabel": "Tour suivant",
+      "nextTurnHint": "Le tour en cours conserve son dossier. Ce choix s'applique au tour suivant.",
+      "nextTurnPending": "Enregistrement du dossier suivant…",
+      "nextTurnFailed": "Le changement de dossier n'a pas été enregistré. Le choix précédent reste actif ; votre brouillon est intact."
     },
     "folders": {
       "saved": "Folder saved. The map and Sandbox rules are up to date.",

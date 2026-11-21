@@ -1,7 +1,15 @@
-import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { expect, it, vi } from "vitest";
 import type { SettingsPayload } from "@/lib/types";
-import { jsonResponse, settingsPayload, renderSettingsView, installSettingsViewTestHooks } from "@/tests/settings-test-utils";
+import { ClientProvider } from "@/providers/ClientProvider";
+import { SettingsView } from "@/components/settings/SettingsView";
+import {
+  jsonResponse,
+  requestMutationMock,
+  settingsPayload,
+  renderSettingsView,
+  installSettingsViewTestHooks,
+} from "@/tests/settings-test-utils";
 
   const thirdPartyBrandNotice =
     "Product names, logos, and brands are property of their respective owners. Use is for identification only and does not imply endorsement.";
@@ -9,6 +17,28 @@ import { jsonResponse, settingsPayload, renderSettingsView, installSettingsViewT
 describe("Settings overview and appearance", () => {
   installSettingsViewTestHooks();
 
+
+  it("offers the theme toggle in Appearance settings", () => {
+    const onToggleTheme = vi.fn();
+    render(
+      <ClientProvider client={{ requestMutation: requestMutationMock } as never} token="tok">
+        <SettingsView
+          theme="light"
+          initialSection="appearance"
+          initialSettings={settingsPayload()}
+          showSidebar
+          onToggleTheme={onToggleTheme}
+          onBackToChat={() => {}}
+          onModelNameChange={() => {}}
+        />
+      </ClientProvider>,
+    );
+
+    const themeRow = screen.getByText("Theme").parentElement?.parentElement;
+    expect(themeRow).not.toBeNull();
+    fireEvent.click(within(themeRow as HTMLElement).getByRole("button"));
+    expect(onToggleTheme).toHaveBeenCalledTimes(1);
+  });
 
   it("persists the file edit display local preference", async () => {
     renderSettingsView({

@@ -22,6 +22,10 @@ import httpx
 from loguru import logger
 
 from nanobot.agent.tools.base import Tool, ToolResult, invalid_numeric_limit
+from nanobot.agent.tools.progress import (
+    ProgressThrottle,
+    current_tool_progress_sink,
+)
 from nanobot.agent.tools.registry import ToolRegistry
 from nanobot.agent.turn import ToolOutcome
 from nanobot.security.network import (
@@ -1167,10 +1171,41 @@ class MCPToolWrapper(_MCPWrapperBase):
     def parameters(self) -> dict[str, Any]:
         return self._parameters
 
+    def _mcp_progress_callback(self) -> Any:
+        """Build a callback that forwards MCP progress to the live UI.
+
+        The MCP SDK attaches ``_meta.progressToken`` only when a callback is
+        present, so servers such as the ComfyUI harness start sending
+        ``notifications/progress`` frames. Frames stay live-only: no transcript
+        row is written for them.
+        """
+        sink = current_tool_progress_sink()
+        if sink is None:
+            return None
+        throttle = ProgressThrottle()
+
+        async def on_progress(
+            progress: float,
+            total: float | None,
+            message: str | None,
+        ) -> None:
+            if not throttle.should_emit(total, message):
+                return
+            with suppress(Exception):
+                await sink.emit(progress, total, message)
+
+        return on_progress
+
     @_admitted_generation
     async def execute(self, **kwargs: Any) -> Any:
         retried_transient = False
         refreshed_session = False
+        progress_callback = self._mcp_progress_callback()
+        call_options: dict[str, Any] = (
+            {"progress_callback": progress_callback}
+            if progress_callback is not None
+            else {}
+        )
         while True:
             try:
                 if self._kohaku_media_stop_enabled:
@@ -1181,6 +1216,7 @@ class MCPToolWrapper(_MCPWrapperBase):
                                 self._original_name,
                                 arguments=kwargs,
                                 meta={_KOHAKU_MEDIA_CALL_META_KEY: call_id},
+                                **call_options,
                             ),
                             timeout=self._tool_timeout,
                         )
@@ -1198,7 +1234,11 @@ class MCPToolWrapper(_MCPWrapperBase):
                         )
                 else:
                     result = await asyncio.wait_for(
-                        self._session.call_tool(self._original_name, arguments=kwargs),
+                        self._session.call_tool(
+                            self._original_name,
+                            arguments=kwargs,
+                            **call_options,
+                        ),
                         timeout=self._tool_timeout,
                     )
             except asyncio.TimeoutError:
@@ -1334,6 +1374,24 @@ class MCPToolWrapper(_MCPWrapperBase):
             )
 
             payload = parse_embedded_text_payload("\n".join(text_parts))
+            staged_videos = [
+                artifact for artifact in artifacts if artifact.get("kind") == "video"
+            ]
+            review_images = [
+                image["path"] for image in inline_images if image is not None
+            ]
+            if staged_videos and review_images:
+                # Video tools return the clip as a resource link plus sampled
+                # review frames. Keep the clip as the primary artifact and expose
+                # the frames only as reference images so the assets library stays clean.
+                return (
+                    _mcp_media_tool_result(
+                        text_parts,
+                        staged_videos,
+                        reference_images=review_images,
+                    ),
+                    staged_videos,
+                )
             candidate_count = candidate_artifact_count(payload)
             if candidate_count is not None and candidate_count <= len(inline_images):
                 # Each inline image has one slot. File links can repeat those images.
@@ -1358,7 +1416,7 @@ class MCPToolWrapper(_MCPWrapperBase):
             return store_generated_image_artifact(
                 data_url,
                 prompt=str(arguments.get("prompt") or ""),
-                model=str(arguments.get("model") or ""),
+                model=str(arguments.get("model") or arguments.get("workflow") or ""),
                 save_dir="generated",
                 provider=f"mcp:{self._server_name}",
             )
@@ -1376,11 +1434,21 @@ class MCPToolWrapper(_MCPWrapperBase):
         """Stage a trusted local MCP resource file into the managed media store."""
         from nanobot.utils.artifacts import ArtifactError, store_generated_file_artifact
 
-        uri = getattr(block, "uri", None)
-        if not isinstance(uri, str) or not uri:
+        raw_uri = getattr(block, "uri", None)
+        # The MCP SDK models ``uri`` as ``pydantic.AnyUrl``, not ``str``.
+        uri = str(raw_uri).strip() if raw_uri is not None else ""
+        if not uri:
+            logger.warning(
+                "MCP tool '{}' returned a resource link without a URI", self._name
+            )
             return None
         parsed = urllib.parse.urlparse(uri)
         if parsed.scheme != "file":
+            logger.debug(
+                "MCP tool '{}' returned non-file resource link scheme '{}'",
+                self._name,
+                parsed.scheme,
+            )
             return None
         raw_path = urllib.parse.unquote(parsed.path)
         if parsed.netloc and parsed.netloc not in {"", "localhost"}:
@@ -1392,7 +1460,7 @@ class MCPToolWrapper(_MCPWrapperBase):
                 Path(raw_path),
                 kind=kind,
                 prompt=str(arguments.get("prompt") or ""),
-                model=str(arguments.get("model") or ""),
+                model=str(arguments.get("model") or arguments.get("workflow") or ""),
                 provider=f"mcp:{self._server_name}",
                 allowed_roots=self._media_output_roots,
                 save_dir="generated",

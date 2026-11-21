@@ -866,6 +866,69 @@ describe("ThreadShell", () => {
     }));
   });
 
+  it("paints saved text while controls are pending and withdraws it only when read access is refused", async () => {
+    const client = makeClient();
+    const chatId = "separate-controls";
+    const key = `websocket:${chatId}`;
+    let releaseControls!: () => void;
+    const controls = new Promise<Response>((resolve) => {
+      releaseControls = () => resolve(new Response("", { status: 503 }));
+    });
+    let readFailure: "offline" | "refused" | null = null;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = new URL(String(input), "https://example.test");
+      if (!url.pathname.endsWith("/webui-thread")) return new Response(null, { status: 404 });
+      if (url.searchParams.get("view") === "controls") return controls;
+      if (readFailure === "offline") throw new TypeError("offline");
+      if (readFailure === "refused") return new Response(null, { status: 403 });
+      return Response.json({
+        view: "history",
+        sessionKey: key,
+        schemaVersion: 3,
+        active_turn_id: "running-turn",
+        has_pending_tool_calls: true,
+        messages: [{ id: "saved", role: "assistant", content: "Saved before the run", createdAt: 1 }],
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const showThread = (resolved: boolean) => wrap(client, <ThreadShell
+      session={resolved ? session(chatId) : null}
+      routeSessionKey={key}
+      openingConversation={!resolved}
+      title="Separate controls"
+      onToggleSidebar={() => {}}
+    />);
+    const { rerender } = render(showThread(false));
+
+    expect(await screen.findByText(replyText("Saved before the run"))).toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledWith(
+      expect.stringContaining("/webui-thread?view=controls"),
+      expect.anything(),
+    );
+    rerender(showThread(true));
+    act(() => client._emitChat(chatId, {
+      event: "goal_status",
+      chat_id: chatId,
+      status: "running",
+      started_at: 1_700_000_000,
+      turn_id: "running-turn",
+    }));
+    const stopButton = await screen.findByRole("button", { name: "Stop response" });
+    expect(stopButton).toBeDisabled();
+    await act(async () => releaseControls());
+    expect(screen.getByText(replyText("Saved before the run"))).toBeInTheDocument();
+    expect(stopButton).toBeDisabled();
+    expect(client.finishRunLocally).not.toHaveBeenCalled();
+
+    readFailure = "offline";
+    await act(async () => { client._emitSessionUpdate(chatId, "thread"); });
+    expect(screen.getByText(replyText("Saved before the run"))).toBeInTheDocument();
+
+    readFailure = "refused";
+    act(() => client._emitSessionUpdate(chatId, "thread"));
+    await waitFor(() => expect(screen.queryByText(replyText("Saved before the run"))).toBeNull());
+  });
+
   it("does not enable legacy Stop after authenticated history reports stop_target null", async () => {
     const client = makeClient();
     vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
@@ -1402,7 +1465,7 @@ describe("ThreadShell", () => {
       title="Inspection parent"
       onToggleSidebar={() => {}}
     />));
-    expect(await screen.findByText("Parent answer")).toBeInTheDocument();
+    expect(await screen.findByText(replyText("Parent answer"))).toBeInTheDocument();
     const composer = screen.getByRole("textbox", { name: "Message input" });
     fireEvent.change(composer, { target: { value: "Keep this parent draft" } });
     const fileInput = container.querySelector<HTMLInputElement>('input[type="file"]');
@@ -4394,11 +4457,8 @@ describe("ThreadShell", () => {
       expect(screen.getByText("missed prefix resumed suffix")).toBeInTheDocument(),
     );
     expect(screen.queryByText("resumed suffix")).not.toBeInTheDocument();
-    await waitFor(() => expectSendMessageWithTurn(
-      client,
-      "before-delta-chat",
-      "queued guidance",
-    ));
+    expect(client.sendMessage).not.toHaveBeenCalled();
+    expect(screen.getByText("queued guidance")).toBeInTheDocument();
   });
 
   it("keeps the live answer cursor when a resumed turn is still running", async () => {
@@ -4502,11 +4562,8 @@ describe("ThreadShell", () => {
       expect(screen.getByText("partial answer missed resumed")).toBeInTheDocument(),
     );
     expect(screen.queryByText("partial answer resumed")).not.toBeInTheDocument();
-    await waitFor(() => expectSendMessageWithTurn(
-      client,
-      "active-resume-chat",
-      "queued guidance",
-    ));
+    expect(client.sendMessage).not.toHaveBeenCalled();
+    expect(screen.getByText("queued guidance")).toBeInTheDocument();
   });
 
   it("keeps active-run timing attached to the original turn after guidance", async () => {
@@ -4568,6 +4625,8 @@ describe("ThreadShell", () => {
     fireEvent.change(input, { target: { value: "How is it going?" } });
     fireEvent.keyDown(input, { key: "Enter" });
     fireEvent.keyDown(input, { key: "Enter" });
+    expect(client.sendMessage).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Steer", exact: true }));
 
     // The queued guidance leaves the queue only when its own owner receipt
     // arrives; the row is still visible as guidance before that.
@@ -4593,7 +4652,7 @@ describe("ThreadShell", () => {
 
     await waitFor(() => expect(queuedRow()).toBeNull());
     expect(screen.getByText("How is it going?")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Working" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^Working(?: · |$)/ })).toBeInTheDocument();
     expect(screen.queryByText("Worked for 1s")).not.toBeInTheDocument();
     expect(screen.queryByRole("status", { name: /^Thinking for / })).not.toBeInTheDocument();
   });
@@ -4985,7 +5044,7 @@ describe("ThreadShell", () => {
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
       if (!url.includes("websocket%3Achat-title/webui-thread")) return { ok: false, status: 404, json: async () => ({}) };
-      if (replySent && url.includes("?limit=1&direction=latest")) {
+      if (replySent && url.includes("?view=controls")) {
         owningReads += 1;
         if (owningReads === 2) readsStarted();
         await readsGate;
@@ -5257,7 +5316,7 @@ describe("ThreadShell", () => {
           workspace_access_request: latestRequest,
           workspace_permissions: latestPermissions,
         };
-        if (deferOwningReads && url.includes("?limit=1&direction=latest")) {
+        if (deferOwningReads && url.includes("?view=controls")) {
           const index = owningReadCount++;
           if (owningReadCount >= 2) resolveOwningReadsStarted?.();
           if (index < 2) {
@@ -5395,7 +5454,7 @@ describe("ThreadShell", () => {
           workspace_access_request: latestRequest,
           workspace_permissions: latestPermissions,
         };
-        if (deferOwningReads && url.includes("?limit=1&direction=latest")) {
+        if (deferOwningReads && url.includes("?view=controls")) {
           const index = owningReadCount++;
           if (owningReadCount >= 2) resolveOwningReadsStarted?.();
           if (index < 2) {
@@ -7451,4 +7510,557 @@ describe("ThreadShell", () => {
     expect(screen.getByRole("button", { name: "Stop response" })).toBeInTheDocument();
   });
 
+  it("reveals an unloaded multi-prompt Steer target end-to-end and isolates live streaming while away from tail", async () => {
+    const client = makeClient();
+    const chatId = "long-reveal-chat";
+    const key = `websocket:${chatId}`;
+    const origin = {
+      store_identity: "store-long",
+      session_key: key,
+      incarnation: "inc-long",
+      generation: 0,
+    };
+    const latestMessages: UIMessage[] = [
+      { id: "u-119", promptId: "evt-u-119", role: "user", content: "Prompt 119", createdAt: 119_000, turnOrdinal: 119 },
+      { id: "a-119", role: "assistant", content: "Reply 119", createdAt: 119_500 },
+    ];
+    const aroundSteer15Messages: UIMessage[] = [
+      { id: "u-15", promptId: "evt-u-15", role: "user", content: "Prompt 15", createdAt: 15_000, turnOrdinal: 15 },
+      { id: "a-15a", role: "assistant", content: "Reply before steer mentioning turn_end", createdAt: 15_200 },
+      { id: "u-steer-15", promptId: "evt-steer-15", role: "user", content: "Steer 15 exact target", createdAt: 15_400, turnOrdinal: 15 },
+      { id: "a-15b", role: "assistant", content: "Reply after steer 15", createdAt: 15_600 },
+    ];
+
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
+      const url = new URL(String(input), "https://example.test");
+      if (url.pathname.endsWith("/webui-thread") && url.searchParams.get("view") === "controls") {
+        return Promise.resolve(httpJson({
+          sessionKey: key,
+          stop_target: null,
+          workspace_access_request: null,
+          workspace_permissions: null,
+        }));
+      }
+      if (url.pathname.endsWith("/webui-thread") && url.searchParams.get("direction") === "around") {
+        const around = url.searchParams.get("around");
+        if (around === "loc-steer-15") {
+          return Promise.resolve(httpJson({
+            schemaVersion: 3,
+            view: "history",
+            sessionKey: key,
+            source: origin,
+            messages: aroundSteer15Messages,
+            page: {
+              before_cursor: "b-14",
+              after_cursor: "a-16",
+              has_more_before: true,
+              has_more_after: true,
+              total_turn_count: 120,
+              total_prompt_count: 121,
+              target_prompt_id: "evt-steer-15",
+              coverage: "indexed",
+            },
+          }));
+        }
+        return Promise.resolve(new Response(JSON.stringify({ error: "stale_history_cursor" }), {
+          status: 409,
+          headers: { "content-type": "application/json" },
+        }));
+      }
+      if (url.pathname.endsWith("/webui-thread")) {
+        return Promise.resolve(httpJson({
+          schemaVersion: 3,
+          view: "history",
+          sessionKey: key,
+          source: origin,
+          messages: latestMessages,
+          page: {
+            before_cursor: "b-118",
+            after_cursor: null,
+            has_more_before: true,
+            has_more_after: false,
+            total_turn_count: 120,
+            total_prompt_count: 121,
+            coverage: "indexed",
+          },
+        }));
+      }
+      if (url.pathname.endsWith("/turns")) {
+        const before = url.searchParams.get("before");
+        if (before === "idx-page-1") {
+          return Promise.resolve(httpJson({
+            schemaVersion: 3,
+            sessionKey: key,
+            turns: [{ ordinal: 15, label: "Prompt 15", created_at: 15_000, cursor: "c-15" }],
+            prompts: [
+              {
+                prompt_id: "evt-u-15",
+                turn_ordinal: 15,
+                prompt_ordinal: 15,
+                label: "Prompt 15",
+                created_at: 15_000,
+                locator: "loc-u-15",
+              },
+              {
+                prompt_id: "evt-steer-15",
+                turn_ordinal: 15,
+                prompt_ordinal: 16,
+                label: "Steer 15 exact target",
+                created_at: 15_400,
+                locator: "loc-steer-15",
+              },
+            ],
+            total_turn_count: 120,
+            total_prompt_count: 121,
+            page: { before_cursor: null, has_more_before: false, loaded_prompt_count: 2 },
+          }));
+        }
+        return Promise.resolve(httpJson({
+          schemaVersion: 3,
+          sessionKey: key,
+          turns: [{ ordinal: 119, label: "Prompt 119", created_at: 119_000, cursor: "c-119" }],
+          prompts: [
+            {
+              prompt_id: "evt-u-119",
+              turn_ordinal: 119,
+              prompt_ordinal: 120,
+              label: "Prompt 119",
+              created_at: 119_000,
+              locator: "loc-u-119",
+            },
+          ],
+          total_turn_count: 120,
+          total_prompt_count: 121,
+          page: { before_cursor: "idx-page-1", has_more_before: true, loaded_prompt_count: 1 },
+        }));
+      }
+      return Promise.resolve(new Response(null, { status: 404 }));
+    }));
+
+    const { container } = render(wrap(
+      client,
+      <ThreadShell
+        session={session(chatId)}
+        title="Long chat"
+        onToggleSidebar={() => {}}
+      />,
+    ));
+
+    // 1. Latest window paints first.
+    expect(await screen.findByText("Prompt 119")).toBeInTheDocument();
+
+    // 2. Open navigator, load older summary range, select Steer 15 (not loaded or mounted).
+    fireEvent.click(screen.getByRole("button", { name: "Open prompt navigator" }));
+    const loadOlderSummary = await screen.findByTestId("prompt-navigator-load-older");
+    fireEvent.click(loadOlderSummary);
+    const steerChoice = await screen.findByRole("button", {
+      name: "Jump to prompt: Steer 15 exact target",
+    });
+    fireEvent.click(steerChoice);
+
+    // 3. Real fetch -> mount -> scroll + highlight lands on the exact Steer prompt.
+    expect(await screen.findByText("Steer 15 exact target")).toBeInTheDocument();
+    await waitFor(() => {
+      const targetEl = container.querySelector<HTMLElement>('[data-prompt-key="evt-steer-15"]');
+      expect(targetEl).toBeTruthy();
+      expect(targetEl?.dataset.promptHighlighted).toBe("true");
+    });
+
+    // 4. Live streaming at the tail must not splice into turn 15's window.
+    act(() => {
+      client._emitChat(chatId, {
+        event: "goal_status",
+        chat_id: chatId,
+        status: "running",
+        started_at: 1_700_000_500,
+        turn_id: "live-tail-turn",
+      });
+      client._emitChat(chatId, {
+        event: "delta",
+        chat_id: chatId,
+        turn_id: "live-tail-turn",
+        text: "Streaming tail token should not appear in turn 15",
+      });
+    });
+    expect(screen.getByText("Steer 15 exact target")).toBeInTheDocument();
+    expect(screen.queryByText(/Streaming tail token/)).not.toBeInTheDocument();
+
+    // 5. Go to latest shows live activity and restores the real tail on click.
+    const latestButton = screen.getByRole("button", { name: "Go to latest" });
+    expect(latestButton).toHaveAttribute("data-tail-activity", "true");
+    fireEvent.click(latestButton);
+    expect(await screen.findByText("Prompt 119")).toBeInTheDocument();
+  });
+
+
+  it("retains latest qualified context usage while viewing an older history window", async () => {
+    const client = makeClient();
+    const chatId = "context-window-independent";
+    const key = `websocket:${chatId}`;
+    const origin = {
+      store_identity: "store-ctx",
+      session_key: key,
+      incarnation: "inc-ctx",
+      generation: 0,
+    };
+    const latestMessages: UIMessage[] = [
+      { id: "u-119", turnId: "t-119", promptId: "evt-u-119", role: "user", content: "Prompt 119", createdAt: 119_000, turnOrdinal: 119 },
+      {
+        id: "a-119",
+        turnId: "t-119",
+        role: "assistant",
+        content: "Reply 119",
+        createdAt: 119_500,
+        contextUsage: { contextTokens: 40_000, contextWindowTokens: 100_000, completionTurnSeq: 2 },
+      },
+    ];
+    const olderWindowMessages: UIMessage[] = [
+      { id: "u-15", turnId: "t-15", promptId: "evt-u-15", role: "user", content: "Prompt 15", createdAt: 15_000, turnOrdinal: 15 },
+      {
+        id: "a-15",
+        turnId: "t-15",
+        role: "assistant",
+        content: "Reply 15",
+        createdAt: 15_200,
+        contextUsage: { contextTokens: 10_000, contextWindowTokens: 100_000, completionTurnSeq: 2 },
+      },
+    ];
+
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
+      const url = new URL(String(input), "https://example.test");
+      if (url.pathname.endsWith("/webui-thread") && url.searchParams.get("view") === "controls") {
+        return Promise.resolve(httpJson({
+          sessionKey: key,
+          stop_target: null,
+          workspace_access_request: null,
+          workspace_permissions: null,
+        }));
+      }
+      if (url.pathname.endsWith("/webui-thread") && url.searchParams.get("direction") === "around") {
+        return Promise.resolve(httpJson({
+          schemaVersion: 3,
+          view: "history",
+          sessionKey: key,
+          source: origin,
+          messages: olderWindowMessages,
+          page: {
+            before_cursor: "b-14",
+            after_cursor: "a-16",
+            has_more_before: true,
+            has_more_after: true,
+            total_turn_count: 120,
+            total_prompt_count: 120,
+            target_prompt_id: "evt-u-15",
+            coverage: "indexed",
+          },
+        }));
+      }
+      if (url.pathname.endsWith("/webui-thread")) {
+        return Promise.resolve(httpJson({
+          schemaVersion: 3,
+          view: "history",
+          sessionKey: key,
+          source: origin,
+          messages: latestMessages,
+          page: {
+            before_cursor: "b-118",
+            after_cursor: null,
+            has_more_before: true,
+            has_more_after: false,
+            total_turn_count: 120,
+            total_prompt_count: 120,
+            coverage: "indexed",
+          },
+        }));
+      }
+      if (url.pathname.endsWith("/turns")) {
+        return Promise.resolve(httpJson({
+          schemaVersion: 3,
+          sessionKey: key,
+          turns: [{ ordinal: 15, label: "Prompt 15", created_at: 15_000, cursor: "c-15" }],
+          prompts: [{
+            prompt_id: "evt-u-15",
+            turn_ordinal: 15,
+            prompt_ordinal: 15,
+            label: "Prompt 15",
+            created_at: 15_000,
+            locator: "loc-u-15",
+          }],
+          total_turn_count: 120,
+          total_prompt_count: 120,
+          page: { before_cursor: null, has_more_before: false, loaded_prompt_count: 1 },
+        }));
+      }
+      return Promise.resolve(new Response(null, { status: 404 }));
+    }));
+
+    render(wrap(
+      client,
+      <ThreadShell
+        session={session(chatId)}
+        title="Context usage chat"
+        onToggleSidebar={() => {}}
+        settingsSnapshot={modelSettings("test-model", "deepseek")}
+      />,
+    ));
+
+    expect(await screen.findByText("Prompt 119")).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Context 40%. Open context usage" })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Open prompt navigator" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Jump to prompt: Prompt 15" }));
+
+    expect(await screen.findByText("Prompt 15")).toBeInTheDocument();
+    // While viewing turn 15 (hasMoreAfter === true), the meter must keep the tail's 40%
+    // rather than reverting to turn 15's 10% or disappearing.
+    expect(screen.getByRole("button", { name: "Context 40%. Open context usage" })).toBeInTheDocument();
+  });
+
+  it("docks generated assets in the inspector from the header button", async () => {
+    const resizeObserver = stubThreadResizeObserver();
+    const client = makeClient();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.includes("websocket%3Aassets-dock/webui-thread")) {
+          return Promise.resolve(httpJson(transcriptFromSimpleMessages([
+            { role: "user", content: "paint a lighthouse" },
+            { role: "assistant", content: "Here are the candidates." },
+          ])));
+        }
+        if (url.includes("/generated-assets?")) {
+          return Promise.resolve({
+            ok: true,
+            headers: new Headers({ "content-type": "application/json" }),
+            json: async () => ({
+              schemaVersion: 1,
+              sessionKey: "websocket:assets-dock",
+              total: 1,
+              groups: [{
+                id: "turn-1|call-1",
+                turnId: "turn-1",
+                toolCallId: "call-1",
+                toolName: "mcp_comfy_generate_image",
+                sequence: 1,
+                startedAt: 1_793_438_338_000,
+                arguments: { prompt: "lighthouse at dusk" },
+                artifacts: [{
+                  id: "a1",
+                  kind: "image",
+                  mime: "image/png",
+                  name: "a1.png",
+                  url: "/api/media/sig/a1",
+                  bytes: 10,
+                }],
+              }],
+            }),
+          } as Response);
+        }
+        return Promise.resolve(new Response(null, { status: 404 }));
+      }),
+    );
+
+    try {
+      const { container } = render(wrap(
+        client,
+        <ThreadShell
+          session={session("assets-dock")}
+          title="Assets dock"
+          onToggleSidebar={() => {}}
+        />,
+      ));
+
+      await screen.findByText(replyText("Here are the candidates."));
+      const shell = container.querySelector("section") as HTMLElement;
+      Object.defineProperty(shell, "clientWidth", { configurable: true, value: 1_200 });
+      const observer = resizeObserver.observers.find((entry) => entry.elements.includes(shell));
+      expect(observer).toBeDefined();
+      act(() => {
+        observer!.callback([], observer as unknown as ResizeObserver);
+      });
+
+      const assetsButton = screen.getByRole("button", { name: "Open generated assets" });
+      expect(assetsButton).toHaveAttribute("aria-pressed", "false");
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+
+      fireEvent.click(assetsButton);
+
+      // Docked pane: a tab, not a dialog, and the thumbnails load in the pane.
+      expect(await screen.findByRole("tab", { name: "Generated assets" })).toHaveAttribute(
+        "aria-selected",
+        "true",
+      );
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+      expect(await screen.findByTestId("generated-assets-flat")).toBeInTheDocument();
+      expect(await screen.findByRole("button", { name: "Open a1.png" })).toBeInTheDocument();
+      expect(assetsButton).toHaveAttribute("aria-pressed", "true");
+
+      fireEvent.click(assetsButton);
+
+      await waitFor(() => {
+        expect(screen.queryByRole("tab", { name: "Generated assets" })).not.toBeInTheDocument();
+      });
+      expect(assetsButton).toHaveAttribute("aria-pressed", "false");
+    } finally {
+      resizeObserver.restore();
+    }
+  });
+
+  it("keeps the assets and file tabs open side by side in the inspector", async () => {
+    await preloadMarkdownText();
+    const resizeObserver = stubThreadResizeObserver();
+    const client = makeClient();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.includes("websocket%3Aassets-tabs/webui-thread")) {
+          return Promise.resolve(httpJson(transcriptFromSimpleMessages([
+            { role: "assistant", content: "Open `files/stream.txt`" },
+          ])));
+        }
+        if (url.includes("/file-preview?") && url.includes("probe=1")) {
+          return Promise.resolve(httpJson({ available: true }));
+        }
+        if (url.includes("/file-preview?")) {
+          return Promise.resolve(httpJson({
+            path: "/project/files/stream.txt",
+            display_path: "files/stream.txt",
+            project_path: "/project",
+            language: "text",
+            content: "stream-marker\n",
+            size: 14,
+            truncated: false,
+          }));
+        }
+        if (url.includes("/generated-assets?")) {
+          return Promise.resolve({
+            ok: true,
+            headers: new Headers({ "content-type": "application/json" }),
+            json: async () => ({
+              schemaVersion: 1,
+              sessionKey: "websocket:assets-tabs",
+              total: 1,
+              groups: [{
+                id: "turn-1|call-1",
+                turnId: "turn-1",
+                toolCallId: "call-1",
+                toolName: "mcp_comfy_generate_image",
+                sequence: 1,
+                startedAt: 1_793_438_338_000,
+                arguments: { prompt: "harbour at dawn" },
+                artifacts: [{
+                  id: "tab-a1",
+                  kind: "image",
+                  mime: "image/png",
+                  name: "tab-a1.png",
+                  url: "/api/media/sig/tab-a1",
+                  bytes: 10,
+                }],
+              }],
+            }),
+          } as Response);
+        }
+        return Promise.resolve(new Response(null, { status: 404 }));
+      }),
+    );
+
+    try {
+      const { container } = render(wrap(
+        client,
+        <ThreadShell
+          session={session("assets-tabs")}
+          title="Assets tabs"
+          onToggleSidebar={() => {}}
+        />,
+      ));
+
+      const fileReference = await screen.findByTestId("inline-file-path");
+      await waitFor(() => expect(fileReference).toHaveAttribute("role", "button"));
+      const shell = container.querySelector("section") as HTMLElement;
+      Object.defineProperty(shell, "clientWidth", { configurable: true, value: 1_200 });
+      const observer = resizeObserver.observers.find((entry) => entry.elements.includes(shell));
+      act(() => {
+        observer!.callback([], observer as unknown as ResizeObserver);
+      });
+
+      fireEvent.click(fileReference);
+      expect(await screen.findByTestId("file-preview-panel")).toHaveTextContent("stream-marker");
+
+      fireEvent.click(screen.getByRole("button", { name: "Open generated assets" }));
+
+      // Both tabs stay mounted; only the selected one is visible.
+      const assetsTab = screen.getByRole("tab", { name: "Generated assets" });
+      const fileTab = screen.getByRole("tab", { name: "stream.txt" });
+      expect(assetsTab).toHaveAttribute("aria-selected", "true");
+      expect(fileTab).toHaveAttribute("aria-selected", "false");
+      expect(await screen.findByTestId("generated-assets-flat")).toBeInTheDocument();
+
+      fireEvent.click(fileTab);
+
+      expect(screen.getByRole("tab", { name: "Generated assets" })).toHaveAttribute(
+        "aria-selected",
+        "false",
+      );
+      expect(screen.getByTestId("file-preview-panel")).toHaveTextContent("stream-marker");
+      expect(screen.queryByTestId("generated-assets-flat")).not.toBeInTheDocument();
+    } finally {
+      resizeObserver.restore();
+    }
+  });
+
+  it("shows the prompt navigator only where the prompt rail is hidden", async () => {
+    const resizeObserver = stubThreadResizeObserver();
+    const client = makeClient();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.includes("websocket%3Anav-width/webui-thread")) {
+          return Promise.resolve(httpJson(transcriptFromSimpleMessages([
+            { role: "user", content: "first question" },
+            { role: "assistant", content: "first answer" },
+          ])));
+        }
+        return Promise.resolve(new Response(null, { status: 404 }));
+      }),
+    );
+
+    try {
+      const { container } = render(wrap(
+        client,
+        <ThreadShell
+          session={session("nav-width")}
+          title="Nav width"
+          onToggleSidebar={() => {}}
+        />,
+      ));
+
+      await screen.findByText(replyText("first answer"));
+      const shell = container.querySelector("section") as HTMLElement;
+      const observer = resizeObserver.observers.find((entry) => entry.elements.includes(shell));
+      const resize = (width: number) => {
+        Object.defineProperty(shell, "clientWidth", { configurable: true, value: width });
+        act(() => {
+          observer!.callback([], observer as unknown as ResizeObserver);
+        });
+      };
+
+      // Wide desktop shows the left rail, so the header duplicate is hidden.
+      resize(1_200);
+      await waitFor(() => {
+        expect(screen.queryByRole("button", { name: "Open prompt navigator" }))
+          .not.toBeInTheDocument();
+      });
+      expect(screen.getByRole("button", { name: "Open generated assets" })).toBeInTheDocument();
+
+      // Narrow and mobile widths hide the rail, so the header navigator returns.
+      resize(700);
+      expect(await screen.findByRole("button", { name: "Open prompt navigator" }))
+        .toBeInTheDocument();
+    } finally {
+      resizeObserver.restore();
+    }
+  });
 });

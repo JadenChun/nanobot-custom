@@ -107,6 +107,9 @@ export function WorkspaceProjectPicker({
   controls,
   workspaces = null,
   error,
+  nextTurnScope = null,
+  nextTurnPending = false,
+  turnActive = false,
   onPickFolder,
   onRefreshWorkspaces = async () => {},
   onChange,
@@ -125,6 +128,12 @@ export function WorkspaceProjectPicker({
   controls: WorkspacesPayload["controls"] | null;
   workspaces?: WorkspacesPayload | null;
   error?: string | null;
+  /** Detached choice for the next turn; the active turn keeps ``scope``. */
+  nextTurnScope?: WorkspaceScopePayload | null;
+  /** A next-turn acknowledgement is still in flight. */
+  nextTurnPending?: boolean;
+  /** A turn is running; the picker still edits the next-turn choice. */
+  turnActive?: boolean;
   onPickFolder?: () => Promise<string | null>;
   onRefreshWorkspaces?: () => Promise<void>;
   onChange?: (scope: WorkspaceScopePayload) => void;
@@ -146,6 +155,19 @@ export function WorkspaceProjectPicker({
     ? ""
     : activeScope?.project_name || projectNameFromPath(activeScope?.project_path ?? "");
   const currentPath = activeScope?.project_path ?? defaultScope?.project_path ?? "";
+  // While a turn runs the picker edits the *next* turn instead of the admitted
+  // one, so its own selection is the readable label.
+  const pendingNextScope = nextTurnScope && (
+    !activeScope
+    || !sameWorkspacePath(nextTurnScope.project_path, activeScope.project_path)
+    || nextTurnScope.access_mode !== activeScope.access_mode
+  )
+    ? nextTurnScope
+    : null;
+  const nextFolderName = pendingNextScope
+    ? pendingNextScope.project_name || projectNameFromPath(pendingNextScope.project_path)
+    : "";
+  const showNextTurnSelection = turnActive && pendingNextScope !== null;
   const visible = !!defaultScope
     && !!onChange;
   const canChangeFocus = controls?.can_change_project !== false;
@@ -221,20 +243,30 @@ export function WorkspaceProjectPicker({
     ownerKey,
     projectPath: currentPath,
     accessMode: activeScope?.access_mode,
+    turnActive,
   });
   useLayoutEffect(() => {
     const previous = committedBrowseLifetimeRef.current;
     const focusChanged = previous.accessMode !== activeScope?.access_mode
       || (previous.projectPath !== currentPath
         && !sameWorkspacePath(previous.projectPath, currentPath));
-    const lifetimeChanged = previous.ownerKey !== ownerKey || focusChanged || !browseEligible;
+    // A browse that spans a run boundary is ambiguous: its picker owner is no
+    // longer the admitted turn. Discard it rather than applying a stale path.
+    const turnBoundaryChanged = previous.turnActive !== turnActive;
+    const lifetimeChanged = previous.ownerKey !== ownerKey || focusChanged
+      || turnBoundaryChanged || !browseEligible;
     committedBrowseLifetimeRef.current = {
       ownerKey,
       projectPath: currentPath,
       accessMode: activeScope?.access_mode,
+      turnActive,
     };
-    if (lifetimeChanged) revokePendingBrowse(true);
-  }, [activeScope?.access_mode, browseEligible, currentPath, ownerKey, revokePendingBrowse]);
+    if (lifetimeChanged) {
+      const hadPendingBrowse = pendingBrowseRef.current !== null;
+      revokePendingBrowse(true);
+      if (hadPendingBrowse && turnBoundaryChanged) setOpen(false);
+    }
+  }, [activeScope?.access_mode, browseEligible, currentPath, ownerKey, revokePendingBrowse, turnActive]);
 
   useLayoutEffect(() => () => revokePendingBrowse(false), [revokePendingBrowse]);
 
@@ -272,6 +304,17 @@ export function WorkspaceProjectPicker({
         folder: folderName,
         defaultValue: `Working in: ${folderName}`,
       });
+  const triggerAccessibleLabel = showNextTurnSelection
+    ? t("workspace.picker.nextTurn", {
+        folder: nextFolderName,
+        defaultValue: `Next turn: ${nextFolderName}`,
+      })
+    : pathAccessibleLabel;
+  const triggerTitle = showNextTurnSelection
+    ? t("workspace.picker.nextTurnHint", {
+        defaultValue: "The running turn keeps its folder. This choice applies to the next turn.",
+      })
+    : isAgentHome ? pathAccessibleLabel : currentPath;
   const effectiveAccess = activeScope?.effective_access;
   const currentAccess = effectiveAccess
     ? effectiveAccessLabel(effectiveAccess, t)
@@ -299,8 +342,8 @@ export function WorkspaceProjectPicker({
               ref={triggerRef}
               type="button"
               disabled={disabled || pickingFolder || !canChangeFocus}
-              aria-label={pathAccessibleLabel}
-              title={isAgentHome ? pathAccessibleLabel : currentPath}
+              aria-label={triggerAccessibleLabel}
+              title={triggerTitle}
               className={cn(
                 "transition-colors disabled:pointer-events-none disabled:opacity-55",
                 line
@@ -333,32 +376,34 @@ export function WorkspaceProjectPicker({
                       ),
               )}
             >
-              {pickingFolder
+              {pickingFolder || nextTurnPending
                 ? <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" aria-hidden />
                 : <Folder className={cn("shrink-0", !line && compact ? "h-4 w-4" : "h-3.5 w-3.5")} aria-hidden />}
               {line ? (
-                folderName ? (
+                (showNextTurnSelection ? nextFolderName : folderName) ? (
                   <span className="thread-composer-project-label min-w-0 truncate">
-                    {folderName}
+                    {showNextTurnSelection ? nextFolderName : folderName}
                   </span>
                 ) : null
               ) : inline ? (
-                folderName ? (
+                (showNextTurnSelection ? nextFolderName : folderName) ? (
                   <span className="thread-composer-project-label min-w-0 truncate">
-                    {folderName}
+                    {showNextTurnSelection ? nextFolderName : folderName}
                   </span>
                 ) : null
               ) : (
                 <span className={cn("thread-composer-project-label min-w-0 truncate", compact && !folderName && "sr-only")}>
-                  {compact && folderName ? folderName : pathAccessibleLabel}
+                  {showNextTurnSelection
+                    ? nextFolderName
+                    : compact && folderName ? folderName : pathAccessibleLabel}
                 </span>
               )}
               {line ? (
-                folderName
+                (showNextTurnSelection ? nextFolderName : folderName)
                   ? <ChevronDown className="h-3 w-3 shrink-0 text-muted-foreground/45" aria-hidden />
                   : null
               ) : inline ? (
-                folderName
+                (showNextTurnSelection ? nextFolderName : folderName)
                   ? <ChevronDown className="ml-1.5 h-3 w-3 shrink-0" aria-hidden />
                   : null
               ) : !compact ? (
@@ -387,6 +432,21 @@ export function WorkspaceProjectPicker({
                   <p className="break-all text-[12px] font-medium" title={currentPath}>{currentPath}</p>
                   <p className="text-[11px] text-muted-foreground">{currentAccess}</p>
                 </div>
+                {showNextTurnSelection && pendingNextScope ? (
+                  <div className="space-y-1 rounded-control border border-primary/30 bg-primary/[0.06] px-3 py-2.5">
+                    <p className="text-[11px] font-semibold uppercase tracking-wide text-primary">
+                      {t("workspace.picker.nextTurnLabel", { defaultValue: "Next turn" })}
+                    </p>
+                    <p className="break-all text-[12px] font-medium" title={pendingNextScope.project_path}>
+                      {pendingNextScope.project_path}
+                    </p>
+                    {nextTurnPending ? (
+                      <p role="status" className="text-[11px] text-muted-foreground">
+                        {t("workspace.picker.nextTurnPending", { defaultValue: "Saving the next folder…" })}
+                      </p>
+                    ) : null}
+                  </div>
+                ) : null}
 
                 <button
                   type="button"
@@ -497,9 +557,13 @@ export function WorkspaceProjectPicker({
                   {pathError ?? error}
                 </p>
               ) : null}
-              {disabled ? (
+              {!line && !disabled ? (
                 <p className="text-[11px] text-muted-foreground">
-                  {t("workspace.picker.busy", { defaultValue: "A response is running. Folder changes are available when it finishes." })}
+                  {turnActive
+                    ? t("workspace.picker.nextTurnHint", {
+                        defaultValue: "The running turn keeps its folder. This choice applies to the next turn.",
+                      })
+                    : t("workspace.picker.chooseProject", { defaultValue: "Choose project folder" })}
                 </p>
               ) : null}
               {!canChangeFocus && !disabled ? (
@@ -527,9 +591,11 @@ export function WorkspaceProjectPicker({
             {currentAccess}
           </span>
         ) : null}
-        {!line && !inline && disabled ? (
+        {!line && !inline && !disabled && showNextTurnSelection ? (
           <span className={cn("text-[10.5px] text-muted-foreground", compact && "sr-only")}>
-            {t("workspace.picker.busy", { defaultValue: "A response is running. Folder changes are available when it finishes." })}
+            {t("workspace.picker.nextTurnHint", {
+              defaultValue: "The running turn keeps its folder. This choice applies to the next turn.",
+            })}
           </span>
         ) : null}
         {!line && !inline && !canChangeFocus && !disabled ? (

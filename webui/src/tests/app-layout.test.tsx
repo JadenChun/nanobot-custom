@@ -169,7 +169,9 @@ vi.mock("@/hooks/useSessions", async (importOriginal) => {
   return {
     ...actual,
     useSessions: () => {
-      const [sessions, setSessions] = React.useState(mockSessions);
+      const listedSessions = mockSessions;
+      const [sessions, setSessions] = React.useState(listedSessions);
+      React.useEffect(() => setSessions(listedSessions), [listedSessions]);
       return {
         sessions,
         loading: mockSessionsLoading,
@@ -571,24 +573,73 @@ describe("App layout", () => {
     );
   });
 
-  it("opens a saved topic before the sidebar returns without enabling a draft send", async () => {
+  it("opens and edits a saved topic before the sidebar returns without enabling a draft send", async () => {
     const key = "websocket:linked-topic";
     const path = `#/chat/${encodeURIComponent(key)}`;
     mockSessionsLoading = true;
     window.history.replaceState(null, "", path);
     mockFetchRoutes({
-      [`/api/sessions/${encodeURIComponent(key)}/webui-thread?limit=40&direction=latest`]: {
+      [`/api/sessions/${encodeURIComponent(key)}/webui-thread?limit=40&direction=latest&view=history`]: {
+        view: "history",
         schemaVersion: 3,
         sessionKey: key,
         messages: [{ id: "saved", role: "assistant", content: "Saved topic reply", createdAt: 1 }],
       },
     });
-    render(<App />);
+    const { rerender } = render(<App />);
 
     expect(await screen.findByText("Saved topic reply")).toBeVisible();
-    expect(screen.getByRole("textbox", { name: "Message input" })).toBeDisabled();
+    const input = screen.getByRole("textbox", { name: "Message input" });
+    expect(input).toBeEnabled();
+    fireEvent.change(input, { target: { value: "start a reply before the list settles" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(sendMessageSpy).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "Send message" })).toBeDisabled();
     expect(window.location.hash).toBe(path);
     expect(createChatSpy).not.toHaveBeenCalled();
+
+    mockSessions = [{
+      key, channel: "websocket", chatId: "linked-topic", title: "Linked topic",
+      preview: "", createdAt: null, updatedAt: null,
+    }];
+    rerender(<App />);
+    await waitFor(() => expect(screen.getByRole("button", { name: "Send message" })).toBeEnabled());
+    expect(screen.getByRole("textbox", { name: "Message Linked topic" })).toBe(input);
+    expect(input).toHaveValue("start a reply before the list settles");
+  });
+
+  it("uses one app-owned settings request while opening and switching saved chats", async () => {
+    const first = "websocket:catalog-first";
+    const second = "websocket:catalog-second";
+    mockSessions = [
+      { key: first, chatId: "catalog-first", title: "First topic" },
+      { key: second, chatId: "catalog-second", title: "Second topic" },
+    ].map((row) => ({ ...row, channel: "websocket", preview: "", createdAt: null, updatedAt: null }));
+    window.history.replaceState(null, "", `#/chat/${encodeURIComponent(first)}`);
+    let releaseSettings!: (payload: ReturnType<typeof baseSettingsPayload>) => void;
+    const pendingSettings = new Promise<ReturnType<typeof baseSettingsPayload>>((resolve) => {
+      releaseSettings = resolve;
+    });
+    const readSettings = vi.fn(() => pendingSettings);
+    const history = (key: string, content: string) => ({
+      view: "history", schemaVersion: 3, sessionKey: key,
+      messages: [{ role: "assistant", id: key, content, createdAt: 1 }],
+    });
+    mockFetchRoutes({
+      "/api/settings": readSettings,
+      [`/api/sessions/${encodeURIComponent(first)}/webui-thread?limit=40&direction=latest&view=history`]:
+        history(first, "First saved reply"),
+      [`/api/sessions/${encodeURIComponent(second)}/webui-thread?limit=40&direction=latest&view=history`]:
+        history(second, "Second saved reply"),
+    });
+
+    render(<App />);
+    expect(await screen.findByText("First saved reply")).toBeVisible();
+    expect(readSettings).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getByRole("button", { name: "Second topic" }));
+    expect(await screen.findByText("Second saved reply")).toBeVisible();
+    await act(async () => releaseSettings(baseSettingsPayload()));
+    expect(readSettings).toHaveBeenCalledTimes(1);
   });
 
   it("keeps a just-created topic route while the session list catches up", async () => {
@@ -707,15 +758,14 @@ describe("App layout", () => {
     const heroTemporaryToggle = within(heroHeader).getByRole("button", {
       name: "Temporary chat",
     });
-    const themeToggle = within(heroHeader).getByRole("button", {
+    // Theme switching moved to Settings → Appearance; the chat header omits it.
+    expect(screen.queryByRole("button", {
       name: "Toggle theme from header",
-    });
+    })).not.toBeInTheDocument();
     expect(within(sidebar).queryByRole("button", { name: "Temporary chat" })).not.toBeInTheDocument();
     expect(within(screen.getByTestId("thread-composer-motion")).queryByRole("button", {
       name: "Temporary chat",
     })).not.toBeInTheDocument();
-    expect(heroTemporaryToggle.compareDocumentPosition(themeToggle)
-      & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
 
     const user = userEvent.setup();
     await user.hover(heroTemporaryToggle);
@@ -3050,9 +3100,11 @@ describe("App layout", () => {
     expect(screen.getByTestId("settings-section-transition")).toHaveClass(
       "animate-in",
       "fade-in-0",
-      "slide-in-from-bottom-1",
-      "duration-200",
+      "duration-150",
       "motion-reduce:animate-none",
+    );
+    expect(screen.getByTestId("settings-section-transition")).not.toHaveClass(
+      "slide-in-from-bottom-1",
     );
     expect(document.title).toBe("Apps · Kohaku");
 
@@ -3470,9 +3522,6 @@ describe("App layout", () => {
 
     await waitFor(() => expect(connectSpy).toHaveBeenCalled());
 
-    fireEvent.click(screen.getByRole("button", { name: "Toggle theme from header" }));
-    expect(toggleThemeSpy).toHaveBeenCalledTimes(1);
-
     fireEvent.click(screen.getByRole("button", { name: "Collapse sidebar" }));
     const sidebarAside = container.querySelector("aside.lg\\:block") as HTMLElement;
     await waitFor(() => expect(sidebarAside.style.width).toBe("56px"));
@@ -3492,7 +3541,7 @@ describe("App layout", () => {
     expect(createChatSpy).not.toHaveBeenCalled();
     expect(screen.getByText(HERO_GREETING_PATTERN)).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Start a new topic" })).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Toggle theme from header" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Toggle theme from header" })).not.toBeInTheDocument();
     expect(within(sidebar).getByRole("button", { name: "Settings" })).toBeInTheDocument();
 
     expect(within(sidebar).getByText("Existing chat")).toBeInTheDocument();

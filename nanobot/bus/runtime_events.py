@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-from nanobot.bus.events import InboundMessage
+from nanobot.bus.events import CommittedUserInput, InboundMessage
 from nanobot.events import AgentEvent
 from nanobot.providers.base import ContextUsageSnapshot, LLMUsage
 from nanobot.session.input_attempt import InputAttemptProof
@@ -40,6 +41,7 @@ class UserInputCommitted(AgentEvent):
     context: RuntimeEventContext
     input_attempt_proof: InputAttemptProof | None = None
     joined: bool = False
+    input: CommittedUserInput | None = None
 
 
 @dataclass(frozen=True)
@@ -55,6 +57,7 @@ class InjectionCommitted(AgentEvent):
     """Queued guidance was committed into the running turn it targeted."""
 
     context: RuntimeEventContext
+    input: CommittedUserInput | None = None
 
 
 @dataclass(frozen=True)
@@ -227,6 +230,7 @@ class RuntimeEventPublisher:
         *,
         input_attempt_proof: InputAttemptProof | None = None,
         joined: bool = False,
+        original_input: CommittedUserInput | None = None,
     ) -> None:
         await self.bus.publish(
             UserInputCommitted(
@@ -238,6 +242,7 @@ class RuntimeEventPublisher:
                 ),
                 input_attempt_proof=input_attempt_proof,
                 joined=joined,
+                input=original_input if not joined else None,
             )
         )
 
@@ -245,15 +250,20 @@ class RuntimeEventPublisher:
         self,
         msg: InboundMessage,
         session_key: str,
+        *,
+        metadata: dict[str, Any] | None = None,
+        original_input: CommittedUserInput | None = None,
+        publish: Callable[[InjectionCommitted], Awaitable[None]] | None = None,
     ) -> None:
-        await self.bus.publish(
+        await (publish or self.bus.publish)(
             InjectionCommitted(
                 context=self._context(
                     channel=msg.channel,
                     chat_id=msg.chat_id,
                     session_key=session_key,
-                    metadata=msg.metadata,
+                    metadata=metadata if metadata is not None else msg.metadata,
                 ),
+                input=original_input,
             )
         )
 

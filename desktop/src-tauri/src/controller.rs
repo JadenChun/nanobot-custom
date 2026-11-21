@@ -32,7 +32,6 @@ pub struct Snapshot {
     pub selected_config: Option<String>,
     pub selected_interpreter: Option<String>,
     pub selected_workspace: Option<String>,
-    #[cfg(target_os = "macos")]
     pub setup_defaults: Option<preferences::SetupDefaults>,
     pub effective_workspace: Option<String>,
     pub tray_available: bool,
@@ -51,7 +50,6 @@ impl Snapshot {
             selected_config: None,
             selected_interpreter: None,
             selected_workspace: None,
-            #[cfg(target_os = "macos")]
             setup_defaults: preferences::setup_defaults(),
             effective_workspace: None,
             tray_available: false,
@@ -375,6 +373,20 @@ fn start_worker(
                 controller.start_selected(preferences, false);
             }
             Ok(Some(_)) => shared.set_error("singleton_guard"),
+            Ok(None) if shared.instance_verified => {
+                if let Some(defaults) = preferences::setup_defaults() {
+                    if let Some(interpreter_path) = defaults.interpreter_path {
+                        controller.start_selected(
+                            Preferences {
+                                config_path: defaults.config_path,
+                                interpreter_path,
+                                workspace: None,
+                            },
+                            true,
+                        );
+                    }
+                }
+            }
             Ok(None) => {}
             Err(code) => shared.set_error(code),
         }
@@ -591,16 +603,12 @@ impl Controller {
             return Err("interpreter_invalid".to_owned());
         }
         let config = Path::new(&preferences.config_path);
-        #[cfg(target_os = "macos")]
         let create_default = _allow_default_creation && preferences::missing_default_config(config);
-        #[cfg(not(target_os = "macos"))]
-        let create_default = false;
         if !create_default && !config.is_file() {
             return Err("config_invalid".to_owned());
         }
         let mut adapter = PipeAdapter::spawn(Path::new(&preferences.interpreter_path))
             .map_err(|error| error.0)?;
-        #[cfg(target_os = "macos")]
         if create_default {
             adapter.prepare_default_config(config).map_err(|error| error.0)?;
         }
@@ -1320,10 +1328,7 @@ impl Controller {
 fn normalize_selection(mut value: Preferences) -> Result<Preferences, String> {
     value.validate().map_err(str::to_owned)?;
     let config = Path::new(&value.config_path);
-    #[cfg(target_os = "macos")]
     let create_default = preferences::missing_default_config(config);
-    #[cfg(not(target_os = "macos"))]
-    let create_default = false;
     if !create_default {
         let config = fs::canonicalize(config).map_err(|_| "config_invalid".to_owned())?;
         if !config.is_file() {

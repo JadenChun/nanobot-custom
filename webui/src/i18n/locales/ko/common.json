@@ -1117,6 +1117,10 @@
     "error": "연결 오류"
   },
   "thread": {
+    "workingBar": {
+      "defaultStep": "작업 중",
+      "ariaLabel": "현재 단계"
+    },
     "compaction": {
       "cancelled": "컨텍스트 압축이 취소되었습니다",
       "empty": "압축할 컨텍스트가 없습니다.",
@@ -1240,6 +1244,11 @@
       "configureModel": "모델 설정",
       "chooseAI": "AI 선택",
       "switchModel": "이 대화에서 사용할 모델 전환",
+      "back": "뒤로",
+      "backToQuickModels": "빠른 모델로 돌아가기",
+      "searchModels": "모델 검색",
+      "noMatchingModels": "일치하는 모델 없음",
+      "moreModels": "모델 더 보기 ({{count}})",
       "manageModels": "모델 관리",
       "context": {
         "tooltip": "컨텍스트 {{percent}}%",
@@ -1428,6 +1437,7 @@
     "forkedFromHistory": "기록에서 분기됨",
     "generatedAssets": {
       "open": "생성된 에셋 열기",
+      "close": "생성된 에셋 닫기",
       "title": "생성된 에셋",
       "refresh": "생성된 에셋 새로고침",
       "view": "에셋 보기",
@@ -1513,6 +1523,7 @@
     "activityThoughtFor": "{{duration}} 동안 생각함",
     "activityGroup": "활동",
     "activityWorking": "작업 중",
+    "activityWorkingFor": "작업 중 · {{duration}}",
     "activityWorked": "작업함",
     "activityWorkedFor": "{{duration}} 동안 작업함",
     "retryConnection": "연결 실패",
@@ -1699,7 +1710,12 @@
     },
     "picker": {
       "chooseProject": "프로젝트 폴더 선택",
-      "clearProject": "프로젝트 폴더 선택 해제"
+      "clearProject": "프로젝트 폴더 선택 해제",
+      "nextTurn": "다음 턴: {{folder}}",
+      "nextTurnLabel": "다음 턴",
+      "nextTurnHint": "실행 중인 턴은 현재 폴더를 유지합니다. 이 선택은 다음 턴에 적용됩니다.",
+      "nextTurnPending": "다음 폴더를 저장하는 중…",
+      "nextTurnFailed": "폴더 변경이 저장되지 않았습니다. 이전 선택이 그대로 적용되며 초안은 유지됩니다."
     },
     "folders": {
       "saved": "Folder saved. The map and Sandbox rules are up to date.",

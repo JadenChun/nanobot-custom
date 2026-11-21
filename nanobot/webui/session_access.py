@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping, Sequence
 from functools import cache
 from typing import Any, TypedDict, cast
 
@@ -134,9 +134,27 @@ class WebuiSessionAccess:
                 if isinstance(message, dict)
             ]
 
+        saved_source = self._sessions.read_saved_source_metadata(session_key)
+        source_state = saved_source.state if saved_source is not None else None
+        canonical_events_loader: Callable[[Sequence[str]], Mapping[str, Mapping[str, Any]]] | None = None
+        if source_state is not None:
+            bound_state = source_state
+
+            def _load_canonical_events(
+                event_ids: Sequence[str],
+            ) -> dict[str, dict[str, Any]]:
+                return self._sessions.read_canonical_events_by_ids(
+                    session_key,
+                    list(event_ids),
+                    expected_source=bound_state,
+                )
+
+            canonical_events_loader = _load_canonical_events
         thread = build_webui_thread_response(
             session_key,
             session_messages_loader=load_session_messages,
+            expected_source=source_state,
+            canonical_events_loader=canonical_events_loader,
         )
         if thread is not None:
             return _visible_messages(thread.get("messages"))

@@ -115,11 +115,23 @@ describe("mobile HTTP bridge", () => {
 
   it("maps thread reads, keeps the query, and carries 404 through", async () => {
     const { runtime, request } = runtimeWith({
-      "/mobile/v1/sessions/websocket%3Achat-1/thread?limit=2": {
+      "/mobile/v1/sessions/websocket%3Achat-1/thread?limit=2&view=history": {
         requestId: 1,
         status: 200,
         headers: {},
         bodyBase64: encode({ messages: ["hello"] }),
+      },
+      "/mobile/v1/sessions/websocket%3Achat-1/thread?view=controls": {
+        requestId: 3,
+        status: 503,
+        headers: {},
+        bodyBase64: encode({ error: "permission_state_unavailable" }),
+      },
+      "/mobile/v1/sessions/websocket%3Aexpired/thread?view=history": {
+        requestId: 4,
+        status: 401,
+        headers: {},
+        bodyBase64: encode({ error: "invalid_access" }),
       },
       "/mobile/v1/sessions/websocket%3Amissing/thread": {
         requestId: 2,
@@ -130,16 +142,20 @@ describe("mobile HTTP bridge", () => {
     });
     installMobileRuntime(runtime);
 
-    const thread = await fetchWithTimeout("/api/sessions/websocket%3Achat-1/webui-thread?limit=2");
+    const thread = await fetchWithTimeout("/api/sessions/websocket%3Achat-1/webui-thread?limit=2&view=history");
     await expect(thread.json()).resolves.toEqual({ messages: ["hello"] });
     expect(request).toHaveBeenCalledWith({
       operation: "mobile_thread",
       method: "GET",
-      path: "/mobile/v1/sessions/websocket%3Achat-1/thread?limit=2",
+      path: "/mobile/v1/sessions/websocket%3Achat-1/thread?limit=2&view=history",
     });
 
     const missing = await fetchWithTimeout("/api/sessions/websocket%3Amissing/webui-thread");
     expect(missing.status).toBe(404);
+    const controls = await fetchWithTimeout("/api/sessions/websocket%3Achat-1/webui-thread?view=controls");
+    expect(controls.status).toBe(503);
+    const expired = await fetchWithTimeout("/api/sessions/websocket%3Aexpired/webui-thread?view=history");
+    expect(expired.status).toBe(401);
   });
 
   it("maps delegated-child pages through their chat.read operation", async () => {

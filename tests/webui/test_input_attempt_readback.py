@@ -23,6 +23,7 @@ from nanobot.session.input_attempt import (
     principal_tag,
 )
 from nanobot.session.manager import JsonlSessionStore, Session
+from nanobot.session.model_selection import SESSION_MODEL_PRESET_METADATA_KEY
 from nanobot.session.turn_writer import SourceTurnWriter
 from tests.agent import test_migration_engine as engine_fixtures
 from tests.agent.test_input_attempt_reconciliation import (
@@ -59,6 +60,32 @@ async def lookup(channel, conn, query, *, chat_id='attempt-chat', client_id='unt
     })
     attached = [frame for frame in _sent_ws_payloads(conn) if frame['event'] == 'attached']
     return attached[-1] if attached else None
+
+
+@pytest.mark.parametrize("exact_readback", [False, True])
+async def test_canonical_attach_reuses_the_source_read_for_display(engine_config, monkeypatch, exact_readback):
+    loop, backend, channel, conn, _, proof = await seeded_channel(engine_config)
+    key = proof.attempt.source.session_key
+    try:
+        backend.source.update_metadata(key, {SESSION_MODEL_PRESET_METADATA_KEY: "Deep Research"})
+        source = Mock(wraps=loop.sessions.read_existing_canonical_source)
+        metadata = Mock(wraps=loop.sessions.read_session_metadata)
+        monkeypatch.setattr(loop.sessions, "read_existing_canonical_source", source)
+        monkeypatch.setattr(loop.sessions, "read_session_metadata", metadata)
+        if exact_readback:
+            attached = await lookup(channel, conn, proof.attempt.query())
+            assert attached["input_attempt_result"]["proof"] == proof.to_dict()
+        else:
+            await channel._dispatch_envelope(conn, "local", {"type": "attach", "chat_id": "attempt-chat"})
+            attached = next(item for item in _sent_ws_payloads(conn) if item["event"] == "attached")
+        assert attached["model_preset"] == "Deep Research"
+        assert attached["input_attempt_source"]["source"] == proof.attempt.source.to_dict()
+        source.assert_called_once_with(key)
+        # The post-attach live hydrator still takes its own fresh state.
+        metadata.assert_called_once_with(key)
+    finally:
+        await channel.stop()
+        await loop.aclose()
 
 
 async def test_actual_attach_is_pure_and_supplies_exact_canonical_proof(engine_config, monkeypatch):

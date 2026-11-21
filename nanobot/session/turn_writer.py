@@ -31,7 +31,7 @@ from nanobot.session.source import (
     canonical_events,
     new_source_event,
 )
-from nanobot.session.source_store import SourceSessionStore, SourceSnapshot
+from nanobot.session.source_store import SourceSessionStore, SourceSnapshot, SourceState
 
 
 def _intent_arguments_digest(value: object) -> str:
@@ -134,6 +134,11 @@ class SourceTurnWriter:
     def failed(self) -> bool:
         """Whether this shared source invocation has been revoked or failed."""
         return self._writes.failed
+
+    @property
+    def committed_state(self) -> SourceState:
+        """The source that produced this stream, not whatever is now at its key."""
+        return self._writes.snapshot.state
 
     def stream_events(self) -> list[dict[str, Any]]:
         """Return the current stream's durable events under the admitted owner."""

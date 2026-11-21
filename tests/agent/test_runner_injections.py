@@ -2235,18 +2235,17 @@ async def test_webui_steering_matching_target_still_dispatches(tmp_path):
 
 @pytest.mark.asyncio
 async def test_injection_receipt_is_published_only_for_a_committed_steer(tmp_path):
-    """A steer acknowledges its own turn; a plain message acknowledges nothing here."""
+    """Keep the legacy steering receipt without inventing canonical display proof."""
     from nanobot.bus.events import InboundMessage
+    from nanobot.bus.runtime_events import InjectionCommitted
     from nanobot.webui.metadata import (
         WEBUI_REQUEST_INTENT_METADATA_KEY,
         WEBUI_TURN_METADATA_KEY,
     )
 
     loop = _make_loop(tmp_path)
-    published: list[object] = []
-    loop.runtime_event_publisher.injection_committed = AsyncMock(  # type: ignore[method-assign]
-        side_effect=lambda msg, key: published.append((msg.chat_id, msg.metadata, key)),
-    )
+    published: list[InjectionCommitted] = []
+    loop.bus.subscribe(published.append, InjectionCommitted)
 
     steer = InboundMessage(
         channel="websocket",
@@ -2279,13 +2278,8 @@ async def test_injection_receipt_is_published_only_for_a_committed_steer(tmp_pat
     for message in (steer, plain, foreign):
         await loop._publish_injection_committed(message, "websocket:steer-receipt")
 
-    assert published == [
-        (
-            "steer-receipt",
-            {
-                WEBUI_REQUEST_INTENT_METADATA_KEY: "steer",
-                WEBUI_TURN_METADATA_KEY: "turn-steer",
-            },
-            "websocket:steer-receipt",
-        )
-    ]
+    [receipt] = published
+    assert receipt.context.chat_id == "steer-receipt"
+    assert receipt.context.metadata == steer.metadata
+    assert receipt.context.session_key == "websocket:steer-receipt"
+    assert receipt.input is None

@@ -168,7 +168,12 @@ async def _thread(
 ) -> tuple[int, dict[str, Any]]:
     if key == "missing":
         return 404, {"error": "thread_not_found"}
-    return 200, {"key": key, "limit": query.get("limit", [None])[0], "viewer": identity.installation_id}
+    return 200, {
+        "key": key,
+        "limit": query.get("limit", [None])[0],
+        "view": query.get("view", [None])[0],
+        "viewer": identity.installation_id,
+    }
 
 
 async def _api(identity: AccessIdentity, path: str) -> tuple[int, dict[str, Any]]:
@@ -229,11 +234,18 @@ async def test_edge_mobile_ui_reads_and_thread(edge_setup) -> None:
     key = quote("websocket:chat-1", safe="")
     thread = await edge.handle(
         None,
-        request(f"/mobile/v1/sessions/{key}/thread?limit=2", pair.access_token),
+        request(f"/mobile/v1/sessions/{key}/thread?limit=2&view=history", pair.access_token),
     )
     assert thread is not None and thread.status_code == 200
     assert body(thread)["key"] == "websocket:chat-1"
     assert body(thread)["limit"] == "2"
+    assert body(thread)["view"] == "history"
+
+    controls = await edge.handle(
+        None, request(f"/mobile/v1/sessions/{key}/thread?view=controls", pair.access_token),
+    )
+    assert controls is not None and controls.status_code == 200
+    assert body(controls)["view"] == "controls"
 
     delegated = await edge.handle(
         None,
@@ -271,6 +283,11 @@ async def test_edge_mobile_ui_reads_and_thread(edge_setup) -> None:
     )
     for path in ("/mobile/v1/model-settings", "/mobile/v1/workspaces", f"/mobile/v1/sessions/{key}/thread"):
         denied = await edge.handle(None, request(path, write_only.access_token))
+        assert denied is not None and denied.status_code == 403
+    for view in ("history", "controls"):
+        denied = await edge.handle(
+            None, request(f"/mobile/v1/sessions/{key}/thread?view={view}", write_only.access_token),
+        )
         assert denied is not None and denied.status_code == 403
     denied_children = await edge.handle(
         None,

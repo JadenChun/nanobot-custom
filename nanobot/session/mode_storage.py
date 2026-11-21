@@ -7,9 +7,10 @@ import hashlib
 import os
 import secrets
 import stat
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, NoReturn, cast
+from typing import TYPE_CHECKING, Generator, NamedTuple, NoReturn, cast
 
 if TYPE_CHECKING:
     from nanobot.session.manager import JsonlSessionStore
@@ -45,6 +46,44 @@ class SessionModeOversizeError(SessionModeError):
 
 def _mode_error(message: str = "managed session namespace requires durable authority") -> SessionModeError:
     return SessionModeError(message)
+
+
+class PrivateFileVersion(NamedTuple):
+    """Physical file identity, not a logical session generation. Reads ignore atime."""
+
+    device: int
+    inode: int
+    size: int
+    modified_ns: int
+    uid: int
+    gid: int
+    mode: int
+    links: int
+    changed_ns: int
+
+
+def private_file_version(info: os.stat_result) -> PrivateFileVersion | None:
+    if (
+        not stat.S_ISREG(info.st_mode) or stat.S_IMODE(info.st_mode) != 0o600
+        or info.st_uid != os.geteuid() or info.st_nlink != 1
+    ):
+        return None
+    return PrivateFileVersion(
+        info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns,
+        info.st_uid, info.st_gid, info.st_mode, info.st_nlink, info.st_ctime_ns,
+    )
+
+
+def installed_file_version(
+    descriptor: int, before: PrivateFileVersion,
+) -> PrivateFileVersion | None:
+    """Stamp the writer's file at replacement; publish only after directory sync."""
+    try:
+        after = private_file_version(os.fstat(descriptor))
+    except OSError:
+        return None
+    # Rename may advance ctime. No other part of the private version may change.
+    return after if after is not None and after[:-1] == before[:-1] else None
 
 
 def _hex32(value: str) -> bool:
@@ -626,7 +665,10 @@ class LifetimeWriterLease:
             names = os.listdir(descriptor)
             if not namespace_scaffolding:
                 return bool(names)
-            allowed = {".workspace", ".session-files.lock", ".execution-locks"}
+            allowed = {
+                ".workspace", ".session-files.lock", ".execution-locks",
+                ".session-prefs", ".event-index",
+            }
             return any(name not in allowed for name in names)
         except OSError:
             raise _mode_error() from None
@@ -934,50 +976,61 @@ class SessionModeStorage:
         finally:
             os.close(parent)
 
-    def read(self, name: str, *, witness: bool = False, limit: int = MODE_JSON_LIMIT) -> bytes:
+    @contextmanager
+    def _checked_entry(
+        self, name: str, *, witness: bool,
+    ) -> Generator[tuple[int, PrivateFileVersion], None, None]:
         parent, leaf = self._parent(name, witness=witness)
         descriptor = -1
         try:
-            before = os.stat(leaf, dir_fd=parent, follow_symlinks=False)
+            before = private_file_version(os.stat(leaf, dir_fd=parent, follow_symlinks=False))
+            if before is None:
+                raise _mode_error()
             descriptor = os.open(
                 leaf,
-                os.O_RDONLY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0),
+                os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | getattr(os, "O_CLOEXEC", 0),
                 dir_fd=parent,
             )
-            opened = os.fstat(descriptor)
-            if (
-                not stat.S_ISREG(opened.st_mode)
-                or opened.st_uid != os.geteuid()
-                or opened.st_nlink != 1
-                or opened.st_mode & 0o777 != 0o600
-                or (opened.st_dev, opened.st_ino) != (before.st_dev, before.st_ino)
-            ):
+            if private_file_version(os.fstat(descriptor)) != before:
                 raise _mode_error()
-            if opened.st_size > limit:
-                raise SessionModeOversizeError(opened.st_size)
-            chunks: list[bytes] = []
-            remaining = opened.st_size
-            while remaining:
-                chunk = os.read(descriptor, min(remaining, 65536))
-                if not chunk:
-                    raise _mode_error()
-                chunks.append(chunk)
-                remaining -= len(chunk)
-            after = os.stat(leaf, dir_fd=parent, follow_symlinks=False)
-            if (after.st_dev, after.st_ino, after.st_size) != (
-                opened.st_dev,
-                opened.st_ino,
-                opened.st_size,
+            yield descriptor, before
+            if (
+                private_file_version(os.fstat(descriptor)) != before
+                or private_file_version(os.stat(leaf, dir_fd=parent, follow_symlinks=False))
+                != before
             ):
                 raise _mode_error()
             self._verify_parent(name, parent, witness=witness)
-            return b"".join(chunks)
         except OSError:
             raise _mode_error() from None
         finally:
             if descriptor >= 0:
                 os.close(descriptor)
             os.close(parent)
+
+    def file_version(self, name: str) -> PrivateFileVersion:
+        """Identify one pinned private file without reading its contents."""
+        with self._checked_entry(name, witness=False) as (_, version):
+            return version
+
+    def read_versioned(
+        self, name: str, *, witness: bool = False, limit: int = MODE_JSON_LIMIT,
+    ) -> tuple[bytes, PrivateFileVersion]:
+        with self._checked_entry(name, witness=witness) as (descriptor, version):
+            if version.size > limit:
+                raise SessionModeOversizeError(version.size)
+            chunks: list[bytes] = []
+            remaining = version.size
+            while remaining:
+                chunk = os.read(descriptor, min(remaining, 65536))
+                if not chunk:
+                    raise _mode_error()
+                chunks.append(chunk)
+                remaining -= len(chunk)
+            return b"".join(chunks), version
+
+    def read(self, name: str, *, witness: bool = False, limit: int = MODE_JSON_LIMIT) -> bytes:
+        return self.read_versioned(name, witness=witness, limit=limit)[0]
 
     def read_first_line(self, name: str, *, maximum: int = MODE_JSON_LIMIT) -> bytes:
         """Read only one leading line without the whole-entry size bound."""

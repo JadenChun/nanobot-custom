@@ -8,6 +8,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import { clearComposerDraftsForSession } from "@/lib/composer-drafts";
 import { Eye, EyeOff, Moon, ShieldCheck, Sun, X } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { channelUiPresentation } from "@/channel-plugins/registry";
@@ -780,6 +781,13 @@ export default function App() {
   const { t } = useTranslation();
   const [state, setState] = useState<BootState>({ status: "loading" });
   const bootstrapSecretRef = useRef("");
+  const handleModelNameChange = useCallback((modelName: string | null) => {
+    setState((current) =>
+      current.status === "ready" && current.modelName !== modelName
+        ? { ...current, modelName }
+        : current,
+    );
+  }, []);
 
   const refreshReadyClient = useCallback(
     async (client: NanobotClient, fallbackSurface: RuntimeSurface) => {
@@ -927,12 +935,6 @@ export default function App() {
     );
   }
 
-  const handleModelNameChange = (modelName: string | null) => {
-    setState((current) =>
-      current.status === "ready" ? { ...current, modelName } : current,
-    );
-  };
-
   const handleLogout = () => {
     if (state.status === "ready") {
       state.client.close();
@@ -1058,6 +1060,12 @@ function Shell({
   const skills = skillCatalog.skills;
   const pageVisible = usePageVisibility();
   const [settingsSnapshot, setSettingsSnapshot] = useState<SettingsPayload | null>(null);
+  const settingsReadVersionRef = useRef(0);
+  const applySettingsSnapshot = useCallback((payload: SettingsPayload) => {
+    // A mutation result supersedes any catalog read already in flight.
+    settingsReadVersionRef.current += 1;
+    setSettingsSnapshot(payload);
+  }, []);
   const [workspaceError, setWorkspaceError] = useState<string | null>(null);
   const [draftWorkspaceScope, setDraftWorkspaceScope] =
     useState<WorkspaceScopePayload | null>(null);
@@ -1129,23 +1137,31 @@ function Shell({
   useEffect(() => {
     let cancelled = false;
     const load = () => {
+      const version = ++settingsReadVersionRef.current;
       fetchSettings(getToken())
         .then((payload) => {
-          if (!cancelled) setSettingsSnapshot(payload);
+          if (!cancelled && settingsReadVersionRef.current === version) {
+            setSettingsSnapshot(payload);
+          }
         })
         .catch(() => {
-          if (!cancelled) setSettingsSnapshot(null);
+          // Keep the last known catalog usable during a transient refresh failure.
         });
     };
     load();
     // Another client changed app-level settings: reload the shared projection
     // so the composer's model presets and the settings surface stay in sync.
     const unsubscribe = client.onSettingsUpdated(load);
+    const unsubscribeModel = client.onRuntimeModelUpdate((modelName) => {
+      onModelNameChange(modelName);
+      load();
+    });
     return () => {
       cancelled = true;
       unsubscribe();
+      unsubscribeModel();
     };
-  }, [client, getToken]);
+  }, [client, getToken, onModelNameChange]);
 
   useEffect(() => {
     try {
@@ -1947,12 +1963,6 @@ function Shell({
   }, [activeSession?.chatId, client]);
 
   useEffect(() => {
-    return client.onRuntimeModelUpdate((modelName) => {
-      onModelNameChange(modelName);
-    });
-  }, [client, onModelNameChange]);
-
-  useEffect(() => {
     return client.onRunStatus((chatId, startedAt) => {
       if (startedAt != null) {
         const nextRunning = new Set(runningChatIdsRef.current);
@@ -2073,6 +2083,9 @@ function Shell({
           });
           return;
         }
+      }
+      for (const item of items) {
+        clearComposerDraftsForSession(null, item.key, { deleted: true });
       }
       setPendingDelete(null);
       if (deletingActive) {
@@ -2434,7 +2447,7 @@ function Shell({
                     onToggleTheme={toggle}
                     onBackToChat={onBackToChat}
                     onModelNameChange={onModelNameChange}
-                    onSettingsChange={setSettingsSnapshot}
+                    onSettingsChange={applySettingsSnapshot}
                     skills={skills}
                     skillsCatalogComplete={skillCatalog.catalog_complete}
                     skillsCatalogNotice={skillCatalog.catalog_notice}

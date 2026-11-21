@@ -49,7 +49,7 @@ from nanobot.webui.session_identity import webui_session_key
 
 if TYPE_CHECKING:
     from nanobot.session.manager import SessionManager
-    from nanobot.session.source_store import SourceSnapshot
+    from nanobot.session.source_store import SavedSourceMetadata, SourceSnapshot
 
 from nanobot.workspace_access_recovery import (
     WorkspaceModeActionResult,
@@ -409,8 +409,12 @@ class WebUIWorkspaceController:
         session_key: str,
         *,
         source_snapshot: SourceSnapshot | None = None,
+        saved_source: SavedSourceMetadata | None = None,
+        include_live_permissions: bool = True,
     ) -> WorkspaceScope:
         if source_snapshot is not None and source_snapshot.state.session_key != session_key:
+            raise WorkspaceScopeError("workspace source does not match the session")
+        if saved_source is not None and saved_source.state.session_key != session_key:
             raise WorkspaceScopeError("workspace source does not match the session")
         draft = self._draft_scopes.get(session_key)
         if draft is not None:
@@ -418,17 +422,23 @@ class WebUIWorkspaceController:
             return draft
         if self._sessions is None:
             return self.default_scope()
-        if source_snapshot is None:
-            data = self._sessions.read_session_metadata(session_key)
-            metadata: object = data.get("metadata") if data is not None else None
+        if source_snapshot is None and saved_source is not None:
+            if not saved_source.workspace_scope_present:
+                return self.default_scope()
+            raw_scope_value: object = saved_source.workspace_scope
         else:
-            metadata = source_snapshot.header["metadata"]
-        if not isinstance(metadata, dict) or WORKSPACE_SCOPE_METADATA_KEY not in metadata:
-            return self.default_scope()
-        metadata_data = cast(dict[str, Any], metadata)
+            if source_snapshot is None:
+                data = self._sessions.read_session_metadata(session_key)
+                metadata: object = data.get("metadata") if data is not None else None
+            else:
+                metadata = source_snapshot.header["metadata"]
+            if not isinstance(metadata, dict) or WORKSPACE_SCOPE_METADATA_KEY not in metadata:
+                return self.default_scope()
+            metadata_data = cast(dict[str, Any], metadata)
+            raw_scope_value = cast(object, metadata_data.get(WORKSPACE_SCOPE_METADATA_KEY))
         scope = self._scope_from_metadata_value(
-            cast(object, metadata_data.get(WORKSPACE_SCOPE_METADATA_KEY)),
-            preserve_full=True,
+            raw_scope_value,
+            preserve_full=include_live_permissions,
         )
         if scope.access_mode == "full":
             source = (
@@ -1326,6 +1336,12 @@ class WebUIWorkspaceController:
                 raise WorkspacePermissionActionError(503, "permission_state_unavailable") from None
 
         new_scope = self.scope_for_session_key(key)
+        prefs = self._sessions.read_next_turn_preferences(key)
+        if prefs is not None and isinstance(next_raw := prefs.get("workspace_scope"), dict):
+            self._sessions.update_next_turn_preferences(
+                key,
+                {"workspace_scope": {**next_raw, "access_mode": mode}},
+            )
         final_source = self._source_binding(key)
         if final_source is None:
             raise WorkspacePermissionActionError(503, "permission_state_unavailable")
@@ -1366,10 +1382,17 @@ class WebUIWorkspaceController:
             backend = self._sessions.source_backend(session_key)
             if backend is None:
                 return None
-            snapshot = backend.source.load_source_snapshot(session_key)
+            header_state = backend.source.read_source_header_state(session_key)
+            if header_state is None:
+                return None
+            state, _header = header_state
         except Exception:
             return None
-        return _snapshot_permission_source(snapshot)
+        return {
+            "store_identity": state.store_identity,
+            "incarnation": state.incarnation,
+            "generation": state.generation,
+        }
 
     _REQUEST_DEFAULTS_KEY = "webui_request_defaults"
 
@@ -1518,6 +1541,111 @@ class WebUIWorkspaceController:
         projection["source_token"] = self._source_token_for(source)
         return projection
 
+    def next_scope_for_session_key(
+        self,
+        session_key: str,
+        *,
+        include_live_permissions: bool = True,
+    ) -> WorkspaceScope | None:
+        """Return the pending next-turn workspace scope preference, if one exists."""
+        if self._sessions is None:
+            return None
+        prefs = self._sessions.read_next_turn_preferences(session_key)
+        if prefs is None:
+            return None
+        raw_scope = prefs.get("workspace_scope")
+        if not isinstance(raw_scope, dict):
+            return None
+        scope = self._scope_from_metadata_value(
+            cast(dict[str, Any], raw_scope),
+            preserve_full=include_live_permissions,
+        )
+        if scope.access_mode == "full":
+            source = self._source_binding(session_key)
+            reference = (
+                self.permission_owner.full_reference(
+                    session_key=session_key,
+                    source_binding=source,
+                )
+                if source is not None and self.permission_owner is not None
+                else None
+            )
+            retiring = False
+            if source is not None and self.permission_owner is not None:
+                projection = self.permission_owner.projection(
+                    session_key=session_key,
+                    source_binding=source,
+                )
+                retiring = projection["state"] == "retiring"
+            if reference is None and not retiring:
+                return self.clamp_effective_scope(scope)
+        return scope
+
+    def set_next_turn_scope(
+        self,
+        chat_id: str,
+        raw_or_envelope: dict[str, Any],
+        *,
+        controls_available: bool = True,
+        expected_revision: int | None = None,
+    ) -> dict[str, Any]:
+        """Validate and persist a next-turn working folder without mutating active work."""
+        session_key = webui_session_key(chat_id)
+        if (
+            "next_workspace_scope" in raw_or_envelope
+            or WORKSPACE_SCOPE_METADATA_KEY in raw_or_envelope
+        ):
+            raw = (
+                raw_or_envelope["next_workspace_scope"]
+                if "next_workspace_scope" in raw_or_envelope
+                else raw_or_envelope[WORKSPACE_SCOPE_METADATA_KEY]
+            )
+        else:
+            raw = raw_or_envelope
+        scope = self._scope_from_request(
+            raw,
+            session_key=session_key,
+            controls_available=controls_available,
+        )
+        prefs = None
+        if self._sessions is not None:
+            prefs = self._sessions.update_next_turn_preferences(
+                session_key,
+                {"workspace_scope": scope.metadata()},
+                expected_revision=expected_revision,
+            )
+        if prefs is None:
+            self._draft_scopes[session_key] = scope
+            self._draft_scopes.move_to_end(session_key)
+            while len(self._draft_scopes) > _MAX_DRAFT_SCOPES:
+                self._draft_scopes.popitem(last=False)
+        active_scope = self.scope_for_session_key(session_key)
+        result: dict[str, Any] = {
+            "workspace_scope": self.scope_payload(active_scope),
+            "next_workspace_scope": self.scope_payload(scope),
+            "source_token": self.source_token(chat_id),
+        }
+        if prefs is not None:
+            result["next_turn_revision"] = prefs.revision
+        return result
+
+    set_next_workspace_scope = set_next_turn_scope
+
+    def retire_once_tasks_for_new_turn(self, chat_id: str) -> None:
+        """Retire any live Once task grants before admitting a new turn."""
+        if self._sessions is None or self.permission_owner is None:
+            return
+        session_key = webui_session_key(chat_id)
+        source = self._source_binding(session_key)
+        if source is None:
+            return
+        self.permission_owner.retire_tasks_for_source(
+            session_key=session_key,
+            source_binding=source,
+            reason="task_replaced",
+            active_turn=False,
+        )
+
     def scope_for_new_chat(
         self,
         envelope: dict[str, Any],
@@ -1538,10 +1666,20 @@ class WebUIWorkspaceController:
         chat_running: bool,
         controls_available: bool,
     ) -> WorkspaceScope:
-        if chat_running:
+        is_next_turn = (
+            envelope.get("next_turn") is True
+            or envelope.get("target") == "next_turn"
+            or "next_workspace_scope" in envelope
+        )
+        if chat_running and not is_next_turn:
             raise WorkspaceScopeError("chat_running", status=409)
-        return self.scope_from_envelope(
-            envelope,
+        raw = (
+            envelope.get("next_workspace_scope")
+            if "next_workspace_scope" in envelope
+            else envelope.get(WORKSPACE_SCOPE_METADATA_KEY)
+        )
+        return self._scope_from_request(
+            raw,
             session_key=webui_session_key(chat_id),
             controls_available=controls_available,
         )
@@ -1575,9 +1713,41 @@ class WebUIWorkspaceController:
     ) -> WorkspaceScope:
         # Messages use the server-owned session scope. A scope change is an
         # explicit control mutation, never a property of a chat message.
+        session_key = webui_session_key(chat_id)
+        is_steer = envelope.get("request_intent") == "steer"
+        content = envelope.get("content")
+        stripped = content.strip() if isinstance(content, str) else ""
+        is_stop = stripped == "/stop" and not envelope.get("media")
+        is_model_cmd = (
+            bool(stripped)
+            and stripped.lower().split(maxsplit=1)[0] == "/model"
+            and not envelope.get("media")
+        )
+        if is_steer or is_stop or is_model_cmd:
+            scope = self._scope_from_request(
+                None,
+                session_key=session_key,
+                controls_available=controls_available,
+            )
+            if is_steer and chat_id in self._deferred_full_sources:
+                from nanobot.session.webui_turns import websocket_turn_scope
+
+                turn_scope = websocket_turn_scope(chat_id)
+                if isinstance(turn_scope, dict) and turn_scope.get("access_mode") == "restricted":
+                    return self.clamp_effective_scope(scope)
+            return scope
+        if not chat_running and self._sessions is not None:
+            prefs = self._sessions.read_next_turn_preferences(session_key)
+            if prefs is not None and isinstance(next_raw := prefs.get("workspace_scope"), dict):
+                self.retire_once_tasks_for_new_turn(chat_id)
+                return self._scope_from_request(
+                    next_raw,
+                    session_key=session_key,
+                    controls_available=controls_available,
+                )
         return self._scope_from_request(
             None,
-            session_key=webui_session_key(chat_id),
+            session_key=session_key,
             controls_available=controls_available,
         )
 
@@ -1592,6 +1762,10 @@ class WebUIWorkspaceController:
                 {"webui": True, WORKSPACE_SCOPE_METADATA_KEY: scope.metadata()},
                 create_if_absent=create_if_absent,
             )
+            self._sessions.consume_next_turn_preferences(
+                session_key,
+                {"workspace_scope": scope.metadata()},
+            )
         self._draft_scopes.pop(session_key, None)
         if scope.access_mode == "full":
             self._deferred_full_sources.pop(chat_id, None)
@@ -1600,14 +1774,34 @@ class WebUIWorkspaceController:
         """A Full request is now queued or running for this chat."""
         self._deferred_full_sources.pop(chat_id, None)
 
-    def stage_scope(self, chat_id: str, scope: WorkspaceScope) -> None:
+    def stage_scope(
+        self, chat_id: str, scope: WorkspaceScope, *, next_turn: bool = False
+    ) -> None:
         """Keep a new chat's scope transient until its first accepted message."""
         session_key = webui_session_key(chat_id)
         if (
             self._sessions is not None
             and self._sessions.read_session_metadata(session_key) is not None
         ):
+            if (
+                next_turn
+                or _session_has_active_turn(self._sessions, session_key, chat_id)
+                or _session_has_pending_recovery_request(self._sessions, session_key)
+            ):
+                if (
+                    self._sessions.update_next_turn_preferences(
+                        session_key,
+                        {"workspace_scope": scope.metadata()},
+                    )
+                    is not None
+                ):
+                    return
             self.persist_scope(chat_id, scope, create_if_absent=False)
+            self._sessions.update_next_turn_preferences(
+                session_key,
+                {},
+                removals=("workspace_scope",),
+            )
             return
         self._draft_scopes[session_key] = scope
         self._draft_scopes.move_to_end(session_key)
@@ -1640,6 +1834,23 @@ def _snapshot_permission_source(snapshot: SourceSnapshot) -> PermissionSourceBin
     }
 
 
+def _session_has_pending_recovery_request(sessions: SessionManager, key: str) -> bool:
+    try:
+        payload = sessions.read_session_metadata(key)
+        if payload is None:
+            return False
+        metadata = payload.get("metadata")
+        if not isinstance(metadata, dict):
+            return False
+        raw = cast(dict[str, Any], metadata).get("workspace_access_request")
+        return isinstance(raw, dict) and cast(dict[str, Any], raw).get("status") in {
+            "pending",
+            "ready",
+        }
+    except Exception:
+        return False
+
+
 def _session_has_active_turn(sessions: SessionManager, key: str, chat_id: str) -> bool:
     from nanobot.session.pending_followups import parse_pending_followup_records
     from nanobot.session.persistence_metadata import SOURCE_PENDING_FOLLOWUPS_METADATA_KEY
@@ -1651,8 +1862,11 @@ def _session_has_active_turn(sessions: SessionManager, key: str, chat_id: str) -
         backend = sessions.source_backend(key)
         if backend is None:
             return True
-        snapshot = backend.source.load_source_snapshot(key)
-        metadata = snapshot.header["metadata"]
+        header_state = backend.source.read_source_header_state(key)
+        if header_state is None:
+            return True
+        _state, header = header_state
+        metadata = header["metadata"]
         if metadata.get("execution_lease") is not None:
             return True
         return bool(parse_pending_followup_records(

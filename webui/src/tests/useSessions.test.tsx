@@ -16,7 +16,9 @@ vi.mock("@/lib/api", async (importOriginal) => {
     listSessions: vi.fn(),
     deleteSession: vi.fn(),
     fetchWebuiThread: vi.fn(),
+    fetchWebuiThreadControls: vi.fn(),
     fetchDelegatedChildren: vi.fn(),
+    fetchSessionTurns: vi.fn(),
   };
 });
 
@@ -68,7 +70,9 @@ describe("useSessions", () => {
     vi.mocked(api.listSessions).mockReset();
     vi.mocked(api.deleteSession).mockReset();
     vi.mocked(api.fetchWebuiThread).mockReset();
+    vi.mocked(api.fetchWebuiThreadControls).mockReset();
     vi.mocked(api.fetchDelegatedChildren).mockReset();
+    vi.mocked(api.fetchSessionTurns).mockReset();
     // The renderer page cache is module-level, so each case must start empty.
     resetSessionPageCache();
   });
@@ -1414,7 +1418,7 @@ describe("useSessions", () => {
 
     await waitFor(() => expect(result.current.workspaceAccessRequest?.access_request_id)
       .toBe(folderAccessThreadFixture.workspace_access_request?.access_request_id));
-    vi.mocked(api.fetchWebuiThread).mockRejectedValueOnce(new Error("offline"));
+    vi.mocked(api.fetchWebuiThreadControls).mockRejectedValueOnce(new Error("offline"));
 
     await act(async () => {
       result.current.markWorkspaceAccessRequestStale();
@@ -1442,9 +1446,10 @@ describe("useSessions", () => {
   });
 
   it("paints a previously loaded session from the renderer cache before the revisit fetch settles", async () => {
+    const wrapper = wrap(fakeClient());
     vi.mocked(api.fetchWebuiThread).mockResolvedValueOnce(folderAccessThreadFixture);
     const first = renderHook(() => useSessionHistory("websocket:chat-revisit"), {
-      wrapper: wrap(fakeClient()),
+      wrapper,
     });
     await waitFor(() => expect(first.result.current.loading).toBe(false));
     const loadedIds = first.result.current.messages.map((message) => message.id);
@@ -1458,12 +1463,96 @@ describe("useSessions", () => {
       new Promise((resolve) => { resolveThread = resolve; }) as never,
     );
     const second = renderHook(() => useSessionHistory("websocket:chat-revisit"), {
-      wrapper: wrap(fakeClient()),
+      wrapper,
     });
 
     await waitFor(() => expect(second.result.current.messages.map((message) => message.id))
       .toEqual(loadedIds));
     resolveThread(null);
+  });
+
+  it("does not paint a cached page for a new authenticated client with the same session key", async () => {
+    const key = "websocket:chat-title";
+    vi.mocked(api.fetchWebuiThread).mockResolvedValueOnce(folderAccessThreadFixture);
+    const first = renderHook(() => useSessionHistory(key), { wrapper: wrap(fakeClient(), "first") });
+    await waitFor(() => expect(first.result.current.messages.length).toBeGreaterThan(0));
+    first.unmount();
+
+    vi.mocked(api.fetchWebuiThread).mockReturnValueOnce(new Promise(() => {}));
+    const second = renderHook(() => useSessionHistory(key), { wrapper: wrap(fakeClient(), "second") });
+    expect(api.fetchWebuiThread).toHaveBeenLastCalledWith("second", key, expect.any(Object));
+    expect(second.result.current.messages).toEqual([]);
+  });
+
+  it("does not paint a cached page after its session has been deleted", async () => {
+    const key = "websocket:chat-title";
+    const wrapper = wrap(fakeClient());
+    vi.mocked(api.fetchWebuiThread).mockResolvedValueOnce(folderAccessThreadFixture);
+    const first = renderHook(() => useSessionHistory(key), { wrapper });
+    await waitFor(() => expect(first.result.current.messages.length).toBeGreaterThan(0));
+    first.unmount();
+
+    vi.mocked(api.listSessions).mockResolvedValueOnce([]);
+    vi.mocked(api.deleteSession).mockResolvedValueOnce({ deleted: true });
+    const catalog = renderHook(useSessions, { wrapper });
+    await act(async () => { await catalog.result.current.deleteChat(key); });
+
+    vi.mocked(api.fetchWebuiThread).mockReturnValueOnce(new Promise(() => {}));
+    const second = renderHook(() => useSessionHistory(key), { wrapper });
+    expect(second.result.current.messages).toEqual([]);
+  });
+
+  it("keeps the settled window when a warm refresh loses transport", async () => {
+    const key = "websocket:chat-title";
+    vi.mocked(api.fetchWebuiThread)
+      .mockResolvedValueOnce(folderAccessThreadFixture)
+      .mockRejectedValueOnce(new TypeError("offline"));
+    const { result } = renderHook(() => useSessionHistory(key), { wrapper: wrap(fakeClient()) });
+    await waitFor(() => expect(result.current.messages.length).toBeGreaterThan(0));
+    const settled = result.current.messages;
+
+    act(() => result.current.refresh());
+    await waitFor(() => expect(result.current.error).toBe("offline"));
+    expect(result.current.messages).toBe(settled);
+    expect(result.current.loading).toBe(false);
+    expect(result.current.historyAccessDenied).toBe(false);
+  });
+
+  it.each(["switch", "refusal"])("discards a late turn index after a history %s", async (change) => {
+    const key = "websocket:chat-title";
+    const otherKey = "websocket:other-chat";
+    vi.mocked(api.fetchWebuiThread).mockResolvedValueOnce(folderAccessThreadFixture);
+    const { result, rerender } = renderHook(
+      ({ selected }) => useSessionHistory(selected),
+      { initialProps: { selected: key }, wrapper: wrap(fakeClient()) },
+    );
+    await waitFor(() => expect(result.current.messages.length).toBeGreaterThan(0));
+
+    let finishIndex!: () => void;
+    vi.mocked(api.fetchSessionTurns).mockReturnValueOnce(new Promise((resolve) => {
+      finishIndex = () => resolve({
+        schemaVersion: 3,
+        sessionKey: key,
+        turns: [{ ordinal: 0, label: "Prompt from the old grant", created_at: null, cursor: "p0" }],
+        total_turn_count: 1,
+      });
+    }));
+    let indexRead!: ReturnType<typeof result.current.loadTurnIndex>;
+    act(() => { indexRead = result.current.loadTurnIndex(); });
+
+    if (change === "refusal") {
+      vi.mocked(api.fetchWebuiThread).mockRejectedValueOnce(new api.ApiError(403, "refused"));
+      act(() => result.current.refresh());
+      await waitFor(() => expect(result.current.historyAccessDenied).toBe(true));
+    } else {
+      vi.mocked(api.fetchWebuiThread).mockResolvedValueOnce({
+        ...folderAccessThreadFixture, sessionKey: otherKey,
+      });
+      rerender({ selected: otherKey });
+      await waitFor(() => expect(result.current.loading).toBe(false));
+    }
+    await act(async () => { finishIndex(); await indexRead; });
+    expect(result.current.turnIndex).toEqual([]);
   });
 
   it("commits the root page and permissions before delegated activity settles", async () => {
@@ -1605,17 +1694,15 @@ describe("useSessions", () => {
     act(() => result.current.updateWorkspacePermissions({ ...current, revision: 3 }));
     expect(result.current.workspacePermissions).toEqual(current);
 
-    vi.mocked(api.fetchWebuiThread).mockResolvedValueOnce({
-      ...folderAccessThreadFixture,
+    vi.mocked(api.fetchWebuiThreadControls).mockResolvedValueOnce({
       workspace_permissions: restarted,
     });
     act(() => result.current.updateWorkspacePermissions(restarted));
     await waitFor(() => expect(result.current.workspacePermissions).toEqual(restarted));
-    expect(api.fetchWebuiThread).toHaveBeenCalledTimes(2);
-    expect(api.fetchWebuiThread).toHaveBeenLastCalledWith(
+    expect(api.fetchWebuiThread).toHaveBeenCalledTimes(1);
+    expect(api.fetchWebuiThreadControls).toHaveBeenCalledWith(
       "tok",
       "websocket:chat-permissions",
-      { limit: 1, direction: "latest" },
     );
   });
 
@@ -1645,5 +1732,334 @@ describe("useSessions", () => {
     ).rejects.toThrow("boom");
 
     expect(result.current.sessions.map((s) => s.key)).toEqual(["websocket:chat-a"]);
+  });
+
+  it("loads bounded prompt summary ranges on demand without eagerly draining the index", async () => {
+    const key = "websocket:prompt-index";
+    vi.mocked(api.fetchWebuiThread).mockResolvedValueOnce({
+      schemaVersion: 3,
+      view: "history",
+      sessionKey: key,
+      messages: [
+        { id: "u120", promptId: "evt-120", role: "user", content: "Prompt 120", createdAt: 120 },
+        { id: "a120", role: "assistant", content: "Reply 120", createdAt: 121 },
+      ],
+      page: {
+        before_cursor: "b-119",
+        has_more_before: true,
+        has_more_after: false,
+        total_turn_count: 120,
+        total_prompt_count: 121,
+        coverage: "indexed",
+      },
+    });
+    vi.mocked(api.fetchSessionTurns)
+      .mockResolvedValueOnce({
+        schemaVersion: 3,
+        sessionKey: key,
+        turns: [{ ordinal: 119, label: "Prompt 120", created_at: 120, cursor: "c-119" }],
+        prompts: [
+          {
+            prompt_id: "evt-119",
+            turn_ordinal: 118,
+            prompt_ordinal: 119,
+            label: "Prompt 119",
+            created_at: 119,
+            locator: "loc-119",
+          },
+          {
+            prompt_id: "evt-120",
+            turn_ordinal: 119,
+            prompt_ordinal: 120,
+            label: "Prompt 120",
+            created_at: 120,
+            locator: "loc-120",
+          },
+        ],
+        total_turn_count: 120,
+        total_prompt_count: 121,
+        page: { before_cursor: "idx-before-118", has_more_before: true, loaded_prompt_count: 2 },
+      })
+      .mockResolvedValueOnce({
+        schemaVersion: 3,
+        sessionKey: key,
+        turns: [{ ordinal: 15, label: "Prompt 15", created_at: 15, cursor: "c-15" }],
+        prompts: [
+          {
+            prompt_id: "evt-u-15",
+            turn_ordinal: 15,
+            prompt_ordinal: 15,
+            label: "Prompt 15",
+            created_at: 15,
+            locator: "loc-u-15",
+          },
+          {
+            prompt_id: "evt-steer-15",
+            turn_ordinal: 15,
+            prompt_ordinal: 16,
+            label: "Steer 15",
+            created_at: 16,
+            locator: "loc-steer-15",
+          },
+        ],
+        total_turn_count: 120,
+        total_prompt_count: 121,
+        page: { before_cursor: null, has_more_before: false, loaded_prompt_count: 2 },
+      });
+
+    const { result } = renderHook(() => useSessionHistory(key), {
+      wrapper: wrap(fakeClient()),
+    });
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(result.current.totalTurnCount).toBe(120);
+    expect(result.current.totalPromptCount).toBe(121);
+
+    await act(async () => {
+      await result.current.loadTurnIndex();
+    });
+    expect(api.fetchSessionTurns).toHaveBeenCalledTimes(1);
+    expect(result.current.promptIndexHasMoreBefore).toBe(true);
+    expect(result.current.promptIndex.map((p) => p.prompt_id)).toEqual(["evt-119", "evt-120"]);
+
+    await act(async () => {
+      await result.current.loadMorePromptIndex();
+    });
+    expect(api.fetchSessionTurns).toHaveBeenCalledTimes(2);
+    expect(result.current.promptIndexHasMoreBefore).toBe(false);
+    expect(result.current.promptIndex.map((p) => p.prompt_id)).toEqual([
+      "evt-u-15",
+      "evt-steer-15",
+      "evt-119",
+      "evt-120",
+    ]);
+  });
+
+  it("reveals an exact prompt, pages backward and forward without duplicates, and isolates tail refreshes", async () => {
+    const key = "websocket:reveal-flow";
+    const origin = {
+      store_identity: "store-1",
+      session_key: key,
+      incarnation: "inc-1",
+      generation: 0,
+    };
+    vi.mocked(api.fetchWebuiThread)
+      // 1. Initial latest window
+      .mockResolvedValueOnce({
+        schemaVersion: 3,
+        view: "history",
+        sessionKey: key,
+        source: origin,
+        messages: [
+          { id: "u99", promptId: "evt-99", role: "user", content: "Prompt 99", createdAt: 99 },
+          { id: "a99", role: "assistant", content: "Reply 99", createdAt: 100 },
+        ],
+        page: {
+          before_cursor: "b-98",
+          after_cursor: null,
+          has_more_before: true,
+          has_more_after: false,
+          total_turn_count: 100,
+          total_prompt_count: 101,
+        },
+      })
+      // 2. Reveal around Steer 15
+      .mockResolvedValueOnce({
+        schemaVersion: 3,
+        view: "history",
+        sessionKey: key,
+        source: origin,
+        messages: [
+          { id: "u15", promptId: "evt-u-15", role: "user", content: "Prompt 15", createdAt: 15 },
+          { id: "a15a", role: "assistant", content: "First reply", createdAt: 16 },
+          { id: "u15b", promptId: "evt-steer-15", role: "user", content: "Steer 15", createdAt: 17 },
+          { id: "a15b", role: "assistant", content: "After steer", createdAt: 18 },
+        ],
+        page: {
+          before_cursor: "b-14",
+          after_cursor: "a-16",
+          has_more_before: true,
+          has_more_after: true,
+          target_prompt_id: "evt-steer-15",
+        },
+      })
+      // 3. loadOlder from revealed window
+      .mockResolvedValueOnce({
+        schemaVersion: 3,
+        view: "history",
+        sessionKey: key,
+        source: origin,
+        messages: [
+          { id: "u14", promptId: "evt-14", role: "user", content: "Prompt 14", createdAt: 14 },
+        ],
+        page: {
+          before_cursor: "b-13",
+          has_more_before: true,
+          has_more_after: true,
+        },
+      })
+      // 4. loadNewer from revealed window
+      .mockResolvedValueOnce({
+        schemaVersion: 3,
+        view: "history",
+        sessionKey: key,
+        source: origin,
+        messages: [
+          { id: "u16", promptId: "evt-16", role: "user", content: "Prompt 16", createdAt: 19 },
+        ],
+        page: {
+          after_cursor: "a-17",
+          has_more_before: true,
+          has_more_after: true,
+        },
+      })
+      // 5. Background refresh while away from tail (same source origin)
+      .mockResolvedValueOnce({
+        schemaVersion: 3,
+        view: "history",
+        sessionKey: key,
+        source: origin,
+        active_turn_id: "turn-101",
+        has_pending_tool_calls: true,
+        messages: [
+          { id: "u100", promptId: "evt-100", role: "user", content: "Prompt 100", createdAt: 200 },
+        ],
+        page: {
+          before_cursor: "b-99",
+          has_more_before: true,
+          has_more_after: false,
+          total_turn_count: 101,
+          total_prompt_count: 102,
+        },
+      })
+      // 6. Explicit goToLatest
+      .mockResolvedValueOnce({
+        schemaVersion: 3,
+        view: "history",
+        sessionKey: key,
+        source: origin,
+        messages: [
+          { id: "u100", promptId: "evt-100", role: "user", content: "Prompt 100", createdAt: 200 },
+          { id: "a100", role: "assistant", content: "Reply 100", createdAt: 201 },
+        ],
+        page: {
+          before_cursor: "b-99",
+          after_cursor: null,
+          has_more_before: true,
+          has_more_after: false,
+          total_turn_count: 101,
+          total_prompt_count: 102,
+        },
+      });
+
+    const { result } = renderHook(() => useSessionHistory(key), {
+      wrapper: wrap(fakeClient()),
+    });
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(result.current.isAtTail).toBe(true);
+
+    await act(async () => {
+      const ok = await result.current.revealPrompt({
+        promptId: "evt-steer-15",
+        locator: "loc-steer-15",
+      });
+      expect(ok).toBe(true);
+    });
+    expect(result.current.isAtTail).toBe(false);
+    expect(result.current.hasMoreBefore).toBe(true);
+    expect(result.current.hasMoreAfter).toBe(true);
+    expect(result.current.pendingReveal?.status).toBe("ready");
+    expect(result.current.pendingReveal?.promptId).toBe("evt-steer-15");
+
+    await act(async () => {
+      await result.current.loadOlder();
+      await result.current.loadNewer();
+    });
+    expect(result.current.messages.map((m) => m.id)).toEqual([
+      "u14", "u15", "a15a", "u15b", "a15b", "u16",
+    ]);
+
+    // Background refresh must not clobber the detached historical window.
+    act(() => result.current.refresh());
+    await waitFor(() => expect(result.current.tailActivityPending).toBe(true));
+    expect(result.current.messages.map((m) => m.id)).toEqual([
+      "u14", "u15", "a15a", "u15b", "a15b", "u16",
+    ]);
+    expect(result.current.isAtTail).toBe(false);
+    expect(result.current.totalTurnCount).toBe(101);
+
+    // Explicit goToLatest returns cleanly to the tail.
+    await act(async () => {
+      const ok = await result.current.goToLatest();
+      expect(ok).toBe(true);
+    });
+    expect(result.current.isAtTail).toBe(true);
+    expect(result.current.tailActivityPending).toBe(false);
+    expect(result.current.messages.map((m) => m.id)).toEqual(["u100", "a100"]);
+  });
+
+  it("cancels a superseded reveal and leaves the current view intact on 409 stale cursor", async () => {
+    const key = "websocket:reveal-race";
+    vi.mocked(api.fetchWebuiThread).mockResolvedValueOnce({
+      schemaVersion: 3,
+      view: "history",
+      sessionKey: key,
+      messages: [
+        { id: "u-current", promptId: "evt-current", role: "user", content: "Current prompt", createdAt: 10 },
+      ],
+      page: { has_more_before: true, has_more_after: false },
+    });
+
+    const { result } = renderHook(() => useSessionHistory(key), {
+      wrapper: wrap(fakeClient()),
+    });
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    let resolveFirst!: (val: Awaited<ReturnType<typeof api.fetchWebuiThread>>) => void;
+    vi.mocked(api.fetchWebuiThread)
+      .mockReturnValueOnce(new Promise((resolve) => { resolveFirst = resolve; }))
+      .mockResolvedValueOnce({
+        schemaVersion: 3,
+        view: "history",
+        sessionKey: key,
+        messages: [
+          { id: "u-second", promptId: "evt-second", role: "user", content: "Second target", createdAt: 2 },
+        ],
+        page: { has_more_before: false, has_more_after: true, target_prompt_id: "evt-second" },
+      });
+
+    let firstPromise!: Promise<boolean>;
+    let secondPromise!: Promise<boolean>;
+    act(() => {
+      firstPromise = result.current.revealPrompt({ promptId: "evt-first", locator: "loc-first" });
+      secondPromise = result.current.revealPrompt({ promptId: "evt-second", locator: "loc-second" });
+    });
+    await act(async () => {
+      expect(await secondPromise).toBe(true);
+    });
+    await act(async () => {
+      resolveFirst({
+        schemaVersion: 3,
+        view: "history",
+        sessionKey: key,
+        messages: [
+          { id: "u-first", promptId: "evt-first", role: "user", content: "First target", createdAt: 1 },
+        ],
+        page: { has_more_before: false, has_more_after: true, target_prompt_id: "evt-first" },
+      });
+      expect(await firstPromise).toBe(false);
+    });
+    expect(result.current.messages.map((m) => m.id)).toEqual(["u-second"]);
+    expect(result.current.pendingReveal?.promptId).toBe("evt-second");
+
+    // 409 stale_history_cursor must keep the current window in place.
+    vi.mocked(api.fetchWebuiThread).mockRejectedValueOnce(
+      new api.ApiError(409, "stale_history_cursor"),
+    );
+    await act(async () => {
+      expect(await result.current.revealPrompt({ promptId: "evt-old", locator: "stale-loc" })).toBe(false);
+    });
+    expect(result.current.messages.map((m) => m.id)).toEqual(["u-second"]);
+    expect(result.current.pendingReveal?.status).toBe("error");
+    expect(result.current.pendingReveal?.errorCode).toBe("stale_history_cursor");
   });
 });

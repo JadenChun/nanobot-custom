@@ -64,6 +64,7 @@ from nanobot.webui.gateway_services import GatewayServices
 from nanobot.webui.mcp_presets_api import normalize_mcp_preset_mentions
 from nanobot.webui.metadata import (
     WEBSOCKET_TURN_OWNER_METADATA_KEY,
+    WEBUI_DISPLAY_ON_COMMIT_KEY,
     WEBUI_INSTALLATION_METADATA_KEY,
     WEBUI_REQUEST_INTENT_METADATA_KEY,
     WEBUI_SOURCE_TOKEN_METADATA_KEY,
@@ -87,6 +88,7 @@ from nanobot.workspace_access_recovery import FolderAccessRequest, WorkspaceScop
 
 if TYPE_CHECKING:
     from nanobot.security.desktop_permissions import WorkspacePermissionProjection
+    from nanobot.session.source_store import SourceSnapshot
 
 _WEBUI_REQUEST_CACHE_TTL_S = 5 * 60.0
 _WEBUI_REQUEST_CACHE_MAX = 256
@@ -639,13 +641,13 @@ class WebUICommandRouter:
             return principal_tag("local")
         return None
 
-    async def _input_attempt_attach_fields(
+    async def _read_input_attempt_attach(
         self, connection: ServerConnection, chat_id: str, envelope: dict[str, Any],
-    ) -> dict[str, object]:
-        """One authorized, noncreating source read; no negative/replay authority."""
+    ) -> tuple[dict[str, object], SourceSnapshot | None]:
+        """Read exact attempt proof and the source for the same attach handshake."""
         principal = self._input_attempt_principal(connection)
         if principal is None:
-            return {}
+            return {}, None
         fields: dict[str, object] = {}
         attempt: InputAttempt | None = None
         if "input_attempt_query" in envelope:
@@ -658,22 +660,22 @@ class WebUICommandRouter:
                     try:
                         turn_id = turn_identity(cast(dict[object, object], raw).get("turn_id"))
                     except ValueError:
-                        return fields
+                        return fields, None
                     fields["input_attempt_result"] = {
                         "version": 1, "turn_id": turn_id, "disposition": "unknown",
                     }
-                return fields
+                return fields, None
             fields["input_attempt_result"] = {
                 "version": 1, "turn_id": attempt.turn_id, "disposition": "unknown",
             }
         sessions = self.gateway.session_manager
         if sessions is None:
-            return fields
+            return fields, None
         try:
             read = await asyncio.to_thread(sessions.read_existing_canonical_source,
                                            webui_session_key(chat_id))
             if read is None:
-                return fields
+                return fields, None
             _, snapshot = read
             source = InputAttemptSource.from_state(snapshot.state)
             fields["input_attempt_source"] = {
@@ -689,8 +691,8 @@ class WebUICommandRouter:
                     }
         except Exception:
             # Read/storage/conflict errors are UNKNOWN; never log raw evidence.
-            pass
-        return fields
+            return fields, None
+        return fields, snapshot
 
     async def dispatch(
         self,
@@ -818,9 +820,10 @@ class WebUICommandRouter:
                 return
             self._transport.webui_attach(connection, chat_id)
             principal_before_read = self._input_attempt_principal(connection)
-            fields = self._session_projection.attach_fields(webui_session_key(chat_id))
+            attempt_fields: dict[str, object] = {}
+            source: SourceSnapshot | None = None
             if not self._temporary_chats.owns(connection, chat_id):
-                fields.update(await self._input_attempt_attach_fields(connection, chat_id, envelope))
+                attempt_fields, source = await self._read_input_attempt_attach(connection, chat_id, envelope)
             # Authorization/subscription may change while the pure read awaits.
             if _typed_mobile_identity(connection) is not None:
                 if not await self._transport.revalidate_mobile_connection(connection):
@@ -833,6 +836,8 @@ class WebUICommandRouter:
                 return
             if self._input_attempt_principal(connection) != principal_before_read:
                 return
+            fields = self._session_projection.attach_fields(webui_session_key(chat_id), source=source)
+            fields.update(attempt_fields)
             await self._transport.webui_send_event(connection, "attached", chat_id=chat_id, **fields)
             await self._transport.webui_hydrate(chat_id)
             return
@@ -881,6 +886,45 @@ class WebUICommandRouter:
                     chat_id=chat_id,
                 )
                 return
+            is_next_turn = (
+                envelope.get("next_turn") is True
+                or envelope.get("target") == "next_turn"
+                or "next_workspace_scope" in envelope
+            )
+            if is_next_turn:
+                result = await self.workspace_scope_or_error(
+                    connection,
+                    lambda: self._workspaces.set_next_turn_scope(
+                        chat_id,
+                        envelope,
+                        controls_available=self.workspace_controls_available(connection),
+                    ),
+                    chat_id=chat_id,
+                )
+                if result is None:
+                    return
+                extra = {
+                    "workspace_scope": result["workspace_scope"],
+                    "next_workspace_scope": result["next_workspace_scope"],
+                    **(
+                        {"next_turn_revision": result["next_turn_revision"]}
+                        if "next_turn_revision" in result
+                        else {}
+                    ),
+                }
+                await self._transport.send_session_updated(
+                    chat_id,
+                    scope="metadata",
+                    **extra,
+                )
+                await self._transport.webui_send_event(
+                    connection,
+                    "session_updated",
+                    chat_id=chat_id,
+                    scope="metadata",
+                    **extra,
+                )
+                return
             scope = await self.workspace_scope_or_error(
                 connection,
                 lambda: self._workspaces.scope_for_set_request(
@@ -894,17 +938,32 @@ class WebUICommandRouter:
             if scope is None:
                 return
             self._workspaces.stage_scope(chat_id, scope)
+            session_key = webui_session_key(chat_id)
+            next_scope = self._workspaces.next_scope_for_session_key(session_key)
+            update_fields: dict[str, Any] = {
+                "workspace_scope": (
+                    self._workspaces.scope_payload(
+                        self._workspaces.scope_for_session_key(session_key)
+                    )
+                    if next_scope is not None
+                    else self._workspaces.scope_payload(scope)
+                ),
+            }
+            if next_scope is not None:
+                update_fields["next_workspace_scope"] = self._workspaces.scope_payload(
+                    next_scope
+                )
             await self._transport.send_session_updated(
                 chat_id,
                 scope="metadata",
-                workspace_scope=self._workspaces.scope_payload(scope),
+                **update_fields,
             )
             await self._transport.webui_send_event(
                 connection,
                 "session_updated",
                 chat_id=chat_id,
                 scope="metadata",
-                workspace_scope=self._workspaces.scope_payload(scope),
+                **update_fields,
             )
             return
         if command_type == "transcribe_audio":
@@ -1366,6 +1425,7 @@ class WebUICommandRouter:
                 return
             local_controls = self.workspace_controls_available(connection)
             controls_available = local_controls or _typed_owner_mobile_identity(connection) is not None
+            was_chat_running = websocket_turn_wall_started_at(chat_id) is not None
             scope = await self.workspace_scope_or_error(
                 connection,
                 lambda: (
@@ -1377,7 +1437,7 @@ class WebUICommandRouter:
                     else self._workspaces.scope_for_message(
                         envelope,
                         chat_id=chat_id,
-                        chat_running=websocket_turn_wall_started_at(chat_id) is not None,
+                        chat_running=was_chat_running,
                         controls_available=controls_available,
                     )
                 ),
@@ -1560,16 +1620,23 @@ class WebUICommandRouter:
                 if is_webui and (
                     temporary_policy is None or temporary_policy.persist_transcript
                 ):
-                    self._transcripts.append_user_message(
-                        chat_id,
-                        content,
-                        metadata=metadata,
-                        media_paths=media_paths or None,
-                        attachments=[record.to_dict() for record in media_records] or None,
-                        cli_apps=cli_apps or None,
-                        mcp_presets=mcp_presets or None,
-                        session_mentions=session_mentions or None,
-                    )
+                    sessions = self.gateway.session_manager
+                    if sessions is not None and sessions.has_managed_authority:
+                        # Managed WebUI inputs (including !shell and /commands)
+                        # get a display row only when their canonical append commits.
+                        if not (content.strip() == "/stop" and not media_paths):
+                            metadata[WEBUI_DISPLAY_ON_COMMIT_KEY] = True
+                    else:
+                        self._transcripts.append_user_message(
+                            chat_id,
+                            content,
+                            metadata=metadata,
+                            media_paths=media_paths or None,
+                            attachments=[record.to_dict() for record in media_records] or None,
+                            cli_apps=cli_apps or None,
+                            mcp_presets=mcp_presets or None,
+                            session_mentions=session_mentions or None,
+                        )
                 if trusted_webui:
                     context_blocks: list[RuntimeContextBlock] = []
                     quote = webui_quote_runtime_context(
@@ -1608,8 +1675,27 @@ class WebUICommandRouter:
                     permission_reference=permission_reference,
                 )
                 if temporary_policy is None:
-                    self._workspaces.persist_scope(chat_id, scope)
-                    self._workspaces.remember_request_defaults(chat_id, scope)
+                    stripped_content = content.strip()
+                    is_model_cmd = (
+                        bool(stripped_content)
+                        and stripped_content.lower().split(maxsplit=1)[0] == "/model"
+                    )
+                    should_persist_scope = (
+                        not was_chat_running
+                        and not is_stop
+                        and request_intent != "steer"
+                        and (
+                            not is_model_cmd
+                            or self.gateway.session_manager is None
+                            or self.gateway.session_manager.read_session_metadata(
+                                webui_session_key(chat_id)
+                            )
+                            is None
+                        )
+                    )
+                    if should_persist_scope:
+                        self._workspaces.persist_scope(chat_id, scope)
+                        self._workspaces.remember_request_defaults(chat_id, scope)
                 accepted = True
             finally:
                 if not accepted and queued_owner is not None:
@@ -1987,7 +2073,10 @@ class WebUICommandRouter:
             backend = sessions.source_backend(key)
             if backend is None:
                 return None
-            state = backend.source.load_source_snapshot(key).state
+            header_state = backend.source.read_source_header_state(key)
+            if header_state is None:
+                return None
+            state, _ = header_state
             return {
                 "store_identity": state.store_identity,
                 "incarnation": state.incarnation,
@@ -2009,7 +2098,7 @@ class WebUICommandRouter:
             if not sessions.has_managed_authority:
                 return False, None
             key = webui_session_key(chat_id)
-            resolved = sessions.resolve_session_mode(key)
+            resolved = sessions.resolve_session_mode_for_metadata(key)
             if resolved.state == "absent":
                 return True, None
             if resolved.state != "active" or resolved.mode != "canonical":
@@ -2017,7 +2106,10 @@ class WebUICommandRouter:
             backend = sessions.source_backend(key)
             if backend is None:
                 return False, None
-            state = backend.source.load_source_snapshot(key).state
+            header_state = backend.source.read_source_header_state(key)
+            if header_state is None:
+                return False, None
+            state, _ = header_state
             return True, {
                 "store_identity": state.store_identity,
                 "incarnation": state.incarnation,

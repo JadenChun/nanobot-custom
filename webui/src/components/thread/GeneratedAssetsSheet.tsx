@@ -1,4 +1,5 @@
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
+import * as Dialog from "@radix-ui/react-dialog";
 import {
   Check,
   CircleAlert,
@@ -9,10 +10,12 @@ import {
   MoreHorizontal,
   Play,
   RefreshCcw,
+  X,
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import { ImageLightbox } from "@/components/ImageLightbox";
+import { ThreadInspectorDialog } from "@/components/thread/ThreadInspector";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -24,9 +27,9 @@ import { SegmentedControl } from "@/components/ui/segmented-control";
 import {
   Sheet,
   SheetContent,
-  SheetTitle,
 } from "@/components/ui/sheet";
 import { useGeneratedAssetLibrary } from "@/hooks/useGeneratedAssetLibrary";
+import { useMobileBack } from "@/hooks/useMobileBack";
 import { useSessionGeneratedAssets } from "@/hooks/useSessionGeneratedAssets";
 import { copyTextToClipboard } from "@/lib/clipboard";
 import { fmtDateTime } from "@/lib/format";
@@ -41,6 +44,19 @@ interface GeneratedAssetsSheetProps {
   sessionKey: string;
   token: string;
   refreshKey?: string | number;
+}
+
+export interface GeneratedAssetsPanelProps extends GeneratedAssetsSheetProps {
+  /** Fetch and show assets while true; keeps idle state when false. */
+  active?: boolean;
+  /** True when the panel fills a modal/sheet surface instead of a docked pane. */
+  modal?: boolean;
+  /** True when the modal surface is the selected inspector tab. */
+  visible?: boolean;
+  /** Render the title with the Radix dialog primitive (inside a Sheet or dialog). */
+  dialogTitle?: boolean;
+  /** Renders a close control; required for modal surfaces. */
+  onClose?: () => void;
 }
 
 interface MediaGroup extends GeneratedAssetGroup {
@@ -64,15 +80,20 @@ interface DatedAsset {
   startedAt: number;
 }
 
-export function GeneratedAssetsSheet({
+export function GeneratedAssetsPanel({
   sessionKey,
   token,
   refreshKey = 0,
-}: GeneratedAssetsSheetProps) {
+  active = true,
+  modal = true,
+  visible = true,
+  dialogTitle = false,
+  onClose,
+}: GeneratedAssetsPanelProps) {
   const { i18n, t } = useTranslation();
-  const [open, setOpen] = useState(false);
   const [view, setView] = useState<ViewMode>("flat");
   const [lightbox, setLightbox] = useState<LightboxState | null>(null);
+  const closeButtonRef = useRef<HTMLButtonElement>(null);
   const {
     groups,
     next,
@@ -81,7 +102,7 @@ export function GeneratedAssetsSheet({
     loadFailed,
     refresh,
     loadMore,
-  } = useSessionGeneratedAssets(open, token, sessionKey, refreshKey);
+  } = useSessionGeneratedAssets(active, token, sessionKey, refreshKey);
   const {
     groups: libraryGroups,
     next: libraryNext,
@@ -90,8 +111,14 @@ export function GeneratedAssetsSheet({
     loadFailed: libraryLoadFailed,
     refresh: refreshLibrary,
     loadMore: loadMoreLibrary,
-  } = useGeneratedAssetLibrary(open && view === "library", token, refreshKey);
+  } = useGeneratedAssetLibrary(active && view === "library", token, refreshKey);
   const locale = i18n.resolvedLanguage || i18n.language;
+
+  // Android back closes the full-screen panel before the chat behind it.
+  useMobileBack(() => {
+    onClose?.();
+    return true;
+  }, modal && visible && Boolean(onClose));
 
   const mediaGroups = useMemo<MediaGroup[]>(
     () => groups
@@ -151,6 +178,195 @@ export function GeneratedAssetsSheet({
   const openFlat = (index: number) => {
     setLightbox({ images: flatAssets.map((item) => item.asset), index });
   };
+
+  const Title = modal || dialogTitle ? Dialog.Title : "h2";
+  const content = (
+    <div className="flex h-full min-h-0 flex-col" data-testid="generated-assets-panel">
+      {modal ? (
+        <Dialog.Description className="sr-only">
+          {t("thread.generatedAssets.title")}
+        </Dialog.Description>
+      ) : null}
+      <div className="shrink-0 border-b border-border/60 px-4 pb-3 pt-3">
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex min-w-0 items-center gap-2">
+            <Title className="truncate text-sm font-medium">
+              {t("thread.generatedAssets.title")}
+            </Title>
+            {activeTotal > 0 ? (
+              <span className="shrink-0 rounded-full bg-muted px-2 py-0.5 text-[11px] text-muted-foreground">
+                {activeNext
+                  ? t("thread.generatedAssets.loaded", {
+                      count: activeTotal,
+                      defaultValue: "{{count}} loaded",
+                    })
+                  : t("thread.generatedAssets.total", { count: activeTotal })}
+              </span>
+            ) : null}
+          </div>
+          <div className="flex shrink-0 items-center gap-0.5">
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              aria-label={t("thread.generatedAssets.refresh")}
+              disabled={activeLoading}
+              onClick={activeRefresh}
+              className="h-8 w-8 rounded-full text-muted-foreground hover:bg-accent/40 hover:text-foreground"
+            >
+              <RefreshCcw className={cn("h-4 w-4", activeLoading && "animate-spin")} />
+            </Button>
+            {modal && onClose ? (
+              <Button
+                ref={closeButtonRef}
+                type="button"
+                variant="ghost"
+                size="icon"
+                aria-label={t("thread.generatedAssets.close")}
+                onClick={onClose}
+                className="h-8 w-8 rounded-full text-muted-foreground hover:bg-accent/40 hover:text-foreground"
+              >
+                <X className="h-4 w-4" aria-hidden />
+              </Button>
+            ) : null}
+          </div>
+        </div>
+        <SegmentedControl
+          className="mt-2.5"
+          value={view}
+          onChange={setView}
+          ariaLabel={t("thread.generatedAssets.view")}
+          options={[
+            { value: "flat", label: t("thread.generatedAssets.all") },
+            { value: "call", label: t("thread.generatedAssets.byCall") },
+            { value: "library", label: t("thread.generatedAssets.allSessions") },
+          ]}
+        />
+      </div>
+
+      <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
+        {activeLoading && activeTotal === 0 ? (
+          <div className="flex items-center justify-center gap-2 py-16 text-sm text-muted-foreground">
+            <Loader2 className="h-4 w-4 animate-spin" />
+            {t("thread.generatedAssets.loading")}
+          </div>
+        ) : activeFailed ? (
+          <div className="mx-auto flex max-w-sm flex-col items-center gap-3 py-16 text-center">
+            <CircleAlert className="h-5 w-5 text-destructive" />
+            <p className="text-sm text-muted-foreground">
+              {t("thread.generatedAssets.loadFailed")}
+            </p>
+            <Button type="button" variant="outline" size="sm" onClick={activeRefresh}>
+              {t("thread.generatedAssets.retry")}
+            </Button>
+          </div>
+        ) : activeTotal === 0 ? (
+          <div className="mx-auto max-w-sm py-16 text-center text-sm text-muted-foreground">
+            {libraryMode && activeNext
+              ? t("thread.generatedAssets.moreSessions", {
+                  defaultValue: "No media found yet. Load more to check the remaining chats.",
+                })
+              : t(libraryMode
+                ? "thread.generatedAssets.emptyLibrary"
+                : "thread.generatedAssets.empty")}
+          </div>
+        ) : view === "flat" ? (
+          <div
+            data-testid="generated-assets-flat"
+            className="grid grid-cols-2 gap-2 sm:grid-cols-3"
+          >
+            {flatAssets.map((item, index) => (
+              <AssetThumbnail
+                key={`${item.group.id}:${item.asset.id}`}
+                asset={item.asset}
+                badge={`#${item.group.sequence}.${item.candidate}`}
+                onClick={() => openFlat(index)}
+              />
+            ))}
+          </div>
+        ) : view === "library" ? (
+          <div data-testid="generated-assets-library" className="space-y-7">
+            {librarySessions.map((session) => (
+              <section key={session.sessionKey} className="space-y-2">
+                <div
+                  className="truncate text-[12px] font-medium text-muted-foreground"
+                  title={session.sessionKey}
+                >
+                  {shortSessionLabel(session.sessionKey)}
+                </div>
+                <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                  {session.assets.map((asset, index) => (
+                    <AssetThumbnail
+                      key={`${session.sessionKey}:${asset.id}`}
+                      asset={asset}
+                      badge={`#${index + 1}`}
+                      onClick={() => setLightbox({ images: session.assets, index })}
+                    />
+                  ))}
+                </div>
+              </section>
+            ))}
+          </div>
+        ) : (
+          <div data-testid="generated-assets-groups" className="space-y-7">
+            {mediaGroups.map((group) => (
+              <AssetGroupSection
+                key={group.id}
+                group={group}
+                locale={locale}
+                onOpen={(index) => openGroup(group, index)}
+              />
+            ))}
+          </div>
+        )}
+        {activeNext ? (
+          <div className="flex justify-center pt-5">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              disabled={activeLoadingMore}
+              onClick={activeLoadMore}
+            >
+              {activeLoadingMore
+                ? t("thread.generatedAssets.loadingMore")
+                : t("thread.generatedAssets.loadMore")}
+            </Button>
+          </div>
+        ) : null}
+      </div>
+
+      {lightbox ? (
+        <ImageLightbox
+          images={lightbox.images}
+          index={lightbox.index}
+          onIndexChange={(index) => setLightbox((current) => (
+            current ? { ...current, index } : current
+          ))}
+          onOpenChange={(nextOpen) => {
+            if (!nextOpen) setLightbox(null);
+          }}
+        />
+      ) : null}
+    </div>
+  );
+  if (!modal) return content;
+  if (!visible) return null;
+  return (
+    <ThreadInspectorDialog focusRef={closeButtonRef} onClose={onClose ?? (() => {})}>
+      {content}
+    </ThreadInspectorDialog>
+  );
+}
+
+/** Standalone trigger + sheet kept for callers that are not inside the inspector. */
+export function GeneratedAssetsSheet({
+  sessionKey,
+  token,
+  refreshKey = 0,
+}: GeneratedAssetsSheetProps) {
+  const { t } = useTranslation();
+  const [open, setOpen] = useState(false);
   return (
     <>
       <Button
@@ -173,157 +389,22 @@ export function GeneratedAssetsSheet({
           aria-describedby={undefined}
           className="w-[min(96vw,56rem)] gap-0 p-0 sm:max-w-[56rem]"
         >
-          <div className="border-b px-5 pb-4 pt-5 pr-12">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div className="flex min-w-0 items-center gap-2">
-                <SheetTitle className="text-base font-medium">
-                  {t("thread.generatedAssets.title")}
-                </SheetTitle>
-                {activeTotal > 0 ? (
-                  <span className="rounded-full bg-muted px-2 py-0.5 text-[11px] text-muted-foreground">
-                    {activeNext
-                      ? t("thread.generatedAssets.loaded", {
-                          count: activeTotal,
-                          defaultValue: "{{count}} loaded",
-                        })
-                      : t("thread.generatedAssets.total", { count: activeTotal })}
-                  </span>
-                ) : null}
-              </div>
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                aria-label={t("thread.generatedAssets.refresh")}
-                disabled={activeLoading}
-                onClick={activeRefresh}
-                className="h-8 w-8 rounded-full text-muted-foreground hover:bg-accent/40 hover:text-foreground"
-              >
-                <RefreshCcw className={cn("h-4 w-4", activeLoading && "animate-spin")} />
-              </Button>
-            </div>
-            <SegmentedControl
-              className="mt-3"
-              value={view}
-              onChange={setView}
-              ariaLabel={t("thread.generatedAssets.view")}
-              options={[
-                { value: "flat", label: t("thread.generatedAssets.all") },
-                { value: "call", label: t("thread.generatedAssets.byCall") },
-                { value: "library", label: t("thread.generatedAssets.allSessions") },
-              ]}
+          {open ? (
+            <GeneratedAssetsPanel
+              sessionKey={sessionKey}
+              token={token}
+              refreshKey={refreshKey}
+              active={open}
+              modal={false}
+              dialogTitle
             />
-          </div>
-
-          <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
-            {activeLoading && activeTotal === 0 ? (
-              <div className="flex items-center justify-center gap-2 py-16 text-sm text-muted-foreground">
-                <Loader2 className="h-4 w-4 animate-spin" />
-                {t("thread.generatedAssets.loading")}
-              </div>
-            ) : activeFailed ? (
-              <div className="mx-auto flex max-w-sm flex-col items-center gap-3 py-16 text-center">
-                <CircleAlert className="h-5 w-5 text-destructive" />
-                <p className="text-sm text-muted-foreground">
-                  {t("thread.generatedAssets.loadFailed")}
-                </p>
-                <Button type="button" variant="outline" size="sm" onClick={activeRefresh}>
-                  {t("thread.generatedAssets.retry")}
-                </Button>
-              </div>
-            ) : activeTotal === 0 ? (
-              <div className="mx-auto max-w-sm py-16 text-center text-sm text-muted-foreground">
-                {libraryMode && activeNext
-                  ? t("thread.generatedAssets.moreSessions", {
-                      defaultValue: "No media found yet. Load more to check the remaining chats.",
-                    })
-                  : t(libraryMode
-                    ? "thread.generatedAssets.emptyLibrary"
-                    : "thread.generatedAssets.empty")}
-              </div>
-            ) : view === "flat" ? (
-              <div
-                data-testid="generated-assets-flat"
-                className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4"
-              >
-                {flatAssets.map((item, index) => (
-                  <AssetThumbnail
-                    key={`${item.group.id}:${item.asset.id}`}
-                    asset={item.asset}
-                    badge={`#${item.group.sequence}.${item.candidate}`}
-                    onClick={() => openFlat(index)}
-                  />
-                ))}
-              </div>
-            ) : view === "library" ? (
-              <div data-testid="generated-assets-library" className="space-y-7">
-                {librarySessions.map((session) => (
-                  <section key={session.sessionKey} className="space-y-2">
-                    <div
-                      className="truncate text-[12px] font-medium text-muted-foreground"
-                      title={session.sessionKey}
-                    >
-                      {shortSessionLabel(session.sessionKey)}
-                    </div>
-                    <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4">
-                      {session.assets.map((asset, index) => (
-                        <AssetThumbnail
-                          key={`${session.sessionKey}:${asset.id}`}
-                          asset={asset}
-                          badge={`#${index + 1}`}
-                          onClick={() => setLightbox({ images: session.assets, index })}
-                        />
-                      ))}
-                    </div>
-                  </section>
-                ))}
-              </div>
-            ) : (
-              <div data-testid="generated-assets-groups" className="space-y-7">
-                {mediaGroups.map((group) => (
-                  <AssetGroupSection
-                    key={group.id}
-                    group={group}
-                    locale={locale}
-                    onOpen={(index) => openGroup(group, index)}
-                  />
-                ))}
-              </div>
-            )}
-            {activeNext ? (
-              <div className="flex justify-center pt-5">
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  disabled={activeLoadingMore}
-                  onClick={activeLoadMore}
-                >
-                  {activeLoadingMore
-                    ? t("thread.generatedAssets.loadingMore")
-                    : t("thread.generatedAssets.loadMore")}
-                </Button>
-              </div>
-            ) : null}
-          </div>
+          ) : null}
         </SheetContent>
       </Sheet>
-
-      {lightbox ? (
-        <ImageLightbox
-          images={lightbox.images}
-          index={lightbox.index}
-          onIndexChange={(index) => setLightbox((current) => (
-            current ? { ...current, index } : current
-          ))}
-          onOpenChange={(nextOpen) => {
-            if (!nextOpen) setLightbox(null);
-          }}
-        />
-      ) : null}
     </>
   );
 }
+
 
 function AssetGroupSection({
   group,

@@ -1117,6 +1117,10 @@
     "error": "Connection error"
   },
   "thread": {
+    "workingBar": {
+      "defaultStep": "Working",
+      "ariaLabel": "Current step"
+    },
     "compaction": {
       "cancelled": "Context compaction cancelled",
       "empty": "Nothing to compact.",
@@ -1240,6 +1244,11 @@
       "configureModel": "Configure model",
       "chooseAI": "Choose your AI",
       "switchModel": "Switch model for this chat",
+      "back": "Back",
+      "backToQuickModels": "Back to quick models",
+      "searchModels": "Search models",
+      "noMatchingModels": "No matching models",
+      "moreModels": "More models ({{count}})",
       "manageModels": "Manage models",
       "context": {
         "tooltip": "Context {{percent}}%",
@@ -1428,6 +1437,7 @@
     "forkedFromHistory": "Forked from history",
     "generatedAssets": {
       "open": "Open generated assets",
+      "close": "Close generated assets",
       "title": "Generated assets",
       "refresh": "Refresh generated assets",
       "view": "Asset view",
@@ -1486,6 +1496,7 @@
     "activityThoughtFor": "Thought for {{duration}}",
     "activityGroup": "Activity",
     "activityWorking": "Working",
+    "activityWorkingFor": "Working · {{duration}}",
     "activityWorked": "Worked",
     "activityWorkedFor": "Worked for {{duration}}",
     "retryConnection": "Connection failed",
@@ -1699,7 +1710,12 @@
     },
     "picker": {
       "chooseProject": "Choose project folder",
-      "clearProject": "Clear project folder"
+      "clearProject": "Clear project folder",
+      "nextTurn": "Next turn: {{folder}}",
+      "nextTurnLabel": "Next turn",
+      "nextTurnHint": "The running turn keeps its folder. This choice applies to the next turn.",
+      "nextTurnPending": "Saving the next folder…",
+      "nextTurnFailed": "The folder change was not saved. The previous choice is still in effect; your draft is intact."
     },
     "folders": {
       "saved": "Folder saved. The map and Sandbox rules are up to date.",

@@ -42,6 +42,7 @@ _PRIVATE_METADATA_KEYS = frozenset({
     "_background_result",
     "_stop_client",
     "_stop_expectation",
+    "_webui_display_source",
 })
 
 

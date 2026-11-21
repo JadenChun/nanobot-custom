@@ -139,6 +139,42 @@ class InboundMessage:
         return self.channel != "system"
 
 
+@dataclass(frozen=True)
+class CommittedUserInput:
+    """Detached user-visible input to project after canonical admission."""
+
+    content: str
+    media_paths: tuple[str, ...]
+    attachments: tuple[AttachmentRecord, ...]
+    created_at_ms: int
+    event_id: str
+
+    @classmethod
+    def from_message(
+        cls,
+        msg: InboundMessage,
+        event_id: str,
+        *,
+        content: str | None = None,
+        created_at_ms: int | None = None,
+    ) -> "CommittedUserInput":
+        text = content
+        if text is None:
+            text = msg.content
+            if msg.metadata.get(INBOUND_META_USER_SHELL) is True and (
+                text == "/__shell" or text.startswith("/__shell ")
+            ):
+                args = text[len("/__shell"):].lstrip()
+                text = f"!{args}" if args else "!"
+        return cls(
+            text,
+            tuple(msg.media),
+            msg.attachments,
+            int(msg.timestamp.timestamp() * 1000) if created_at_ms is None else created_at_ms,
+            event_id,
+        )
+
+
 @dataclass
 class OutboundMessage:
     """Message to send to a chat channel.

@@ -8,6 +8,7 @@ from typing import Any
 from loguru import logger
 
 from nanobot.agent.hook import AgentHook, AgentHookContext
+from nanobot.agent.tools.progress import ToolProgressSink
 from nanobot.bus.outbound_events import ProgressEvent, StreamDeltaEvent, StreamEndEvent
 from nanobot.events import NO_EVENTS, EventSink
 from nanobot.providers.base import ToolCallRequest
@@ -42,6 +43,29 @@ class AgentProgressHook(AgentHook):
     def wants_streaming(self) -> bool:
         return self._streaming
 
+    def tool_progress_sink(self, tool_call: ToolCallRequest) -> Any:
+        """Expose a live-only sink for the tool call that is starting now.
+
+        Progress frames are ephemeral: the WebUI merges them onto the running
+        tool row and never writes them to the session transcript.
+        """
+        if not self._publish or not self._streaming:
+            return None
+        call_id = str(getattr(tool_call, "id", "") or "")
+        name = str(getattr(tool_call, "name", "") or "")
+        if not call_id or not name:
+            return None
+        return ToolProgressSink(
+            call_id=call_id,
+            name=name,
+            publish=self._publish_tool_progress,
+        )
+
+    async def _publish_tool_progress(self, payload: dict[str, Any]) -> None:
+        if not self._publish:
+            return
+        await self._publish(ProgressEvent(tool_events=[payload]))
+
     @staticmethod
     def _strip_think(text: str | None) -> str | None:
         if not text:
@@ -71,7 +95,13 @@ class AgentProgressHook(AgentHook):
         await self.emit_reasoning_end()
         if self._publish and self._streaming:
             await self._publish(StreamEndEvent(
-                resuming=resuming, merge_next=context.stream_continues_current_message,
+                resuming=resuming,
+                merge_next=context.stream_continues_current_message,
+                source_event_id=(
+                    context.source_event_id
+                    if not context.stream_continues_current_message
+                    else None
+                ),
             ))
         self._stream_buf = ""
         self._think_extractor.reset()

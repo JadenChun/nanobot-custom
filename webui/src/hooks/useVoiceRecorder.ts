@@ -1,6 +1,7 @@
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
   type PointerEvent as ReactPointerEvent,
@@ -38,6 +39,7 @@ export type VoiceRecorderErrorKey =
 
 interface VoiceRecorderOptions {
   disabled?: boolean;
+  draftKey?: string | null;
   onClearError: () => void;
   onError: (key: VoiceRecorderErrorKey) => void;
   onTranscript: (text: string) => void;
@@ -48,6 +50,7 @@ interface VoiceRecorderOptions {
 
 export function useVoiceRecorder({
   disabled,
+  draftKey,
   onClearError,
   onError,
   onTranscript,
@@ -191,16 +194,13 @@ export function useVoiceRecorder({
     }
     const requestEpoch = ++requestEpochRef.current;
     const recordingId = ++recordingIdRef.current;
+    const isCurrentRecording = () => mountedRef.current && recordingIdRef.current === recordingId;
     startPendingRef.current = true;
     let stream: MediaStream | null = null;
     let capture: VoiceCapture | null = null;
     try {
       stream = await mediaDevices.getUserMedia({ audio: true });
-      if (
-        requestEpoch !== requestEpochRef.current
-        || recordingId !== recordingIdRef.current
-        || !mountedRef.current
-      ) {
+      if (requestEpoch !== requestEpochRef.current || !isCurrentRecording()) {
         stopMediaStream(stream);
         return;
       }
@@ -222,35 +222,31 @@ export function useVoiceRecorder({
         const chunks = capture?.chunks.splice(0) ?? [];
         const durationMs = Math.max(0, Date.now() - (capture?.startedAt ?? Date.now()));
         const mimeType = recorder.mimeType || "audio/webm";
-        const isCurrentRecording = recordingIdRef.current === recordingId;
         if (capture) cleanupRecording(capture);
-        if (!mountedRef.current) return;
+        if (!isCurrentRecording()) return;
         if (chunks.length === 0) {
-          if (isCurrentRecording) setState("idle");
+          setState("idle");
           return;
         }
         if (durationMs < VOICE_RECORDING_MIN_MS) {
-          if (isCurrentRecording) {
-            setState("idle");
-            onError("tooShort");
-          }
+          setState("idle");
+          onError("tooShort");
           return;
         }
-        if (isCurrentRecording) setState("transcribing");
+        setState("transcribing");
         const blob = new Blob(chunks, { type: mimeType });
         const audioPromise = wantsWav ? convertBlobToWav(blob) : blobToDataUrl(blob);
         void audioPromise
-          .then((dataUrl) => onTranscribeAudio(dataUrl, { durationMs }))
-          .then((text) => {
-            if (mountedRef.current) onTranscript(text);
+          .then(async (dataUrl) => {
+            if (!isCurrentRecording()) return;
+            const text = await onTranscribeAudio(dataUrl, { durationMs });
+            if (isCurrentRecording()) onTranscript(text);
           })
           .catch((error) => {
-            if (mountedRef.current && recordingIdRef.current === recordingId) {
-              onError(transcriptionErrorKey(error));
-            }
+            if (isCurrentRecording()) onError(transcriptionErrorKey(error));
           })
           .finally(() => {
-            if (mountedRef.current && recordingIdRef.current === recordingId) setState("idle");
+            if (isCurrentRecording()) setState("idle");
           });
       };
       recorder.start();
@@ -259,11 +255,7 @@ export function useVoiceRecorder({
       maxTimerRef.current = setTimeout(stopRecording, VOICE_RECORDING_MAX_MS);
     } catch (error) {
       if (stream) stopMediaStream(stream);
-      if (
-        requestEpoch !== requestEpochRef.current
-        || recordingId !== recordingIdRef.current
-        || !mountedRef.current
-      ) return;
+      if (requestEpoch !== requestEpochRef.current || !isCurrentRecording()) return;
       if (capture) stopMediaRecorder(capture.recorder);
       cleanupRecording(capture ?? undefined);
       setState("idle");
@@ -283,8 +275,10 @@ export function useVoiceRecorder({
 
   const startRecordingWithDeferredStop = useCallback(() => {
     stopAfterStartRef.current = false;
-    void startRecording().then(() => {
-      if (!stopAfterStartRef.current) return;
+    const started = startRecording();
+    const recordingId = recordingIdRef.current;
+    void started.then(() => {
+      if (recordingIdRef.current !== recordingId || !stopAfterStartRef.current) return;
       stopAfterStartRef.current = false;
       stopRecording();
     });
@@ -377,8 +371,11 @@ export function useVoiceRecorder({
     return () => window.clearInterval(interval);
   }, [state]);
 
-  useEffect(() => {
+  // Switching editors has the same capture boundary as unmounting. A
+  // recording from the old draft cannot publish even if that key is revisited.
+  useLayoutEffect(() => {
     mountedRef.current = true;
+    setState("idle");
     return () => {
       mountedRef.current = false;
       requestEpochRef.current += 1;
@@ -386,11 +383,14 @@ export function useVoiceRecorder({
       clearTimer(holdTimerRef);
       clearTimer(maxTimerRef);
       clearSuppressClickTimer();
+      holdActiveRef.current = false;
+      stopAfterStartRef.current = false;
+      suppressClickRef.current = false;
       const capture = captureRef.current;
       cleanupRecording(capture ?? undefined);
       if (capture) stopMediaRecorder(capture.recorder);
     };
-  }, [cleanupRecording, clearSuppressClickTimer]);
+  }, [cleanupRecording, clearSuppressClickTimer, draftKey]);
 
   useEffect(() => {
     const onVisibilityChange = () => {

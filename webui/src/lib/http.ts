@@ -86,7 +86,7 @@ async function mobileFetch(
       runtime,
       "mobile_thread",
       `/mobile/v1/sessions/${encodeURIComponent(key)}/thread${url.search}`,
-      { allowNotFound: true },
+      { passThroughStatus: true },
     );
   }
   const delegatedChildren = /^\/api\/sessions\/([^/]+)\/delegated-children$/.exec(url.pathname);
@@ -190,13 +190,13 @@ async function mobileJsonRequest(
   runtime: ReturnType<typeof getMobileRuntime> & object,
   operation: string,
   path: string,
-  options: { allowNotFound?: boolean } = {},
+  options: { allowNotFound?: boolean; passThroughStatus?: boolean } = {},
 ): Promise<Response> {
   const response = await runtime.request({ operation, method: "GET", path });
   if (response.status === 404 && options.allowNotFound) {
     return new Response("", { status: 404 });
   }
-  if (response.status < 200 || response.status >= 300) {
+  if (!options.passThroughStatus && (response.status < 200 || response.status >= 300)) {
     throw new Error(`${operation} failed: HTTP ${response.status}`);
   }
   return new Response(decodeBase64Text(response.bodyBase64), {

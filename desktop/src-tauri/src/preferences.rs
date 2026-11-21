@@ -37,34 +37,42 @@ impl Preferences {
     }
 }
 
-#[cfg(target_os = "macos")]
 #[derive(Clone, Debug, Serialize)]
 pub struct SetupDefaults {
     pub config_path: String,
     pub interpreter_path: Option<String>,
 }
 
-#[cfg(target_os = "macos")]
 fn home_directory() -> Option<PathBuf> {
     env::var_os("HOME").map(PathBuf::from).filter(|path| path.is_absolute())
 }
 
-#[cfg(target_os = "macos")]
 fn config_under(home: &Path) -> PathBuf {
     home.join(".nanobot").join("config.json")
 }
 
-#[cfg(target_os = "macos")]
+fn is_executable_file(path: &Path) -> bool {
+    fs::metadata(path).is_ok_and(|meta| meta.is_file() && meta.mode() & 0o111 != 0)
+}
+
+fn resolve_release_python(root: &Path, selector: &str, relative_python: &str) -> Option<PathBuf> {
+    let release = fs::canonicalize(root.join(selector)).ok()?;
+    // Resolve the release, not its interpreter symlink: Python needs the
+    // venv's bin path to find its pyvenv.cfg.
+    let python = release.join(relative_python);
+    is_executable_file(&python).then_some(python)
+}
+
 fn setup_defaults_under(home: &Path) -> Option<SetupDefaults> {
     let managed = home.join(".local/share/nanobot");
-    let interpreter_path = ["desktop-current", "current"]
-        .into_iter()
-        .filter_map(|selector| fs::canonicalize(managed.join(selector)).ok())
-        // Resolve the release, not its interpreter symlink: Python needs the
-        // venv's bin path to find its pyvenv.cfg.
-        .map(|release| release.join("env/bin/python"))
-        .find(|path| {
-            fs::metadata(path).is_ok_and(|meta| meta.is_file() && meta.mode() & 0o111 != 0)
+    let release_root = home.join(".local/share/nanobot-release");
+    let interpreter_path = resolve_release_python(&managed, "desktop-current", "env/bin/python")
+        .or_else(|| resolve_release_python(&managed, "current", "env/bin/python"))
+        .or_else(|| resolve_release_python(&release_root, "desktop-current", "venv/bin/python"))
+        .or_else(|| resolve_release_python(&release_root, "current", "venv/bin/python"))
+        .or_else(|| {
+            let direct = release_root.join("venv/bin/python");
+            is_executable_file(&direct).then_some(direct)
         })
         .and_then(|path| path.into_os_string().into_string().ok());
     Some(SetupDefaults {
@@ -73,12 +81,27 @@ fn setup_defaults_under(home: &Path) -> Option<SetupDefaults> {
     })
 }
 
-#[cfg(target_os = "macos")]
-pub fn setup_defaults() -> Option<SetupDefaults> {
-    setup_defaults_under(&home_directory()?)
+fn bundled_interpreter_near_exe() -> Option<String> {
+    let exe = env::current_exe().ok()?;
+    let bin_dir = exe.parent()?;
+    let release_dir = bin_dir.parent()?;
+    for rel in ["venv/bin/python", "env/bin/python"] {
+        let candidate = release_dir.join(rel);
+        if is_executable_file(&candidate) {
+            return candidate.into_os_string().into_string().ok();
+        }
+    }
+    None
 }
 
-#[cfg(target_os = "macos")]
+pub fn setup_defaults() -> Option<SetupDefaults> {
+    let mut defaults = setup_defaults_under(&home_directory()?)?;
+    if defaults.interpreter_path.is_none() {
+        defaults.interpreter_path = bundled_interpreter_near_exe();
+    }
+    Some(defaults)
+}
+
 pub fn missing_default_config(path: &Path) -> bool {
     home_directory().is_some_and(|home| config_under(&home) == path)
         && fs::symlink_metadata(path)
@@ -243,7 +266,6 @@ pub fn lock_is_exclusive(file: &fs::File) -> bool {
 mod tests {
     use super::*;
 
-    #[cfg(target_os = "macos")]
     #[test]
     fn setup_suggests_the_standard_config_and_prefers_the_desktop_install() {
         let home = env::temp_dir().join(format!(

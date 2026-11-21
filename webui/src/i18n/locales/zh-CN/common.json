@@ -1117,6 +1117,10 @@
     "error": "连接出错"
   },
   "thread": {
+    "workingBar": {
+      "defaultStep": "处理中",
+      "ariaLabel": "当前步骤"
+    },
     "compaction": {
       "cancelled": "上下文压缩已取消",
       "empty": "无需压缩上下文",
@@ -1239,6 +1243,11 @@
       "configureModel": "配置模型",
       "chooseAI": "选择你的 AI",
       "switchModel": "切换本次对话所用模型",
+      "back": "返回",
+      "backToQuickModels": "返回快捷模型",
+      "searchModels": "搜索模型",
+      "noMatchingModels": "没有匹配的模型",
+      "moreModels": "更多模型（{{count}}）",
       "manageModels": "管理模型预设",
       "context": {
         "tooltip": "上下文 {{percent}}%",
@@ -1428,6 +1437,7 @@
     "forkedFromHistory": "从历史消息分叉",
     "generatedAssets": {
       "open": "打开生成的素材",
+      "close": "关闭生成的素材",
       "title": "生成的素材",
       "refresh": "刷新生成的素材",
       "view": "素材视图",
@@ -1486,6 +1496,7 @@
     "activityThoughtFor": "思考了 {{duration}}",
     "activityGroup": "活动",
     "activityWorking": "处理中",
+    "activityWorkingFor": "处理中 · {{duration}}",
     "activityWorked": "已处理",
     "activityWorkedFor": "处理了 {{duration}}",
     "retryConnection": "连接失败",
@@ -1699,7 +1710,12 @@
     },
     "picker": {
       "chooseProject": "选择项目文件夹",
-      "clearProject": "清除项目文件夹"
+      "clearProject": "清除项目文件夹",
+      "nextTurn": "下一轮：{{folder}}",
+      "nextTurnLabel": "下一轮",
+      "nextTurnHint": "正在运行的一轮保留其文件夹。此选择应用于下一轮。",
+      "nextTurnPending": "正在保存下一个文件夹…",
+      "nextTurnFailed": "文件夹更改未保存。之前的选择仍然有效，您的草稿保持完整。"
     },
     "folders": {
       "saved": "文件夹已保存，目录索引与沙箱规则已更新。",

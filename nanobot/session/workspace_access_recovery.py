@@ -607,7 +607,7 @@ class WorkspaceAccessRecoveryOwner:
         controls_available: bool,
         scope: WorkspaceScope,
     ) -> tuple[FolderAccessRequest | None, Any, WorkspacePermissionReference | None]:
-        """Project the history response from one validated canonical source."""
+        """Project the current controls from one validated canonical source."""
         key, checked_chat = self._key(chat_id)
         if snapshot.state.session_key != key or snapshot.header["metadata"].get("webui") is not True:
             raise WorkspaceAccessActionError(404, "session_not_found")
@@ -644,13 +644,24 @@ class WorkspaceAccessRecoveryOwner:
         if backend is None or owner is None:
             raise WorkspaceAccessActionError(503, "permission_state_unavailable")
         try:
-            snapshot = backend.source.load_source_snapshot(key)
-            source = self._binding(snapshot)
+            header_state = backend.source.read_source_header_state(key)
+            if header_state is None:
+                raise WorkspaceAccessActionError(503, "permission_state_unavailable")
+            state, header = header_state
+            source: WorkspaceAccessSourceBinding = {
+                "store_identity": state.store_identity,
+                "incarnation": state.incarnation,
+                "generation": state.generation,
+            }
+            raw_record = header["metadata"].get("workspace_access_request")
+            record = None if raw_record is None else parse_workspace_access_record(raw_record)
+        except WorkspaceAccessActionError:
+            raise
         except Exception:
             raise WorkspaceAccessActionError(503, "permission_state_unavailable") from None
 
         return self._workspace_permissions_for_source(
-            key, owner, source, self._access_record(snapshot), controls_available=controls_available,
+            key, owner, source, record, controls_available=controls_available,
         )
 
     def _workspace_permissions_for_source(

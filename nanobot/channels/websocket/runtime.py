@@ -62,6 +62,7 @@ from nanobot.webui.transcript import WEBUI_TRANSCRIPT_INCOMPLETE_KEY
 from nanobot.webui.websocket_logging import websockets_server_logger
 
 if TYPE_CHECKING:
+    from nanobot.bus.events import CommittedUserInput
     from nanobot.bus.outbound_events import ProgressEvent
     from nanobot.security.desktop_permissions import WorkspacePermissionProjection
     from nanobot.security.workspace_access import WorkspaceScope
@@ -72,6 +73,18 @@ _WEBUI_HTTP_OPEN_TIMEOUT_S = 360.0
 _LISTENER_CHECK_INTERVAL_S = 0.5
 _LISTENER_STABLE_AFTER_S = 30.0
 _LISTENER_RESTART_BACKOFF_S = (1.0, 2.0, 4.0, 8.0, 16.0, 30.0)
+
+
+def _is_live_progress_event(progress_event: "ProgressEvent | None") -> bool:
+    """True when a progress frame is live-only and must not be persisted.
+
+    ``phase: "progress"`` tool events describe a running call's incremental
+    state. They refresh the live row over WebSocket and are intentionally
+    excluded from the session transcript so replay never duplicates rows.
+    """
+    if progress_event is None or not progress_event.tool_events:
+        return False
+    return all(event.get("phase") == "progress" for event in progress_event.tool_events)
 
 # Outbound delivery is isolated per connection.  A bounded queue keeps a slow
 # or suspended terminal from retaining an unbounded stream in server memory.
@@ -1214,7 +1227,7 @@ class WebSocketChannel(BaseChannel):
         metadata: dict[str, Any] | None,
         phase: str,
     ) -> bool:
-        if not persisted and phase in {"answer", "complete"} and (metadata or {}).get("webui") is True:
+        if not persisted and phase in {"user", "answer", "complete"} and (metadata or {}).get("webui") is True:
             owner = (metadata or {}).get(WEBSOCKET_TURN_OWNER_METADATA_KEY)
             mark_websocket_turn_transcript_persistence_failed(
                 chat_id,
@@ -1252,6 +1265,20 @@ class WebSocketChannel(BaseChannel):
 
     async def send(self, msg: OutboundMessage) -> None:
         await self._outbound.send(msg)
+
+    def persist_committed_user_input(
+        self,
+        chat_id: str,
+        user_input: CommittedUserInput,
+        metadata: dict[str, Any],
+    ) -> None:
+        if self._temporary_chats.should_persist_transcript(chat_id):
+            self._retain_turn_on_transcript_failure(
+                chat_id,
+                persisted=self._transcripts.append_committed_user_message(chat_id, user_input, metadata),
+                metadata=metadata,
+                phase="user",
+            )
 
     def _media_workspace(self, chat_id: str) -> tuple[Path, bool]:
         """Resolve acknowledged chat focus and its temporary-chat grant ceiling."""
@@ -1316,17 +1343,18 @@ class WebSocketChannel(BaseChannel):
         elif progress_event:
             payload["kind"] = "progress"
         phase = "activity" if payload.get("kind") in ("tool_hint", "progress") else "answer"
-        self._persist_turn_transcript_event(
-            msg.chat_id,
-            payload,
-            metadata=msg.metadata,
-            phase=phase,
-            include_source=True,
-            transcript_overrides={
-                "text": text,
-                "media_publications": retained_markdown_media(wire_text),
-            },
-        )
+        if not _is_live_progress_event(progress_event):
+            self._persist_turn_transcript_event(
+                msg.chat_id,
+                payload,
+                metadata=msg.metadata,
+                phase=phase,
+                include_source=True,
+                transcript_overrides={
+                    "text": text,
+                    "media_publications": retained_markdown_media(wire_text),
+                },
+            )
         raw = json.dumps(payload, ensure_ascii=False)
         if not conns:
             return

@@ -1005,6 +1005,7 @@ class AgentRunner:
                     logger.exception("follow-up request acknowledgment failed")
             response_owners.callback(recorded_response.release)
             response = recorded_response.response
+            context.source_event_id = recorded_response.source_event_id
             assert request_state.messages is not None
             messages_for_model = request_state.messages
             if request_state.compaction is not None:
@@ -2902,8 +2903,18 @@ class AgentRunner:
             and recorded_response.context_usage_epoch == state.context_usage_epoch
             and state.usage.context_tokens is not None
         ):
+            window_tokens = (
+                recorded_response.context_window_tokens
+                if recorded_response.context_window_tokens is not None
+                else (
+                    response.context_window_tokens
+                    if type(response.context_window_tokens) is int
+                    and response.context_window_tokens > 0
+                    else None
+                )
+            )
             state.context_usage = ContextUsageSnapshot(
-                state.usage.context_tokens, recorded_response.context_window_tokens,
+                state.usage.context_tokens, window_tokens,
             )
         from nanobot.providers.openai_compat_provider import OpenAICompatProvider
 

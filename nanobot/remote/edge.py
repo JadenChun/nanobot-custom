@@ -517,7 +517,9 @@ class MobileGatewayEdge:
                 return http_json_response({"error": "scope_denied"}, status=403)
             if self.thread_handler is None:
                 return http_json_response({"error": "thread_unavailable"}, status=503)
-            if set(query) - {"limit", "direction", "before"} or any(
+            if set(query) - {
+                "limit", "direction", "before", "after", "around", "prompt_id", "view",
+            } or any(
                 len(values) != 1 for values in query.values()
             ):
                 return http_json_response({"error": "invalid_query"}, status=400)

@@ -19,7 +19,7 @@ import shutil
 import subprocess
 import threading
 import time
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from functools import cache
 from pathlib import Path
@@ -56,7 +56,7 @@ from nanobot.security.folder_locations import FolderEditIncompleteError
 from nanobot.security.workspace_access import WorkspaceScope
 from nanobot.session.manager import JsonlSessionStore, SessionManager
 from nanobot.session.recovery import RecoveryActionError
-from nanobot.session.source_store import SourceSnapshot, SourceState
+from nanobot.session.source_store import SavedSourceMetadata, SourceSnapshot, SourceState
 from nanobot.triggers.local_types import LocalTrigger
 from nanobot.webui.file_preview import (
     WebUIFilePreviewError,
@@ -159,6 +159,7 @@ from nanobot.webui.skills_marketplace import (
 )
 from nanobot.webui.transcript import (
     WEBUI_TRANSCRIPT_SCHEMA_VERSION,
+    HistoryWindowError,
     build_webui_thread_response,
     delete_webui_transcript_result,
     read_transcript_lines,
@@ -826,12 +827,7 @@ class GatewayHTTPHandler:
         *,
         owner: bool = False,
     ) -> tuple[int, dict[str, Any]]:
-        """Return one persisted thread, including restricted permission state.
-
-        Mobile may read the projection but cannot enable Full access: the
-        permission projection is requested with ``controls_available=False`` so
-        the existing mode control explains the local-only boundary.
-        """
+        """Project the requested thread view after the mobile edge checks scope."""
         suffix = f"?{urlencode(query, doseq=True)}" if query else ""
         path = f"/api/sessions/{quote(key, safe='')}/webui-thread{suffix}"
         request = WsRequest(path, Headers())
@@ -845,6 +841,10 @@ class GatewayHTTPHandler:
         try:
             body = json.loads(response.body)
         except (UnicodeDecodeError, json.JSONDecodeError):
+            if response.status_code >= 400:
+                # The desktop handler uses plain-text errors. Preserve their
+                # status through the bridge, especially missing/revoked reads.
+                return response.status_code, {"error": response.body.decode("utf-8", "replace")}
             return 502, {"error": "invalid_thread_payload"}
         if not isinstance(body, dict):
             return 502, {"error": "invalid_thread_payload"}
@@ -1505,7 +1505,7 @@ class GatewayHTTPHandler:
         return _http_json_response(session_context_payload(session))
 
     async def _handle_session_turns_get(self, request: WsRequest, key: str) -> Response:
-        """Summarise every turn in a session for a whole-history navigator."""
+        """Summarise a page of saved turns for the prompt navigator."""
         if not self.check_api_token(request):
             return _http_error(401, "Unauthorized")
         decoded_key = _decode_api_key(key)
@@ -1528,15 +1528,40 @@ class GatewayHTTPHandler:
             if limit <= 0:
                 return _http_error(400, "invalid limit")
         before = _query_first(query, "before")
+        return await asyncio.to_thread(
+            self._session_turns_response, decoded_key, limit=limit, before=before,
+        )
 
+    def _session_turns_response(
+        self, key: str, *, limit: int | None, before: str | None,
+    ) -> Response:
         from nanobot.webui.transcript import session_turn_index
 
-        payload = await asyncio.to_thread(
-            session_turn_index,
-            decoded_key,
-            limit=limit,
-            before=before,
-        )
+        sessions = self.session_manager
+        if sessions is None:
+            return _http_error(503, "session manager unavailable")
+        try:
+            # The projection runs off-thread. Read the source and labels under
+            # the same files lock so deletion cannot race the two steps.
+            with sessions.locked_session_files():
+                source = self._read_saved_history_source(key)
+                if isinstance(source, Response):
+                    return source
+                source_state = (
+                    source.state
+                    if isinstance(source, (SavedSourceMetadata, SourceSnapshot))
+                    else None
+                )
+                payload = session_turn_index(
+                    key, limit=limit, before=before, expected_source=source_state,
+                )
+                if payload is not None and source_state is not None:
+                    payload["source"] = _source_origin_payload(source_state)
+        except HistoryWindowError as exc:
+            return _http_error(exc.status_code, exc.detail)
+        except Exception:
+            self._log.exception("session turn index read failed")
+            return _http_error(503, "session_read_unavailable")
         if payload is None:
             return _http_error(404, "session not found")
         return _http_json_response(payload)
@@ -1750,15 +1775,20 @@ class GatewayHTTPHandler:
         if decoded_key is None:
             return _http_error(400, "invalid session key")
         query = _parse_query(request.path)
+        view = _query_first(query, "view")
+        if "view" in query and (len(query["view"]) != 1 or view not in {"history", "controls"}):
+            return _http_error(400, "invalid thread view")
         is_child = decoded_key.startswith("delegated:")
         if not (_is_websocket_channel_session_key(decoded_key) or is_child):
             return _http_error(404, "session not found")
+        if view == "controls" and (is_child or set(query) != {"view"}):
+            return _http_error(400, "invalid thread controls query")
         child_limit = 160
         before: str | None = None
         child_payload: dict[str, Any] | None = None
         child_ancestry: _ChildAncestry | None = None
         if is_child:
-            if set(query) - {"limit", "direction", "before"}:
+            if set(query) - {"limit", "direction", "before", "view"}:
                 return _http_error(400, "unsupported child history query")
             if any(len(values) != 1 for values in query.values()):
                 return _http_error(400, "invalid child history query")
@@ -1825,15 +1855,46 @@ class GatewayHTTPHandler:
         else:
             scope_key = decoded_key
         snapshot: SourceSnapshot | None = None
+        saved_source: SavedSourceMetadata | None = None
+        source_state: SourceState | None = None
+        if not is_child:
+            if view == "history":
+                saved_or_snap = self._read_saved_history_source(decoded_key)
+                if isinstance(saved_or_snap, Response):
+                    return saved_or_snap
+                if isinstance(saved_or_snap, SavedSourceMetadata):
+                    saved_source = saved_or_snap
+                    source_state = saved_source.state
+                else:
+                    snapshot = saved_or_snap
+                    source_state = snapshot.state if isinstance(snapshot, SourceSnapshot) else None
+            else:
+                source = self._read_thread_source(decoded_key, require_saved_read=view is not None)
+                if isinstance(source, Response):
+                    return source
+                snapshot = source
+                source_state = snapshot.state if isinstance(snapshot, SourceSnapshot) else None
         try:
-            if not is_child and self.session_manager is not None:
-                source = self.session_manager.read_existing_canonical_source(decoded_key)
-                if source is not None:
-                    _, snapshot = source
-            scope = self.workspaces.scope_for_session_key(scope_key, source_snapshot=snapshot)
+            if view == "history":
+                # The saved folder resolves relative markdown paths only.
+                # Signing still requires the media reader's own authorization.
+                scope = self.workspaces.scope_for_session_key(
+                    scope_key,
+                    source_snapshot=snapshot,
+                    saved_source=saved_source,
+                    include_live_permissions=False,
+                )
+            else:
+                scope = self.workspaces.scope_for_session_key(scope_key, source_snapshot=snapshot)
         except Exception:
             self._log.exception("workspace thread scope projection failed")
             return _http_error(503, "permission_state_unavailable")
+        if view == "controls":
+            return self._thread_with_controls(
+                request, decoded_key, {"view": "controls", "sessionKey": decoded_key},
+                snapshot=snapshot, scope=scope, connection=connection,
+                allow_remote_permissions=allow_remote_permissions, remote_owner=remote_owner,
+            )
         allow_folder_grants = self.workspaces.folder_grants_allowed_for_session(scope_key)
         if (
             is_child
@@ -1850,6 +1911,7 @@ class GatewayHTTPHandler:
                 before=before,
                 scope=scope,
                 allow_folder_grants=allow_folder_grants,
+                include_workspace_scope=view != "history",
             )
 
         @cache
@@ -1858,6 +1920,9 @@ class GatewayHTTPHandler:
                 return snapshot.events
             if self.session_manager is None:
                 return None
+            if saved_source is not None:
+                loaded = self.session_manager.read_existing_canonical_source(decoded_key)
+                return loaded[1].events if loaded is not None else None
             session_data = self.session_manager.read_session_file(decoded_key)
             raw_messages = session_data.get("messages") if isinstance(session_data, dict) else None
             if isinstance(raw_messages, list) and raw_messages:
@@ -1877,9 +1942,14 @@ class GatewayHTTPHandler:
             except ValueError:
                 return _http_error(400, "invalid limit")
         direction = _query_first(query, "direction")
-        if direction is not None and direction not in {"latest"}:
+        if direction is not None and direction not in {"latest", "before", "after", "around"}:
             return _http_error(400, "invalid direction")
         before = _query_first(query, "before")
+        after = _query_first(query, "after")
+        around = _query_first(query, "around")
+        prompt_id = _query_first(query, "prompt_id")
+        if sum(1 for val in (before, after, around or prompt_id) if val is not None) > 1:
+            return _http_error(400, "conflicting history window cursors")
         from nanobot.session.webui_turns import (
             websocket_turn_id,
             websocket_turn_transcript_persistence_failed,
@@ -1892,6 +1962,23 @@ class GatewayHTTPHandler:
         active_turn_transcript_persistence_failed = (
             False if is_child else websocket_turn_transcript_persistence_failed(chat_id)
         )
+
+        canonical_events_loader: Callable[[Sequence[str]], Mapping[str, Mapping[str, Any]]] | None = None
+        sessions = self.session_manager
+        if source_state is not None and sessions is not None:
+            bound_state = source_state
+            bound_sessions = sessions
+
+            def _load_canonical_events(
+                event_ids: Sequence[str],
+            ) -> dict[str, dict[str, Any]]:
+                return bound_sessions.read_canonical_events_by_ids(
+                    decoded_key,
+                    list(event_ids),
+                    expected_source=bound_state,
+                )
+
+            canonical_events_loader = _load_canonical_events
 
         def build_thread(limit_value: int | None) -> dict[str, Any] | None:
             return build_webui_thread_response(
@@ -1919,41 +2006,54 @@ class GatewayHTTPHandler:
                 limit=limit_value,
                 direction=direction,
                 before=before,
+                after=after,
+                around=around,
+                prompt_id=prompt_id,
+                expected_source=source_state,
+                canonical_events_loader=canonical_events_loader,
             )
 
-
-        data: dict[str, Any] | None = build_thread(limit)
-        # Bound one response by showing fewer turns, never by trimming a turn:
-        # every client receives identical content for the turns it gets. The
-        # ceiling applies to the no-query compatibility path as well, so it is
-        # independent of a caller-supplied ``limit``.
-        if data is not None:
-            effective_limit = limit
-            while (
-                len(json.dumps(data, ensure_ascii=False).encode("utf-8"))
-                > THREAD_PROJECTION_BUDGET_BYTES
-            ):
-                if effective_limit is None:
-                    effective_limit = max(1, len(data["messages"]) // 2)
-                elif effective_limit > 1:
-                    effective_limit = max(1, effective_limit // 2)
-                else:
-                    break
-                smaller_page = build_thread(effective_limit)
-                if smaller_page is None:
-                    break
-                data = smaller_page
+        try:
+            data: dict[str, Any] | None = build_thread(limit)
+            # Bound one response by showing fewer turns, never by trimming a turn:
+            # every client receives identical content for the turns it gets. The
+            # ceiling applies to the no-query compatibility path as well, so it is
+            # independent of a caller-supplied ``limit``.
+            if data is not None:
+                effective_limit = limit
+                while (
+                    len(json.dumps(data, ensure_ascii=False).encode("utf-8"))
+                    > THREAD_PROJECTION_BUDGET_BYTES
+                ):
+                    if effective_limit is None:
+                        effective_limit = max(1, len(data["messages"]) // 2)
+                    elif effective_limit > 1:
+                        effective_limit = max(1, effective_limit // 2)
+                    else:
+                        break
+                    smaller_page = build_thread(effective_limit)
+                    if smaller_page is None:
+                        break
+                    data = smaller_page
+        except HistoryWindowError as exc:
+            return _http_error(exc.status_code, exc.detail)
 
         if data is None:
-            if snapshot is not None:
-                metadata: object = snapshot.header["metadata"]
+            if saved_source is not None:
+                is_webui = saved_source.webui
+            elif snapshot is not None:
+                is_webui = snapshot.header["metadata"].get("webui") is True
             else:
                 metadata_payload = (
                     self.session_manager.read_session_metadata(decoded_key)
                     if self.session_manager is not None else None
                 )
                 metadata = metadata_payload.get("metadata") if metadata_payload is not None else None
-            if type(metadata) is not dict or cast(dict[str, object], metadata).get("webui") is not True:
+                is_webui = (
+                    type(metadata) is dict
+                    and cast(dict[str, object], metadata).get("webui") is True
+                )
+            if not is_webui:
                 return _http_error(404, "webui thread not found")
             data = {
                 "schemaVersion": WEBUI_TRANSCRIPT_SCHEMA_VERSION,
@@ -1963,13 +2063,94 @@ class GatewayHTTPHandler:
                 "has_pending_tool_calls": False,
                 "active_turn_id": active_turn_id,
             }
-            if limit is not None or direction is not None or before is not None:
+            if (
+                limit is not None
+                or direction is not None
+                or before is not None
+                or after is not None
+                or around is not None
+                or prompt_id is not None
+            ):
                 data["page"] = {
                     "has_more_before": False,
+                    "has_more_after": False,
                     "loaded_message_count": 0,
                     "total_known_message_count": 0,
                     "user_message_offset": 0,
                 }
+        if view == "history":
+            data["view"] = "history"
+            if source_state is not None:
+                data["source"] = _source_origin_payload(source_state)
+            return _http_json_response(
+                data,
+                accept_encoding=_combined_list_header(request.headers, "Accept-Encoding"),
+            )
+        return self._thread_with_controls(
+            request, decoded_key, data,
+            snapshot=snapshot, scope=scope, connection=connection,
+            allow_remote_permissions=allow_remote_permissions, remote_owner=remote_owner,
+        )
+
+    def _read_saved_history_source(
+        self, key: str,
+    ) -> SavedSourceMetadata | SourceSnapshot | Response | None:
+        """Prefer bounded browse metadata before falling back to full canonical validation."""
+        sessions = self.session_manager
+        if sessions is None:
+            return None
+        if sessions.has_managed_authority:
+            try:
+                saved = sessions.read_saved_source_metadata(key)
+            except Exception:
+                self._log.exception("saved source metadata browse failed")
+                return _http_error(503, "session_read_unavailable")
+            if saved is not None:
+                if not saved.webui:
+                    return _http_error(404, "session not found")
+                return saved
+        return self._read_thread_source(key, require_saved_read=True)
+
+    def _read_thread_source(
+        self, key: str, *, require_saved_read: bool,
+    ) -> SourceSnapshot | Response | None:
+        """Apply the same source check before projecting rows or prompt labels."""
+        sessions = self.session_manager
+        if sessions is None:
+            return None
+        try:
+            source = sessions.read_existing_canonical_source(key)
+            if source is not None:
+                snapshot = source[1]
+                if require_saved_read and snapshot.header["metadata"].get("webui") is not True:
+                    return _http_error(404, "session not found")
+                return snapshot
+            if not require_saved_read:
+                return None
+            managed = sessions.has_managed_authority
+            if self._legacy_thread_history_without_permission_source(key, allow_absent=not managed):
+                return None
+            # Display files can outlive a deleted source. They do not make a
+            # managed session readable again, even for short prompt summaries.
+            if managed and sessions.resolve_session_mode(key).state != "active":
+                return _http_error(404, "session not found")
+        except Exception:
+            self._log.exception("workspace thread source read failed")
+        return _http_error(503, "session_read_unavailable")
+
+    def _thread_with_controls(
+        self,
+        request: WsRequest,
+        decoded_key: str,
+        data: dict[str, Any],
+        *,
+        snapshot: SourceSnapshot | None,
+        scope: WorkspaceScope,
+        connection: Any,
+        allow_remote_permissions: bool,
+        remote_owner: bool,
+    ) -> Response:
+        """Read current control state, without using any display transcript facts."""
         # Emit the key only for a session whose Stop target this gateway can
         # derive, which is the same condition the loop uses. A session without a
         # canonical source has no such authority, and an explicit null would tell
@@ -1980,6 +2161,43 @@ class GatewayHTTPHandler:
                 decoded_key, source_snapshot=snapshot,
             )
         data["workspace_scope"] = self.workspaces.scope_payload(scope)
+        next_scope_fn = getattr(self.workspaces, "next_scope_for_session_key", None)
+        next_scope = next_scope_fn(decoded_key) if callable(next_scope_fn) else None
+        if isinstance(next_scope, WorkspaceScope):
+            data["next_workspace_scope"] = self.workspaces.scope_payload(next_scope)
+        if self.session_manager is not None:
+            from nanobot.session.next_turn_preferences import NextTurnPreferences
+
+            read_prefs = getattr(
+                self.session_manager, "read_next_turn_preferences", None
+            )
+            prefs = read_prefs(decoded_key) if callable(read_prefs) else None
+            if isinstance(prefs, NextTurnPreferences) and prefs.values:
+                data["next_turn_preferences"] = prefs.payload()
+                if "model_preset" in prefs.values:
+                    data["next_model_preset"] = prefs.get("model_preset")
+                if "reasoning_effort" in prefs.values:
+                    data["next_reasoning_effort"] = prefs.get("reasoning_effort")
+            if (
+                data.get("view") == "controls"
+                and snapshot is not None
+                and isinstance(getattr(snapshot, "header", None), dict)
+            ):
+                from nanobot.session.model_selection import (
+                    model_preset_from_metadata,
+                    reasoning_effort_from_metadata,
+                )
+
+                header_meta = snapshot.header.get("metadata")
+                if isinstance(header_meta, dict):
+                    typed_meta = cast(dict[str, Any], header_meta)
+                    try:
+                        data["model_preset"] = model_preset_from_metadata(typed_meta)
+                    except ValueError:
+                        data["model_preset"] = None
+                    effort = reasoning_effort_from_metadata(typed_meta)
+                    if effort is not None:
+                        data["reasoning_effort"] = effort
         local_permission_projection = (
             connection is not None
             and _is_loopback_host(self.config.host)
@@ -1998,7 +2216,7 @@ class GatewayHTTPHandler:
                 try:
                     request_state, permissions, permission_reference = (
                         self.workspace_access_recovery.thread_permission_context(
-                            chat_id,
+                            decoded_key.split(":", 1)[1],
                             snapshot,
                             scope=scope,
                             controls_available=(
@@ -2029,7 +2247,9 @@ class GatewayHTTPHandler:
             accept_encoding=_combined_list_header(request.headers, "Accept-Encoding"),
         )
 
-    def _legacy_thread_history_without_permission_source(self, session_key: str) -> bool:
+    def _legacy_thread_history_without_permission_source(
+        self, session_key: str, *, allow_absent: bool = True,
+    ) -> bool:
         """Allow only absent or strictly parsed legacy history to omit V2 permissions."""
         sessions = self.session_manager
         if sessions is None:
@@ -2040,11 +2260,11 @@ class GatewayHTTPHandler:
             if has_managed_authority:
                 resolved = sessions.resolve_session_mode(session_key)
                 if resolved.state == "absent":
-                    return not path.exists()
+                    return allow_absent and not path.exists()
                 if resolved.state != "active" or resolved.mode != "legacy":
                     return False
             if not path.exists():
-                return not has_managed_authority
+                return allow_absent and not has_managed_authority
             with sessions.locked_session_files():
                 if not path.exists():
                     return False
@@ -2224,6 +2444,7 @@ class GatewayHTTPHandler:
                 ),
                 cursor=cursor,
                 limit=limit,
+                newest_first=_query_first(query, "order") == "newest",
             )
         except Exception:
             self._log.exception("generated assets projection failed")
@@ -4158,6 +4379,7 @@ def _child_history_response(
     before: str | None,
     scope: WorkspaceScope,
     allow_folder_grants: bool,
+    include_workspace_scope: bool,
 ) -> Response:
     snapshot = ancestry.child_snapshot
     is_canonical = snapshot is not None
@@ -4231,8 +4453,11 @@ def _child_history_response(
                     "has_more_before": has_more,
                     "loaded_message_count": len(selected),
                 },
-                "workspace_scope": handler.workspaces.scope_payload(scope),
             }
+            if include_workspace_scope:
+                data["workspace_scope"] = handler.workspaces.scope_payload(scope)
+            else:
+                data["view"] = "history"
             response_size = len(json.dumps(data, ensure_ascii=False).encode("utf-8"))
             if response_size <= THREAD_PROJECTION_BUDGET_BYTES:
                 return _http_json_response(data)
@@ -4279,8 +4504,11 @@ def _child_history_response(
             "has_more_before": False,
             "loaded_message_count": len(selected_summary),
         },
-        "workspace_scope": handler.workspaces.scope_payload(scope),
     }
+    if include_workspace_scope:
+        summary_data["workspace_scope"] = handler.workspaces.scope_payload(scope)
+    else:
+        summary_data["view"] = "history"
     if len(json.dumps(summary_data, ensure_ascii=False).encode("utf-8")) > THREAD_PROJECTION_BUDGET_BYTES:
         return _http_error(413, "child_history_record_too_large")
     return _http_json_response(summary_data)

@@ -91,6 +91,7 @@ var routes = map[string]route{
 			"limit":     true,
 			"direction": true,
 			"before":    true,
+			"view":      true,
 		},
 	},
 	"mobile_delegated_children": {

@@ -115,7 +115,7 @@ def build_gateway_services(
         logger=logger,
         attachment_limits=ingress.attachments,
     )
-    transcripts = WebUITranscriptRecorder(log=logger)
+    transcripts = WebUITranscriptRecorder(log=logger, sessions=session_manager)
     sessions_root = session_manager.sessions_root if session_manager is not None else None
     instance_root = (
         config_path.expanduser().resolve(strict=False).parent

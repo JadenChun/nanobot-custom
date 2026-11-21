@@ -34,4 +34,17 @@ describe("describeMcpActivity", () => {
       action: "Export report completed",
     });
   });
+
+  it.each([
+    ["generate_video", { workflow: "wan" }, "running", "Generating video", "wan"],
+    ["generate_video", { workflow: "wan" }, "done", "Generated video", "wan"],
+    ["generate_video", { workflow: "wan" }, "error", "Video generation failed", "wan"],
+    ["generate_image", { mode: "t2i" }, "running", "Generating image", "t2i"],
+    ["edit_image", {}, "done", "Edited image", undefined],
+    ["comfy_status", {}, "running", "Checking ComfyUI status", undefined],
+    ["media_workflow_catalog", {}, "done", "Checked media workflows", undefined],
+    ["image_lora_catalog", {}, "done", "Checked LoRA catalog", undefined],
+  ] as const)("describes the %s media tool as %s", (tool, args, status, action, target) => {
+    expect(describeMcpActivity(tool, args, status)).toEqual({ action, target });
+  });
 });

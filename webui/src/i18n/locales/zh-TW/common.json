@@ -1117,6 +1117,10 @@
     "error": "連線錯誤"
   },
   "thread": {
+    "workingBar": {
+      "defaultStep": "處理中",
+      "ariaLabel": "目前步驟"
+    },
     "compaction": {
       "cancelled": "上下文壓縮已取消",
       "empty": "無需壓縮上下文",
@@ -1240,6 +1244,11 @@
       "configureModel": "設定模型",
       "chooseAI": "選擇你的 AI",
       "switchModel": "切換此對話使用的模型",
+      "back": "返回",
+      "backToQuickModels": "返回快捷模型",
+      "searchModels": "搜尋模型",
+      "noMatchingModels": "沒有符合的模型",
+      "moreModels": "更多模型（{{count}}）",
       "manageModels": "管理模型預設",
       "context": {
         "tooltip": "上下文 {{percent}}%",
@@ -1428,6 +1437,7 @@
     "forkedFromHistory": "從歷史訊息建立分支",
     "generatedAssets": {
       "open": "開啟生成的素材",
+      "close": "關閉生成的素材",
       "title": "生成的素材",
       "refresh": "重新整理生成的素材",
       "view": "素材檢視",
@@ -1512,6 +1522,7 @@
     "activityThoughtFor": "已思考 {{duration}}",
     "activityGroup": "活動",
     "activityWorking": "處理中",
+    "activityWorkingFor": "處理中 · {{duration}}",
     "activityWorked": "已處理",
     "activityWorkedFor": "已處理 {{duration}}",
     "retryConnection": "連線失敗",
@@ -1699,7 +1710,12 @@
     },
     "picker": {
       "chooseProject": "選擇專案資料夾",
-      "clearProject": "清除專案資料夾"
+      "clearProject": "清除專案資料夾",
+      "nextTurn": "下一輪：{{folder}}",
+      "nextTurnLabel": "下一輪",
+      "nextTurnHint": "執行中的一輪保留其資料夾。此選擇套用於下一輪。",
+      "nextTurnPending": "正在儲存下一個資料夾…",
+      "nextTurnFailed": "資料夾變更未儲存。先前的選擇仍然有效，您的草稿保持完整。"
     },
     "folders": {
       "saved": "資料夾已儲存，目錄索引與沙箱規則已更新。",

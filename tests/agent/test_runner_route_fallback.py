@@ -240,3 +240,53 @@ def test_fallback_attribution_accessor_does_not_treat_inherited_budget_as_capaci
     assert route.context_window_tokens == int(PRIMARY["context_window_tokens"])
     assert wrapper.context_usage_window_for_route(route) is None
     assert wrapper.context_usage_window_for_route(None) is None
+
+
+async def test_fallback_wrapper_preserves_primary_context_window_without_budget_preview() -> None:
+    from nanobot.providers.base import ContextUsageSnapshot, LLMUsage
+
+    response = LLMResponse(
+        content="ok",
+        usage=LLMUsage(
+            input_tokens=277_842,
+            output_tokens=100,
+            total_tokens=277_942,
+            reported_tokens=277_942,
+            context_tokens=277_842,
+            request_count=1,
+        ),
+    )
+
+    class _NoPreviewPrimary(_CountingProxy):
+        def preview_request_budget(self, *args: Any, **kwargs: Any) -> None:
+            return None
+
+        async def chat(self, *args: Any, **kwargs: Any) -> LLMResponse:
+            self.calls += 1
+            return response
+
+        async def chat_with_retry(self, *args: Any, **kwargs: Any) -> LLMResponse:
+            self.calls += 1
+            return response
+
+    primary = _NoPreviewPrimary(_leaf(PRIMARY))
+    preset = _fallback_preset(FALLBACK)
+    wrapper = FallbackProvider(
+        primary,
+        [preset],
+        lambda _preset: _leaf(FALLBACK),
+        primary_context_window_tokens=1_000_000,
+    )
+    runner = AgentRunner()
+    messages = [{"role": "user", "content": "hello"}]
+    spec = make_run_spec(
+        wrapper,
+        model=str(PRIMARY["model"]),
+        context_window_tokens=1_000_000,
+        max_iterations=2,
+        max_tool_result_chars=1000,
+        tools=_tools(),
+        initial_messages=messages,
+    )
+    result = await runner.run(spec)
+    assert result.context_usage == ContextUsageSnapshot(277_842, 1_000_000)

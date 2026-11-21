@@ -1117,6 +1117,10 @@
     "error": "接続エラー"
   },
   "thread": {
+    "workingBar": {
+      "defaultStep": "作業中",
+      "ariaLabel": "現在のステップ"
+    },
     "compaction": {
       "cancelled": "コンテキストの圧縮をキャンセルしました",
       "empty": "圧縮するコンテキストはありません。",
@@ -1240,6 +1244,11 @@
       "configureModel": "モデルを設定",
       "chooseAI": "AI を選択",
       "switchModel": "この会話で使うモデルを切り替える",
+      "back": "戻る",
+      "backToQuickModels": "クイックモデルに戻る",
+      "searchModels": "モデルを検索",
+      "noMatchingModels": "一致するモデルがありません",
+      "moreModels": "その他のモデル（{{count}}）",
       "manageModels": "モデルを管理",
       "context": {
         "tooltip": "コンテキスト {{percent}}%",
@@ -1428,6 +1437,7 @@
     "forkedFromHistory": "履歴から分岐",
     "generatedAssets": {
       "open": "生成されたアセットを開く",
+      "close": "生成されたアセットを閉じる",
       "title": "生成されたアセット",
       "refresh": "生成されたアセットを更新",
       "view": "アセット表示",
@@ -1513,6 +1523,7 @@
     "activityThoughtFor": "{{duration}}考えました",
     "activityGroup": "アクティビティ",
     "activityWorking": "作業中",
+    "activityWorkingFor": "作業中 · {{duration}}",
     "activityWorked": "作業しました",
     "activityWorkedFor": "{{duration}}作業しました",
     "retryConnection": "接続に失敗しました",
@@ -1699,7 +1710,12 @@
     },
     "picker": {
       "chooseProject": "プロジェクトフォルダーを選択",
-      "clearProject": "プロジェクトフォルダーの選択を解除"
+      "clearProject": "プロジェクトフォルダーの選択を解除",
+      "nextTurn": "次のターン: {{folder}}",
+      "nextTurnLabel": "次のターン",
+      "nextTurnHint": "実行中のターンは現在のフォルダを維持します。この選択は次のターンに適用されます。",
+      "nextTurnPending": "次のフォルダを保存しています…",
+      "nextTurnFailed": "フォルダの変更は保存されませんでした。以前の選択が有効なままで、下書きは保持されています。"
     },
     "folders": {
       "saved": "Folder saved. The map and Sandbox rules are up to date.",

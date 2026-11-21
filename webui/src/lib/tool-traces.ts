@@ -36,8 +36,8 @@ export function canonicalToolTrace(line: string): string {
   }
 }
 
-const VALID_PHASES = new Set(["start", "end", "error"]);
-const PHASE_RANK: Record<string, number> = { start: 1, end: 2, error: 3 };
+const VALID_PHASES = new Set(["start", "end", "error", "progress"]);
+const PHASE_RANK: Record<string, number> = { start: 1, progress: 1, end: 2, error: 3 };
 
 export function normalizeToolProgressEvents(events: unknown): ToolProgressEvent[] {
   if (!Array.isArray(events)) return [];
@@ -63,11 +63,20 @@ function toolEventKey(event: ToolProgressEvent): string {
   return formatToolCallTrace(event) ?? JSON.stringify(event);
 }
 
+function withoutLiveProgress(event: ToolProgressEvent): ToolProgressEvent {
+  if (event.phase !== "end" && event.phase !== "error") return event;
+  const rest = { ...event };
+  delete rest.progress;
+  delete rest.total;
+  delete rest.message;
+  return rest;
+}
+
 export function mergeToolProgressEvents(
   previous: ToolProgressEvent[] | undefined,
   incoming: ToolProgressEvent[],
 ): ToolProgressEvent[] {
-  if (!previous?.length) return incoming;
+  if (!previous?.length) return incoming.map(withoutLiveProgress);
   if (!incoming.length) return previous;
   const next = [...previous];
   const indexByKey = new Map(next.map((event, index) => [toolEventKey(event), index]));
@@ -76,21 +85,49 @@ export function mergeToolProgressEvents(
     const existingIndex = indexByKey.get(key);
     if (existingIndex === undefined) {
       indexByKey.set(key, next.length);
-      next.push(event);
+      next.push(withoutLiveProgress(event));
       continue;
     }
     const existing = next[existingIndex];
     const incomingRank = PHASE_RANK[String(event.phase)] ?? 0;
     const existingRank = PHASE_RANK[String(existing.phase)] ?? 0;
-    next[existingIndex] = incomingRank >= existingRank ? { ...existing, ...event } : existing;
+    next[existingIndex] = incomingRank >= existingRank
+      ? withoutLiveProgress({ ...existing, ...event })
+      : existing;
   }
   return next;
+}
+
+/**
+ * Apply live `phase: "progress"` frames to the in-flight tool rows.
+ *
+ * Progress frames carry no new row: they only refresh the live phase text and
+ * percentage of the call they belong to, so the activity timeline never grows
+ * duplicate rows while a long ComfyUI/MCP step is running.
+ */
+export function applyToolProgressPatches(
+  events: ToolProgressEvent[] | undefined,
+  patches: ToolProgressEvent[],
+): ToolProgressEvent[] | undefined {
+  if (!events?.length || !patches.length) return events;
+  const patchByKey = new Map<string, ToolProgressEvent>();
+  for (const patch of patches) patchByKey.set(toolEventKey(patch), patch);
+  let changed = false;
+  const next = events.map((event) => {
+    const patch = patchByKey.get(toolEventKey(event));
+    if (!patch) return event;
+    changed = true;
+    return { ...event, ...patch };
+  });
+  return changed ? next : events;
 }
 
 export function toolTraceLinesFromEvents(events: unknown): string[] {
   const seen = new Set<string>();
   const lines: string[] = [];
   for (const event of normalizeToolProgressEvents(events)) {
+    // A live progress frame belongs to an existing call row; it never adds one.
+    if (event.phase === "progress") continue;
     const callId = (event as { call_id?: unknown }).call_id;
     if (callId && typeof callId === "string") {
       if (seen.has(callId)) continue;

@@ -390,6 +390,9 @@ def inspect_webui(path: Path, references: References) -> None:
             if data.get("version") != 8:
                 raise MediaRetentionError("unsupported session index version")
             references.scan(data)
+        elif relative.parts[0].endswith(".index") and item.suffix in {".json", ".tmp"}:
+            # Rebuildable byte-offset & prompt-summary index; holds no media custody references.
+            continue
         else:
             raise MediaRetentionError("unknown display evidence file")
 
@@ -479,6 +482,8 @@ def inventory(custody: MediaCustody, registry: dict[str, object]) -> MediaRefere
                         continue
                     if relative.parts[0] == ".execution-locks" and path.suffix == ".lock":
                         continue
+                    if relative.parts[0] in {".session-prefs", ".event-index"} and path.suffix in {".json", ".tmp"}:
+                        continue  # Content-free next-turn choices; no media references.
                     if len(relative.parts) == 1 and path.suffix == ".jsonl":
                         expected_key = JsonlSessionStore.session_key_from_path(path)
                         if expected_key is None:

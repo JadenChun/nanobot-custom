@@ -1117,6 +1117,10 @@
     "error": "Kesalahan koneksi"
   },
   "thread": {
+    "workingBar": {
+      "defaultStep": "Sedang bekerja",
+      "ariaLabel": "Langkah saat ini"
+    },
     "compaction": {
       "cancelled": "Pemadatan konteks dibatalkan",
       "empty": "Tidak ada konteks yang perlu dipadatkan.",
@@ -1240,6 +1244,11 @@
       "configureModel": "Konfigurasi model",
       "chooseAI": "Pilih AI Anda",
       "switchModel": "Ganti model untuk percakapan ini",
+      "back": "Kembali",
+      "backToQuickModels": "Kembali ke model cepat",
+      "searchModels": "Cari model",
+      "noMatchingModels": "Tidak ada model yang cocok",
+      "moreModels": "Model lainnya ({{count}})",
       "manageModels": "Kelola model",
       "context": {
         "tooltip": "Konteks {{percent}}%",
@@ -1428,6 +1437,7 @@
     "forkedFromHistory": "Cabang dari riwayat",
     "generatedAssets": {
       "open": "Buka aset yang dihasilkan",
+      "close": "Tutup aset yang dihasilkan",
       "title": "Aset yang dihasilkan",
       "refresh": "Segarkan aset yang dihasilkan",
       "view": "Tampilan aset",
@@ -1513,6 +1523,7 @@
     "activityThoughtFor": "Selesai berpikir dalam {{duration}}",
     "activityGroup": "Aktivitas",
     "activityWorking": "Sedang bekerja",
+    "activityWorkingFor": "Sedang bekerja · {{duration}}",
     "activityWorked": "Selesai memproses",
     "activityWorkedFor": "Diproses selama {{duration}}",
     "retryConnection": "Koneksi gagal",
@@ -1699,7 +1710,12 @@
     },
     "picker": {
       "chooseProject": "Pilih folder proyek",
-      "clearProject": "Hapus pilihan folder proyek"
+      "clearProject": "Hapus pilihan folder proyek",
+      "nextTurn": "Giliran berikutnya: {{folder}}",
+      "nextTurnLabel": "Giliran berikutnya",
+      "nextTurnHint": "Giliran yang berjalan tetap memakai foldernya. Pilihan ini berlaku untuk giliran berikutnya.",
+      "nextTurnPending": "Menyimpan folder berikutnya…",
+      "nextTurnFailed": "Perubahan folder tidak tersimpan. Pilihan sebelumnya tetap berlaku; draf Anda utuh."
     },
     "folders": {
       "saved": "Folder saved. The map and Sandbox rules are up to date.",

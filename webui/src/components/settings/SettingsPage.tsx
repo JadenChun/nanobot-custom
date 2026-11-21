@@ -1,3 +1,4 @@
+import { useLayoutEffect, useRef } from "react";
 import { ChevronLeft, Loader2 } from "lucide-react";
 
 import { RemoteAccessSettings } from "@/components/settings/RemoteAccessSettings";
@@ -77,6 +78,7 @@ export function SettingsPage({
   onPickWorkspaceFolder,
 }: SettingsPageProps) {
   const { client } = useClient();
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
   const {
     activeSection,
     apiService,
@@ -236,6 +238,12 @@ export function SettingsPage({
     webSearchKeyVisible,
     webSearchSaving,
   } = controller;
+
+  useLayoutEffect(() => {
+    if (scrollContainerRef.current) {
+      scrollContainerRef.current.scrollTop = 0;
+    }
+  }, [activeSection]);
 
   const renderSection = () => {
     if (!settings) return null;
@@ -644,17 +652,15 @@ export function SettingsPage({
       />
 
       <div
-        className={cn(
-          "min-w-0 flex-1 bg-settings-canvas [scrollbar-gutter:stable]",
-          activeSection === "channels" ? "overflow-y-auto xl:overflow-hidden" : "overflow-y-auto",
-        )}
+        ref={scrollContainerRef}
+        className="min-w-0 flex-1 overflow-y-auto bg-settings-canvas [scrollbar-gutter:stable]"
       >
         <div
           key={activeSection}
           data-testid="settings-section-transition"
           data-settings-section={activeSection}
           className={cn(
-            "mx-auto w-full animate-in fade-in-0 slide-in-from-bottom-1 px-4 py-6 duration-200 ease-out",
+            "mx-auto w-full animate-in fade-in-0 px-4 py-6 duration-150 ease-out",
             "motion-reduce:animate-none sm:px-8 sm:py-8 lg:py-12",
             activeSection === "channels" ? "max-w-[1240px] xl:px-10" : "max-w-[920px]",
             activeSection === "channels" && "flex min-h-full flex-col xl:h-full xl:min-h-0",
