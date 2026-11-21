@@ -26,10 +26,15 @@ declare global {
 
 const $ = <T extends HTMLElement>(id: string): T => {
   const element = document.getElementById(id);
-  if (!element) throw new Error(`Missing setup element: ${id}`);
+  if (!element) throw new Error(`Missing startup element: ${id}`);
   return element as T;
 };
 
+const splash = $("splash");
+const splashStatus = $("splash-status");
+const fallback = $("fallback");
+const selection = $("selection");
+const toggleAdvanced = $("toggle-advanced") as HTMLButtonElement;
 const config = $("config") as HTMLInputElement;
 const python = $("python") as HTMLInputElement;
 const workspace = $("workspace") as HTMLInputElement;
@@ -39,88 +44,99 @@ const openChat = $("open-chat") as HTMLButtonElement;
 const change = $("change") as HTMLButtonElement;
 const quit = $("quit") as HTMLButtonElement;
 const detail = $("detail");
-const summary = $("summary");
-const selected = $("selected");
 const stateLabel = $("state");
-const indicator = $("indicator");
+
+let advancedExpanded = false;
+let initialized = false;
 
 const copy: Record<string, string> = {
-  setup_required: "Review the config and Python paths, then connect.",
+  setup_required: "Could not detect an installed Kohaku Python environment automatically. Choose the paths under Connection settings to continue.",
   hello_required: "Validate the selected installation before starting it.",
   backend_version_unsupported: "This Python installation has an unsupported Nanobot version.",
   backend_capability_unsupported: "This Nanobot installation lacks the desktop lifecycle capability.",
   default_config_backend_unsupported: "Select a newer Nanobot Python installation to create a default config.",
-  default_config_write_failed: "Could not create the default config. Check that the Nanobot config directory is writable.",
+  default_config_write_failed: "Could not create the default config. Check that ~/.nanobot is writable.",
   interpreter_mismatch: "The selected Python interpreter did not launch the installed backend.",
   interpreter_invalid: "Choose the executable bin/python from an installed Nanobot environment.",
   config_invalid: "The selected config file could not be validated.",
   workspace_invalid: "The workspace override must be an absolute path.",
-  loopback_required: "Desktop requires loopback addresses (such as 127.0.0.1) for gateway.host and channels.websocket.host, without a public URL, TLS, or Unix socket override.",
-  provider_unavailable: "Configure a model provider for this config, then connect again. You can use nanobot onboard --wizard.",
-  runtime_preflight_refused: "The selected backend refused startup during its safety checks.",
-  startup_admission_refused: "The selected backend refused desktop startup.",
-  gateway_conflict: "An unmanaged or incompatible gateway is using this instance.",
-  gateway_unavailable: "The managed gateway is unavailable. Retry to check it again.",
-  gateway_starting: "The managed gateway is starting.",
-  gateway_stopping: "Stopping the managed backend. This window stays open until its process exit is confirmed.",
-  gateway_stopped: "The managed gateway has stopped.",
-  gateway_ready: "The managed gateway is ready.",
-  gateway_identity_mismatch: "The responding gateway did not match the selected instance.",
-  webui_auth_failed: "The selected gateway rejected desktop authentication.",
-  adapter_unavailable: "The selected Python process stopped responding. Retry to reconcile it.",
-  stop_unconfirmed: "Shutdown is unconfirmed. The backend may still be running; retry to check.",
-  singleton_guard: "The session bus could not verify this desktop process. The backend was not started.",
+  loopback_required: "Desktop requires loopback addresses (such as 127.0.0.1) for gateway.host and channels.websocket.host.",
+  provider_unavailable: "Configure a model provider in your config, then retry.",
+  runtime_preflight_refused: "The backend refused startup during its safety checks.",
+  startup_admission_refused: "The backend refused desktop startup.",
+  gateway_conflict: "Another unmanaged or incompatible gateway is using this instance.",
+  gateway_unavailable: "The local server is unavailable. Retry to start it again.",
+  gateway_starting: "Starting Kohaku…",
+  gateway_stopping: "Stopping Kohaku…",
+  gateway_stopped: "The local server has stopped.",
+  gateway_ready: "Opening chat…",
+  gateway_identity_mismatch: "The responding server did not match this Kohaku instance.",
+  webui_auth_failed: "The local server rejected desktop authentication.",
+  adapter_unavailable: "The backend process stopped responding. Retry to reconnect.",
+  stop_unconfirmed: "Shutdown is still confirming. Retry to check status.",
+  singleton_guard: "Could not verify this desktop session. The server was not started.",
   host_lock_busy: "Another Kohaku window is already running.",
-  tray_unavailable: "No system tray host is available. Keep this window open for controls.",
-  host_lock_unavailable: "This desktop session cannot establish a private single-instance lock. The backend was not started.",
+  tray_unavailable: "Kohaku is running. Keep this window open or click Open chat.",
+  host_lock_unavailable: "Could not establish a private single-instance lock. The server was not started.",
 };
 
 function message(code: string): string {
-  return copy[code] ?? "Nanobot could not complete this operation. Check the selected installation before retrying.";
+  return copy[code] ?? "Kohaku could not start cleanly. Retry or check Connection settings.";
 }
 
 function draw(state: DesktopState, syncSelection = false): void {
+  const showSplash =
+    state.state === "starting"
+    || state.state === "stopping"
+    || (state.state === "running" && state.tray_available);
+
+  splash.hidden = !showSplash;
+  fallback.hidden = showSplash;
+
+  if (showSplash) {
+    splashStatus.textContent =
+      state.state === "stopping"
+        ? "Stopping Kohaku…"
+        : state.state === "running"
+          ? "Opening chat…"
+          : "Starting Kohaku…";
+    return;
+  }
+
   const names: Record<string, string> = {
-    setup: "Setup required",
-    starting: "Starting",
-    running: "Running",
-    unavailable: "Unavailable",
-    stopping: "Stopping",
-    stopped: "Stopped",
+    setup: "Setup needed",
+    running: "Kohaku is running",
+    unavailable: "Could not start Kohaku",
+    stopped: "Kohaku stopped",
   };
-  stateLabel.textContent = names[state.state] ?? "Unavailable";
+  stateLabel.textContent = names[state.state] ?? "Could not start Kohaku";
   detail.textContent = state.state === "running" && !state.tray_available
     ? message("tray_unavailable")
     : state.admission_unknown
-      ? "The start response was lost before this desktop could verify the gateway identity. The selection is locked; keep this window open while the original result is reconciled."
+      ? "Reconciling the startup response. Keep this window open while Kohaku checks the running server."
       : state.stop_unconfirmed
         ? message("stop_unconfirmed")
-      : message(state.code);
-  summary.textContent = state.state === "running"
-    ? "Your selected Nanobot backend is ready. Chat opens in its own window."
-    : "Connect this shell to an existing Nanobot Python installation.";
-  indicator.className = "indicator";
-  if (state.state === "running") indicator.classList.add("running");
-  else if (state.state === "starting" || state.state === "stopping") indicator.classList.add("busy");
-  else if (state.state === "unavailable" || state.state === "stopped") indicator.classList.add("error");
+        : message(state.code);
+
   const hasSelection = state.selected_config !== null && state.selected_interpreter !== null;
-  if (syncSelection) {
-    if (state.setup_defaults) {
-      $("selection-hint").textContent = "Connect uses the default config unless you choose another. If the default file is missing, Desktop creates a local-only config.";
-    }
+  if (syncSelection || !initialized) {
+    initialized = true;
     config.defaultValue = state.setup_defaults?.config_path ?? "";
     python.defaultValue = state.setup_defaults?.interpreter_path ?? "";
     config.value = state.selected_config ?? config.defaultValue;
     python.value = state.selected_interpreter ?? python.defaultValue;
     workspace.value = state.selected_workspace ?? "";
+    if (state.state === "setup" && !hasSelection) {
+      advancedExpanded = true;
+    }
   }
-  selected.textContent = hasSelection
-    ? `Config: ${state.selected_config}\nPython: ${state.selected_interpreter}${state.selected_workspace ? `\nWorkspace: ${state.selected_workspace}` : ""}`
-    : "";
+
   retry.hidden = !state.retry_allowed;
   openChat.hidden = state.state !== "running";
   change.hidden = !hasSelection || state.selection_locked;
-  $("selection").toggleAttribute("hidden", hasSelection && state.selection_locked);
+  toggleAdvanced.hidden = state.selection_locked && hasSelection;
+  selection.hidden = !advancedExpanded || (hasSelection && state.selection_locked);
+
   config.disabled = state.selection_locked;
   python.disabled = state.selection_locked;
   workspace.disabled = state.selection_locked;
@@ -134,11 +150,18 @@ async function refresh(syncSelection = false): Promise<void> {
   try {
     draw(await invoke<DesktopState>("desktop_state"), syncSelection);
   } catch {
-    detail.textContent = "Desktop status is temporarily unavailable.";
+    splash.hidden = false;
+    fallback.hidden = true;
+    splashStatus.textContent = "Starting Kohaku…";
   }
 }
 
 window.__NANOBOT_DESKTOP_STATE__ = draw;
+
+toggleAdvanced.addEventListener("click", () => {
+  advancedExpanded = !advancedExpanded;
+  selection.hidden = !advancedExpanded;
+});
 
 document.querySelectorAll<HTMLButtonElement>("[data-pick]").forEach((button) => {
   button.addEventListener("click", async () => {
@@ -158,7 +181,9 @@ document.querySelectorAll<HTMLButtonElement>("[data-pick]").forEach((button) => 
 
 connect.addEventListener("click", async () => {
   connect.disabled = true;
-  detail.textContent = "Validating the selected installation…";
+  splash.hidden = false;
+  fallback.hidden = true;
+  splashStatus.textContent = "Starting Kohaku…";
   try {
     const state = await invoke<DesktopState>("select_backend", {
       configPath: config.value.trim() || config.defaultValue,
@@ -168,6 +193,8 @@ connect.addEventListener("click", async () => {
     draw(state, true);
   } catch (error) {
     const code = typeof error === "string" ? error : "config_invalid";
+    splash.hidden = true;
+    fallback.hidden = false;
     detail.textContent = message(code);
   } finally {
     await refresh();
@@ -176,9 +203,14 @@ connect.addEventListener("click", async () => {
 
 retry.addEventListener("click", async () => {
   retry.disabled = true;
+  splash.hidden = false;
+  fallback.hidden = true;
+  splashStatus.textContent = "Starting Kohaku…";
   try {
     draw(await invoke<DesktopState>("retry_backend"));
   } catch (error) {
+    splash.hidden = true;
+    fallback.hidden = false;
     detail.textContent = message(typeof error === "string" ? error : "adapter_unavailable");
   } finally {
     retry.disabled = false;
@@ -192,18 +224,23 @@ openChat.addEventListener("click", async () => {
 
 change.addEventListener("click", async () => {
   try {
+    advancedExpanded = true;
     draw(await invoke<DesktopState>("change_selection"), true);
   } catch {
-    detail.textContent = "Quit the managed backend before changing its selection.";
+    detail.textContent = "Quit the running server before changing connection settings.";
   }
 });
 
 quit.addEventListener("click", async () => {
   quit.disabled = true;
-  detail.textContent = "Stopping the verified managed backend…";
+  splash.hidden = false;
+  fallback.hidden = true;
+  splashStatus.textContent = "Stopping Kohaku…";
   try {
     draw(await invoke<DesktopState>("quit_desktop"));
   } catch (error) {
+    splash.hidden = true;
+    fallback.hidden = false;
     detail.textContent = message(typeof error === "string" ? error : "stop_unconfirmed");
   } finally {
     quit.disabled = false;

@@ -138,7 +138,6 @@ impl PipeAdapter {
         })
     }
 
-    #[cfg(target_os = "macos")]
     pub fn prepare_default_config(&mut self, expected: &Path) -> Result<(), AdapterFailure> {
         let response = self.request("prepare_default_config", json!({}), Duration::from_secs(5))
             .map_err(|error| {
