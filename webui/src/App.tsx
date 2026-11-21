@@ -2412,6 +2412,7 @@ function Shell({
                 onTurnEnd={onTurnEnd}
                 theme={theme}
                 onToggleTheme={toggle}
+                hideSidebarToggleForHostChrome
                 hideHeader={false}
                 composerInputAriaLabel={activeSession
                   ? t("thread.composer.inputAriaFor", { title: headerTitle })

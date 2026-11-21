@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { createPortal } from "react-dom";
-import { Bot, FileText, Images } from "lucide-react";
+import { Bot, FileText, Images, PanelRight } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import { FilePreviewAvailabilityProvider } from "@/components/FilePreviewAvailabilityContext";
@@ -1457,6 +1457,7 @@ export function ThreadShell({
   const filePreviewPath = filePreview?.parentKey === historyKey ? filePreview.path : null;
   const [filePreviewRefreshKey, setFilePreviewRefreshKey] = useState(0);
   const [assetsInspectorOpen, setAssetsInspectorOpen] = useState(false);
+  const [inspectorCollapsed, setInspectorCollapsed] = useState(false);
   const filePreviewEditKeysRef = useRef<Set<string>>(new Set());
   const draftNamespace = useMemo(() => draftNamespaceFor(token), [token]);
   const [quotedContext, setQuotedContext] = useState<string | null>(null);
@@ -1795,7 +1796,8 @@ export function ThreadShell({
             ? "assets"
             : activeChildHistoryInspection ? "subagents" : null;
   const inspectorDocked = shellWidth >= MIN_INSPECTOR_DOCK_WIDTH;
-  const inspectorVisible = inspectorDocked || composerActive;
+  const inspectorVisible = !inspectorCollapsed && (inspectorDocked || composerActive);
+  const inspectorOpen = inspectorVisible && inspectorTab !== null;
   const inspectorModal = inspectorVisible && inspectorTab !== null && !inspectorDocked;
   const childHistoryModal = inspectorModal && inspectorTab === "subagents";
   const delegatedStatusAvailable = connectionOpen && !delegatedChildrenLoading && !delegatedChildrenError;
@@ -1881,6 +1883,7 @@ export function ThreadShell({
     const viewportState = viewportRef.current?.captureViewState() ?? null;
     inspectionReturnRef.current = { parentKey: historyKey, viewportState, trigger, wasModal: !inspectorDocked };
     setSelectedInspector("subagents");
+    setInspectorCollapsed(false);
     setChildHistoryError(null);
     setChildHistoryInspection({
       parentKey: historyKey,
@@ -3250,6 +3253,7 @@ export function ThreadShell({
   const handleOpenFilePreview = useCallback((path: string) => {
     if (!historyKey) return;
     setSelectedInspector("file");
+    setInspectorCollapsed(false);
     setFilePreview({ parentKey: historyKey, path });
   }, [historyKey]);
 
@@ -3338,13 +3342,29 @@ export function ThreadShell({
 
   const handleToggleAssetsInspector = useCallback(() => {
     if (!historyKey || temporary) return;
-    if (assetsInspectorOpen && selectedInspector === "assets") {
+    if (assetsInspectorOpen && inspectorTab === "assets" && !inspectorCollapsed) {
       setAssetsInspectorOpen(false);
       return;
     }
     setSelectedInspector("assets");
     setAssetsInspectorOpen(true);
-  }, [assetsInspectorOpen, historyKey, selectedInspector, temporary]);
+    setInspectorCollapsed(false);
+  }, [assetsInspectorOpen, historyKey, inspectorCollapsed, inspectorTab, temporary]);
+
+  const handleToggleInspectorPanel = useCallback(() => {
+    if (inspectorOpen) {
+      setInspectorCollapsed(true);
+      return;
+    }
+    if (inspectorTab !== null) {
+      setInspectorCollapsed(false);
+      return;
+    }
+    if (!historyKey || temporary) return;
+    setSelectedInspector("assets");
+    setAssetsInspectorOpen(true);
+    setInspectorCollapsed(false);
+  }, [historyKey, inspectorOpen, inspectorTab, temporary]);
 
   const handleForkFromMessage = useCallback(
     async (beforeUserIndex: number) => {
@@ -3668,21 +3688,40 @@ export function ThreadShell({
       <HeroGreeting text={t(heroGreetingKey)} />
     </div>
   );
-  const generatedAssetsAction = historyKey && !temporary ? (
-    <Button
-      type="button"
-      variant="ghost"
-      size="icon"
-      aria-label={t("thread.generatedAssets.open")}
-      aria-pressed={assetsInspectorAvailable && inspectorTab === "assets"}
-      onClick={handleToggleAssetsInspector}
-      className={cn(
-        "host-no-drag h-8 w-8 shrink-0 rounded-full text-muted-foreground/85 hover:bg-accent/40 hover:text-foreground",
-        assetsInspectorAvailable && inspectorTab === "assets" && "bg-accent/45 text-foreground",
-      )}
-    >
-      <Images className="h-4 w-4" aria-hidden />
-    </Button>
+  const canToggleInspector = Boolean(historyKey && !temporary) || inspectorTab !== null;
+  const generatedAssetsAction = canToggleInspector ? (
+    <>
+      {historyKey && !temporary ? (
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          aria-label={t("thread.generatedAssets.open")}
+          aria-pressed={assetsInspectorAvailable && inspectorOpen && inspectorTab === "assets"}
+          onClick={handleToggleAssetsInspector}
+          className={cn(
+            "host-no-drag h-8 w-8 shrink-0 rounded-full text-muted-foreground/85 hover:bg-accent/40 hover:text-foreground",
+            assetsInspectorAvailable && inspectorOpen && inspectorTab === "assets" && "bg-accent/45 text-foreground",
+          )}
+        >
+          <Images className="h-4 w-4" aria-hidden />
+        </Button>
+      ) : null}
+      <Button
+        type="button"
+        variant="ghost"
+        size="icon"
+        aria-label={t("thread.inspector.toggle", { defaultValue: "Toggle side panel" })}
+        aria-pressed={inspectorOpen}
+        onClick={handleToggleInspectorPanel}
+        className={cn(
+          "host-no-drag h-8 w-8 shrink-0 rounded-full text-muted-foreground/85 hover:bg-accent/40 hover:text-foreground",
+          inspectorOpen && "bg-accent/45 text-foreground",
+        )}
+      >
+        <PanelRight className="h-4 w-4" aria-hidden />
+      </Button>
+    </>
   ) : undefined;
   const sessionInfoAction = historyKey ? (
     <SessionInfoPopover sessionKey={historyKey} token={token} title={title} />
