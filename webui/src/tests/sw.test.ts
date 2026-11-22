@@ -49,14 +49,14 @@ interface LoadedSw {
   fire: (type: string, event?: Record<string, unknown>) => Promise<void>;
 }
 
-function loadSw(): LoadedSw {
+function loadSw(windowClients = {}): LoadedSw {
   const listeners = new Map<string, Array<(event: Record<string, unknown>) => void>>();
   const skipWaitingMock = vi.fn();
   const claimMock = vi.fn();
   const self = {
     location: { origin: ORIGIN },
     skipWaiting: skipWaitingMock,
-    clients: { claim: claimMock },
+    clients: { claim: claimMock, ...windowClients },
     addEventListener: (type: string, cb: (event: Record<string, unknown>) => void) => {
       listeners.set(type, [...(listeners.get(type) ?? []), cb]);
     },
@@ -116,6 +116,19 @@ function fetchEvent(url: string) {
 describe("service worker", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
+  });
+
+  it("focuses the target chat or opens it in a new window", async () => {
+    const client = { focus: vi.fn(), navigate: vi.fn() };
+    const openWindow = vi.fn();
+    const matchAll = vi.fn().mockResolvedValueOnce([client]).mockResolvedValueOnce([]);
+    const sw = loadSw({ matchAll, openWindow });
+    const notification = { close: vi.fn(), data: { chatId: "chat-17" } };
+    await sw.fire("notificationclick", { notification });
+    expect(client.navigate).toHaveBeenCalledWith("/#/chat/websocket%3Achat-17");
+    expect(client.focus).toHaveBeenCalledOnce();
+    await sw.fire("notificationclick", { notification });
+    expect(openWindow).toHaveBeenCalledWith("/#/chat/websocket%3Achat-17");
   });
 
   it("precaches the shell and manifest on install", async () => {

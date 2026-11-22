@@ -1,5 +1,5 @@
 import type { NanobotClient } from "@/lib/nanobot-client";
-import type { UIMessage } from "@/lib/types";
+import type { SessionPromptSummary, SessionTurnSummary, UIMessage } from "@/lib/types";
 
 /**
  * Renderer-side cache of a session's loaded history.
@@ -26,6 +26,10 @@ export interface CachedSessionPage {
   forkBoundaryMessageCount: number | null;
   totalTurnCount?: number;
   totalPromptCount?: number;
+  turnIndex?: SessionTurnSummary[];
+  promptIndex?: SessionPromptSummary[];
+  promptIndexBeforeCursor?: string | null;
+  promptIndexHasMoreBefore?: boolean;
   version: number;
 }
 

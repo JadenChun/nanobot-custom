@@ -1,5 +1,6 @@
 import {
   Fragment,
+  memo,
   type RefObject,
   useCallback,
   useEffect,
@@ -14,6 +15,7 @@ import { floatingSurfaceElevationClassName } from "@/components/ui/floating-surf
 import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { cn } from "@/lib/utils";
 import type {
+  PendingPromptReveal,
   SessionPromptSummary,
   SessionTurnSummary,
   UIMessage,
@@ -36,11 +38,14 @@ interface PromptRailProps {
   sessionPrompts?: SessionPromptSummary[];
   totalPromptCount?: number;
   hasMoreBefore?: boolean;
+  loadingOlder?: boolean;
+  onLoadOlder?: () => Promise<void> | void;
   hasMoreAfter?: boolean;
   hasMorePromptsBefore?: boolean;
   loadingMorePrompts?: boolean;
   onLoadMorePrompts?: () => void;
   onRevealPrompt?: (target: RevealPromptTarget) => void;
+  pendingReveal?: PendingPromptReveal | null;
   /**
    * Legacy turn summaries retained for backwards compatibility when a gateway
    * does not emit ``prompts``.
@@ -86,10 +91,10 @@ const MARKER_MIN_GAP_PX = 9;
 const MARKER_BASE_WIDTH_PX = 9;
 const MARKER_STACK_GAP_PX = 16;
 const RAIL_FALLBACK_HEIGHT_PX = 300;
-const MEASURE_RETRY_FRAMES = 2;
+const RESIZE_MEASURE_THROTTLE_MS = 150;
 const HOVER_MARKER_WIDTHS_PX = [28, 22, 16, 11];
 
-export function PromptRail({
+export const PromptRail = memo(function PromptRail({
   bottomOffset,
   messages,
   onJumpToPrompt,
@@ -97,11 +102,14 @@ export function PromptRail({
   sessionPrompts = [],
   totalPromptCount = 0,
   hasMoreBefore = false,
+  loadingOlder = false,
+  onLoadOlder,
   hasMoreAfter = false,
   hasMorePromptsBefore = false,
   loadingMorePrompts = false,
   onLoadMorePrompts,
   onRevealPrompt,
+  pendingReveal = null,
   sessionTurns = [],
   totalTurnCount = 0,
   onNeedSessionTurns,
@@ -173,7 +181,16 @@ export function PromptRail({
     const measured = measurePrompts(scrollEl, promptAnchors, Math.max(1, scrollRange));
     measuredPromptsRef.current = measured;
 
-    const topInsetPx = hasMorePromptsBefore && onLoadMorePrompts ? 28 : 0;
+    const canLoadOlderViaIndex = hasMorePromptsBefore && Boolean(onLoadMorePrompts);
+    const canLoadOlderDirectly =
+      !canLoadOlderViaIndex
+      && hasMoreBefore
+      && sessionPrompts.length === 0
+      && sessionTurns.length === 0
+      && Boolean(onLoadOlder);
+    const topInsetPx = canLoadOlderViaIndex || canLoadOlderDirectly ? 28 : 0;
+
+    const nextActive = activePromptForScroll(measured, scrollEl.scrollTop, promptAnchors);
 
     // Prefer per-prompt summaries so multi-prompt turns (e.g. Steer) get
     // distinct, identity-bound markers. Bucket dense ranges so long histories
@@ -183,7 +200,7 @@ export function PromptRail({
       const bounded = bucketSummaryMarkers(rawMarkers, nextRailHeight);
       const nextMarkers = distributeMarkerPositions(bounded, nextRailHeight, topInsetPx);
       setMarkers((current) => promptMarkersEqual(current, nextMarkers) ? current : nextMarkers);
-      setActivePromptId(activePromptForScroll(measured, scrollEl.scrollTop));
+      setActivePromptId((current) => nextActive ?? current);
       return;
     }
 
@@ -197,14 +214,22 @@ export function PromptRail({
       const bounded = bucketSummaryMarkers(rawMarkers, nextRailHeight);
       const nextMarkers = distributeMarkerPositions(bounded, nextRailHeight, topInsetPx);
       setMarkers((current) => promptMarkersEqual(current, nextMarkers) ? current : nextMarkers);
-      setActivePromptId(activePromptForScroll(measured, scrollEl.scrollTop));
+      setActivePromptId((current) => nextActive ?? current);
       return;
     }
 
-    const grouped = groupPromptMarkers(measured, nextRailHeight);
+    // When ThreadMessages is virtualized, only viewport+overscan prompts are
+    // mounted in the DOM. Build rail markers from all loaded promptAnchors so
+    // the rail never truncates to the visible slice or jumps during scroll.
+    const isVirtualized =
+      measured.length < promptAnchors.length
+      && Boolean(scrollEl.querySelector("[data-testid='thread-virtual-list']"));
+    const grouped = isVirtualized
+      ? bucketSummaryMarkers(localPromptAnchorMarkers(promptAnchors), nextRailHeight)
+      : groupPromptMarkers(measured, nextRailHeight);
     const nextMarkers = distributeMarkerPositions(grouped, nextRailHeight, topInsetPx);
     setMarkers((current) => promptMarkersEqual(current, nextMarkers) ? current : nextMarkers);
-    setActivePromptId(activePromptForScroll(measured, scrollEl.scrollTop));
+    setActivePromptId((current) => nextActive ?? current);
   }, [
     effectiveTotalPrompts,
     enabled,
@@ -212,16 +237,35 @@ export function PromptRail({
     hasMorePromptsBefore,
     hasUnloadedHistory,
     onLoadMorePrompts,
+    onLoadOlder,
     promptAnchors,
     scrollRef,
     sessionPrompts,
     sessionTurns,
   ]);
 
+  const updateMarkersRef = useRef(updateMarkers);
+  updateMarkersRef.current = updateMarkers;
+  const promptAnchorsRef = useRef(promptAnchors);
+  promptAnchorsRef.current = promptAnchors;
+
   const updateActivePrompt = useCallback(() => {
     const scrollEl = scrollRef.current;
     if (!scrollEl) return;
-    const next = activePromptForScroll(measuredPromptsRef.current, scrollEl.scrollTop);
+    const anchors = promptAnchorsRef.current;
+    const isVirtualized = Boolean(scrollEl.querySelector("[data-testid='thread-virtual-list']"));
+    const measured = isVirtualized
+      ? measurePrompts(
+        scrollEl,
+        anchors,
+        Math.max(1, scrollEl.scrollHeight - scrollEl.clientHeight),
+      )
+      : measuredPromptsRef.current;
+    if (isVirtualized) {
+      measuredPromptsRef.current = measured;
+    }
+    const next = activePromptForScroll(measured, scrollEl.scrollTop, anchors);
+    if (next === null && isVirtualized) return;
     setActivePromptId((current) => current === next ? current : next);
   }, [scrollRef]);
 
@@ -232,17 +276,7 @@ export function PromptRail({
       setActivePromptId(null);
       return;
     }
-    let frame = 0;
-    let remainingFrames = MEASURE_RETRY_FRAMES;
-    const measure = () => {
-      updateMarkers();
-      remainingFrames -= 1;
-      if (remainingFrames > 0) {
-        frame = window.requestAnimationFrame(measure);
-      }
-    };
-    measure();
-    return () => window.cancelAnimationFrame(frame);
+    updateMarkers();
   }, [bottomOffset, enabled, updateMarkers]);
 
   useEffect(() => {
@@ -258,7 +292,7 @@ export function PromptRail({
     };
     const scheduleMeasurement = () => {
       window.cancelAnimationFrame(resizeFrame);
-      resizeFrame = window.requestAnimationFrame(updateMarkers);
+      resizeFrame = window.requestAnimationFrame(() => updateMarkersRef.current());
     };
 
     scrollEl.addEventListener("scroll", scheduleActivePrompt, { passive: true });
@@ -269,28 +303,58 @@ export function PromptRail({
       scrollEl.removeEventListener("scroll", scheduleActivePrompt);
       window.removeEventListener("resize", scheduleMeasurement);
     };
-  }, [enabled, scrollRef, updateActivePrompt, updateMarkers]);
+  }, [enabled, scrollRef, updateActivePrompt]);
 
   const railMounted = markers.length > 0;
+  const hasWholeSessionSummaries = sessionPrompts.length > 0 || sessionTurns.length > 0;
   useEffect(() => {
     if (!enabled) return undefined;
     const scrollEl = scrollRef.current;
     if (!scrollEl || typeof ResizeObserver === "undefined") return undefined;
-    const observer = new ResizeObserver(() => updateMarkers());
+    let frame = 0;
+    let timer = 0;
+    let lastMeasuredAt = 0;
+    const runMeasurement = () => {
+      frame = 0;
+      timer = 0;
+      lastMeasuredAt = Date.now();
+      updateMarkersRef.current();
+    };
+    const scheduleObservedMeasurement = () => {
+      if (frame !== 0 || timer !== 0) return;
+      const elapsed = Date.now() - lastMeasuredAt;
+      if (elapsed >= RESIZE_MEASURE_THROTTLE_MS) {
+        frame = window.requestAnimationFrame(runMeasurement);
+        return;
+      }
+      timer = window.setTimeout(() => {
+        timer = 0;
+        frame = window.requestAnimationFrame(runMeasurement);
+      }, RESIZE_MEASURE_THROTTLE_MS - elapsed);
+    };
+    const observer = new ResizeObserver(scheduleObservedMeasurement);
     observer.observe(scrollEl);
-    if (scrollEl.firstElementChild) observer.observe(scrollEl.firstElementChild);
+    // When whole-session prompt/turn summaries are already loaded, rail marker
+    // positions depend only on rail height and summary count, not on content
+    // height fluctuations from virtualized item measurement.
+    if (!hasWholeSessionSummaries && scrollEl.firstElementChild) {
+      observer.observe(scrollEl.firstElementChild);
+    }
     if (railRef.current) observer.observe(railRef.current);
-    return () => observer.disconnect();
-  }, [enabled, railMounted, scrollRef, updateMarkers]);
+    return () => {
+      if (frame !== 0) window.cancelAnimationFrame(frame);
+      if (timer !== 0) window.clearTimeout(timer);
+      observer.disconnect();
+    };
+  }, [enabled, hasWholeSessionSummaries, railMounted, scrollRef]);
 
-  // After the selected history paints, request one bounded page of prompt
-  // summaries when older prompts exist outside the loaded window.
+  // Request the session prompt index immediately when older prompts exist
+  // outside the loaded window so the whole-session rail populates right away.
   useEffect(() => {
     if (!enabled || !onNeedSessionTurns) return;
     if (sessionPrompts.length > 0 || sessionTurns.length > 0) return;
     if (effectiveTotalPrompts <= promptAnchors.length && !hasMoreBefore) return;
-    const frame = window.requestAnimationFrame(() => onNeedSessionTurns());
-    return () => window.cancelAnimationFrame(frame);
+    onNeedSessionTurns();
   }, [
     effectiveTotalPrompts,
     enabled,
@@ -301,7 +365,22 @@ export function PromptRail({
     sessionTurns.length,
   ]);
 
-  if (markers.length === 0) return null;
+  const waitingForInitialIndex =
+    hasMoreBefore
+    && loadingMorePrompts
+    && sessionPrompts.length === 0
+    && sessionTurns.length === 0;
+  if (markers.length === 0 || waitingForInitialIndex) return null;
+
+  const showLoadOlderFromIndex = hasMorePromptsBefore && Boolean(onLoadMorePrompts);
+  const showLoadOlderTranscript =
+    !showLoadOlderFromIndex
+    && hasMoreBefore
+    && sessionPrompts.length === 0
+    && sessionTurns.length === 0
+    && Boolean(onLoadOlder);
+  const showLoadOlderButton = showLoadOlderFromIndex || showLoadOlderTranscript;
+  const loadOlderButtonDisabled = showLoadOlderFromIndex ? loadingMorePrompts : loadingOlder;
 
   return (
     <div
@@ -315,15 +394,21 @@ export function PromptRail({
       onPointerLeave={() => setFocusedMarkerIndex(null)}
       style={{ bottom: Math.max(80, bottomOffset) }}
     >
-      {hasMorePromptsBefore && onLoadMorePrompts ? (
+      {showLoadOlderButton ? (
         <button
           type="button"
           data-testid="prompt-rail-load-older"
-          disabled={loadingMorePrompts}
+          disabled={loadOlderButtonDisabled}
           aria-label={t("thread.promptNavigator.loadOlder", {
             defaultValue: "Load older prompts",
           })}
-          onClick={onLoadMorePrompts}
+          onClick={() => {
+            if (showLoadOlderFromIndex) {
+              onLoadMorePrompts?.();
+            } else {
+              void onLoadOlder?.();
+            }
+          }}
           className={cn(
             "absolute left-0 top-0 z-30 flex h-5 w-7 items-center justify-center rounded-sm text-[11px] font-medium",
             "text-muted-foreground/80 hover:bg-accent/50 hover:text-foreground disabled:opacity-40",
@@ -335,6 +420,14 @@ export function PromptRail({
       ) : null}
       {markers.map((marker, index) => {
         const active = marker.ids.includes(activePromptId ?? "");
+        const revealing = Boolean(
+          pendingReveal?.status === "loading"
+          && (
+            (pendingReveal.promptId && marker.promptId === pendingReveal.promptId)
+            || (pendingReveal.locator && marker.locator === pendingReveal.locator)
+            || (pendingReveal.cursor && marker.cursor === pendingReveal.cursor)
+          ),
+        );
         const previewVisible = focusedMarkerIndex === index;
         const hoverDistance =
           focusedMarkerIndex === null ? null : Math.abs(index - focusedMarkerIndex);
@@ -343,10 +436,10 @@ export function PromptRail({
             <button
               type="button"
               aria-label={t("thread.promptNavigator.jumpTo", { label: marker.label })}
+              aria-busy={revealing || undefined}
               onClick={() => {
-                const targetRenderedId = marker.renderedId ?? marker.ids[marker.ids.length - 1];
-                if (targetRenderedId) {
-                  onJumpToPrompt(targetRenderedId);
+                if (marker.renderedId) {
+                  onJumpToPrompt(marker.renderedId);
                   return;
                 }
                 if (onRevealPrompt && (marker.locator || marker.promptId)) {
@@ -367,6 +460,11 @@ export function PromptRail({
                     locator: null,
                     cursor: marker.cursor,
                   });
+                  return;
+                }
+                const fallbackRenderedId = marker.ids[marker.ids.length - 1];
+                if (fallbackRenderedId) {
+                  onJumpToPrompt(fallbackRenderedId);
                 }
               }}
               onBlur={() => setFocusedMarkerIndex(null)}
@@ -382,10 +480,13 @@ export function PromptRail({
               <span
                 aria-hidden
                 data-testid="prompt-rail-marker"
+                data-revealing={revealing ? "true" : undefined}
                 className={cn(
                   "absolute left-0 top-1/2 h-0.5 -translate-y-1/2 rounded-full",
                   "transition-[width,background-color,opacity,height] duration-150",
-                  railMarkerTone(hoverDistance, active),
+                  revealing
+                    ? "animate-pulse bg-primary"
+                    : railMarkerTone(hoverDistance, active),
                 )}
                 style={{
                   height: markerHeight(hoverDistance),
@@ -434,7 +535,7 @@ export function PromptRail({
       })}
     </div>
   );
-}
+});
 
 function makeInert(node: HTMLDivElement | null): void {
   if (node) node.inert = true;
@@ -738,12 +839,33 @@ function distributeMarkerPositions(
   }));
 }
 
+function localPromptAnchorMarkers(anchors: PromptAnchor[]): PromptMarker[] {
+  return anchors.map((anchor) => ({
+    key: `local:${anchor.promptId ?? anchor.id}`,
+    answerPreview: anchor.answerPreview,
+    count: 1,
+    ids: [anchor.id],
+    renderedId: anchor.id,
+    promptId: anchor.promptId ?? anchor.id,
+    label: anchor.label,
+    preview: anchor.preview,
+    topPercent: 0,
+  }));
+}
+
 function activePromptForScroll(
   measured: MeasuredPrompt[],
   scrollTop: number,
+  anchors?: PromptAnchor[],
 ): string | null {
   if (measured.length === 0) return null;
   const cursor = scrollTop + 96;
+  if (anchors && measured[0].top > cursor) {
+    const firstMountedIdx = anchors.findIndex((anchor) => anchor.id === measured[0].id);
+    if (firstMountedIdx > 0) {
+      return anchors[firstMountedIdx - 1].id;
+    }
+  }
   let lower = 0;
   let upper = measured.length - 1;
   let activeIndex = 0;

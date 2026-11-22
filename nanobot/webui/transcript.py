@@ -1228,6 +1228,36 @@ def _decode_page_cursor(value: str | None) -> int | None:
     return before_turn
 
 
+def _encode_after_cursor(after_turn_ordinal: int) -> str:
+    raw = json.dumps(
+        {"after_turn": after_turn_ordinal},
+        separators=(",", ":"),
+        ensure_ascii=False,
+    ).encode("utf-8")
+    return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
+
+
+def _decode_after_cursor(value: str | None) -> int | None:
+    if not value:
+        return None
+    try:
+        padded = value + "=" * (-len(value) % 4)
+        data = json.loads(base64.urlsafe_b64decode(padded.encode("ascii")).decode("utf-8"))
+    except (binascii.Error, json.JSONDecodeError, UnicodeDecodeError, ValueError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    cursor_data = cast(dict[str, Any], data)
+    after_turn = cursor_data.get("after_turn")
+    if (
+        isinstance(after_turn, bool)
+        or not isinstance(after_turn, int)
+        or after_turn < 0
+    ):
+        return None
+    return after_turn
+
+
 def _coerce_page_limit(limit: int | None) -> int:
     if limit is None:
         return _DEFAULT_TRANSCRIPT_PAGE_LIMIT
@@ -1350,10 +1380,14 @@ def _select_transcript_page(
         }
 
     first_ref = selected_chronological[0]
+    last_ref = selected_chronological[-1]
     has_more = first_ref.ordinal > 0
+    has_more_after = last_ref.ordinal + 1 < total_turns
     page = {
         "before_cursor": _encode_page_cursor(first_ref.ordinal) if has_more else None,
         "has_more_before": has_more,
+        "after_cursor": _encode_after_cursor(last_ref.ordinal + 1) if has_more_after else None,
+        "has_more_after": has_more_after,
         "loaded_message_count": 0,
         # Turn bookkeeping for a whole-session navigator. All three come from
         # the chunk refs already computed above, so they cost nothing extra and
@@ -1369,6 +1403,172 @@ def _select_transcript_page(
         ),
     }
     return lines, page
+
+
+def _select_legacy_after_page(
+    session_key: str,
+    *,
+    limit: int | None,
+    after: str,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    page_limit = _coerce_page_limit(limit)
+    after_ordinal = _decode_after_cursor(after)
+    if after_ordinal is None:
+        raise HistoryWindowError(409, "stale_history_cursor")
+    turn_cache: dict[str, list[list[dict[str, Any]]]] = {}
+    chunks = _chunk_turn_refs(session_key, turn_cache)
+    total_turns = sum(chunk.turn_count for chunk in chunks)
+    selected: list[_TranscriptTurnRef] = []
+    selected_message_count = 0
+
+    for chunk in chunks:
+        if chunk.start_ordinal + chunk.turn_count <= after_ordinal:
+            continue
+        turns = _cached_chunk_turns(session_key, chunk.chunk_id, turn_cache)
+        local_start = max(0, after_ordinal - chunk.start_ordinal)
+        for turn_index in range(local_start, len(turns)):
+            ordinal = chunk.start_ordinal + turn_index
+            turn = turns[turn_index]
+            selected.append(_TranscriptTurnRef(ordinal, turn))
+            selected_message_count += len(replay_transcript_to_ui_messages(turn))
+            if selected_message_count >= page_limit:
+                break
+        if selected_message_count >= page_limit:
+            break
+
+    if not selected:
+        return [], {
+            "before_cursor": _encode_page_cursor(total_turns) if total_turns > 0 else None,
+            "has_more_before": total_turns > 0,
+            "after_cursor": None,
+            "has_more_after": False,
+            "loaded_message_count": 0,
+            "user_message_offset": _count_user_messages_before_ordinal(
+                session_key, chunks, total_turns, turn_cache,
+            ),
+        }
+
+    lines = [
+        record
+        for ref in selected
+        for record in _records_with_replay_identity(ref.records, turn_ordinal=ref.ordinal)
+    ]
+    first_ref = selected[0]
+    last_ref = selected[-1]
+    has_more_before = first_ref.ordinal > 0
+    has_more_after = last_ref.ordinal + 1 < total_turns
+    return lines, {
+        "before_cursor": _encode_page_cursor(first_ref.ordinal) if has_more_before else None,
+        "has_more_before": has_more_before,
+        "after_cursor": _encode_after_cursor(last_ref.ordinal + 1) if has_more_after else None,
+        "has_more_after": has_more_after,
+        "loaded_message_count": 0,
+        "first_turn_ordinal": first_ref.ordinal,
+        "loaded_turn_count": len(selected),
+        "total_turn_count": total_turns,
+        "user_message_offset": _count_user_messages_before_ordinal(
+            session_key, chunks, first_ref.ordinal, turn_cache,
+        ),
+    }
+
+
+def _select_legacy_around_page(
+    session_key: str,
+    *,
+    limit: int | None,
+    prompt_id: str | None,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    if not prompt_id:
+        raise HistoryWindowError(404, "prompt_not_found")
+    page_limit = _coerce_page_limit(limit)
+    turn_cache: dict[str, list[list[dict[str, Any]]]] = {}
+    chunks = _chunk_turn_refs(session_key, turn_cache)
+    total_turns = sum(chunk.turn_count for chunk in chunks)
+    all_turns: list[_TranscriptTurnRef] = []
+    target_idx: int | None = None
+    resolved_prompt_id = prompt_id
+
+    for chunk in chunks:
+        turns = _cached_chunk_turns(session_key, chunk.chunk_id, turn_cache)
+        for local_idx, turn in enumerate(turns):
+            ordinal = chunk.start_ordinal + local_idx
+            ref = _TranscriptTurnRef(ordinal, turn)
+            all_turns.append(ref)
+            if target_idx is not None:
+                continue
+            for record_index, rec in enumerate(turn):
+                if not _is_user_transcript_row(rec):
+                    continue
+                committed = rec.get(_PROMPT_SOURCE_EVENT)
+                legacy_id = f"legacy:{ordinal}:{record_index}"
+                if committed == prompt_id or legacy_id == prompt_id:
+                    target_idx = len(all_turns) - 1
+                    resolved_prompt_id = committed if isinstance(committed, str) and committed else legacy_id
+                    break
+            if target_idx is None:
+                stamped = _records_with_replay_identity(turn, turn_ordinal=ordinal)
+                replayed = replay_transcript_to_ui_messages(stamped)
+                for msg in replayed:
+                    if msg.get("role") == "user" and (
+                        msg.get("id") == prompt_id or msg.get("promptId") == prompt_id
+                    ):
+                        target_idx = len(all_turns) - 1
+                        pid = msg.get("promptId") or msg.get("id")
+                        if isinstance(pid, str) and pid:
+                            resolved_prompt_id = pid
+                        break
+
+    if target_idx is None:
+        raise HistoryWindowError(404, "prompt_not_found")
+
+    target_ref = all_turns[target_idx]
+    target_msg_count = max(1, len(replay_transcript_to_ui_messages(target_ref.records)))
+    half_before = max(1, (page_limit - target_msg_count) // 2)
+    half_after = max(1, page_limit - target_msg_count - half_before)
+
+    before_refs: list[_TranscriptTurnRef] = []
+    budget = 0
+    for idx in range(target_idx - 1, -1, -1):
+        ref = all_turns[idx]
+        before_refs.append(ref)
+        budget += len(replay_transcript_to_ui_messages(ref.records))
+        if budget >= half_before:
+            break
+    before_refs.reverse()
+
+    after_refs: list[_TranscriptTurnRef] = []
+    budget = 0
+    for idx in range(target_idx + 1, len(all_turns)):
+        ref = all_turns[idx]
+        after_refs.append(ref)
+        budget += len(replay_transcript_to_ui_messages(ref.records))
+        if budget >= half_after:
+            break
+
+    selected = [*before_refs, target_ref, *after_refs]
+    lines = [
+        record
+        for ref in selected
+        for record in _records_with_replay_identity(ref.records, turn_ordinal=ref.ordinal)
+    ]
+    first_ref = selected[0]
+    last_ref = selected[-1]
+    has_more_before = first_ref.ordinal > 0
+    has_more_after = last_ref.ordinal + 1 < total_turns
+    return lines, {
+        "before_cursor": _encode_page_cursor(first_ref.ordinal) if has_more_before else None,
+        "has_more_before": has_more_before,
+        "after_cursor": _encode_after_cursor(last_ref.ordinal + 1) if has_more_after else None,
+        "has_more_after": has_more_after,
+        "target_prompt_id": resolved_prompt_id,
+        "loaded_message_count": 0,
+        "first_turn_ordinal": first_ref.ordinal,
+        "loaded_turn_count": len(selected),
+        "total_turn_count": total_turns,
+        "user_message_offset": _count_user_messages_before_ordinal(
+            session_key, chunks, first_ref.ordinal, turn_cache,
+        ),
+    }
 
 
 _TURN_INDEX_DEFAULT_LIMIT = 400
@@ -3903,13 +4103,20 @@ def replay_transcript_to_ui_messages(
             chunk = rec.get("text")
             if not isinstance(chunk, str):
                 continue
-            if media_reply_texts:
-                turn_id = _turn_fields(rec, "answer").get("turnId")
-                if isinstance(turn_id, str):
-                    deferred_answers.setdefault(turn_id, []).append(chunk)
-                continue
-            close_activity_for_answer()
             turn_fields = _turn_fields(rec, "answer")
+            turn_id = turn_fields.get("turnId")
+            turn_captions = [
+                caption for tid, caption in media_reply_texts if tid == turn_id and caption
+            ]
+            if turn_captions and isinstance(turn_id, str):
+                combined_deferred = "".join(deferred_answers.get(turn_id, [])) + chunk
+                trimmed = combined_deferred.strip()
+                if not trimmed or any(c.startswith(trimmed) for c in turn_captions):
+                    deferred_answers.setdefault(turn_id, []).append(chunk)
+                    continue
+                deferred_answers.pop(turn_id, None)
+                chunk = combined_deferred
+            close_activity_for_answer()
             source_fields = _source_fields(rec)
             adopted = find_active_placeholder(messages, turn_fields) if buffer_message_id is None else None
             if buffer_message_id is None:
@@ -3953,16 +4160,21 @@ def replay_transcript_to_ui_messages(
             turn_fields = _turn_fields(rec, "answer")
             merge_next = rec.get("resuming") is True and rec.get("merge_next") is True
             turn_id = turn_fields.get("turnId")
-            if media_reply_texts and isinstance(turn_id, str):
+            turn_captions = {
+                caption for tid, caption in media_reply_texts if tid == turn_id and caption
+            }
+            if isinstance(turn_id, str) and turn_id in deferred_answers:
                 deferred = deferred_answers.pop(turn_id, [])
                 if not isinstance(final_text, str):
                     final_text = "".join(deferred)
-                if merge_next:
+                if merge_next and final_text:
                     deferred_answers[turn_id] = [final_text]
-            if media_reply_texts and (
-                not isinstance(final_text, str)
-                or not final_text.strip()
-                or (turn_fields.get("turnId"), final_text.strip()) in media_reply_texts
+            if turn_captions and (
+                (not isinstance(final_text, str) and buffer_message_id is None)
+                or (
+                    isinstance(final_text, str)
+                    and (not final_text.strip() or final_text.strip() in turn_captions)
+                )
             ):
                 buffer_message_id = None
                 buffer_parts = []
@@ -4007,8 +4219,6 @@ def replay_transcript_to_ui_messages(
             continue
 
         if ev == "reasoning_delta":
-            if media_reply_texts:
-                continue
             chunk = rec.get("text")
             if not isinstance(chunk, str) or not chunk:
                 continue
@@ -4023,8 +4233,6 @@ def replay_transcript_to_ui_messages(
             continue
 
         if ev == "reasoning_end":
-            if media_reply_texts:
-                continue
             text = rec.get("text")
             if isinstance(text, str) and text:
                 close_file_edit_phase_before_activity()
@@ -4081,12 +4289,6 @@ def replay_transcript_to_ui_messages(
             continue
 
         if ev == "message":
-            if media_reply_texts and rec.get("kind") in (
-                "tool_hint",
-                "progress",
-                "reasoning",
-            ):
-                continue
             kind = rec.get("kind")
             if kind == "reasoning":
                 line = rec.get("text")
@@ -4188,7 +4390,7 @@ def replay_transcript_to_ui_messages(
             turn_id = extra.get("turnId")
             if isinstance(turn_id, str):
                 deferred_answers.pop(turn_id, None)
-            if media:
+            if media and content_s.strip():
                 media_reply_texts.add((turn_id, content_s.strip()))
             continue
 
@@ -4370,19 +4572,31 @@ def _select_indexed_transcript_page(
 
     expected_origin = _record_origin(expected_source) if expected_source is not None else None
     page_limit = _coerce_page_limit(limit)
-    legacy_adoptable = (
-        after is None
-        and around is None
-        and prompt_id is None
-        and direction not in {"after", "around"}
-        and _legacy_display_rows_adoptable(session_key, expected_source)
-    )
-    if legacy_adoptable:
-        if before is None:
-            return None
-        _, v2_before = decode_window_cursor(before, expected_origin=expected_origin)
-        if not v2_before and _decode_page_cursor(before) is not None:
-            return None
+    is_legacy_adoptable = _legacy_display_rows_adoptable(session_key, expected_source)
+    if is_legacy_adoptable:
+        if after is not None and _decode_after_cursor(after) is not None:
+            return _select_legacy_after_page(session_key, limit=limit, after=after)
+        if (around is None and prompt_id is not None) or (
+            direction == "around" and around is None
+        ):
+            return _select_legacy_around_page(session_key, limit=limit, prompt_id=prompt_id)
+        if around is not None:
+            from nanobot.webui.transcript_index import decode_prompt_locator
+
+            decoded = decode_prompt_locator(around, expected_origin=expected_origin)
+            if decoded is not None:
+                return _select_legacy_around_page(session_key, limit=limit, prompt_id=decoded[2])
+        if (
+            after is None
+            and around is None
+            and prompt_id is None
+            and direction not in {"after", "around"}
+        ):
+            if before is None:
+                return None
+            _, v2_before = decode_window_cursor(before, expected_origin=expected_origin)
+            if not v2_before and _decode_page_cursor(before) is not None:
+                return None
 
     if around is not None or prompt_id is not None or direction == "around":
         window_dir: Literal["latest", "before", "after", "around"] = "around"

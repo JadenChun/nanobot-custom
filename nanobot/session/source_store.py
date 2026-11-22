@@ -719,8 +719,25 @@ class SourceSessionStore:
         root_authority: SourceRootAuthority | None = None,
     ) -> SourceSnapshot:
         if root_authority is None:
+            from nanobot.session.mode_storage import private_file_version
+
             with self._backend.locked_session_files():
-                return self._snapshot(*self._read_unlocked(key))
+                path = self._backend.get_session_path(key)
+                has_checkpoint = self._backend.get_runtime_checkpoint_path(key).exists()
+                current_version: Any = None
+                if not has_checkpoint:
+                    try:
+                        current_version = private_file_version(path.lstat())
+                    except FileNotFoundError:
+                        current_version = None
+                    if current_version is not None:
+                        cached = self._backend.cached_source_snapshot(key, current_version)
+                        if cached is not None:
+                            return cached
+                snapshot = self._snapshot(*self._read_unlocked(key))
+                if not has_checkpoint and current_version is not None:
+                    self._backend.remember_source_snapshot(key, current_version, snapshot)
+                return snapshot
         with root_authority.operation(self._backend):
             with root_authority.lock_file(".session-files.lock", blocking=True):
                 return self._snapshot(
@@ -2053,6 +2070,19 @@ class SourceSessionStore:
                         body_offset=len(header_line),
                     ),
                 )
+                prev_cached = self._backend.cached_source_snapshot(key, proof.version)
+                if prev_cached is not None:
+                    raw_cp = header["metadata"].get("context_checkpoint")
+                    cp: dict[str, Any] | None = (
+                        deepcopy(cast(dict[str, Any], raw_cp))
+                        if isinstance(raw_cp, dict)
+                        else None
+                    )
+                    self._backend.remember_source_snapshot(
+                        key,
+                        installed,
+                        SourceSnapshot(state, deepcopy(header), prev_cached.events, cp),
+                    )
                 update_event_index_header(
                     self._backend,
                     key,

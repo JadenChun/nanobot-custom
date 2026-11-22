@@ -1,6 +1,7 @@
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -70,6 +71,8 @@ interface MessageBubbleProps {
   message: UIMessage;
   /** The containing agent turn has not received turn_end yet. */
   isTurnStreaming?: boolean;
+  /** Avoid reserving an empty footer slot under intermediate assistant updates while streaming. */
+  suppressReservedFooter?: boolean;
   /** Reveal this completed assistant body when its conversation enters history. */
   revealOnHistoryEntry?: boolean;
   /** Give temporary-chat user turns the dashed private-mode treatment. */
@@ -461,6 +464,7 @@ function IncomingSessionMessage({
 export function MessageBubble({
   message,
   isTurnStreaming = false,
+  suppressReservedFooter = false,
   revealOnHistoryEntry = false,
   temporary = false,
   showCopyAction = true,
@@ -634,7 +638,10 @@ export function MessageBubble({
       ? completedAt
       : message.createdAt;
   const assistantTimestampLabel =
-    message.role === "assistant" && !message.isStreaming && message.timestampAvailable !== false
+    message.role === "assistant"
+    && !message.isStreaming
+    && !isTurnStreaming
+    && message.timestampAvailable !== false
       ? formatMessageEndTime(assistantTimestamp)
       : "";
   const showCompletedAt =
@@ -649,13 +656,15 @@ export function MessageBubble({
     showCopyButton || showForkButton || showAssistantTimestamp;
   const showAssistantFooterSlot =
     message.role === "assistant"
-    && (!empty || hasReasoning || media.length > 0);
+    && (!empty || hasReasoning || media.length > 0)
+    && (showAssistantFooterRow || !suppressReservedFooter);
   return (
     <div className="w-full text-[15px]" style={{ lineHeight: "var(--cjk-line-height)" }}>
       {hasReasoning ? (
         <ReasoningBubble
           text={reasoning}
           streaming={reasoningStreaming}
+          durationMs={message.latencyMs}
           hasBodyBelow={!empty}
         />
       ) : null}
@@ -983,8 +992,14 @@ function UserImageCell({
 }) {
   const { t } = useTranslation();
   const hasUrl = typeof image.url === "string" && image.url.length > 0;
+  const imgRef = useRef<HTMLImageElement | null>(null);
   const [imageState, setImageState] = useState<"loading" | "ready" | "error">("loading");
-  useEffect(() => {
+  useLayoutEffect(() => {
+    const node = imgRef.current;
+    if (node && node.complete && node.naturalWidth > 0) {
+      setImageState("ready");
+      return;
+    }
     setImageState("loading");
   }, [image.url]);
   const tileClasses = cn(
@@ -1002,13 +1017,17 @@ function UserImageCell({
       <div
         className={cn(
           "relative",
-          layout === "tile" ? "h-full w-full" : size === "large" ? "w-full" : "h-full w-full",
+          layout === "tile"
+            ? "h-full w-full"
+            : size === "large"
+              ? cn("w-full", imageState === "loading" && "min-h-40")
+              : "h-full w-full",
         )}
       >
         <img
+          ref={imgRef}
           src={image.url}
           alt={image.name ?? ""}
-          loading="lazy"
           decoding="async"
           draggable={false}
           onLoad={() => setImageState("ready")}
@@ -1122,20 +1141,23 @@ export function StreamingLabelSheen({
 interface ReasoningBubbleProps {
   text: string;
   streaming: boolean;
+  durationMs?: number;
   hasBodyBelow: boolean;
 }
 
 function ReasoningBubble({
   text,
   streaming,
+  durationMs,
   hasBodyBelow,
 }: ReasoningBubbleProps) {
   return (
     <ReasoningRow
       text={text}
       streaming={streaming}
+      durationMs={durationMs}
       className={cn(
-        "animate-in fade-in-0 slide-in-from-top-1 duration-200",
+        streaming && "animate-in fade-in-0 slide-in-from-top-1 duration-200",
         hasBodyBelow && "mb-2",
       )}
     />

@@ -295,6 +295,7 @@ def serve_signed_media(
     *,
     secret: bytes,
     request: WsRequest | None = None,
+    max_response_bytes: int | None = None,
     media_dir: MediaDirProvider = _default_media_dir,
 ) -> Response:
     """Serve a signed media URL, including browser-friendly byte ranges."""
@@ -349,6 +350,8 @@ def serve_signed_media(
                 ],
             )
         try:
+            if max_response_bytes is not None:
+                end = min(end, start + max_response_bytes - 1)
             length = end - start + 1
             with candidate.open("rb") as fh:
                 fh.seek(start)
@@ -365,6 +368,8 @@ def serve_signed_media(
             ],
         )
 
+    if max_response_bytes is not None and size > max_response_bytes:
+        return _http_error(413, "media too large")
     try:
         body = candidate.read_bytes()
     except OSError:

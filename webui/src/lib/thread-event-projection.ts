@@ -48,13 +48,21 @@ export function findStreamingAssistantIndex(
 ): number | null {
   for (let i = prev.length - 1; i >= 0; i -= 1) {
     const m = prev[i];
-    if (m.kind === "trace") continue;
+    // A trace row (tool call / progress / file edit) is a causal phase boundary:
+    // answer deltas after tools must start a new bubble below the tools rather
+    // than adopting a pre-tool reasoning placeholder above them.
+    if (m.kind === "trace") break;
     if (
       m.role === "assistant"
       && m.isStreaming
       && !closedStreamIds.has(m.id)
       && matchesTurn(m, turn)
     ) return i;
+    if (
+      m.role === "assistant"
+      && !m.isStreaming
+      && (m.content.trim().length > 0 || (m.media?.length ?? 0) > 0)
+    ) break;
     if (m.role === "user") break;
   }
   return null;

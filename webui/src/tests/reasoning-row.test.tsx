@@ -1,4 +1,4 @@
-import { act, render, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
 
@@ -92,21 +92,59 @@ describe("ReasoningRow", () => {
     expect(disclosures[0]).toHaveAttribute("aria-expanded", "true");
   });
 
-  it("preserves the open or closed choice as streaming reasoning updates", async () => {
-    const user = userEvent.setup();
+  it("streams multi-line reasoning verbosely in a bounded viewport and auto-collapses when done", () => {
     const { rerender } = render(
-      <ReasoningRow text="initial thought" streaming />,
+      <ReasoningRow text={"checking imports\n\nreading viewport"} streaming />,
     );
     const disclosure = screen.getByRole("button", { name: "Reasoning" });
     const body = document.getElementById(disclosure.getAttribute("aria-controls")!)!;
 
-    await user.click(disclosure);
-    rerender(<ReasoningRow text={"initial thought\n\nappended thought"} streaming />);
     expect(disclosure).toHaveAttribute("aria-expanded", "true");
-    expect(body).toHaveTextContent("appended thought");
+    expect(screen.getByTestId("reasoning-live-stream")).toBeInTheDocument();
+    expect(body).toHaveTextContent("checking imports");
+    expect(body).toHaveTextContent("reading viewport");
 
     rerender(
-      <ReasoningRow text={"initial thought\n\nappended thought"} streaming={false} />,
+      <ReasoningRow text={"checking imports\n\nreading viewport\n\nverifying layout"} streaming />,
+    );
+    expect(disclosure).toHaveAttribute("aria-expanded", "true");
+    expect(body).toHaveTextContent("verifying layout");
+
+    rerender(
+      <ReasoningRow
+        text={"checking imports\n\nreading viewport\n\nverifying layout"}
+        streaming={false}
+      />,
+    );
+    expect(disclosure).toHaveAttribute("aria-expanded", "false");
+    expect(body).toHaveAttribute("hidden");
+    expect(body).toBeEmptyDOMElement();
+    expect(screen.getByTestId("activity-reasoning-marker")).toHaveAttribute("data-state", "done");
+  });
+
+  it("preserves the user's manual open or closed choice as streaming reasoning updates", async () => {
+    const user = userEvent.setup();
+    const { rerender } = render(
+      <ReasoningRow text={"initial thought\n\nsecond line"} streaming />,
+    );
+    const disclosure = screen.getByRole("button", { name: "Reasoning" });
+    const body = document.getElementById(disclosure.getAttribute("aria-controls")!)!;
+
+    // Multi-line streaming starts expanded; clicking collapses it and keeps it collapsed.
+    expect(disclosure).toHaveAttribute("aria-expanded", "true");
+    await user.click(disclosure);
+    rerender(<ReasoningRow text={"initial thought\n\nsecond line\n\nappended thought"} streaming />);
+    expect(disclosure).toHaveAttribute("aria-expanded", "false");
+    expect(body).toHaveAttribute("hidden");
+    expect(body).toBeEmptyDOMElement();
+
+    // Clicking again pins it open across streaming updates and completion.
+    await user.click(disclosure);
+    rerender(
+      <ReasoningRow
+        text={"initial thought\n\nsecond line\n\nappended thought"}
+        streaming={false}
+      />,
     );
     expect(disclosure).toHaveAttribute("aria-expanded", "true");
     expect(screen.getByTestId("activity-reasoning-marker")).toHaveAttribute("data-state", "done");
@@ -115,7 +153,7 @@ describe("ReasoningRow", () => {
     await user.click(disclosure);
     rerender(
       <ReasoningRow
-        text={"initial thought\n\nappended thought\n\nclosed update"}
+        text={"initial thought\n\nsecond line\n\nappended thought\n\nclosed update"}
         streaming={false}
       />,
     );
@@ -123,5 +161,61 @@ describe("ReasoningRow", () => {
     expect(body).toHaveAttribute("hidden");
     expect(body).toBeEmptyDOMElement();
     expect(screen.getByTestId("activity-reasoning-marker")).toHaveAttribute("data-state", "done");
+  });
+
+  it("uses compact Thinking… / Thought / Thought for Xs headers without truncated previews", () => {
+    const { rerender } = render(<ReasoningRow text="short streaming note" streaming />);
+
+    const disclosure = screen.getByRole("button", { name: "Reasoning" });
+    expect(disclosure).toHaveTextContent("Thinking…");
+    expect(disclosure).not.toHaveTextContent("short streaming note");
+    expect(disclosure).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByTestId("reasoning-live-stream")).toHaveTextContent("short streaming note");
+
+    rerender(<ReasoningRow text="short streaming note" streaming={false} durationMs={16_000} />);
+    expect(disclosure).toHaveTextContent("Thought for 16s");
+    expect(disclosure).toHaveAttribute("aria-expanded", "false");
+
+    rerender(<ReasoningRow text="short streaming note" streaming nestedInScrollViewport />);
+    expect(screen.getByTestId("reasoning-live-stream")).not.toHaveClass("overflow-y-auto");
+
+    rerender(<ReasoningRow text="short streaming note" streaming={false} />);
+    expect(disclosure).toHaveTextContent("Thought");
+    expect(disclosure).not.toHaveTextContent("Thought for");
+  });
+
+  it("keeps auto-following the latest reasoning line across rapid content growth until the user scrolls up", () => {
+    const { rerender } = render(<ReasoningRow text="line 1" streaming />);
+    const viewport = screen.getByTestId("reasoning-live-stream");
+
+    let scrollHeight = 200;
+    Object.defineProperty(viewport, "clientHeight", { configurable: true, get: () => 100 });
+    Object.defineProperty(viewport, "scrollHeight", { configurable: true, get: () => scrollHeight });
+
+    rerender(<ReasoningRow text={"line 1\n\nline 2"} streaming />);
+    expect(viewport.scrollTop).toBe(100);
+
+    // Content grows faster than a queued scroll event without the user scrolling up.
+    scrollHeight = 360;
+    fireEvent.scroll(viewport);
+
+    rerender(<ReasoningRow text={"line 1\n\nline 2\n\nline 3"} streaming />);
+    expect(viewport.scrollTop).toBe(260);
+
+    // User actually scrolls upward -> auto-follow pauses.
+    viewport.scrollTop = 40;
+    fireEvent.scroll(viewport);
+
+    scrollHeight = 440;
+    rerender(<ReasoningRow text={"line 1\n\nline 2\n\nline 3\n\nline 4"} streaming />);
+    expect(viewport.scrollTop).toBe(40);
+
+    // User scrolls back near the bottom -> auto-follow resumes.
+    viewport.scrollTop = 335;
+    fireEvent.scroll(viewport);
+
+    scrollHeight = 500;
+    rerender(<ReasoningRow text={"line 1\n\nline 2\n\nline 3\n\nline 4\n\nline 5"} streaming />);
+    expect(viewport.scrollTop).toBe(400);
   });
 });

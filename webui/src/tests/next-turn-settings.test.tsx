@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ReactNode } from "react";
@@ -86,12 +86,60 @@ const HOME: WorkspaceScopePayload = {
 };
 
 function workspacesFixture(): WorkspacesPayload {
+  const effectiveAccess = {
+    policy: "managed" as const,
+    source: "grant" as const,
+    grant_root: "/projects",
+    exists: true,
+    read: true,
+    write: true,
+    commands: {
+      requested: true,
+      available: true,
+      backend: "native" as const,
+      reason: null,
+    },
+  };
   return {
     schema_version: 2,
     default_access_mode: "restricted",
     default_scope: HOME,
     managed_access: false,
-    management: null,
+    management: {
+      grants: [],
+      repositories: [
+        {
+          name: "alpha",
+          path: FOLDER_A.project_path,
+          purpose: "",
+          kind: "project",
+          knowledge_repos: [],
+          auto_sync: false,
+          sync_paths: [],
+          exists: true,
+          effective_access: effectiveAccess,
+        },
+        {
+          name: "beta",
+          path: FOLDER_B.project_path,
+          purpose: "",
+          kind: "project",
+          knowledge_repos: [],
+          auto_sync: false,
+          sync_paths: [],
+          exists: true,
+          effective_access: effectiveAccess,
+        },
+      ],
+      policy: {
+        default_workspace: HOME.project_path,
+        managed_access: false,
+        can_manage_folders: true,
+        can_manage_catalog: true,
+        commands_enabled: true,
+        commands_backend: "native",
+      },
+    },
     controls: {
       can_change_project: true,
       can_use_full_access: true,
@@ -438,10 +486,10 @@ describe("ThreadComposer next-turn picker", () => {
     const trigger = screen.getByRole("button", { name: "Next turn: beta" });
     expect(trigger).toBeEnabled();
     await user.click(trigger);
-    expect(await screen.findByText("Next turn", { selector: "p" })).toBeInTheDocument();
-    expect(screen.getByText(FOLDER_B.project_path)).toBeInTheDocument();
-    // The active turn's folder still shows the admitted scope.
-    expect(screen.getByText(FOLDER_A.project_path)).toBeInTheDocument();
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByRole("button", { name: /beta/ })).toHaveAttribute("aria-current", "true");
+    expect(within(dialog).getByRole("button", { name: "Clear project folder" })).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: /alpha/ })).not.toHaveAttribute("aria-current");
   });
 
   it("does not request history to change the next folder", async () => {
@@ -464,10 +512,7 @@ describe("ThreadComposer next-turn picker", () => {
       />,
     );
     await user.click(screen.getByRole("button", { name: "Working in: alpha" }));
-    fireEvent.change(await screen.findByLabelText("Paste path"), {
-      target: { value: FOLDER_B.project_path },
-    });
-    await user.click(screen.getByRole("button", { name: "Use folder" }));
+    await user.click(await screen.findByRole("button", { name: /beta/i }));
     expect(onWorkspaceScopeChange).toHaveBeenCalledWith(
       expect.objectContaining({ project_path: FOLDER_B.project_path }),
     );
@@ -491,9 +536,12 @@ describe("ThreadComposer next-turn picker", () => {
         onWorkspaceScopeChange={vi.fn()}
       />,
     );
-    expect(screen.getByTestId("composer-next-turn-error")).toHaveTextContent(
+    const banner = screen.getByTestId("composer-next-turn-error");
+    expect(banner).toHaveTextContent(
       "The folder change was not saved.",
     );
+    fireEvent.click(within(banner).getByRole("button", { name: "Dismiss" }));
+    expect(screen.queryByTestId("composer-next-turn-error")).not.toBeInTheDocument();
   });
 });
 
@@ -541,10 +589,7 @@ describe("ThreadShell next-turn container lock", () => {
     const folderTrigger = screen.getByRole("button", { name: "Working in: alpha" });
     expect(folderTrigger).toBeEnabled();
     await user.click(folderTrigger);
-    fireEvent.change(await screen.findByLabelText("Paste path"), {
-      target: { value: FOLDER_B.project_path },
-    });
-    await user.click(screen.getByRole("button", { name: "Use folder" }));
+    await user.click(await screen.findByRole("button", { name: /beta/i }));
 
     await waitFor(() => expect(client.setNextTurnWorkspaceScope)
       .toHaveBeenCalledWith("next-turn-chat", expect.objectContaining({
@@ -600,10 +645,7 @@ describe("ThreadShell next-turn container lock", () => {
     }));
 
     await user.click(screen.getByRole("button", { name: "Working in: alpha" }));
-    fireEvent.change(await screen.findByLabelText("Paste path"), {
-      target: { value: FOLDER_B.project_path },
-    });
-    await user.click(screen.getByRole("button", { name: "Use folder" }));
+    await user.click(await screen.findByRole("button", { name: /beta/i }));
     await waitFor(() => expect(client.setNextTurnWorkspaceScope).toHaveBeenCalled());
 
     // Turn A ends naturally while B's acknowledgement is still in flight.
@@ -665,10 +707,7 @@ describe("ThreadShell next-turn container lock", () => {
     }));
 
     await user.click(screen.getByRole("button", { name: "Working in: alpha" }));
-    fireEvent.change(await screen.findByLabelText("Paste path"), {
-      target: { value: FOLDER_B.project_path },
-    });
-    await user.click(screen.getByRole("button", { name: "Use folder" }));
+    await user.click(await screen.findByRole("button", { name: /beta/i }));
     await waitFor(() => expect(client.setNextTurnWorkspaceScope).toHaveBeenCalled());
 
     act(() => client._emitChat("next-turn-chat", {
@@ -811,10 +850,7 @@ describe("ThreadShell next-turn container lock", () => {
 
     // Pick folder B while turn A is running; its ack stays held.
     await user.click(screen.getByRole("button", { name: "Working in: alpha" }));
-    fireEvent.change(await screen.findByLabelText("Paste path"), {
-      target: { value: FOLDER_B.project_path },
-    });
-    await user.click(screen.getByRole("button", { name: "Use folder" }));
+    await user.click(await screen.findByRole("button", { name: /beta/i }));
     await waitFor(() => expect(client.setNextTurnWorkspaceScope).toHaveBeenCalledTimes(1));
 
     // Queue a prompt and click Steer: must send immediately without awaiting beta's ack.

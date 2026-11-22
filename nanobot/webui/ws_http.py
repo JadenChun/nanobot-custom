@@ -17,6 +17,7 @@ import mimetypes
 import re
 import shutil
 import subprocess
+import sys
 import threading
 import time
 from collections.abc import Awaitable, Callable, Mapping, Sequence
@@ -587,6 +588,8 @@ class GatewayHTTPHandler:
     ) -> None:
         self.config = config
         self.session_manager = session_manager
+        self._desktop_notification_lock = threading.Lock()
+        self._desktop_notification_ids: dict[str, int] = {}
         self.static_dist_path = static_dist_path
         self.runtime_model_name = runtime_model_name
         self.bus = bus
@@ -2949,25 +2952,57 @@ class GatewayHTTPHandler:
         query = _request_query(request)
         title = (query.get("title") or ["Kohaku"])[0].strip()[:120] or "Kohaku"
         body = (query.get("body") or [""])[0].strip()[:500]
+        sound = (query.get("sound") or ["true"])[0] == "true"
+        tag = (query.get("tag") or [""])[0].strip()[:256]
+        command = shutil.which("notify-send")
+        apple_command = shutil.which("osascript") if command is None and sys.platform == "darwin" else None
+        if (query.get("checkOnly") or ["false"])[0] == "true":
+            return _http_json_response({"available": bool(command or apple_command)})
         if not body:
             return _http_error(400, "missing notification body")
-        command = shutil.which("notify-send")
-        if command is None:
-            return _http_error(503, "desktop notifications unavailable")
-        notification_command = [command, "--app-name=Kohaku"]
-        if self.static_dist_path is not None:
-            icon_path = self.static_dist_path / "brand" / "nanobot_icon_192.png"
-            if icon_path.is_file():
-                notification_command.extend(["--icon", str(icon_path)])
-        notification_command.extend([title, body])
-        try:
-            completed = await asyncio.to_thread(
-                subprocess.run,
-                notification_command,
-                capture_output=True,
-                check=False,
-                timeout=5,
+        if command:
+            notification_command = [command, "--app-name=Kohaku", "--category=im.received"]
+            if tag:
+                notification_command.append(f"--hint=string:x-canonical-private-synchronous:{tag}")
+            notification_command.append(
+                "--hint=string:sound-name:complete" if sound else "--hint=boolean:suppress-sound:true"
             )
+            if self.static_dist_path is not None:
+                icon_path = self.static_dist_path / "brand" / "nanobot_icon_192.png"
+                if icon_path.is_file():
+                    notification_command.extend(["--icon", str(icon_path)])
+            notification_command.extend(["--", title, body])
+        elif apple_command:
+            script = "on run argv\ndisplay notification (item 2 of argv) with title (item 1 of argv)\nend run"
+            notification_command = [apple_command, "-e", script, "--", title, body]
+        else:
+            return _http_error(503, "desktop notifications unavailable")
+        def send() -> subprocess.CompletedProcess[bytes]:
+            if not (command and tag):
+                return subprocess.run(notification_command, capture_output=True, check=False, timeout=5)
+            # Notification servers can ignore vendor hints. Reuse the actual
+            # server ID and serialize replacements for simultaneous completions.
+            with self._desktop_notification_lock:
+                options = ["--print-id"]
+                previous = self._desktop_notification_ids.get(tag)
+                if previous:
+                    options.append(f"--replace-id={previous}")
+                args = [command, *options, *notification_command[1:]]
+                result = subprocess.run(args, capture_output=True, check=False, timeout=5)
+                if result.returncode != 0:
+                    # Older notify-send versions reject the notification ID options.
+                    self._desktop_notification_ids.pop(tag, None)
+                    return subprocess.run(notification_command, capture_output=True, check=False, timeout=5)
+                value = result.stdout.strip()
+                if value.isdigit():
+                    self._desktop_notification_ids.pop(tag, None)
+                    self._desktop_notification_ids[tag] = int(value)
+                    if len(self._desktop_notification_ids) > 256:
+                        del self._desktop_notification_ids[next(iter(self._desktop_notification_ids))]
+                return result
+
+        try:
+            completed = await asyncio.to_thread(send)
         except (OSError, subprocess.SubprocessError):
             self._log.warning("desktop notification command failed", exc_info=True)
             return _http_error(500, "notification failed")
@@ -2977,6 +3012,8 @@ class GatewayHTTPHandler:
                 completed.returncode,
             )
             return _http_error(500, "notification failed")
+        if "sound" in query:
+            return _http_json_response({"ok": True, "nativeSound": bool(command and sound)})
         return _http_json_response({"ok": True})
 
     async def _handle_workspace_access_action(
@@ -3672,6 +3709,11 @@ class GatewayHTTPHandler:
         except ValueError:
             return _http_error(403, "Forbidden")
         if not candidate.is_file():
+            # Hashed Vite assets under /assets/ must 404 when absent (e.g. after
+            # a rebuild replaces old chunks) rather than serving index.html with
+            # text/html, which causes confusing MIME errors on dynamic imports.
+            if rel.startswith("assets/"):
+                return _http_error(404, "Not Found")
             index = self.static_dist_path / "index.html"
             if index.is_file():
                 candidate = index

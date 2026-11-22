@@ -7,8 +7,6 @@
  * builds, background-start restrictions, or an exhausted dataSync quota must
  * never interfere with chat.
  */
-import { readLocalPreferences } from "@/lib/local-preferences";
-
 interface MobileRunKeepAliveBridge {
   start?: (chatId: string) => Promise<void> | void;
   stop?: (chatId?: string) => Promise<void> | void;
@@ -27,7 +25,6 @@ function mobileBridge(): MobileRunKeepAliveBridge | undefined {
 
 export function startMobileRunKeepAlive(chatId: string): void {
   if (typeof window === "undefined") return;
-  if (!readLocalPreferences().browserNotifications) return;
   const bridge = mobileBridge();
   if (!bridge?.start) return;
   try {

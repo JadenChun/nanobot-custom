@@ -5,6 +5,7 @@ import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.net.Uri;
+import android.os.Build;
 import android.os.Bundle;
 import android.os.SystemClock;
 import android.webkit.WebView;
@@ -28,6 +29,7 @@ public class MainActivity extends BridgeActivity {
     private static final long EXIT_CONFIRM_WINDOW_MS = 2000;
     private static final String PERMISSION_PREFERENCES = "kohaku_native_permissions";
     private static final String INITIAL_MICROPHONE_REQUESTED = "initial_microphone_request_requested";
+    private static final String INITIAL_NOTIFICATION_REQUESTED = "initial_notification_request_requested";
     private static final String[] MICROPHONE_PERMISSIONS = {
         Manifest.permission.RECORD_AUDIO,
         Manifest.permission.MODIFY_AUDIO_SETTINGS
@@ -90,13 +92,35 @@ public class MainActivity extends BridgeActivity {
 
     private void requestInitialMicrophonePermission() {
         SharedPreferences preferences = getSharedPreferences(PERMISSION_PREFERENCES, MODE_PRIVATE);
-        if (preferences.getBoolean(INITIAL_MICROPHONE_REQUESTED, false)) {
+        boolean micRequested = preferences.getBoolean(INITIAL_MICROPHONE_REQUESTED, false);
+        boolean notificationRequested =
+            Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU
+                || preferences.getBoolean(INITIAL_NOTIFICATION_REQUESTED, false)
+                || ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS)
+                    == PackageManager.PERMISSION_GRANTED;
+        if (micRequested && notificationRequested) {
             return;
         }
-        if (!preferences.edit().putBoolean(INITIAL_MICROPHONE_REQUESTED, true).commit()) {
+        List<String> toRequest = new ArrayList<>();
+        SharedPreferences.Editor editor = preferences.edit();
+        if (!micRequested) {
+            editor.putBoolean(INITIAL_MICROPHONE_REQUESTED, true);
+            for (String permission : MICROPHONE_PERMISSIONS) {
+                if (ContextCompat.checkSelfPermission(this, permission)
+                        != PackageManager.PERMISSION_GRANTED) {
+                    toRequest.add(permission);
+                }
+            }
+        }
+        if (!notificationRequested && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            editor.putBoolean(INITIAL_NOTIFICATION_REQUESTED, true);
+            toRequest.add(Manifest.permission.POST_NOTIFICATIONS);
+        }
+        if (!editor.commit() || toRequest.isEmpty() || microphonePermissionRequestInFlight) {
             return;
         }
-        requestMicrophonePermission(null);
+        microphonePermissionRequestInFlight = true;
+        microphonePermissionLauncher.launch(toRequest.toArray(new String[0]));
     }
 
     private void requestMicrophonePermission(Consumer<Boolean> callback) {

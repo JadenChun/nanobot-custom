@@ -194,10 +194,23 @@ class CustodyStore(context: Context) {
         return record
     }
 
+    @Volatile private var cachedRecord: CustodyRecord? = null
+    @Volatile private var cachedModTime: Long = -1L
+    @Volatile private var cachedLength: Long = -1L
+
     @Synchronized
     fun load(): CustodyRecord? {
         if (!recordFile.exists()) {
+            cachedRecord = null
+            cachedModTime = -1L
+            cachedLength = -1L
             return null
+        }
+        val modTime = recordFile.lastModified()
+        val length = recordFile.length()
+        val hit = cachedRecord
+        if (hit != null && modTime == cachedModTime && length == cachedLength) {
+            return hit
         }
         val bytes = recordFile.readBytes()
         if (bytes.size < 6 || String(bytes, 0, 4, Charsets.US_ASCII) != MAGIC) {
@@ -224,11 +237,15 @@ class CustodyStore(context: Context) {
         return try {
             val record = CustodyRecord.fromJson(JSONObject(String(plaintext, Charsets.UTF_8)))
             // An older app could write credentials before settling the pending setup.
-            if (record.pendingPairingOrigin.isNotBlank()) {
+            val resolved = if (record.pendingPairingOrigin.isNotBlank()) {
                 record.copy(accessToken = "", refreshToken = "", accessExpiresAt = 0, refreshExpiresAt = 0)
             } else {
                 record
             }
+            cachedRecord = resolved
+            cachedModTime = modTime
+            cachedLength = length
+            resolved
         } catch (exception: CustodyUnknownVersionException) {
             throw exception
         } catch (exception: Exception) {
@@ -265,6 +282,9 @@ class CustodyStore(context: Context) {
             throw CustodyException("custody record could not be replaced atomically")
         }
         syncDirectory()
+        cachedRecord = null
+        cachedModTime = -1L
+        cachedLength = -1L
     }
 
     @Synchronized
@@ -532,6 +552,9 @@ class CustodyStore(context: Context) {
             purgeNetworkState(appContext, it)
         }
         recordFile.delete()
+        cachedRecord = null
+        cachedModTime = -1L
+        cachedLength = -1L
         File(custodyDir, "record.tmp").delete()
         pendingInstallationFile().delete()
         try {

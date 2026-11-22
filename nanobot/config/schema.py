@@ -865,6 +865,35 @@ def _lazy_default(module_path: str, class_name: str) -> Any:
     return getattr(module, class_name)()
 
 
+PermissionAction = Literal["allow", "ask", "deny"]
+PermissionProfile = Literal["autonomous", "balanced", "strict"]
+
+
+class ToolPermissionsConfig(Base):
+    """Declarative tool action permissions (Codex/OpenCode-inspired).
+
+    - ``autonomous`` (default): All local workspace edits and shell commands run
+      autonomously inside the active Sandbox / workspace boundary without
+      interactive approval prompts. Hard invariants (sandbox/path containment,
+      SSRF, read-only subagents, unconfined nested ``--yolo`` refusal, and
+      explicit ``deny`` rules) remain enforced silently.
+    - ``balanced``: Local workspace edits and local shell commands run
+      autonomously; external or OS-level mutations (``desktop_use``,
+      ``agent_device``, ``agent_browser`` mutations, external ``git push`` /
+      ``publish`` / ``kubectl`` / DB drops, and confined reduced-protection
+      nested launches) ask for approval.
+    - ``strict``: Legacy behavior — asks on large file overwrites/edits,
+      ``replace_all``, destructive local/external shell commands, ``cron``,
+      and external mutations.
+
+    ``rules`` supports per-tool or pattern-scoped overrides
+    (``"allow"`` | ``"ask"`` | ``"deny"``), evaluated last-match-wins.
+    """
+
+    profile: PermissionProfile = "autonomous"
+    rules: dict[str, PermissionAction | dict[str, PermissionAction]] = Field(default_factory=dict)
+
+
 class ToolsConfig(Base):
     """Tools configuration.
 
@@ -914,6 +943,7 @@ class ToolsConfig(Base):
     # 0 = no quota. Quota cleanup never deletes referenced assets.
     generated_media_max_bytes: int = Field(default=0, ge=0)
     restrict_to_workspace: bool = False  # policy intent: keep tool access inside workspace when possible
+    permissions: ToolPermissionsConfig = Field(default_factory=ToolPermissionsConfig)
     webui_allow_local_service_access: bool = Field(
         default=True,
         validation_alias=AliasChoices(

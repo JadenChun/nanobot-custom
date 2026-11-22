@@ -267,6 +267,31 @@ async def _health_server(
         await server.serve_forever()
 
 
+async def _publish_gateway_identity_when_ready(
+    channels: Any,
+    shutdown: asyncio.Event,
+    publish: Callable[[], None],
+    *,
+    poll_interval_s: float = 0.025,
+) -> None:
+    """Publish desktop gateway identity only once required channels are ready.
+
+    Publishing owner ports while the WebSocket listener is still starting clears
+    the provisional starting state prematurely, causing the desktop adapter's
+    status poll to observe ``ready=False`` and flash a transient
+    ``gateway_unavailable`` error right before opening chat.
+    """
+    while not shutdown.is_set():
+        ready, _payload = _gateway_readiness_payload(channels)
+        if ready:
+            publish()
+            return
+        try:
+            await asyncio.wait_for(shutdown.wait(), timeout=poll_interval_s)
+        except asyncio.TimeoutError:
+            pass
+
+
 async def _close_gateway_runtime(
     handle: RuntimeHandle,
     composition: RuntimeComposition,
@@ -496,6 +521,7 @@ def _run_gateway(
         assert channels is not None
         tasks: list[asyncio.Task[Any]] = []
         local_trigger_task: asyncio.Task[None] | None = None
+        identity_publish_task: asyncio.Task[None] | None = None
         shutdown = asyncio.Event()
         processes = None
         cron_gateway = None
@@ -649,14 +675,32 @@ def _run_gateway(
                     ):
                         websocket_ports = (websocket_port,)
                 def publish_gateway_identity(actual_port: int) -> None:
-                    if isinstance(gateway_id, str) and gateway_id and websocket_ports:
+                    nonlocal identity_publish_task
+                    if not (isinstance(gateway_id, str) and gateway_id and websocket_ports):
+                        return
+                    resolved_gateway_id = gateway_id
+
+                    def _publish() -> None:
                         gateway_runtime.publish_desktop_gateway_identity(
-                            gateway_id,
+                            resolved_gateway_id,
                             __version__,
                             "managed-gateway-v1",
                             sys.executable,
                             actual_port,
                             websocket_ports,
+                        )
+
+                    ready, _payload = _gateway_readiness_payload(channels)
+                    if ready:
+                        _publish()
+                        return
+                    if identity_publish_task is None or identity_publish_task.done():
+                        identity_publish_task = asyncio.create_task(
+                            _publish_gateway_identity_when_ready(
+                                channels,
+                                shutdown,
+                                _publish,
+                            )
                         )
                 tasks.extend([
                     asyncio.create_task(
@@ -717,6 +761,14 @@ def _run_gateway(
             primary_error = exc
             raise
         finally:
+            if identity_publish_task is not None and not identity_publish_task.done():
+                identity_publish_task.cancel()
+                try:
+                    await identity_publish_task
+                except asyncio.CancelledError:
+                    pass
+                except BaseException as exc:
+                    record_cleanup_error(exc)
             if local_trigger_task is not None and not local_trigger_task.done():
                 # Stop queue admission before waiting for other runtime owners.
                 local_trigger_task.cancel()

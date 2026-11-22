@@ -12,6 +12,7 @@ import { clearComposerDraftsForSession } from "@/lib/composer-drafts";
 import { Eye, EyeOff, Moon, ShieldCheck, Sun, X } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { channelUiPresentation } from "@/channel-plugins/registry";
+import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { Sidebar } from "@/components/Sidebar";
 import type { SidebarDeleteItem } from "@/components/ChatList";
 import type { SettingsSectionKey } from "@/components/settings/SettingsView";
@@ -24,7 +25,7 @@ import { useMobileBack } from "@/hooks/useMobileBack";
 import { useSessions } from "@/hooks/useSessions";
 import { useDeferredTitleRefresh } from "@/hooks/useDeferredTitleRefresh";
 import { useSidebarState } from "@/hooks/useSidebarState";
-import { isMobileRuntimeActive, mobileOwnerCapability } from "@/lib/mobile-runtime";
+import { getMobileRuntime, isMobileRuntimeActive, mobileOwnerCapability } from "@/lib/mobile-runtime";
 import { useSkillsCatalog } from "@/hooks/useSkills";
 import { useLogoFallback } from "@/hooks/useLogoFallback";
 import { usePageVisibility } from "@/hooks/usePageVisibility";
@@ -48,6 +49,7 @@ import { ClientProvider, useClient } from "@/providers/ClientProvider";
 import type {
   BootstrapResponse,
   ChatSummary,
+  ConnectionStatus,
   RuntimeSurface,
   PairingRequestInfo,
   SessionAutomationJob,
@@ -295,15 +297,12 @@ function writeShellRoute(route: ShellRoute, replace = false): void {
   if (typeof window === "undefined") return;
   const nextHash = shellRouteHash(route);
   if (window.location.hash === nextHash) return;
+  const nextUrl = `${window.location.pathname}${window.location.search}${nextHash}`;
   if (replace) {
-    window.history.replaceState(
-      null,
-      "",
-      `${window.location.pathname}${window.location.search}${nextHash}`,
-    );
+    window.history.replaceState(null, "", nextUrl);
     return;
   }
-  window.location.hash = nextHash;
+  window.history.pushState(null, "", nextUrl);
 }
 
 function bootstrapTokenExpiresAt(expiresInSeconds: number): number {
@@ -841,8 +840,14 @@ export default function App() {
               try {
                 const refreshed = await refreshReadyClient(client, runtimeSurface);
                 return refreshed.url;
-              } catch {
-                return null;
+              } catch (e) {
+                if (
+                  isBootstrapAuthRequired(e) ||
+                  (e instanceof Error && /handshake_status_401\b/.test(e.message))
+                ) {
+                  return null;
+                }
+                throw e;
               }
             },
           });
@@ -917,14 +922,35 @@ export default function App() {
     );
   }
   if (state.status === "error") {
+    const mobileActive = isMobileRuntimeActive();
+    const mobileLogout = getMobileRuntime()?.transport.logout;
     return (
       <div className="flex h-full w-full items-center justify-center px-4 text-center">
         <div className="flex max-w-md flex-col items-center gap-3">
           <p className="text-lg font-semibold">{t("app.error.title")}</p>
           <p className="text-sm text-muted-foreground">{state.message}</p>
-          <p className="text-xs text-muted-foreground">
-            {t("app.error.gatewayHint")}
-          </p>
+          {!mobileActive ? (
+            <p className="text-xs text-muted-foreground">
+              {t("app.error.gatewayHint")}
+            </p>
+          ) : null}
+          <div className="mt-1 flex flex-wrap items-center justify-center gap-2">
+            <Button
+              type="button"
+              onClick={() => bootstrapWithSecret(bootstrapSecretRef.current || loadSavedSecret())}
+            >
+              {t("common.retry", { defaultValue: "Retry" })}
+            </Button>
+            {mobileActive && mobileLogout ? (
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => void mobileLogout()}
+              >
+                {t("app.account.unpair", { defaultValue: "Unpair / Switch server" })}
+              </Button>
+            ) : null}
+          </div>
         </div>
       </div>
     );
@@ -935,6 +961,13 @@ export default function App() {
       state.client.close();
     }
     clearSavedSecret();
+    if (isMobileRuntimeActive()) {
+      const mobileLogout = getMobileRuntime()?.transport.logout;
+      if (mobileLogout) {
+        void mobileLogout();
+        return;
+      }
+    }
     setState({ status: "auth" });
   };
 
@@ -994,7 +1027,6 @@ function Shell({
   const { t, i18n } = useTranslation();
   const { client, getToken } = useClient();
   const { theme, toggle } = useTheme();
-  useTaskNotifications();
   const {
     sessions,
     loading,
@@ -1017,6 +1049,13 @@ function Shell({
   );
   const [view, setView] = useState<ShellView>(initialRouteRef.current.view);
   const [temporarySessions, setTemporarySessions] = useState<Record<string, ChatSummary>>({});
+  useTaskNotifications(useCallback((chatId: string) => {
+    const key = `websocket:${chatId}`;
+    return {
+      temporary: !!temporarySessions[key],
+      threadTitle: sidebarState.title_overrides[key] || sessions.find((s) => s.key === key)?.title,
+    };
+  }, [sessions, sidebarState.title_overrides, temporarySessions]));
   const [temporaryChatEnabled, setTemporaryChatEnabled] = useState(false);
   const [settingsInitialSection, setSettingsInitialSection] =
     useState<SettingsSectionKey>(initialRouteRef.current.settingsSection);
@@ -1072,7 +1111,7 @@ function Shell({
   const temporarySessionsRef = useRef<Record<string, ChatSummary>>({});
   const effectiveRuntimeSurface =
     settingsSnapshot?.surface ?? settingsSnapshot?.runtime_surface ?? runtimeSurface;
-  const showHostChrome = isNativeRuntime(effectiveRuntimeSurface);
+  const showHostChrome = !isMobileRuntimeActive() && isNativeRuntime(effectiveRuntimeSurface);
   const showMainSidebar = view !== "settings";
   const activeTemporarySession = activeKey ? temporarySessions[activeKey] ?? null : null;
   const temporaryChatId = activeTemporarySession?.chatId ?? null;
@@ -1111,7 +1150,11 @@ function Shell({
       }
     };
     window.addEventListener("hashchange", applyRoute);
-    return () => window.removeEventListener("hashchange", applyRoute);
+    window.addEventListener("popstate", applyRoute);
+    return () => {
+      window.removeEventListener("hashchange", applyRoute);
+      window.removeEventListener("popstate", applyRoute);
+    };
   }, []);
 
   useEffect(() => {
@@ -1209,6 +1252,7 @@ function Shell({
 
   useEffect(() => {
     if (!pageVisible) return undefined;
+    if (isMobileRuntimeActive() && !mobileOwnerCapability()) return undefined;
 
     let disposed = false;
     let timer: number | null = null;
@@ -1435,6 +1479,18 @@ function Shell({
   }, []);
 
   useMobileBack(useCallback(() => {
+    if (pendingDelete) {
+      setPendingDelete(null);
+      return true;
+    }
+    if (pendingRename) {
+      setPendingRename(null);
+      return true;
+    }
+    if (pendingProjectRename) {
+      setPendingProjectRename(null);
+      return true;
+    }
     if (sessionSearchOpen) {
       setSessionSearchOpen(false);
       return true;
@@ -1444,11 +1500,11 @@ function Shell({
       return true;
     }
     if (view !== "chat") {
-      setView("chat");
+      navigate({ view: "chat", activeKey, settingsSection: "overview" }, { replace: true });
       return true;
     }
     return false;
-  }, [mobileSidebarOpen, sessionSearchOpen, view]));
+  }, [activeKey, mobileSidebarOpen, navigate, pendingDelete, pendingProjectRename, pendingRename, sessionSearchOpen, view]));
 
   const toggleSidebar = useCallback(() => {
     const isNativeHost =
@@ -1893,7 +1949,7 @@ function Shell({
   }, [activeKey, navigate]);
 
   const onSettingsIntent = useCallback(() => {
-    void loadSettingsView();
+    void loadSettingsView().catch(() => {});
   }, []);
 
   const onOpenModelSettings = useCallback(() => {
@@ -1993,6 +2049,36 @@ function Shell({
         return next;
       });
     });
+  }, [client]);
+
+  const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>(client.status);
+
+  useEffect(() => {
+    return client.onStatus(setConnectionStatus);
+  }, [client]);
+
+  useEffect(() => {
+    const reviveIfDisconnected = () => {
+      if (document.visibilityState !== "visible") return;
+      if (client.status === "error" || client.status === "closed") {
+        void client.retry();
+      }
+    };
+    const reviveOnOnline = () => {
+      if (client.status === "error" || client.status === "closed") {
+        void client.retry();
+      }
+    };
+    document.addEventListener("visibilitychange", reviveIfDisconnected);
+    window.addEventListener("pageshow", reviveIfDisconnected);
+    window.addEventListener("online", reviveOnOnline);
+    window.addEventListener("nanobot-native-resume", reviveOnOnline);
+    return () => {
+      document.removeEventListener("visibilitychange", reviveIfDisconnected);
+      window.removeEventListener("pageshow", reviveIfDisconnected);
+      window.removeEventListener("online", reviveOnOnline);
+      window.removeEventListener("nanobot-native-resume", reviveOnOnline);
+    };
   }, [client]);
 
   useEffect(() => {
@@ -2276,7 +2362,7 @@ function Shell({
         )}
       >
         <MobileConnectionNotice
-          status={client.status}
+          status={connectionStatus}
           onRetry={() => void client.retry()}
         />
         {showHostChrome ? (
@@ -2360,17 +2446,23 @@ function Shell({
           ) : null}
 
           {sessionSearchOpen ? (
-            <Suspense fallback={null}>
-              <SessionSearchDialog
-                open
-                onOpenChange={setSessionSearchOpen}
-                sessions={topicSessions}
-                activeKey={activeKey}
-                loading={loading}
-                titleOverrides={sidebarState.title_overrides}
-                onSelect={onSelectSearchResult}
-              />
-            </Suspense>
+            <ErrorBoundary
+              resetKeys={[sessionSearchOpen]}
+              fallback={() => null}
+              onError={() => setSessionSearchOpen(false)}
+            >
+              <Suspense fallback={null}>
+                <SessionSearchDialog
+                  open
+                  onOpenChange={setSessionSearchOpen}
+                  sessions={topicSessions}
+                  activeKey={activeKey}
+                  loading={loading}
+                  titleOverrides={sidebarState.title_overrides}
+                  onSelect={onSelectSearchResult}
+                />
+              </Suspense>
+            </ErrorBoundary>
           ) : null}
         <main
           className={cn(
@@ -2419,6 +2511,7 @@ function Shell({
                 workspaces={workspaces}
                 onRefreshWorkspaces={refreshWorkspaces}
                 workspaceError={workspaceError}
+                onDismissWorkspaceError={() => setWorkspaceError(null)}
                 onWorkspaceScopeChange={applyWorkspaceScope}
                 onWorkspaceScopeAcknowledged={(scope) => {
                   if (activeChatId) acknowledgeWorkspaceScope(activeChatId, scope);
@@ -2430,72 +2523,96 @@ function Shell({
             </div>
             {view !== "chat" && (
               <div className="absolute inset-0 flex flex-col">
-                <Suspense fallback={<SurfaceLoadingFallback />}>
-                  <SettingsView
-                    theme={theme}
-                    initialSection={settingsInitialSection}
-                    initialSettings={settingsSnapshot}
-                    workspaces={workspaces}
-                    onRefreshWorkspaces={refreshWorkspaces}
-                    onPickWorkspaceFolder={workspaces?.controls.can_pick_folder ? pickWorkspaceFolder : undefined}
-                    showSidebar={view === "settings"}
-                    onToggleTheme={toggle}
-                    onBackToChat={onBackToChat}
-                    onModelNameChange={onModelNameChange}
-                    onSettingsChange={applySettingsSnapshot}
-                    skills={skills}
-                    skillsCatalogComplete={skillCatalog.catalog_complete}
-                    skillsCatalogNotice={skillCatalog.catalog_notice}
-                    skillsCatalogLoading={skillCatalog.loading}
-                    skillsCatalogError={skillCatalog.error}
-                    onRetrySkillsCatalog={skillCatalog.refresh}
-                    onSectionChange={onSettingsSectionChange}
-                    onLogout={onLogout}
-                    onRestart={onRestart}
-                    onNativeEngineRestart={onNativeEngineRestart}
-                    isRestarting={isRestarting}
-                    hostChromeInset={showHostChrome}
-                  />
-                </Suspense>
+                <ErrorBoundary
+                  resetKeys={[view, settingsInitialSection]}
+                  onBack={onBackToChat}
+                  backLabel={t("settings.backToChat")}
+                >
+                  <Suspense fallback={<SurfaceLoadingFallback />}>
+                    <SettingsView
+                      theme={theme}
+                      initialSection={settingsInitialSection}
+                      initialSettings={settingsSnapshot}
+                      workspaces={workspaces}
+                      onRefreshWorkspaces={refreshWorkspaces}
+                      onPickWorkspaceFolder={workspaces?.controls.can_pick_folder ? pickWorkspaceFolder : undefined}
+                      showSidebar={view === "settings"}
+                      onToggleTheme={toggle}
+                      onBackToChat={onBackToChat}
+                      onModelNameChange={onModelNameChange}
+                      onSettingsChange={applySettingsSnapshot}
+                      skills={skills}
+                      skillsCatalogComplete={skillCatalog.catalog_complete}
+                      skillsCatalogNotice={skillCatalog.catalog_notice}
+                      skillsCatalogLoading={skillCatalog.loading}
+                      skillsCatalogError={skillCatalog.error}
+                      onRetrySkillsCatalog={skillCatalog.refresh}
+                      onSectionChange={onSettingsSectionChange}
+                      onLogout={onLogout}
+                      onRestart={onRestart}
+                      onNativeEngineRestart={onNativeEngineRestart}
+                      isRestarting={isRestarting}
+                      hostChromeInset={showHostChrome}
+                    />
+                  </Suspense>
+                </ErrorBoundary>
               </div>
             )}
           </main>
         </div>
 
         {pendingDelete ? (
-          <Suspense fallback={null}>
-            <DeleteConfirm
-              open
-              title={pendingDelete.items[0]?.label ?? ""}
-              count={pendingDelete.items.length}
-              automations={pendingDelete.automations}
-              onCancel={() => setPendingDelete(null)}
-              onConfirm={onConfirmDelete}
-            />
-          </Suspense>
+          <ErrorBoundary
+            resetKeys={[pendingDelete]}
+            fallback={() => null}
+            onError={() => setPendingDelete(null)}
+          >
+            <Suspense fallback={null}>
+              <DeleteConfirm
+                open
+                title={pendingDelete.items[0]?.label ?? ""}
+                count={pendingDelete.items.length}
+                automations={pendingDelete.automations}
+                onCancel={() => setPendingDelete(null)}
+                onConfirm={onConfirmDelete}
+              />
+            </Suspense>
+          </ErrorBoundary>
         ) : null}
         {pendingRename ? (
-          <Suspense fallback={null}>
-            <RenameChatDialog
-              open
-              title={pendingRename.label}
-              onCancel={() => setPendingRename(null)}
-              onConfirm={onConfirmRename}
-            />
-          </Suspense>
+          <ErrorBoundary
+            resetKeys={[pendingRename]}
+            fallback={() => null}
+            onError={() => setPendingRename(null)}
+          >
+            <Suspense fallback={null}>
+              <RenameChatDialog
+                open
+                title={pendingRename.label}
+                onCancel={() => setPendingRename(null)}
+                onConfirm={onConfirmRename}
+              />
+            </Suspense>
+          </ErrorBoundary>
         ) : null}
         {pendingProjectRename ? (
-          <Suspense fallback={null}>
-            <RenameChatDialog
-              open
-              title={pendingProjectRename.label}
-              dialogTitle={t("chat.renameProjectTitle")}
-              description={t("chat.renameProjectDescription")}
-              placeholder={t("chat.renameProjectPlaceholder")}
-              onCancel={() => setPendingProjectRename(null)}
-              onConfirm={onConfirmProjectRename}
-            />
-          </Suspense>
+          <ErrorBoundary
+            resetKeys={[pendingProjectRename]}
+            fallback={() => null}
+            onError={() => setPendingProjectRename(null)}
+          >
+            <Suspense fallback={null}>
+              <RenameChatDialog
+                open
+                title={pendingProjectRename.label}
+                dialogTitle={t("chat.renameProjectTitle")}
+                description={t("chat.renameProjectDescription")}
+                placeholder={t("chat.renameProjectPlaceholder")}
+                onCancel={() => setPendingProjectRename(null)}
+                onConfirm={onConfirmProjectRename}
+              />
+            </Suspense>
+          </ErrorBoundary>
         ) : null}
         {restartToast ? (
           <div className="fixed left-1/2 top-[calc(0.75rem+env(safe-area-inset-top))] z-50 flex w-[min(32rem,calc(100vw-1rem))] -translate-x-1/2 flex-col items-center gap-2">

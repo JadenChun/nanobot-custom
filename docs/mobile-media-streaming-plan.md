@@ -87,17 +87,14 @@ Two planes, with different rules.
 
 ### Mechanism decision
 
-Use a **loopback streaming proxy inside the Go broker** rather than
-`WebViewClient.shouldInterceptRequest` or a JNI read API:
-
-- No WebView internals to subclass (Capacitor owns `BridgeWebViewClient`).
-- Native HTTP semantics (Range, ETag, caching) come for free from the WebView.
-- One JNI surface (return the base URL), no per-chunk JNI traffic.
-- The proxy can only reach the allowlisted media route through the tsnet dialer.
-
-Security: bind `127.0.0.1` only, require a per-process random path token, accept
-only `GET`/`HEAD` for `/media/<sig>/<payload>`, forward only allowlisted headers,
-and never proxy arbitrary URLs.
+The packaged Android app uses the same signed media URLs as the desktop app.
+The WebView intercepts those URLs and reads bytes from the Go broker through JNI.
+The broker forwards byte ranges to the authenticated mobile gateway.
+The gateway limits each media response to 8 MiB.
+For a request that exceeds this limit, the broker joins successive ranges into one stream.
+The WebView receives the media type and byte count for the complete request.
+For a range request, the response also includes the requested range.
+The interceptor accounts for the seek that the WebView applies to the response stream.
 
 ## 5. Work packages
 
@@ -245,7 +242,7 @@ reverting the plugin method and `mobile-media.ts` together.
 | P2 projection budget | implemented (`nanobot/webui/ws_http.py`, `THREAD_PROJECTION_BUDGET_BYTES`) |
 | P3 media streaming core | implemented (`mobile/native-network/internal/broker/media.go`, C ABI + JNI) |
 | P4 same-origin intercept | implemented (`NativeMediaInterceptor.kt`, `NanobotWebViewClient.java`, direct media URLs in the WebUI) |
-| P5 cap → safety ceiling | implemented (64 MiB, `nanobot/remote/edge.py`) |
+| P5 media response limit | 8 MiB per gateway response, with range assembly in the broker |
 | P9 loading placeholder | implemented |
 | P8 device cache | implemented in the core (LRU, 512 MiB, purge on logout/revocation); hit-ratio metrics pending |
 | On-device verification | **done for the session/media path** (see below); video seek and the loading placeholder still need a visual check |

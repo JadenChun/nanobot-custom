@@ -80,6 +80,12 @@ def _provider_spec_for_config(
     provider_config: ProviderConfig | None,
 ) -> ProviderSpec | None:
     spec = find_by_name(provider_name)
+    if spec is None and provider_config is not None and provider_config.api_base:
+        return create_dynamic_spec(
+            provider_name,
+            display_name=provider_config.display_name or "",
+            thinking_style=provider_config.thinking_style or "",
+        )
     if (
         spec is not None
         and spec.name == "orcarouter"

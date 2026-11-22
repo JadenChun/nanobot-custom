@@ -8,9 +8,16 @@ const bootstrapSource = readFileSync(
   "utf8",
 );
 const androidRoot = resolve(process.cwd(), "../mobile/android/app/src/main");
-const notificationVectorPath = resolve(
-  androidRoot,
-  "res/drawable/ic_stat_nanobot.xml",
+const notificationSmallDensities = [
+  ["res/drawable-mdpi/ic_stat_nanobot.png", 24],
+  ["res/drawable-hdpi/ic_stat_nanobot.png", 36],
+  ["res/drawable-xhdpi/ic_stat_nanobot.png", 48],
+  ["res/drawable-xxhdpi/ic_stat_nanobot.png", 72],
+  ["res/drawable-xxxhdpi/ic_stat_nanobot.png", 96],
+] as const;
+const canonicalBadgePath = resolve(
+  process.cwd(),
+  "public/brand/kohaku_notification_badge.png",
 );
 const notificationBitmapPath = resolve(
   androidRoot,
@@ -36,16 +43,20 @@ interface LocalNotification {
   smallIcon?: string;
   largeIcon?: string;
   schedule?: unknown;
+  extra?: { chatId: string };
+  channelId?: string;
 }
 
 interface LocalNotificationsPlugin {
+  createChannel?: (options: unknown) => Promise<void>;
+  addListener?: (name: string, listener: (action: { notification: LocalNotification }) => void) => Promise<void>;
   requestPermissions: () => Promise<{ display: string }>;
   schedule: (options: { notifications: LocalNotification[] }) => Promise<unknown>;
 }
 
 interface MobileNotificationBridge {
   requestPermission: () => Promise<boolean>;
-  notify: (options: { title: string; body: string }) => Promise<void>;
+  notify: (options: { title: string; body: string; chatId?: string; sound?: boolean }) => Promise<boolean | void>;
 }
 
 interface CapacitorWindow extends Window {
@@ -72,7 +83,7 @@ function installBootstrap(localNotifications?: LocalNotificationsPlugin): void {
         pairingIdentity: async () => ({ installationId: "phone-local-id" }),
         pendingPairingLink: async () => null,
       },
-      ...(localNotifications ? { LocalNotifications: localNotifications } : {}),
+      ...(localNotifications ? { LocalNotifications: { createChannel: async () => {}, addListener: async () => {}, ...localNotifications } } : {}),
     },
   };
   window.eval(bootstrapSource);
@@ -131,8 +142,32 @@ describe("mobile task notification bridge", () => {
     await expect(bridge?.requestPermission()).resolves.toBe(false);
     await expect(
       bridge?.notify({ title: "Task failed", body: "The task did not finish." }),
-    ).resolves.toBeUndefined();
+    ).resolves.toBe(false);
     expect(schedule).toHaveBeenCalledTimes(1);
+  });
+
+  it("posts alerts per thread, uses the sound setting, and opens the tapped chat", async () => {
+    const createChannel = vi.fn().mockResolvedValue(undefined);
+    const addListener = vi.fn().mockResolvedValue(undefined);
+    const schedule = vi.fn<LocalNotificationsPlugin["schedule"]>().mockResolvedValue({});
+    installBootstrap({ createChannel, addListener, schedule, requestPermissions: async () => ({ display: "granted" }) });
+    const bridge = window.nanobotMobileNotifications!;
+    for (const [chatId, sound] of [["chat-17", true], ["chat-17", false], ["chat-18", true]] as const) {
+      await bridge.notify!({ title: "Kohaku", body: "Task completed", chatId, sound });
+    }
+    expect(createChannel).toHaveBeenCalledWith(expect.objectContaining({ id: "kohaku_task_alerts", importance: 4, vibration: true }));
+    const [first, second, third] = schedule.mock.calls.map(([payload]) => payload.notifications[0]);
+    expect(first.id).toBeGreaterThan(0);
+    expect(first.id).toBeLessThan(2147483648);
+    expect(second.id).toBe(first.id);
+    expect(third.id).not.toBe(first.id);
+    expect(first.channelId).toBe("kohaku_task_alerts");
+    expect(second.channelId).toBe("kohaku_task_alerts_silent");
+    expect(first.extra).toEqual({ chatId: "chat-17" });
+    expect(addListener.mock.calls[0][0]).toBe("localNotificationActionPerformed");
+    addListener.mock.calls[0][1]({ notification: first });
+    expect(window.location.hash).toBe("#/chat/websocket%3Achat-17");
+    window.history.replaceState(null, "", "/");
   });
 
   it("does not install a notification bridge without the Capacitor plugin", () => {
@@ -142,33 +177,29 @@ describe("mobile task notification bridge", () => {
   });
 
   it("contains valid icon resources and points keepalive at the same small drawable", () => {
-    const hasVector = existsSync(notificationVectorPath);
     const hasBitmap = existsSync(notificationBitmapPath);
-    expect(hasVector).toBe(true);
     expect(hasBitmap).toBe(true);
     expect(keepAliveSource).toContain("R.drawable.ic_stat_nanobot");
     expect(keepAliveSource).not.toContain("android.R.drawable.stat_notify_sync");
-    if (!hasVector || !hasBitmap) return;
 
-    const vectorSource = readFileSync(notificationVectorPath, "utf8");
-    const parsed = new DOMParser().parseFromString(vectorSource, "application/xml");
-    const vector = parsed.documentElement;
-    expect(vector.localName).toBe("vector");
-    expect(vector.getAttribute("android:width")).toBe("24dp");
-    expect(vector.getAttribute("android:height")).toBe("24dp");
-    expect(vector.getAttribute("android:viewportWidth")).toBe("24");
-    expect(vector.getAttribute("android:viewportHeight")).toBe("24");
-    expect(vector.querySelectorAll("path").length).toBeGreaterThan(0);
-    for (const path of vector.querySelectorAll("path")) {
-      expect(path.getAttribute("android:fillColor")).toBe("#FFFFFFFF");
-      expect(path.getAttribute("android:pathData")).toBeTruthy();
+    const pngHeader = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
+    for (const [relativePath, expectedSize] of notificationSmallDensities) {
+      const iconPath = resolve(androidRoot, relativePath);
+      expect(existsSync(iconPath)).toBe(true);
+      const bytes = readFileSync(iconPath);
+      expect(bytes.subarray(0, 8)).toEqual(pngHeader);
+      expect(bytes.readUInt32BE(16)).toBe(expectedSize);
+      expect(bytes.readUInt32BE(20)).toBe(expectedSize);
     }
-    expect(vector.querySelector("path")?.getAttribute("android:fillType")).toBe("evenOdd");
+    expect(
+      readFileSync(resolve(androidRoot, "res/drawable-xxxhdpi/ic_stat_nanobot.png")),
+    ).toEqual(readFileSync(canonicalBadgePath));
 
+    if (!hasBitmap) return;
     const bitmap = readFileSync(notificationBitmapPath);
     const canonical = readFileSync(canonicalBitmapPath);
     expect(bitmap).toEqual(canonical);
-    expect(bitmap.subarray(0, 8)).toEqual(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
+    expect(bitmap.subarray(0, 8)).toEqual(pngHeader);
     expect(bitmap.readUInt32BE(16)).toBe(192);
     expect(bitmap.readUInt32BE(20)).toBe(192);
   });

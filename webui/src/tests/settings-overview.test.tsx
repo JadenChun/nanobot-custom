@@ -18,6 +18,24 @@ describe("Settings overview and appearance", () => {
   installSettingsViewTestHooks();
 
 
+  it("shows permission denial and sends a test through the mobile notifier", async () => {
+    const requestPermission = vi.fn().mockResolvedValueOnce(false).mockResolvedValue(true);
+    const notify = vi.fn().mockResolvedValue(true);
+    window.nanobotMobileNotifications = { requestPermission, notify };
+    try {
+      renderSettingsView({ initialSection: "overview", initialSettings: settingsPayload() });
+      const toggle = screen.getByRole("switch", { name: "Task notifications" });
+      expect(screen.queryByRole("button", { name: "Send test notification" })).toBeNull();
+      fireEvent.click(toggle);
+      expect(await screen.findByText("Allow notifications in your device or browser settings.")).toBeVisible();
+      fireEvent.click(toggle);
+      fireEvent.click(await screen.findByRole("switch", { name: "Notification sound" }));
+      fireEvent.click(screen.getByRole("button", { name: "Send test notification" }));
+      expect(notify).toHaveBeenCalledWith(expect.objectContaining({ sound: false }));
+      expect(await screen.findByText("Test notification sent.")).toBeVisible();
+    } finally { delete window.nanobotMobileNotifications; }
+  });
+
   it("offers the theme toggle in Appearance settings", () => {
     const onToggleTheme = vi.fn();
     render(

@@ -31,7 +31,12 @@ from nanobot.agent.context_governance import (
 from nanobot.agent.hook import AgentHook, AgentHookContext, AgentRunHookContext
 from nanobot.agent.policy import ToolPolicy
 from nanobot.agent.tools.base import ToolDenialKind
-from nanobot.agent.tools.execution import KnownToolResult, ToolResultCallback, execute_tool_calls
+from nanobot.agent.tools.execution import (
+    KnownToolResult,
+    ToolResultCallback,
+    execute_tool_calls,
+    strip_retry_hint,
+)
 from nanobot.agent.tools.registry import CapturedToolBindings, ToolRegistry
 from nanobot.agent.turn import ToolOutcome, TurnContext
 from nanobot.events import NO_EVENTS, EventSink
@@ -162,6 +167,13 @@ _MAX_EMPTY_RETRIES = 2
 _MAX_LENGTH_RECOVERIES = 3
 _MAX_INJECTIONS_PER_TURN = 3
 _MAX_INJECTION_CYCLES = 5
+_CONTEXT_REPO_EXEC_DENIAL_PREFIXES = (
+    "Error: Command blocked by resource policy (execution is disabled by context repo policy",
+    "Error: Command blocked by resource policy (managed_repository_policy:",
+    "Error: Command blocked by resource policy (protected context path referenced)",
+    "Error: Command blocked by resource policy (protected target repo path referenced)",
+    "Error: Command blocked by resource policy (target repo path requires a proposal)",
+)
 
 
 def _restore_outer_whitespace(content: str, original: str | None) -> str:
@@ -402,6 +414,10 @@ class AgentRunner:
         return False
 
     @staticmethod
+    def _is_context_repo_exec_denial_message(content: str) -> bool:
+        return content.startswith(_CONTEXT_REPO_EXEC_DENIAL_PREFIXES)
+
+    @staticmethod
     def _is_context_repo_exec_denial(
         tools: ToolRegistry,
         tool_calls: list[ToolCallRequest],
@@ -414,10 +430,7 @@ class AgentRunner:
         return (
             type(tools.get("exec")) is ExecTool
             and not terminal.policy_metadata
-            and str(terminal.content).startswith(
-                "Error: Command blocked by resource policy "
-                "(execution is disabled by context repo policy"
-            )
+            and AgentRunner._is_context_repo_exec_denial_message(str(terminal.content or ""))
             and any(result is terminal and call.name == "exec"
                     for call, result in zip(tool_calls, results))
         )
@@ -1195,7 +1208,6 @@ class AgentRunner:
                     and not any(
                         str(event.get("detail", "")).startswith((
                             "ssrf_violation: ",
-                            "workspace_violation: ",
                             "workspace_violation_escalated: ",
                         ))
                         for event in new_events
@@ -1376,10 +1388,9 @@ class AgentRunner:
                     if not unknown_rejection:
                         stop_reason = terminal.stop_reason or "policy_blocked"
                         policy_metadata = dict(terminal.policy_metadata)
-                        final_content = str(terminal.content or "")
-                        if stop_reason == "tool_error" and final_content.startswith(
-                            "Error: Command blocked by resource policy "
-                            "(execution is disabled by context repo policy"
+                        final_content = strip_retry_hint(str(terminal.content or ""))
+                        if stop_reason == "tool_error" and self._is_context_repo_exec_denial_message(
+                            final_content
                         ):
                             final_content = CONTEXT_REPO_EXEC_DISABLED_MESSAGE
                         context.stop_reason = stop_reason
@@ -1449,7 +1460,7 @@ class AgentRunner:
                         else:
                             stop_reason = terminal.stop_reason or "policy_blocked"
                             policy_metadata = dict(terminal.policy_metadata)
-                            final_content = str(terminal.content or "")
+                            final_content = strip_retry_hint(str(terminal.content or ""))
                             assistant_message = build_assistant_message(final_content)
 
                         if streaming:

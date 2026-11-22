@@ -22,7 +22,14 @@ import { useTranslation } from "react-i18next";
 
 import { MarkdownText } from "@/components/MarkdownText";
 import { cliAppInitials, mcpPresetInitials } from "@/components/CliAppMentionText";
-import { ActivityStep } from "@/components/thread/activity/ActivityStep";
+import {
+  ActivityDetailPanel,
+  ActivityDisclosureStep,
+  formatDetailFieldsFromArgs,
+  formatDetailResult,
+  hasActivityDetailContent,
+  type ActivityDetailContent,
+} from "@/components/thread/activity/ActivityDisclosureStep";
 import { coalesceActivityMessages } from "@/components/thread/activity/activity-message-model";
 import {
   compactActivityPath,
@@ -106,6 +113,7 @@ interface McpRunSummary {
   args: unknown;
   status: McpRunStatus;
   error?: string;
+  result?: unknown;
   /** Live phase text reported by the MCP server while the call runs. */
   progressMessage?: string;
   /** Rounded 0–100 progress for the running call. */
@@ -225,6 +233,7 @@ export function AgentActivityCluster({
   const activityScrollRef = useRef<HTMLDivElement>(null);
   const activityContentRef = useRef<HTMLDivElement>(null);
   const autoFollowActivityRef = useRef(true);
+  const lastActivityScrollTopRef = useRef(0);
   const scrollFrameRef = useRef<number | null>(null);
   const wasTurnStreamingRef = useRef(isTurnStreaming);
   const wasTurnStreaming = wasTurnStreamingRef.current;
@@ -314,6 +323,7 @@ export function AgentActivityCluster({
     const el = activityScrollRef.current;
     if (!el) return;
     el.scrollTop = Math.max(0, el.scrollHeight - el.clientHeight);
+    lastActivityScrollTopRef.current = el.scrollTop;
     syncActivityScrollFade();
   }, [syncActivityScrollFade]);
 
@@ -336,18 +346,21 @@ export function AgentActivityCluster({
 
   useLayoutEffect(() => {
     if (!activityScrollRef.current || !outerExpanded || !autoFollowActivityRef.current) return;
+    scrollActivityToBottom();
     scheduleActivityScrollToBottom();
-  }, [outerExpanded, activityMessages, isTurnStreaming, scheduleActivityScrollToBottom]);
+  }, [outerExpanded, activityMessages, isTurnStreaming, scrollActivityToBottom, scheduleActivityScrollToBottom]);
 
   useEffect(() => {
     if (!outerExpanded) {
       autoFollowActivityRef.current = true;
+      lastActivityScrollTopRef.current = 0;
       return;
     }
     const target = activityContentRef.current;
     if (!target || typeof ResizeObserver === "undefined") return;
     const observer = new ResizeObserver(() => {
       if (autoFollowActivityRef.current) {
+        scrollActivityToBottom();
         scheduleActivityScrollToBottom();
       } else {
         syncActivityScrollFade();
@@ -355,7 +368,7 @@ export function AgentActivityCluster({
     });
     observer.observe(target);
     return () => observer.disconnect();
-  }, [outerExpanded, scheduleActivityScrollToBottom, syncActivityScrollFade]);
+  }, [outerExpanded, scrollActivityToBottom, scheduleActivityScrollToBottom, syncActivityScrollFade]);
 
   useEffect(() => cancelActivityScrollFrame, [cancelActivityScrollFrame]);
 
@@ -376,7 +389,16 @@ export function AgentActivityCluster({
     const el = activityScrollRef.current;
     if (!el) return;
     const distance = el.scrollHeight - el.scrollTop - el.clientHeight;
-    autoFollowActivityRef.current = distance < ACTIVITY_SCROLL_NEAR_BOTTOM_PX;
+    // Only pause auto-follow when the user actually scrolls upward; rapid
+    // content growth or delayed scroll events after a programmatic scroll
+    // increase scrollHeight without decreasing scrollTop and must not detach.
+    const scrolledUp = el.scrollTop < lastActivityScrollTopRef.current - 1;
+    if (distance < ACTIVITY_SCROLL_NEAR_BOTTOM_PX) {
+      autoFollowActivityRef.current = true;
+    } else if (scrolledUp) {
+      autoFollowActivityRef.current = false;
+    }
+    lastActivityScrollTopRef.current = el.scrollTop;
     syncActivityScrollFade();
   }, [syncActivityScrollFade]);
 
@@ -464,6 +486,21 @@ function traceLines(message: UIMessage): string[] {
   return message.content.trim() ? [message.content] : [];
 }
 
+function hasRunningToolEvent(message: UIMessage): boolean {
+  const events = message.toolEvents;
+  if (!events?.length) return false;
+  const statusByKey = new Map<string, string>();
+  for (const event of events) {
+    const key = event.call_id || formatToolCallTrace(event);
+    if (!key || typeof event.phase !== "string") continue;
+    statusByKey.set(key, event.phase);
+  }
+  for (const phase of statusByKey.values()) {
+    if (phase === "start" || phase === "progress") return true;
+  }
+  return false;
+}
+
 function ActivityMessageTimeline({
   messages,
   active,
@@ -501,6 +538,8 @@ function ActivityMessageTimeline({
           key={message.id}
           text={message.reasoning ?? ""}
           streaming={active && !!message.reasoningStreaming}
+          durationMs={message.latencyMs}
+          nestedInScrollViewport
         />,
       );
       return;
@@ -511,7 +550,7 @@ function ActivityMessageTimeline({
         <Fragment key={message.id}>
           <ActivityTraceTimeline
             message={message}
-            active={active && index === messages.length - 1}
+            active={active && (index === messages.length - 1 || hasRunningToolEvent(message))}
             cliAppsByName={cliAppsByName}
             mcpPresetsByName={mcpPresetsByName}
           />
@@ -755,7 +794,7 @@ function ActivityTraceRow({
   state?: GenericToolState;
 }) {
   const status = state?.status ?? (active ? "running" : "done");
-  const trace = describeTraceLine(line, status, state?.result);
+  const trace = describeTraceLine(line, status, state?.result, state?.args);
   const rowActive = status === "running" && active;
   const Icon = trace.icon === "clock" ? Clock3 : (trace.kind === "search"
     ? Search
@@ -776,18 +815,77 @@ function ActivityTraceRow({
       />
     );
   }
+  const detail = buildTraceDetail(line, trace, state);
+  const hasDetails = hasActivityDetailContent(detail);
+  const label = [trace.label, trace.detail].filter(Boolean).join(" ");
   return (
-    <ActivityStep
+    <ActivityDisclosureStep
       marker={<TraceIconMark trace={trace} fallbackIcon={Icon} active={rowActive} />}
       active={rowActive && trace.kind !== "done"}
       tone={status === "error" ? "error" : status === "done" ? "success" : "active"}
-      label={[trace.label, trace.detail].filter(Boolean).join(" ")}
-    />
+      label={label}
+      hasDetails={hasDetails}
+    >
+      {hasDetails ? <ActivityDetailPanel detail={detail} scrollable={false} /> : null}
+    </ActivityDisclosureStep>
   );
+}
+
+function buildTraceDetail(
+  line: string,
+  trace: TraceDescription,
+  state?: GenericToolState,
+): ActivityDetailContent {
+  if (trace.icon === "clock" && !state?.error) return {};
+  const trimmed = line.trim();
+  const fnMatch = /^([a-zA-Z0-9_.-]+)\((.*)\)$/.exec(trimmed);
+  const fnName = (fnMatch?.[1] ?? "").toLowerCase().split(".").pop() || "";
+  const rawArgsText = fnMatch?.[2]?.trim() ?? "";
+
+  let parsedArgs: unknown = state?.args;
+  if (parsedArgs === undefined && rawArgsText) {
+    try {
+      parsedArgs = JSON.parse(rawArgsText);
+    } catch {
+      parsedArgs = rawArgsText;
+    }
+  }
+
+  let command: string | undefined;
+  let fields = formatDetailFieldsFromArgs(parsedArgs);
+  if (
+    /^(exec|exec_command|execute_command|run_command|run_shell|shell|terminal)$/.test(fnName)
+  ) {
+    if (parsedArgs && typeof parsedArgs === "object" && !Array.isArray(parsedArgs)) {
+      const record = parsedArgs as Record<string, unknown>;
+      const rawCommand = record.command ?? record.cmd ?? record.script;
+      if (typeof rawCommand === "string" && rawCommand.trim()) {
+        command = rawCommand;
+        const rest = Object.fromEntries(
+          Object.entries(record).filter(
+            ([k]) => k !== "command" && k !== "cmd" && k !== "script" && k !== "description" && k !== "summary",
+          ),
+        );
+        fields = formatDetailFieldsFromArgs(rest);
+      }
+    } else if (typeof parsedArgs === "string" && parsedArgs.trim()) {
+      command = parsedArgs.replace(/^["']|["']$/g, "");
+      fields = [];
+    }
+  }
+
+  const resultText = formatDetailResult(state?.result);
+  return {
+    ...(command ? { command } : {}),
+    ...(fields.length > 0 ? { fields } : {}),
+    ...(state?.error ? { error: state.error } : {}),
+    ...(resultText ? { result: resultText } : {}),
+  };
 }
 
 interface GenericToolState {
   status: GenericToolStatus;
+  args?: unknown;
   error?: string;
   result?: unknown;
 }
@@ -805,12 +903,14 @@ function genericToolStateByTraceLine(message: UIMessage): Map<string, GenericToo
       : event.phase === "end"
         ? "done"
         : "running";
-    const next = {
-      status,
-      error: status === "error" ? toolProgressError(event.error) : undefined,
-      result: event.result,
-    };
     const previous = map.get(key);
+    const parsedArgs = event.arguments !== undefined ? parseToolEventArguments(event) : undefined;
+    const next: GenericToolState = {
+      status,
+      args: parsedArgs ?? previous?.args,
+      error: status === "error" ? toolProgressError(event.error) : previous?.error,
+      result: event.result !== undefined ? event.result : previous?.result,
+    };
     if (!previous || GENERIC_TOOL_STATUS_RANK[next.status] >= GENERIC_TOOL_STATUS_RANK[previous.status]) {
       map.set(key, next);
     }
@@ -1037,6 +1137,7 @@ function mcpRunFromToolName(
     args: argsObject,
     status: options.status,
     error: options.error,
+    ...(options.event?.result !== undefined ? { result: options.event.result } : {}),
     ...(message ? { progressMessage: message } : {}),
     ...(percent !== null ? { progressPercent: percent } : {}),
   };
@@ -1219,7 +1320,8 @@ function CliRunGroup({
 }
 
 function CliRunRow({ run, active, app }: { run: CliRunSummary; active: boolean; app?: CliAppInfo }) {
-  const args = compactActivityPath(redactShellCommand(formatCliArgs(run)));
+  const rawArgs = formatCliArgs(run);
+  const args = compactActivityPath(redactShellCommand(rawArgs));
   const failed = run.status === "error";
   const rowActive = active && run.status === "running";
   const color = failed ? "#DC2626" : app?.brand_color || "#0891B2";
@@ -1228,12 +1330,19 @@ function CliRunRow({ run, active, app }: { run: CliRunSummary; active: boolean; 
   const displayName = app?.display_name || titleFromPresetName(run.name);
   const action = failed ? "Could not use" : rowActive ? "Using" : "Used";
   const label = `${action} ${displayName}${args ? ` · ${args}` : ""}`;
+  const detail: ActivityDetailContent = {
+    ...(rawArgs ? { command: `${run.name} ${rawArgs}` } : {}),
+    ...(run.workingDir ? { fields: [{ label: "working dir", value: compactActivityPath(run.workingDir), mono: true }] } : {}),
+    ...(run.error ? { error: run.error } : {}),
+  };
+  const hasDetails = hasActivityDetailContent(detail);
 
   return (
-    <ActivityStep
+    <ActivityDisclosureStep
       active={rowActive}
       tone={failed ? "error" : rowActive ? "active" : run.status === "done" ? "success" : "neutral"}
       label={label}
+      hasDetails={hasDetails}
       marker={(
         <span
           data-testid={`activity-cli-logo-${run.name.toLowerCase()}`}
@@ -1265,7 +1374,9 @@ function CliRunRow({ run, active, app }: { run: CliRunSummary; active: boolean; 
           )}
         </span>
       )}
-    />
+    >
+      {hasDetails ? <ActivityDetailPanel detail={detail} scrollable={false} /> : null}
+    </ActivityDisclosureStep>
   );
 }
 
@@ -1313,12 +1424,21 @@ function McpRunRow({ run, active, preset }: { run: McpRunSummary; active: boolea
         run.progressPercent !== undefined ? `${run.progressPercent}%` : undefined,
       ].filter(Boolean).join(" · ")
     : label;
+  const fields = formatDetailFieldsFromArgs(run.args);
+  const resultText = formatDetailResult(run.result);
+  const detail: ActivityDetailContent = {
+    ...(fields.length > 0 ? { fields } : {}),
+    ...(run.error ? { error: run.error } : {}),
+    ...(resultText ? { result: resultText } : {}),
+  };
+  const hasDetails = hasActivityDetailContent(detail);
 
   return (
-    <ActivityStep
+    <ActivityDisclosureStep
       active={rowActive}
       tone={failed ? "error" : rowActive ? "active" : run.status === "done" ? "success" : "neutral"}
       label={liveLabel}
+      hasDetails={hasDetails}
       description={rowActive && run.progressPercent !== undefined ? (
         <LiveProgressBar percent={run.progressPercent} color={color} />
       ) : undefined}
@@ -1353,7 +1473,9 @@ function McpRunRow({ run, active, preset }: { run: McpRunSummary; active: boolea
           )}
         </span>
       )}
-    />
+    >
+      {hasDetails ? <ActivityDetailPanel detail={detail} scrollable={false} /> : null}
+    </ActivityDisclosureStep>
   );
 }
 

@@ -1800,8 +1800,18 @@ def read_preindex_latest_tail(
             or len(selected) < len(complete_turns)
         )
         annotated: list[dict[str, Any]] = []
+        # When has_more_before is True we only read a tail window whose absolute
+        # starting ordinal is unknown: use negative ordinals so their replay IDs
+        # never collide with real indexed ordinals (0, 1, ...) when older pages
+        # are prepended after the index is built. When has_more_before is False
+        # we read from the origin start so idx is the exact canonical ordinal.
         for idx, turn in enumerate(selected):
-            annotated.extend(transcript_records_with_replay_identity(turn, turn_ordinal=idx))
+            annotated.extend(
+                transcript_records_with_replay_identity(
+                    turn,
+                    turn_ordinal=-(len(selected) - idx) if has_more_before else idx,
+                ),
+            )
         return HistoryWindowResult(
             status="ok",
             coverage="tail_only",

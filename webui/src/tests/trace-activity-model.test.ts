@@ -66,4 +66,43 @@ describe("trace activity semantics", () => {
     });
     expect(result.detail).not.toContain("second-secret-line");
   });
+
+  it("displays explicit shell command description as the action intention", () => {
+    expect(
+      describeTraceLine(
+        'exec({"command":"python3 check.py","description":"Check image luminance"})',
+        "done",
+      ),
+    ).toMatchObject({ label: "Ran", detail: "check image luminance" });
+
+    expect(
+      describeTraceLine(
+        'exec("python3 check.py")',
+        "running",
+        undefined,
+        { command: "python3 check.py", description: "WebUI build" },
+      ),
+    ).toMatchObject({ label: "Running", detail: "WebUI build" });
+  });
+
+  it("infers clean intentions for common shell commands without explicit descriptions", () => {
+    expect(
+      describeTrace(
+        'exec({"command":"cd ~/.nanobot-staging/workspace/tiktok-test && python3 - <<\'EOF\'\\nfrom PIL import Image\\nim = Image.open(\'a.png\')\\nEOF"})',
+        "done",
+      ),
+    ).toMatchObject({ label: "Analyzed images", detail: "Python · 4 lines" });
+
+    expect(
+      describeTrace('exec({"command":"pytest tests/test_shell.py -v"})', "running"),
+    ).toMatchObject({ label: "Running tests", detail: "" });
+
+    expect(
+      describeTrace('exec({"command":"ruff check nanobot/"})', "done"),
+    ).toMatchObject({ label: "Ran linter", detail: "" });
+
+    expect(
+      describeTrace('exec({"command":"git status --short"})', "done"),
+    ).toMatchObject({ label: "Checked git status", detail: "" });
+  });
 });

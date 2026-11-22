@@ -176,6 +176,13 @@
       "managedFolderAccess": "Accès des dossiers",
       "currentModel": "Configuration actuelle",
       "brandLogos": "Logos de marque",
+      "notificationSound": "Son des notifications",
+      "notificationTest": "Test de réception",
+      "testNotificationBody": "Les notifications fonctionnent.",
+      "testNotification": "Envoyer une notification de test",
+      "permissionDenied": "Autorisez les notifications dans votre appareil ou navigateur.",
+      "notifierUnavailable": "Notifications indisponibles. Vérifiez les paramètres système.",
+      "notificationSent": "Notification de test envoyée.",
       "browserNotifications": "Notifications de tâches",
       "cliAppsCatalog": "Catalogue",
       "cliAppsFilter": "Filtre",
@@ -1586,6 +1593,10 @@
     "cancel": "Annuler"
   },
   "errors": {
+    "approvalRejected": {
+      "title": "L’approbation n’est plus active",
+      "body": "Cette demande d’approbation n’est plus active sur la passerelle, par exemple après un redémarrage. Envoyez un nouveau message pour continuer."
+    },
     "messageTooBig": {
       "title": "Message trop volumineux",
       "body": "Le serveur a rejeté votre dernier message car il dépasse la taille autorisée. Retirez des images ou choisissez des fichiers plus légers, puis renvoyez-le."

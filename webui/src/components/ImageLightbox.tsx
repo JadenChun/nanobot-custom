@@ -4,6 +4,7 @@ import * as DialogPrimitive from "@radix-ui/react-dialog";
 import { Check, ChevronLeft, ChevronRight, FileText, Link2, Play, X } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
+import { AssetPreview, MediaLoadingIndicator } from "@/components/AssetPreview";
 import { useMobileBack } from "@/hooks/useMobileBack";
 import { copyTextToClipboard } from "@/lib/clipboard";
 import { mediaLink } from "@/lib/media-links";
@@ -46,6 +47,7 @@ export function ImageLightbox({
   const { t } = useTranslation();
   const open = index !== null;
   const total = images.length;
+  const touchFirst = isMobileRuntimeActive();
   const current = index !== null ? images[index] : null;
   const resolvedCurrent = useMobileMediaUrl(current?.url);
   const stripRef = useRef<HTMLDivElement | null>(null);
@@ -124,14 +126,13 @@ export function ImageLightbox({
 
   // Neighbours we want the browser to decode eagerly.
   const preload = useMemo(() => {
-    if (index === null || total <= 1) return [] as UIImage[];
+    if (touchFirst || index === null || total <= 1) return [] as UIImage[];
     const prev = images[(index - 1 + total) % total];
     const next = images[(index + 1) % total];
     return [prev, next].filter((i) => i && i.url);
-  }, [images, index, total]);
+  }, [images, index, total, touchFirst]);
 
   const hasMany = total > 1;
-  const touchFirst = isMobileRuntimeActive();
   const counter = hasMany && index !== null ? `${index + 1} / ${total}` : null;
   const slideImages = hasMany && index !== null
     ? [images[(index - 1 + total) % total], current, images[(index + 1) % total]]
@@ -336,7 +337,11 @@ export function ImageLightbox({
                 onTransitionEnd={handleTrackTransitionEnd}
               >
                 {slideImages.map((image, slot) => (
-                  <LightboxSlide key={`${image?.url ?? "empty"}-${slot}`} image={image} />
+                  <LightboxSlide
+                    key={`${image?.url ?? "empty"}-${slot}`}
+                    image={image}
+                    active={!hasMany || slot === 1}
+                  />
                 ))}
               </div>
             </div>
@@ -401,7 +406,7 @@ export function ImageLightbox({
                         : "border-white/15 opacity-60 hover:opacity-90",
                     )}
                   >
-                    <LightboxThumbnail image={image} />
+                    <AssetPreview asset={image} compact />
                   </button>
                 ))}
               </div>
@@ -438,32 +443,49 @@ interface NavButtonProps {
   onClick: React.MouseEventHandler<HTMLButtonElement>;
 }
 
-function LightboxSlide({ image }: { image: UIImage | null }) {
-  const src = useMobileMediaUrl(image?.url);
-  if (!src) return <div className="h-full w-full shrink-0" aria-hidden />;
-  if (image?.kind === "video") {
-    return (
-      <div className="flex h-full w-full shrink-0 items-center justify-center">
+function LightboxSlide({ image, active }: { image: UIImage | null; active: boolean }) {
+  const { t } = useTranslation();
+  const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
+  const src = image?.url;
+  const video = image?.kind === "video";
+  const mobile = isMobileRuntimeActive();
+  return (
+    <div className="relative flex h-full w-full shrink-0 items-center justify-center">
+      {video && mobile && !active ? (
+        <Play className="h-10 w-10 text-white/60" aria-hidden />
+      ) : src && status !== "error" && (video ? (
         <video
           src={src}
           controls
           playsInline
-          preload="metadata"
-          aria-label={image.name ?? ""}
+          preload={active ? "auto" : "metadata"}
+          aria-label={image?.name ?? ""}
+          onLoadedData={() => setStatus("ready")}
+          onCanPlay={() => setStatus("ready")}
+          onPlaying={() => setStatus("ready")}
+          onWaiting={() => setStatus("loading")}
+          onError={() => setStatus("error")}
           className="max-h-full max-w-full rounded-compact bg-black shadow-2xl"
         />
-      </div>
-    );
-  }
-  return (
-    <div className="flex h-full w-full shrink-0 items-center justify-center">
-      <img
-        src={src}
-        alt={image?.name ?? ""}
-        decoding="async"
-        draggable={false}
-        className="max-h-full max-w-full select-none rounded-compact object-contain shadow-2xl"
-      />
+      ) : (
+        <img
+          src={src}
+          alt={image?.name ?? ""}
+          decoding="async"
+          draggable={false}
+          onLoad={() => setStatus("ready")}
+          onError={() => setStatus("error")}
+          className={cn(
+            "max-h-full max-w-full select-none rounded-compact object-contain shadow-2xl",
+            status !== "ready" && "opacity-0",
+          )}
+        />
+      ))}
+      {active && (status === "error" ? (
+        <p className="text-center text-sm text-white/80">
+          {t("message.attachmentUnavailable", { defaultValue: "Attachment unavailable" })}
+        </p>
+      ) : src && status === "loading" ? <MediaLoadingIndicator /> : null)}
     </div>
   );
 }
@@ -472,37 +494,6 @@ function PreloadImage({ image }: { image: UIImage }) {
   const src = useMobileMediaUrl(image.url);
   if (!src || image.kind === "video") return null;
   return <img src={src} alt="" />;
-}
-
-function LightboxThumbnail({ image }: { image: UIImage }) {
-  const src = useMobileMediaUrl(image.url);
-  if (!src) return null;
-  if (image.kind === "video") {
-    return (
-      <span className="relative block h-full w-full">
-        <video
-          src={src}
-          muted
-          playsInline
-          preload="metadata"
-          className="h-full w-full object-cover"
-        />
-        <span className="absolute inset-0 grid place-items-center bg-black/20">
-          <Play className="h-4 w-4 fill-white text-white" aria-hidden />
-        </span>
-      </span>
-    );
-  }
-  return (
-    <img
-      src={src}
-      alt=""
-      loading="lazy"
-      decoding="async"
-      draggable={false}
-      className="h-full w-full object-cover"
-    />
-  );
 }
 
 function LightboxAction({

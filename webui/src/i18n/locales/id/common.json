@@ -176,6 +176,13 @@
       "managedFolderAccess": "Akses folder terkelola",
       "currentModel": "Konfigurasi saat ini",
       "brandLogos": "Logo merek",
+      "notificationSound": "Suara notifikasi",
+      "notificationTest": "Uji pengiriman",
+      "testNotificationBody": "Notifikasi berfungsi.",
+      "testNotification": "Kirim notifikasi uji",
+      "permissionDenied": "Izinkan notifikasi di pengaturan perangkat atau peramban.",
+      "notifierUnavailable": "Notifikasi tidak tersedia. Periksa pengaturan sistem.",
+      "notificationSent": "Notifikasi uji terkirim.",
       "browserNotifications": "Notifikasi tugas",
       "cliAppsCatalog": "Katalog",
       "cliAppsFilter": "Saring",
@@ -1586,6 +1593,10 @@
     "cancel": "Batal"
   },
   "errors": {
+    "approvalRejected": {
+      "title": "Persetujuan tidak lagi aktif",
+      "body": "Permintaan persetujuan ini tidak lagi aktif di gateway, misalnya setelah gateway dimulai ulang. Kirim pesan baru untuk melanjutkan."
+    },
     "messageTooBig": {
       "title": "Pesan terlalu besar",
       "body": "Server menolak pesan terakhir karena melebihi batas ukuran. Hapus beberapa gambar atau gunakan berkas yang lebih kecil, lalu coba lagi."

@@ -748,7 +748,44 @@ describe("generation-scoped mobile socket maintenance", () => {
     expect(opened).not.toHaveBeenCalled();
   });
 
-  it.each([false, "rejected"])("does not report repair or reopen when credential refresh is %s", async (result) => {
+  it("rotates access tokens in-band via wsRefreshAuth without closing a healthy socket", async () => {
+    const fixture = socketTransportFixture();
+    const wsRefreshAuth = vi.fn(async () => true);
+    fixture.transport.wsRefreshAuth = wsRefreshAuth;
+    const runtime = createMobileRuntime(fixture.transport);
+    const socket = runtime.createWebSocket("wss://host/mobile/v1/ws");
+    const closed = vi.fn();
+    socket.onclose = closed;
+    await vi.waitFor(() => expect(socket.readyState).toBe(1));
+
+    await runtime.renew();
+
+    expect(fixture.transport.refresh).toHaveBeenCalledTimes(1);
+    expect(wsRefreshAuth).toHaveBeenCalledWith(1);
+    expect(fixture.wsClose).not.toHaveBeenCalled();
+    expect(closed).not.toHaveBeenCalled();
+    expect(socket.readyState).toBe(1);
+    runtime.dispose();
+  });
+
+  it.each([false, "rejected"])("keeps a healthy socket open on renew when credential refresh is %s", async (result) => {
+    const fixture = socketTransportFixture();
+    if (result === false) vi.mocked(fixture.transport.refresh).mockResolvedValue(false);
+    else vi.mocked(fixture.transport.refresh).mockRejectedValue(new Error("refresh refused"));
+    const runtime = createMobileRuntime(fixture.transport);
+    const socket = runtime.createWebSocket("wss://host/mobile/v1/ws");
+    const closed = vi.fn();
+    socket.onclose = closed;
+    await vi.waitFor(() => expect(socket.readyState).toBe(1));
+    await runtime.renew();
+    expect(fixture.transport.refresh).toHaveBeenCalledTimes(1);
+    expect(fixture.wsClose).not.toHaveBeenCalled();
+    expect(fixture.wsOpen).toHaveBeenCalledTimes(1);
+    expect(closed).not.toHaveBeenCalled();
+    runtime.dispose();
+  });
+
+  it.each([false, "rejected"])("closes a ping-failed socket on recover even when credential refresh is %s", async (result) => {
     const fixture = socketTransportFixture();
     fixture.wsPing.mockResolvedValue(false);
     if (result === false) vi.mocked(fixture.transport.refresh).mockResolvedValue(false);
@@ -759,11 +796,10 @@ describe("generation-scoped mobile socket maintenance", () => {
     socket.onclose = closed;
     await vi.waitFor(() => expect(socket.readyState).toBe(1));
     await runtime.recover();
-    await runtime.renew();
-    expect(fixture.transport.refresh).toHaveBeenCalledTimes(2);
-    expect(fixture.wsClose).not.toHaveBeenCalled();
-    expect(fixture.wsOpen).toHaveBeenCalledTimes(1);
-    expect(closed).not.toHaveBeenCalled();
+    expect(fixture.transport.refresh).toHaveBeenCalledTimes(1);
+    expect(fixture.wsClose).toHaveBeenCalledTimes(1);
+    expect(closed).toHaveBeenCalledTimes(1);
+    expect(socket.readyState).toBe(3);
     runtime.dispose();
   });
 });

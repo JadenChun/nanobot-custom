@@ -176,6 +176,13 @@
       "managedFolderAccess": "Acceso a carpetas",
       "currentModel": "Configuración actual",
       "brandLogos": "Logos de marca",
+      "notificationSound": "Sonido de notificación",
+      "notificationTest": "Prueba de entrega",
+      "testNotificationBody": "Las notificaciones funcionan.",
+      "testNotification": "Enviar notificación de prueba",
+      "permissionDenied": "Permite las notificaciones en el dispositivo o navegador.",
+      "notifierUnavailable": "Notificaciones no disponibles. Revisa los ajustes del sistema.",
+      "notificationSent": "Notificación de prueba enviada.",
       "browserNotifications": "Notificaciones de tareas",
       "cliAppsCatalog": "Catálogo",
       "cliAppsFilter": "Filtro",
@@ -1586,6 +1593,10 @@
     "cancel": "Cancelar"
   },
   "errors": {
+    "approvalRejected": {
+      "title": "La aprobación ya no está activa",
+      "body": "Esta solicitud de aprobación ya no está activa en la puerta de enlace, por ejemplo, después de un reinicio. Envía un nuevo mensaje para continuar."
+    },
     "messageTooBig": {
       "title": "Mensaje demasiado grande",
       "body": "El servidor rechazó tu último mensaje por superar el tamaño permitido. Quita algunas imágenes o usa archivos más pequeños y vuelve a enviarlo."

@@ -103,4 +103,35 @@ describe("ApprovalRequestCard", () => {
       ),
     ).toBeInTheDocument();
   });
+
+  it("clears the pending state when resetSignal increments after a rejected send", async () => {
+    const user = userEvent.setup();
+    const onApprove = vi.fn();
+    const onCancel = vi.fn();
+    const { rerender } = render(
+      <ApprovalRequestCard
+        summary="overwrite storyboard_v3.md"
+        approvalId={APPROVAL_ID}
+        resetSignal={0}
+        onApprove={onApprove}
+        onCancel={onCancel}
+      />,
+    );
+
+    const approveButton = screen.getByRole("button", { name: "Approve and continue" });
+    await user.click(approveButton);
+    expect(approveButton).toBeDisabled();
+
+    rerender(
+      <ApprovalRequestCard
+        summary="overwrite storyboard_v3.md"
+        approvalId={APPROVAL_ID}
+        resetSignal={1}
+        onApprove={onApprove}
+        onCancel={onCancel}
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: "Approve and continue" })).toBeEnabled();
+  });
 });

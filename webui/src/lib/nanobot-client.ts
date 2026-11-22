@@ -351,6 +351,7 @@ export class NanobotClient {
   private taskNotificationHandlers = new Set<TaskNotificationHandler>();
   private errorHandlers = new Set<ErrorHandler>();
   /** Runs submitted by this client, keyed by chat id so any ending turn can notify. */
+  private notifiedTurnKeys = new Set<string>();
   private ownedRunTurnIdsByChatId = new Map<string, Set<string>>();
   /** Side-channel turns stay quiet even when their chat has an owned run. */
   private sideChannelTurnIdsByChatId = new Map<string, Set<string>>();
@@ -750,6 +751,18 @@ export class NanobotClient {
       fences.delete(oldest);
     }
     if (fences.size > 0) this.canonicalCompletedTurnIdsByChatId.set(chatId, fences);
+    const ownedTurns = this.ownedRunTurnIdsByChatId.get(chatId);
+    if (ownedTurns) {
+      // An idle snapshot can also retire an unacknowledged send. Only
+      // announce completion when the gateway has evidence of admission.
+      for (const turnId of ownedTurns) {
+        if (this.isUnknownPendingMessageSend(chatId, turnId)
+          && !completed.has(turnId) && !observed.has(turnId)) continue;
+        this.emitTaskNotificationForEvent(chatId, {
+          event: "turn_end", chat_id: chatId, turn_id: turnId, outcome: "completed",
+        });
+      }
+    }
     this.clearOwnedRuns(chatId);
     this.clearSideChannelTurns(chatId);
     stopMobileRunKeepAlive(chatId);
@@ -867,6 +880,15 @@ export class NanobotClient {
       const turnId = typeof ev.turn_id === "string" ? ev.turn_id : undefined;
       if (turnId && (!this.isOwnedRun(chatId, turnId) || this.hasSideChannelTurn(chatId, turnId))) {
         return;
+      }
+      if (turnId) {
+        const key = this.runSendKey(chatId, turnId);
+        if (this.notifiedTurnKeys.has(key)) return;
+        this.notifiedTurnKeys.add(key);
+        if (this.notifiedTurnKeys.size > NanobotClient.COMPLETED_TURN_FENCE_MAX) {
+          const oldest = this.notifiedTurnKeys.values().next().value;
+          if (oldest !== undefined) this.notifiedTurnKeys.delete(oldest);
+        }
       }
       const attempts = typeof ev.failure_attempts === "number"
         && Number.isInteger(ev.failure_attempts)
@@ -1327,6 +1349,17 @@ export class NanobotClient {
     this.intentionallyClosed = false;
     this.reconnectAttempts = 0;
     this.authRetryFailures = 0;
+    // Force-close an existing half-open or wedged socket so manual/resume retry
+    // always establishes a fresh connection instead of returning early in connect().
+    if (this.socket && this.socket.readyState < WS_CLOSING) {
+      const stale = this.socket;
+      this.socket = null;
+      try {
+        stale.close();
+      } catch {
+        // ignore close errors on already-broken sockets
+      }
+    }
     if (this.options.onReauth) {
       try {
         const refreshed = await this.options.onReauth();
@@ -2377,8 +2410,9 @@ export class NanobotClient {
     const matchesPending = !!(
       pending
       && pending.socket === this.socket
-      && revision !== null
-      && (pending.baselineRevision === null || revision > pending.baselineRevision)
+      && (revision === null
+        || pending.baselineRevision === null
+        || revision >= pending.baselineRevision)
       && nextScope !== undefined
       && nextScope !== null
       && nextScope.project_path === pending.workspaceScope.project_path
@@ -2650,11 +2684,13 @@ export class NanobotClient {
             }
           }
         } catch {
-          this.authRetryFailures += 1;
-          if (this.authRetryFailures >= 3) {
-            this.setStatus("error");
-            return;
+          // A thrown error signals a transient network/transport failure rather
+          // than an auth rejection; continue the normal exponential backoff
+          // instead of aborting permanently after 3.5s.
+          if (!this.intentionallyClosed) {
+            this.scheduleReconnect();
           }
+          return;
         }
       }
       this.connect();

@@ -12,12 +12,16 @@ Every entry writes out all fields so you can copy-paste as a template.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 from pydantic.alias_generators import to_snake
 
-from nanobot.providers.provider_policy import ESTIMATED_COMPAT_POLICY, ProviderPolicy
+from nanobot.providers.provider_policy import (
+    ESTIMATED_COMPAT_POLICY,
+    OPENAI_COMPAT_DEFAULT_POLICY,
+    ProviderPolicy,
+)
 
 
 @dataclass(frozen=True)
@@ -195,7 +199,7 @@ class ProviderSpec:
 # PROVIDERS — the registry. Order = priority. Copy any entry as template.
 # ---------------------------------------------------------------------------
 
-PROVIDERS: tuple[ProviderSpec, ...] = (
+_RAW_PROVIDERS: tuple[ProviderSpec, ...] = (
     # === Custom (direct OpenAI-compatible endpoint) ========================
     ProviderSpec(
         name="custom",
@@ -853,6 +857,33 @@ PROVIDERS: tuple[ProviderSpec, ...] = (
     ),
 )
 
+_DEFAULT_STRICT_POLICY = ProviderPolicy()
+
+
+def _with_default_openai_compat_policy(spec: ProviderSpec) -> ProviderSpec:
+    """Default non-OpenAI chat-compatible presets to estimated accounting.
+
+    Official OpenAI routes retain strict accounting because their models map
+    directly to installed tiktoken encodings. Other OpenAI-compatible gateways
+    and third-party providers route arbitrary non-OpenAI models where strict
+    UTF-8 byte fallback overestimates tokens by ~3.5-4x and blocks source
+    compaction recovery. Any provider can still opt back into strict accounting
+    via config (``requestAccounting: "strict"``).
+    """
+    if (
+        spec.backend == "openai_compat"
+        and spec.name != "openai"
+        and not spec.is_transcription_only
+        and spec.policy == _DEFAULT_STRICT_POLICY
+    ):
+        return replace(spec, policy=OPENAI_COMPAT_DEFAULT_POLICY)
+    return spec
+
+
+PROVIDERS: tuple[ProviderSpec, ...] = tuple(
+    _with_default_openai_compat_policy(spec) for spec in _RAW_PROVIDERS
+)
+
 
 # ---------------------------------------------------------------------------
 # Lookup helpers
@@ -883,6 +914,7 @@ def create_dynamic_spec(
         env_key="",
         display_name=display_name or name.replace("-", " ").replace("_", " ").title(),
         backend="openai_compat",
+        policy=OPENAI_COMPAT_DEFAULT_POLICY,
         is_direct=True,
         strip_model_prefixes=strip_prefixes,
         thinking_style=thinking_style,

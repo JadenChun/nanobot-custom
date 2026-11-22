@@ -89,7 +89,6 @@ class RunKeepAliveService : Service() {
 
     override fun onDestroy() {
         handler.removeCallbacks(timeout)
-        RunKeepAliveRegistry.clear()
         ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
         super.onDestroy()
     }

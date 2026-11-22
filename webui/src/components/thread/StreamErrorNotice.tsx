@@ -36,7 +36,7 @@ export function StreamErrorNotice({ error, onDismiss }: StreamErrorNoticeProps) 
         className="mt-0.5 h-4 w-4 shrink-0"
         aria-hidden
       />
-      <div className="flex-1">
+      <div className="min-w-0 flex-1 max-h-[25dvh] overflow-y-auto [overflow-wrap:anywhere]">
         <p className="font-medium">{title}</p>
         <p className="mt-0.5 text-destructive/80">{body}</p>
       </div>
@@ -69,9 +69,15 @@ function resolveCopy(
         body: t("errors.workspaceScopeRejected.body"),
       };
     case "turn_rejected": {
+      const isApprovalRejection =
+        error.reason === "approval_stale"
+        || error.reason === "invalid_approval_decision"
+        || error.reason === "approval_source_unavailable";
       const key = messageDeliveryErrorKind(error) === "session_recovery_required"
         ? "errors.sessionRecoveryRequired"
-        : "errors.turnRejected";
+        : isApprovalRejection
+          ? "errors.approvalRejected"
+          : "errors.turnRejected";
       return {
         title: t(`${key}.title`),
         body: t(`${key}.body`),

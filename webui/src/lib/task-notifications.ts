@@ -18,7 +18,10 @@ interface MobileTaskNotificationBridge {
     title: string;
     body: string;
     tag?: string;
-  }) => Promise<void> | void;
+    chatId?: string;
+    sound?: boolean;
+    temporary?: boolean;
+  }) => Promise<boolean | void> | void;
 }
 
 declare global {
@@ -48,8 +51,7 @@ function isDesktopShell(): boolean {
 /** Whether this client currently has a window the user can actually see. */
 export function clientWindowIsOpen(): boolean {
   if (!isDesktopShell()) return true;
-  if (typeof document === "undefined") return desktopWindowOpen;
-  return desktopWindowOpen && document.visibilityState === "visible";
+  return desktopWindowOpen;
 }
 
 if (typeof window !== "undefined") {
@@ -59,12 +61,7 @@ if (typeof window !== "undefined") {
   window.addEventListener(DESKTOP_SHOW_EVENT, () => {
     desktopWindowOpen = true;
   });
-  if (typeof document !== "undefined") {
-    document.addEventListener("visibilitychange", () => {
-      if (!isDesktopShell()) return;
-      desktopWindowOpen = document.visibilityState === "visible";
-    });
-  }
+
 }
 
 export function taskNotificationsSupported(): boolean {
@@ -119,95 +116,84 @@ export function buildTaskNotificationBody(
   return t("recovery.completed", { defaultValue: "Task completed" });
 }
 
-function notificationOptions(body: string, tag?: string): NotificationOptions {
-  return {
-    body,
-    tag,
-    icon: DEFAULT_NOTIFICATION_ICON,
-    badge: DEFAULT_NOTIFICATION_ICON,
-    data: { url: "/" },
-  };
-}
-
-function showViaServiceWorker(
-  title: string,
-  body: string,
-  tag?: string,
-): void {
-  if (typeof navigator === "undefined" || !("serviceWorker" in navigator)) return;
-  void navigator.serviceWorker.getRegistration().then((registration) => {
-    if (!registration) return undefined;
-    return registration.showNotification(title, notificationOptions(body, tag));
-  }).catch(() => {
-    // Notifications are optional; a blocked registration must not affect chat.
-  });
-}
-
-function isDesktopTaskConclusion(event: TaskNotificationEvent): boolean {
-  if (event.kind === "recovery") return event.status === "failed";
-  return event.outcome === undefined || event.outcome === "completed" || event.outcome === "failed";
-}
-
-export function showTaskNotification({
-  event,
-  t,
-  requestMutation,
-}: {
-  event: TaskNotificationEvent;
-  t: TFunction;
-  /** Authenticated WebSocket mutation control; the desktop side effect needs it. */
-  requestMutation?: (
-    action: string,
-    payload: Record<string, unknown>,
-  ) => Promise<unknown>;
-}): void {
-  // The desktop shell dispatches ``nanobot:desktop-hide`` before hiding the
-  // window. Suppress even the browser Notification fallback in that state:
-  // activating a stale notification must not pull the hidden window back.
-  if (!desktopWindowOpen) return;
-  const desktop = isDesktopShell();
-  if (desktop && !isDesktopTaskConclusion(event)) return;
-  const body = buildTaskNotificationBody(event, t);
-  const title = DEFAULT_NOTIFICATION_TITLE;
-  const tag = `nanobot-turn-${event.chatId}`;
-  if (desktop) {
-    if (!clientWindowIsOpen()) return;
-    // The desktop notifier is an authenticated local mutation. Without the
-    // control there is no unauthenticated fallback request.
-    if (!requestMutation) return;
-    void requestMutation("desktop.notify", {
-      title,
-      body,
-      tag,
-    }).catch(() => {
-      // Desktop notifications are best-effort and must not affect chat.
-    });
-    return;
-  }
-
-  const bridge = mobileBridge();
-  if (bridge?.notify) {
-    try {
-      void bridge.notify({ title, body, tag });
-    } catch {
-      // The native bridge is best-effort, like the browser API below.
-    }
-    return;
-  }
-
-  if (typeof Notification === "undefined" || Notification.permission !== "granted") {
-    return;
-  }
-
+async function chime(): Promise<void> {
+  let audio: AudioContext | undefined;
+  let resumeTimeout: ReturnType<typeof setTimeout> | undefined;
   try {
-    const notification = new Notification(title, notificationOptions(body, tag));
-    notification.onclick = () => {
-      window.focus();
-      notification.close();
-    };
-    return;
+    audio = new AudioContext();
+    if (audio.state === "suspended") {
+      // Autoplay policies can leave resume pending until the next user gesture.
+      await Promise.race([
+        audio.resume(),
+        new Promise<void>((resolve) => { resumeTimeout = setTimeout(resolve, 1000); }),
+      ]);
+    }
+    if (audio.state !== "running") return;
+    const tone = audio.createOscillator();
+    const gain = audio.createGain();
+    const now = audio.currentTime;
+    tone.frequency.setValueAtTime(660, now);
+    tone.frequency.setValueAtTime(880, now + 0.12);
+    gain.gain.setValueAtTime(0.001, now);
+    gain.gain.exponentialRampToValueAtTime(0.09, now + 0.02);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.35);
+    tone.connect(gain).connect(audio.destination);
+    const ended = new Promise<void>((resolve) => { tone.onended = () => resolve(); });
+    tone.start(now);
+    tone.stop(now + 0.36);
+    await ended;
   } catch {
-    // Android/iOS browsers do not expose the non-persistent constructor.
+    // Notification delivery can succeed when the browser blocks audio.
+  } finally {
+    clearTimeout(resumeTimeout);
+    if (audio) await audio.close().catch(() => {});
   }
-  showViaServiceWorker(title, body, tag);
+}
+
+export async function showTaskNotification({
+  event, t, requestMutation, threadTitle, temporary, sound = true,
+}: {
+  event?: TaskNotificationEvent;
+  t: TFunction;
+  threadTitle?: string;
+  temporary?: boolean;
+  sound?: boolean;
+  requestMutation?: (action: string, payload: Record<string, unknown>) => Promise<unknown>;
+}): Promise<boolean> {
+  if (!clientWindowIsOpen()) return false;
+  const chatId = event?.chatId;
+  const title = threadTitle?.trim() ? `Kohaku · ${threadTitle.trim()}` : DEFAULT_NOTIFICATION_TITLE;
+  const body = event ? buildTaskNotificationBody(event, t) : t("settings.rows.testNotificationBody");
+  const tag = chatId ? `nanobot-turn-${chatId}` : "kohaku-test";
+  try {
+    if (isDesktopShell()) {
+      if (!requestMutation) return false;
+      if (event?.kind === "recovery" && event.status !== "failed") return false;
+      if (event?.kind === "turn_end" && event.outcome && !["completed", "failed"].includes(event.outcome)) return false;
+      const result = await requestMutation("desktop.notify", { title, body, tag, sound });
+      if (sound && !(result && typeof result === "object" && "nativeSound" in result && result.nativeSound)) void chime();
+      return true;
+    }
+    const bridge = mobileBridge();
+    if (bridge?.notify) return await bridge.notify({ title, body, tag, chatId, sound, temporary }) !== false;
+    if (typeof Notification === "undefined" || Notification.permission !== "granted") return false;
+    const hash = !chatId ? "" : temporary ? "#/temporary/" + encodeURIComponent(chatId)
+      : "#/chat/" + encodeURIComponent("websocket:" + chatId);
+    const options = { body, tag, silent: true, icon: DEFAULT_NOTIFICATION_ICON,
+      badge: "/brand/kohaku_notification_badge.png", data: { chatId, temporary } };
+    try {
+      const notification = new Notification(title, options);
+      notification.onclick = () => {
+        window.focus();
+        if (hash) window.location.hash = hash;
+        notification.close();
+      };
+    } catch {
+      const registration = await navigator.serviceWorker?.getRegistration();
+      if (!registration) return false;
+      await registration.showNotification(title, options);
+    }
+    if (sound) void chime();
+    return true;
+  } catch { return false; }
 }

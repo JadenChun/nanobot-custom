@@ -255,6 +255,65 @@ async def test_health_server_reports_its_actual_bound_management_port() -> None:
         await asyncio.gather(server, return_exceptions=True)
 
 
+async def test_publish_gateway_identity_waits_for_websocket_readiness() -> None:
+    from nanobot.cli.gateway_runtime import _publish_gateway_identity_when_ready
+
+    ws_running = False
+
+    class _Channels:
+        enabled_channels = ["websocket"]
+
+        def get_status(self) -> dict[str, dict[str, object]]:
+            return {
+                "websocket": {
+                    "running": ws_running,
+                    "state": "running" if ws_running else "starting",
+                },
+            }
+
+    published: list[str] = []
+    shutdown = asyncio.Event()
+    task = asyncio.create_task(
+        _publish_gateway_identity_when_ready(
+            _Channels(),
+            shutdown,
+            lambda: published.append("published"),
+            poll_interval_s=0.01,
+        )
+    )
+    await asyncio.sleep(0.03)
+    assert published == []
+
+    ws_running = True
+    await asyncio.wait_for(task, timeout=1.0)
+    assert published == ["published"]
+
+
+async def test_publish_gateway_identity_skips_publish_when_shutdown_before_ready() -> None:
+    from nanobot.cli.gateway_runtime import _publish_gateway_identity_when_ready
+
+    class _Channels:
+        enabled_channels = ["websocket"]
+
+        def get_status(self) -> dict[str, dict[str, object]]:
+            return {"websocket": {"running": False, "state": "starting"}}
+
+    published: list[str] = []
+    shutdown = asyncio.Event()
+    task = asyncio.create_task(
+        _publish_gateway_identity_when_ready(
+            _Channels(),
+            shutdown,
+            lambda: published.append("published"),
+            poll_interval_s=0.05,
+        )
+    )
+    await asyncio.sleep(0.02)
+    shutdown.set()
+    await asyncio.wait_for(task, timeout=1.0)
+    assert published == []
+
+
 async def test_mcp_readiness_hook_delegates_to_application_provider() -> None:
     provider = _TrackingMCPProvider()
     hook = _MCPReadinessHook(provider)

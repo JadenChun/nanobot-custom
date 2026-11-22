@@ -474,3 +474,172 @@ async def test_message_tool_cli_context_may_target_other_ws_chat(tmp_path) -> No
     assert result.startswith("Message sent")
     assert sent[0].channel == "websocket"
     assert sent[0].chat_id == target
+
+
+@pytest.mark.asyncio
+async def test_message_tool_attaches_webui_display_source_for_same_websocket_session(
+    tmp_path: Path,
+) -> None:
+    """Managed WebUI turns must carry source authority so media messages persist to transcript."""
+    from nanobot.session.source_store import SourceState
+    from nanobot.webui.metadata import WEBUI_DISPLAY_SOURCE_KEY
+
+    sent: list[OutboundMessage] = []
+
+    async def _send(msg: OutboundMessage) -> None:
+        sent.append(msg)
+
+    tool = MessageTool(send_callback=_send)
+    conv = "550e8400-e29b-41d4-a716-446655440000"
+    img = tmp_path / "icon.png"
+    img.write_bytes(b"\x89PNG\r\n\x1a\n")
+    source = SourceState(
+        store_identity="store-1",
+        session_key=f"websocket:{conv}",
+        incarnation="inc-1",
+        revision=3,
+        generation=0,
+        checkpoint_id=None,
+        checkpoint_fingerprint="fp-1",
+    )
+    stale_source = SourceState(
+        store_identity="store-1",
+        session_key="websocket:other-chat",
+        incarnation="inc-stale",
+        revision=0,
+        generation=0,
+        checkpoint_id=None,
+        checkpoint_fingerprint="fp-stale",
+    )
+    with request_context(
+        RequestContext(
+            channel="websocket",
+            chat_id=conv,
+            session_key=f"websocket:{conv}",
+            metadata={WEBUI_DISPLAY_SOURCE_KEY: stale_source, "webui_turn_id": "turn-1"},
+            source_state=source,
+        )
+    ):
+        result = await tool.execute(
+            content="The four monochrome masters.",
+            media=[str(img)],
+        )
+
+    assert result == f"Message sent to websocket:{conv} with 1 attachments"
+    assert len(sent) == 1
+    assert sent[0].metadata[WEBUI_DISPLAY_SOURCE_KEY] == source
+    assert sent[0].metadata["webui_turn_id"] == "turn-1"
+
+    # Cross-channel sends must never inherit WebUI display source state.
+    sent.clear()
+    with request_context(
+        RequestContext(
+            channel="websocket",
+            chat_id=conv,
+            session_key=f"websocket:{conv}",
+            metadata={"webui_turn_id": "turn-1"},
+            source_state=source,
+        )
+    ):
+        await tool.execute(
+            content="cross channel",
+            channel="telegram",
+            chat_id="tg-1",
+        )
+    assert len(sent) == 1
+    assert WEBUI_DISPLAY_SOURCE_KEY not in sent[0].metadata
+
+
+@pytest.mark.asyncio
+async def test_message_tool_media_persists_in_managed_webui_transcript(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Outbound media sent via MessageTool in a managed session survives transcript replay."""
+    from nanobot.session.execution_owner import acquire_execution
+    from nanobot.session.runtime_authority import DurableSessionAuthority
+    from nanobot.session.turn_writer import SourceTurnWriter
+    from nanobot.webui.metadata import WEBUI_TURN_METADATA_KEY
+    from nanobot.webui.transcript import (
+        WebUITranscriptRecorder,
+        build_webui_thread_response,
+    )
+
+    webui_dir = tmp_path / "webui"
+    webui_dir.mkdir()
+    monkeypatch.setattr("nanobot.webui.transcript.get_webui_dir", lambda: webui_dir)
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    lease = await DurableSessionAuthority(
+        workspace,
+        sessions_root=tmp_path / "sessions",
+    ).acquire()
+    try:
+        sessions = lease.manager
+        conv = "bde81382-a01f-467b-a271-999462600861"
+        session_key = f"websocket:{conv}"
+        assert sessions.upsert_session_metadata(session_key, {"webui": True}, create_if_absent=True)
+        backend = sessions.source_backend(session_key)
+        assert backend is not None
+        async with acquire_execution(backend, session_key, run_id="seed-media") as owner:
+            writer = SourceTurnWriter(backend.source, owner, run_id="seed-media")
+            writer.append_message({"role": "user", "content": "show me the icon"})
+            source_state = owner.read_snapshot().state
+
+        recorder = WebUITranscriptRecorder(log=None, sessions=sessions)
+        sent: list[OutboundMessage] = []
+
+        async def _send(msg: OutboundMessage) -> None:
+            sent.append(msg)
+
+        img = workspace / "final-1024-mono-black.png"
+        img.write_bytes(b"\x89PNG\r\n\x1a\n")
+        tool = MessageTool(send_callback=_send, workspace=workspace)
+
+        with request_context(
+            RequestContext(
+                channel="websocket",
+                chat_id=conv,
+                session_key=session_key,
+                metadata={WEBUI_TURN_METADATA_KEY: "turn-icons", "webui": True},
+                source_state=source_state,
+            )
+        ):
+            await tool.execute(content="Monochrome masters.", media=[str(img)])
+
+        assert len(sent) == 1
+        from loguru import logger as test_logger
+
+        from nanobot.webui.media_gateway import WebUIMediaGateway
+
+        media_gateway = WebUIMediaGateway(
+            secret=b"test-secret",
+            workspace_path=workspace,
+            logger=test_logger,
+        )
+        signed = media_gateway.sign_or_stage_media_path(Path(sent[0].media[0]))
+        assert signed is not None
+        payload = {
+            "event": "message",
+            "chat_id": conv,
+            "text": sent[0].content,
+            "media": sent[0].media,
+            "media_urls": [signed],
+        }
+        assert recorder.prepare_and_append(
+            conv,
+            payload,
+            metadata=sent[0].metadata,
+            phase="answer",
+            include_source=True,
+        )
+
+        response = build_webui_thread_response(session_key, expected_source=source_state)
+        assert response is not None
+        replayed = response["messages"]
+        assert len(replayed) == 1
+        assert replayed[0]["content"] == "Monochrome masters."
+        assert replayed[0]["media"][0]["name"] == "final-1024-mono-black.png"
+        assert replayed[0]["media"][0]["url"] == signed["url"]
+    finally:
+        await lease.close()

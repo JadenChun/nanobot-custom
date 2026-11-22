@@ -176,6 +176,13 @@
       "managedFolderAccess": "Quyền truy cập thư mục được quản lý",
       "currentModel": "Cấu hình hiện tại",
       "brandLogos": "Logo thương hiệu",
+      "notificationSound": "Âm báo",
+      "notificationTest": "Kiểm tra việc gửi",
+      "testNotificationBody": "Thông báo đang hoạt động.",
+      "testNotification": "Gửi thông báo thử",
+      "permissionDenied": "Cho phép thông báo trong cài đặt thiết bị hoặc trình duyệt.",
+      "notifierUnavailable": "Thông báo không khả dụng. Hãy kiểm tra cài đặt hệ thống.",
+      "notificationSent": "Đã gửi thông báo thử.",
       "browserNotifications": "Thông báo tác vụ",
       "cliAppsCatalog": "Danh mục",
       "cliAppsFilter": "Bộ lọc",
@@ -1586,6 +1593,10 @@
     "cancel": "Hủy"
   },
   "errors": {
+    "approvalRejected": {
+      "title": "Yêu cầu phê duyệt đã hết hiệu lực",
+      "body": "Yêu cầu phê duyệt này không còn hiệu lực trên cổng kết nối, chẳng hạn sau khi khởi động lại. Hãy gửi tin nhắn mới để tiếp tục."
+    },
     "messageTooBig": {
       "title": "Tin nhắn quá lớn",
       "body": "Máy chủ đã từ chối tin nhắn trước vì vượt quá giới hạn kích thước. Hãy bớt ảnh hoặc chọn tệp nhỏ hơn rồi thử lại."

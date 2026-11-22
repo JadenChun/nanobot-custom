@@ -166,59 +166,7 @@ export function normalizeActivityTimeline(
 export function projectActivityTimeline(
   messages: UIMessage[],
 ): TurnUnit[] {
-  return groupTurnActivity(normalizeActivityTimeline(messages));
-}
-
-/**
- * Collapse a turn's work into one group per turn.
- *
- * Reference chat UIs present a turn as "what the agent did" followed by the
- * reply, not as work/reply/work/reply. Grouping here keeps the semantic order
- * of answers while moving every activity fold of a turn into a single surface
- * placed before that turn's first answer. Turns with no work, and rows that are
- * not part of a turn, keep their original position.
- */
-function groupTurnActivity(units: TurnUnit[]): TurnUnit[] {
-  const grouped = new Map<string, TurnUnit[]>();
-  for (const unit of units) {
-    if (unit.type !== "activity" || !unit.turnId) continue;
-    const list = grouped.get(unit.turnId) ?? [];
-    list.push(unit);
-    grouped.set(unit.turnId, list);
-  }
-  if (![...grouped.values()].some((list) => list.length > 1)) return units;
-
-  const emitted = new Set<string>();
-  const result: TurnUnit[] = [];
-  for (const unit of units) {
-    const turnId = unit.type === "activity" ? unit.turnId : unit.message.turnId;
-    const groups = turnId ? grouped.get(turnId) : undefined;
-    if (unit.type !== "activity" || !turnId || !groups) {
-      result.push(unit);
-      continue;
-    }
-    if (emitted.has(turnId)) continue;
-    emitted.add(turnId);
-    result.push(mergeActivityGroup(groups));
-  }
-  return result;
-}
-
-function mergeActivityGroup(groups: TurnUnit[]): TurnUnit {
-  const activityGroups = groups.filter(
-    (unit): unit is Extract<TurnUnit, { type: "activity" }> => unit.type === "activity",
-  );
-  if (activityGroups.length === 1) return activityGroups[0];
-  const first = activityGroups[0];
-  const last = activityGroups[activityGroups.length - 1];
-  return {
-    ...first,
-    messages: activityGroups.flatMap((unit) => unit.messages),
-    sourceMessageCount: activityGroups.reduce((sum, unit) => sum + unit.sourceMessageCount, 0),
-    showTurnDuration: activityGroups.some((unit) => unit.showTurnDuration === true),
-    turnLatencyMs: last.turnLatencyMs ?? first.turnLatencyMs,
-    startedAtMs: first.startedAtMs,
-  };
+  return normalizeActivityTimeline(messages);
 }
 
 function projectOrderedTurn(
@@ -313,6 +261,12 @@ function projectOrderedTurn(
         appendActivity(reasoningOnlyMessageFromAnswer(message), 0);
       }
       flushActivity();
+      // Keep media inline where the agent emitted it: once a buffered answer
+      // already carries media/images, later text starts a new bubble below the
+      // media instead of pulling the media down to the end of the turn.
+      if (answers.some(hasAttachedMedia)) {
+        flushAnswers();
+      }
       answerSourceMessageCount += claimLeadingNoops();
       answers.push(stripInlineReasoning(message));
       answerSourceMessageCount += 1;
@@ -359,9 +313,12 @@ function isAssistantAnswer(message: UIMessage): boolean {
   return (
     message.turnPhase === "answer"
     || message.content.trim().length > 0
-    || !!message.media?.length
-    || !!message.images?.length
+    || hasAttachedMedia(message)
   );
+}
+
+function hasAttachedMedia(message: UIMessage): boolean {
+  return Boolean(message.media?.length || message.images?.length);
 }
 
 function orderMessagesByTurnSeq(messages: UIMessage[]): UIMessage[] {

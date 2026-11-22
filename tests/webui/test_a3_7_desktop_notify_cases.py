@@ -45,7 +45,7 @@ class _NotifySpy:
 
     def __call__(self, command: list[str], **_kwargs: Any) -> SimpleNamespace:
         self.commands.append(list(command))
-        return SimpleNamespace(returncode=0, stdout=b"", stderr=b"")
+        return SimpleNamespace(returncode=0, stdout=b"42", stderr=b"")
 
 
 @pytest.fixture
@@ -238,3 +238,53 @@ def test_u6_notify_send_failure_keeps_existing_error_response(gateway, monkeypat
 
     assert response.status_code == 500
     assert len(calls) == 1
+
+def test_thread_notifications_replace_by_tag_and_honor_sound(gateway) -> None:
+    services, spy = gateway
+    for sound in [True, False]:
+        response = asyncio.run(services.http.dispatch_webui_mutation(
+            _Connection([("Origin", "http://127.0.0.1:8765")]),
+            "desktop.notify", {"title": "Kohaku", "body": "Done", "tag": "chat-17", "sound": sound},
+        ))
+        assert response.status_code == 200
+    first, second = spy.commands
+    assert "--hint=string:sound-name:complete" in first
+    assert "--hint=boolean:suppress-sound:true" in second
+    assert "--hint=string:x-canonical-private-synchronous:chat-17" in second
+    assert "--replace-id=42" in second
+
+
+def test_legacy_notify_send_delivers_tagged_notification(gateway, monkeypatch) -> None:
+    services, spy = gateway
+
+    def legacy_notify(command: list[str], **kwargs: Any) -> SimpleNamespace:
+        if "--print-id" in command or any(arg.startswith("--replace-id=") for arg in command):
+            return SimpleNamespace(returncode=1, stderr=b"Unknown option", stdout=b"")
+        return spy(command, **kwargs)
+
+    monkeypatch.setattr("nanobot.webui.ws_http.subprocess.run", legacy_notify)
+    response = asyncio.run(services.http.dispatch_webui_mutation(
+        _Connection([("Origin", "http://127.0.0.1:8765")]),
+        "desktop.notify", {"title": "Kohaku", "body": "Done", "tag": "chat-17", "sound": False},
+    ))
+    assert response.status_code == 200
+    delivered, = spy.commands
+    assert delivered[-2:] == ["Kohaku", "Done"]
+    assert "--hint=boolean:suppress-sound:true" in delivered
+    assert "--hint=string:x-canonical-private-synchronous:chat-17" in delivered
+
+
+def test_darwin_fallback_preserves_notification_text(gateway, monkeypatch) -> None:
+    services, spy = gateway
+    monkeypatch.setattr("nanobot.webui.ws_http.sys.platform", "darwin")
+    monkeypatch.setattr("nanobot.webui.ws_http.shutil.which", lambda name: "/usr/bin/osascript" if name == "osascript" else None)
+    body = 'Done — "release"; $(echo test)\nReady'
+    response = asyncio.run(services.http.dispatch_webui_mutation(
+        _Connection([("Origin", "http://127.0.0.1:8765")]),
+        "desktop.notify", {"title": "Release review", "body": body},
+    ))
+    assert response.status_code == 200
+    command, = spy.commands
+    assert command[0] == "/usr/bin/osascript"
+    assert command[-2:] == ["Release review", body]
+    assert body not in command[2]

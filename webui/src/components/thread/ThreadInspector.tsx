@@ -11,7 +11,7 @@ const MIN_CHAT_WIDTH = 420;
 const MAX_INSPECTOR_WIDTH = 960;
 export const MIN_INSPECTOR_DOCK_WIDTH = MIN_CHAT_WIDTH + MIN_INSPECTOR_WIDTH;
 
-export type InspectorTabId = "subagents" | "file" | "assets" | "summary";
+export type InspectorTabId = "subagents" | "file" | "assets";
 
 export interface InspectorTab {
   id: InspectorTabId;
@@ -26,6 +26,7 @@ interface ThreadInspectorProps {
   selected: InspectorTabId | null;
   containerWidth: number;
   visible: boolean;
+  headerActions?: ReactNode;
   onSelect: (id: InspectorTabId) => void;
   onClose: (id: InspectorTabId) => void;
 }
@@ -35,6 +36,7 @@ export function ThreadInspector({
   selected,
   containerWidth,
   visible,
+  headerActions,
   onSelect,
   onClose,
 }: ThreadInspectorProps) {
@@ -102,7 +104,7 @@ export function ThreadInspector({
               event.preventDefault();
             }}
           />
-          <div className="flex h-10 shrink-0 items-center border-b border-border/60 px-2">
+          <div className="flex h-10 shrink-0 items-center gap-2 border-b border-border/60 px-2">
             <div role="tablist" aria-label={t("thread.inspector.tabs", "Open previews")} className="flex min-w-0 flex-1 items-center gap-1">
               {tabs.map((tab, index) => (
                 <div key={tab.id} role="presentation" className={cn(
@@ -154,6 +156,14 @@ export function ThreadInspector({
                 </div>
               ))}
             </div>
+            {headerActions ? (
+              <div
+                data-testid="inspector-header-actions"
+                className="flex shrink-0 items-center gap-1"
+              >
+                {headerActions}
+              </div>
+            ) : null}
           </div>
         </>
       ) : null}

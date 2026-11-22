@@ -265,3 +265,10 @@ Java_ai_nanobot_mobile_network_NativeNetwork_mediaPurge(JNIEnv *env, jobject thi
     (void)thiz;
     return (jint)nanobot_network_media_purge((int64_t)handle);
 }
+
+JNIEXPORT jint JNICALL
+Java_ai_nanobot_mobile_network_NativeNetwork_networkChanged(JNIEnv *env, jobject thiz, jlong handle) {
+    (void)env;
+    (void)thiz;
+    return (jint)nanobot_network_network_changed((int64_t)handle);
+}

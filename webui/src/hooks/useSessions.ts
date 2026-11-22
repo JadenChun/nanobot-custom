@@ -409,17 +409,37 @@ export function useSessions(): {
   useEffect(() => {
     let disposed = false;
     let refreshQueued = false;
-    const unsubscribe = client.onSessionUpdate(() => {
+    const queueRefresh = () => {
       if (refreshQueued) return;
       refreshQueued = true;
       queueMicrotask(() => {
         refreshQueued = false;
         if (!disposed) void refresh();
       });
+    };
+    const unsubscribeUpdate = client.onSessionUpdate(queueRefresh);
+    let sawDisconnect = client.status !== "open";
+    const unsubscribeStatus = client.onStatus((status) => {
+      if (status !== "open") {
+        sawDisconnect = true;
+        return;
+      }
+      if (sawDisconnect) {
+        sawDisconnect = false;
+        queueRefresh();
+      }
     });
+    const onResume = () => {
+      if (document.visibilityState === "visible") queueRefresh();
+    };
+    document.addEventListener("visibilitychange", onResume);
+    window.addEventListener("nanobot-native-resume", onResume);
     return () => {
       disposed = true;
-      unsubscribe();
+      unsubscribeUpdate();
+      unsubscribeStatus();
+      document.removeEventListener("visibilitychange", onResume);
+      window.removeEventListener("nanobot-native-resume", onResume);
     };
   }, [client, refresh]);
 
@@ -974,6 +994,14 @@ export function useSessionHistory(key: string | null): {
       if (typeof cachedPage.totalPromptCount === "number") {
         setTotalPromptCount(cachedPage.totalPromptCount);
       }
+      if (cachedPage.turnIndex && cachedPage.turnIndex.length > 0) {
+        setTurnIndex(cachedPage.turnIndex);
+      }
+      if (cachedPage.promptIndex && cachedPage.promptIndex.length > 0) {
+        setPromptIndex(cachedPage.promptIndex);
+        setPromptIndexBeforeCursor(cachedPage.promptIndexBeforeCursor ?? null);
+        setPromptIndexHasMoreBefore(cachedPage.promptIndexHasMoreBefore === true);
+      }
       setState((prev) => prev.client === client && prev.key === key
         ? { ...prev, messages: cachedPage.messages, loading: false }
         : {
@@ -1420,9 +1448,23 @@ export function useSessionHistory(key: string | null): {
       forkBoundaryMessageCount: state.forkBoundaryMessageCount,
       totalTurnCount,
       totalPromptCount,
+      turnIndex,
+      promptIndex,
+      promptIndexBeforeCursor,
+      promptIndexHasMoreBefore,
       version: state.version,
     });
-  }, [client, key, state, totalPromptCount, totalTurnCount]);
+  }, [
+    client,
+    key,
+    promptIndex,
+    promptIndexBeforeCursor,
+    promptIndexHasMoreBefore,
+    state,
+    totalPromptCount,
+    totalTurnCount,
+    turnIndex,
+  ]);
 
   const markWorkspaceAccessRequestStale = useCallback(() => {
     accessRequestReadVersionRef.current += 1;
@@ -1904,7 +1946,15 @@ export function useSessionHistory(key: string | null): {
       }
       const ui = persistedMessagesToUi(body.messages ?? [])
         .filter((message) => message.kind !== "delegated_child");
-      const resolvedPromptId = body.page?.target_prompt_id ?? target.promptId;
+      const fallbackCursorPrompt = !body.page?.target_prompt_id && !target.promptId && target.cursor
+        ? [...ui].reverse().find((message) => message.role === "user")
+        : undefined;
+      const resolvedPromptId =
+        body.page?.target_prompt_id
+        || target.promptId
+        || fallbackCursorPrompt?.promptId
+        || fallbackCursorPrompt?.id
+        || "";
       if (target.locator || !target.cursor) {
         const foundTarget = ui.some(
           (message) =>

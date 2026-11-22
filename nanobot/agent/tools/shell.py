@@ -189,6 +189,10 @@ class _PreparedCommand:
     tool_parameters_schema(
         command=StringSchema("The shell command to execute"),
         cmd=StringSchema("Compatibility alias for command"),
+        summary=StringSchema(
+            "Brief 2-6 word summary of what this command does (e.g. 'Check image dimensions', 'Run unit tests', 'Build WebUI bundle').",
+            nullable=True,
+        ),
         working_dir=StringSchema("Optional working directory for the command"),
         workdir=StringSchema("Compatibility alias for working_dir"),
         timeout=IntegerSchema(
@@ -557,7 +561,10 @@ class ExecTool(Tool):
 
     @property
     def description(self) -> str:
-        return "Execute a shell command."
+        return (
+            "Execute a shell command. Always pass a brief 2-6 word `summary` "
+            "of what the command does."
+        )
 
     @property
     def exclusive(self) -> bool:
@@ -622,6 +629,7 @@ class ExecTool(Tool):
 
     async def execute(
         self, command: str | None = None, cmd: str | None = None,
+        summary: str | None = None,
         working_dir: str | None = None, workdir: str | None = None,
         timeout: int | None = None, shell: str | None = None,
         login: bool | None = None, yield_time_ms: int | None = None,

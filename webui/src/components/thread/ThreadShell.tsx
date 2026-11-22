@@ -25,7 +25,8 @@ import { GeneratedAssetsPanel } from "@/components/thread/GeneratedAssetsSheet";
 import { Button } from "@/components/ui/button";
 import { PromptNavigator } from "@/components/thread/PromptNavigator";
 import { RecoveryNotice } from "@/components/thread/RecoveryNotice";
-import { SessionSummaryPanel } from "@/components/thread/SessionInfoPopover";
+import { SessionSummaryCard } from "@/components/thread/SessionInfoPopover";
+import { cn } from "@/lib/utils";
 import { resolveRetainedContextUsage } from "@/lib/context-usage-retention";
 import {
   clearComposerDraftsForSession,
@@ -102,7 +103,6 @@ import type {
   WorkspacesPayload,
 } from "@/lib/types";
 import { projectWebuiThreadMessages } from "@/lib/thread-display-compat";
-import { cn } from "@/lib/utils";
 import { useClient } from "@/providers/ClientProvider";
 
 type MessageShape = Pick<UIMessage, "role" | "kind" | "content" | "isStreaming" | "turnId">;
@@ -113,6 +113,16 @@ type MessageShape = Pick<UIMessage, "role" | "kind" | "content" | "isStreaming" 
  * offer the prompt navigator instead.
  */
 const PROMPT_RAIL_MIN_WIDTH = 944;
+/**
+ * Minimum chat pane width to display the Session Summary card beside the chat
+ * history without colliding with messages. Below this width the card hides.
+ */
+const SESSION_SUMMARY_MIN_PANE_WIDTH = 1040;
+/**
+ * Chat pane width where the empty right gutter next to the centered 49.5rem
+ * message column already fits the Session Summary card without shifting chat.
+ */
+const SESSION_SUMMARY_GUTTER_MIN_WIDTH = 1328;
 
 interface ChildHistoryInspection {
   parentKey: string;
@@ -679,6 +689,29 @@ function isStaleThreadSnapshot(
   return snapshot.every((message, index) => sameMessageShape(current[index], message));
 }
 
+function prependOlderHistoryPrefix(
+  current: UIMessage[],
+  normalizedHistory: UIMessage[],
+): UIMessage[] | null {
+  const currentTranscript = current.filter((row) => row.kind !== "delegated_child");
+  if (currentTranscript.length === 0 || normalizedHistory.length === 0) return null;
+  const firstCurrent = currentTranscript[0];
+  const prefixCount = normalizedHistory.findIndex(
+    (candidate) => candidate.id === firstCurrent.id,
+  );
+  if (prefixCount <= 0) return null;
+  const overlapCount = normalizedHistory.length - prefixCount;
+  if (overlapCount <= 0 || overlapCount > currentTranscript.length) return null;
+  for (let index = 0; index < overlapCount; index += 1) {
+    const historyRow = normalizedHistory[prefixCount + index];
+    const currentRow = currentTranscript[index];
+    if (historyRow.id !== currentRow.id && !sameMessageShape(historyRow, currentRow)) {
+      return null;
+    }
+  }
+  return [...normalizedHistory.slice(0, prefixCount), ...current];
+}
+
 function latestActiveTurnId(messages: UIMessage[], runStartedAt: number | null): string | null {
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     const message = messages[index];
@@ -821,6 +854,7 @@ interface ThreadShellProps {
   onRefreshWorkspaces?: () => Promise<void>;
   workspaceScopeDisabled?: boolean;
   workspaceError?: string | null;
+  onDismissWorkspaceError?: () => void;
   onWorkspaceScopeChange?: (scope: WorkspaceScopePayload) => void;
   onWorkspaceScopeAcknowledged?: (scope: WorkspaceScopePayload) => void;
   settingsSnapshot?: SettingsPayload | null;
@@ -1128,6 +1162,7 @@ export function ThreadShell({
   onRefreshWorkspaces,
   workspaceScopeDisabled = false,
   workspaceError = null,
+  onDismissWorkspaceError,
   onWorkspaceScopeChange,
   onWorkspaceScopeAcknowledged,
   settingsSnapshot = null,
@@ -1228,9 +1263,9 @@ export function ThreadShell({
   const nextTurnChatIdRef = useRef<string | null>(chatId);
   const nextTurnSettings = nextTurnTrackerRef.current;
   const workspaceNextTurnPending = nextTurnPendingKinds.has("workspace");
-  // The gateway acknowledgement is authoritative; the local override only
-  // displays the in-flight choice so the picker reacts immediately.
-  const nextWorkspaceScope = liveNextWorkspaceScope ?? nextTurnScopeOverride;
+  // Prefer the latest local/acknowledged override over the HTTP history snapshot
+  // so repeated next-turn folder changes during a running turn react immediately.
+  const nextWorkspaceScope = nextTurnScopeOverride ?? liveNextWorkspaceScope;
   const trackNextTurnSetting = useCallback((
     ownerChatId: string,
     kind: NextTurnSettingKind,
@@ -1268,17 +1303,6 @@ export function ThreadShell({
         : current
     ));
   }, [liveNextWorkspaceScope]);
-  useEffect(() => {
-    // A confirmed scope equal to the pending choice means admission consumed
-    // it; the picker now shows the active folder, not a pending one.
-    setNextTurnScopeOverride((current) => (
-      current && workspaceScope
-        && current.project_path === workspaceScope.project_path
-        && current.access_mode === workspaceScope.access_mode
-        ? null
-        : current
-    ));
-  }, [workspaceScope]);
   const [appliedHistoryVersion, setAppliedHistoryVersion] = useState(0);
   const pendingRecoveryInvalidationRef = useRef<PendingRecoveryInvalidation | null>(null);
   const pendingRecoveryResolveRef = useRef<PendingRecoveryResolve | null>(null);
@@ -1452,18 +1476,20 @@ export function ThreadShell({
     wasModal: boolean;
   } | null>(null);
   const [shellWidth, setShellWidth] = useState(0);
+  const [chatPaneWidth, setChatPaneWidth] = useState(0);
+  const [sessionSummaryOpen, setSessionSummaryOpen] = useState(false);
   const [selectedInspector, setSelectedInspector] = useState<InspectorTabId>("subagents");
   const [filePreview, setFilePreview] = useState<{ parentKey: string; path: string } | null>(null);
   const filePreviewPath = filePreview?.parentKey === historyKey ? filePreview.path : null;
   const [filePreviewRefreshKey, setFilePreviewRefreshKey] = useState(0);
   const [assetsInspectorOpen, setAssetsInspectorOpen] = useState(false);
-  const [summaryInspectorOpen, setSummaryInspectorOpen] = useState(false);
   const [inspectorCollapsed, setInspectorCollapsed] = useState(false);
   const filePreviewEditKeysRef = useRef<Set<string>>(new Set());
   const draftNamespace = useMemo(() => draftNamespaceFor(token), [token]);
   const [quotedContext, setQuotedContext] = useState<string | null>(null);
   const [composerFocusSignal, setComposerFocusSignal] = useState(0);
   const shellRef = useRef<HTMLElement | null>(null);
+  const chatPaneRef = useRef<HTMLDivElement | null>(null);
   const composerSurfaceRef = useRef<HTMLDivElement | null>(null);
   const pendingFirstRef = useRef<PendingFirstMessage | null>(null);
   const [pendingFirstTargetChatId, setPendingFirstTargetChatId] = useState<string | null>(null);
@@ -1477,8 +1503,12 @@ export function ThreadShell({
 
   useLayoutEffect(() => {
     const shell = shellRef.current;
+    const chatPane = chatPaneRef.current;
     if (!shell) return;
-    const measure = () => setShellWidth(shell.clientWidth);
+    const measure = () => {
+      setShellWidth(shell.clientWidth);
+      setChatPaneWidth(chatPane ? chatPane.clientWidth : 0);
+    };
     measure();
     if (typeof ResizeObserver === "undefined") {
       window.addEventListener("resize", measure);
@@ -1486,6 +1516,7 @@ export function ThreadShell({
     }
     const observer = new ResizeObserver(measure);
     observer.observe(shell);
+    if (chatPane) observer.observe(chatPane);
     return () => observer.disconnect();
   }, []);
   const activeViewportTurnByChatIdRef = useRef<Map<string, string>>(new Map());
@@ -1779,33 +1810,45 @@ export function ThreadShell({
   const turnActive = messagesReady
     && !recoveryNeedsDecision
     && (isStreaming || currentRunStartedAt !== null);
+  useEffect(() => {
+    if (!chatId || typeof client.onNextTurnSettings !== "function") return;
+    return client.onNextTurnSettings(() => {
+      if (nextTurnChatIdRef.current !== chatId) return;
+      const latest = client.getNextTurnSettings?.(chatId)?.workspaceScope;
+      if (latest) setNextTurnScopeOverride(latest);
+    });
+  }, [chatId, client]);
+  useEffect(() => {
+    if (turnActive) return;
+    // A confirmed scope equal to the pending choice means admission consumed
+    // it; the picker now shows the active folder, not a pending one.
+    setNextTurnScopeOverride((current) => (
+      current && workspaceScope
+        && current.project_path === workspaceScope.project_path
+        && current.access_mode === workspaceScope.access_mode
+        ? null
+        : current
+    ));
+  }, [turnActive, workspaceScope]);
   const activeChildHistoryInspection = childHistoryInspection?.parentKey === historyKey
     ? childHistoryInspection
     : null;
   const assetsInspectorAvailable = Boolean(historyKey) && !temporary && assetsInspectorOpen;
-  const summaryInspectorAvailable = Boolean(historyKey) && summaryInspectorOpen;
   // Prefer the tab the user selected when it is still open. Otherwise fall back
   // to whatever remains open, in the same order the tabs are rendered.
   const inspectorTab = selectedInspector === "file" && filePreviewPath
     ? "file"
     : selectedInspector === "assets" && assetsInspectorAvailable
       ? "assets"
-      : selectedInspector === "summary" && summaryInspectorAvailable
-        ? "summary"
-        : selectedInspector === "subagents" && activeChildHistoryInspection
-          ? "subagents"
-          : filePreviewPath
-            ? "file"
-            : assetsInspectorAvailable
-              ? "assets"
-              : summaryInspectorAvailable
-                ? "summary"
-                : activeChildHistoryInspection ? "subagents" : null;
+      : selectedInspector === "subagents" && activeChildHistoryInspection
+        ? "subagents"
+        : filePreviewPath
+          ? "file"
+          : assetsInspectorAvailable
+            ? "assets"
+            : activeChildHistoryInspection ? "subagents" : null;
   const inspectorDocked = shellWidth >= MIN_INSPECTOR_DOCK_WIDTH;
-  // Session summary only docks side-by-side when there is enough width for both
-  // the chat column and the side panel — it never floats over the chat window.
-  const summaryHiddenForWidth = inspectorTab === "summary" && !inspectorDocked;
-  const inspectorVisible = !inspectorCollapsed && !summaryHiddenForWidth && (inspectorDocked || composerActive);
+  const inspectorVisible = !inspectorCollapsed && (inspectorDocked || composerActive);
   const inspectorOpen = inspectorVisible && inspectorTab !== null;
   const inspectorModal = inspectorVisible && inspectorTab !== null && !inspectorDocked;
   const childHistoryModal = inspectorModal && inspectorTab === "subagents";
@@ -1952,17 +1995,24 @@ export function ThreadShell({
     previousInspectionActiveRef.current = isActive;
     previousChildHistoryModalRef.current = childHistoryModal;
   }, [activeChildHistoryInspection, childHistoryModal, historyKey]);
+  const pendingRootApprovalRef = useRef<{ turnId: string; approvalId: string } | null>(null);
+  const [rootApprovalResetSignal, setRootApprovalResetSignal] = useState(0);
+  const [dismissedRootApprovalIds, setDismissedRootApprovalIds] = useState<string[]>([]);
   const riskyApproval = useMemo(() => {
     if (turnActive || booting) return null;
     for (let index = displayMessages.length - 1; index >= 0; index -= 1) {
       const message = displayMessages[index];
       if (message.role === "user") return null;
       if (message.role === "assistant" && message.kind !== "trace") {
-        return parseRiskyApprovalPrompt(message.content);
+        const parsed = parseRiskyApprovalPrompt(message.content);
+        if (parsed?.approvalId && dismissedRootApprovalIds.includes(parsed.approvalId)) {
+          return null;
+        }
+        return parsed;
       }
     }
     return null;
-  }, [booting, displayMessages, turnActive]);
+  }, [booting, dismissedRootApprovalIds, displayMessages, turnActive]);
   const submitChildApprovalDecision = useCallback((
     prompt: ChildApprovalPrompt,
     decision: "approve" | "deny",
@@ -2059,12 +2109,15 @@ export function ThreadShell({
     [historyKey],
   );
   const filePreviewAvailabilityRevision = `${displayMessages.length}:${turnActive}`;
+  const filePreviewAvailabilityRevisionRef = useRef(filePreviewAvailabilityRevision);
+  filePreviewAvailabilityRevisionRef.current = filePreviewAvailabilityRevision;
   const resolveFilePreviewAvailability = useCallback((path: string) => {
     if (!historyKey) return Promise.resolve(false);
+    const revision = filePreviewAvailabilityRevisionRef.current;
     const cached = filePreviewAvailabilityCache.get(path);
     if (
       cached
-      && (cached.available !== false || cached.revision === filePreviewAvailabilityRevision)
+      && (cached.available !== false || cached.revision === revision)
     ) {
       return cached.promise;
     }
@@ -2081,7 +2134,7 @@ export function ThreadShell({
     );
     const entry: FilePreviewAvailabilityCacheEntry = {
       promise: pending,
-      revision: filePreviewAvailabilityRevision,
+      revision,
     };
     filePreviewAvailabilityCache.set(path, entry);
     void pending.then((available) => {
@@ -2092,10 +2145,20 @@ export function ThreadShell({
     return pending;
   }, [
     filePreviewAvailabilityCache,
-    filePreviewAvailabilityRevision,
     getToken,
     historyKey,
+    turnActive,
   ]);
+
+  const [appliedHistoryMeta, setAppliedHistoryMeta] = useState<{
+    chatId: string | null;
+    userMessageOffset: number;
+    forkBoundaryMessageCount: number | null;
+  }>({
+    chatId: null,
+    userMessageOffset: 0,
+    forkBoundaryMessageCount: null,
+  });
 
   // Fetch completion comes before the history effect updates the displayed messages.
   const historyIsPending = historyKey !== null && (
@@ -2104,19 +2167,36 @@ export function ThreadShell({
   const showingOpeningPage = historyKey !== null && (
     !chatId || (historyIsPending && messagesReady && displayMessages.length === 0)
   );
-  const openingMessages = useMemo(() => {
-    if (!showingOpeningPage) return [];
-    return projectWebuiThreadMessages(historical);
-  }, [historical, showingOpeningPage]);
-  const historicalWindowMessages = useMemo(() => {
-    if (!viewingHistoricalWindow) return [];
-    return projectWebuiThreadMessages(historical);
-  }, [historical, viewingHistoricalWindow]);
+  const projectedHistorical = useMemo(
+    () => projectWebuiThreadMessages(historical),
+    [historical],
+  );
+  const openingMessages = showingOpeningPage ? projectedHistorical : [];
+  const historicalWindowMessages = viewingHistoricalWindow ? projectedHistorical : [];
+  const displayWithOlderHistory = useMemo(
+    () =>
+      !viewingHistoricalWindow && messagesReady
+        ? (prependOlderHistoryPrefix(displayMessages, projectedHistorical) ?? displayMessages)
+        : displayMessages,
+    [displayMessages, messagesReady, projectedHistorical, viewingHistoricalWindow],
+  );
   const viewportMessages = historyAccessDenied
     ? []
     : viewingHistoricalWindow
       ? historicalWindowMessages
-      : showingOpeningPage || !messagesReady ? openingMessages : displayMessages;
+      : showingOpeningPage || !messagesReady ? openingMessages : displayWithOlderHistory;
+  const useDirectHistoryMeta =
+    viewingHistoricalWindow
+    || showingOpeningPage
+    || !messagesReady
+    || displayWithOlderHistory !== displayMessages
+    || appliedHistoryMeta.chatId !== chatId;
+  const viewportUserMessageOffset = useDirectHistoryMeta
+    ? userMessageOffset
+    : appliedHistoryMeta.userMessageOffset;
+  const viewportForkBoundaryMessageCount = useDirectHistoryMeta
+    ? forkBoundaryMessageCount
+    : appliedHistoryMeta.forkBoundaryMessageCount;
   const conversationLoading = (openingConversation || historyIsPending) && viewportMessages.length === 0;
   const showHeroComposer = viewportMessages.length === 0 && !conversationLoading;
   const composerVariant = showHeroComposer ? emptyComposerVariant : "thread";
@@ -2355,6 +2435,13 @@ export function ThreadShell({
   useEffect(() => {
     if (!historyKey || !chatId || loading) return;
     setAppliedHistoryVersion(historyVersion);
+    setAppliedHistoryMeta((current) => (
+      current.chatId === chatId
+      && current.userMessageOffset === userMessageOffset
+      && current.forkBoundaryMessageCount === forkBoundaryMessageCount
+        ? current
+        : { chatId, userMessageOffset, forkBoundaryMessageCount }
+    ));
     if (historyAccessDenied) {
       messageCacheRef.current.delete(chatId);
       pendingCanonicalHydrateRef.current.delete(chatId);
@@ -2471,9 +2558,14 @@ export function ThreadShell({
     // and keep the current child rows for the independent hydration to update.
     const transcriptRows = (rows: UIMessage[]) => rows.filter((row) => row.kind !== "delegated_child");
     const cachedTranscriptLength = cached ? transcriptRows(cached).length : 0;
+    const isExplicitReveal = pendingReveal?.status === "ready";
+    const prependedFromSource = prependOlderHistoryPrefix(historySource, normalizedHistory);
     const canAdoptHistory = (current: UIMessage[]) => (
-      (cachedTranscriptLength === 0 || normalizedHistory.length > cachedTranscriptLength)
-      && !isStaleThreadSnapshot(transcriptRows(current), normalizedHistory)
+      isExplicitReveal
+      || (
+        (cachedTranscriptLength === 0 || normalizedHistory.length > cachedTranscriptLength)
+        && !isStaleThreadSnapshot(transcriptRows(current), normalizedHistory)
+      )
     );
     const mergeHistory = (current: UIMessage[]) => mergeDelegatedChildRows(
       preserveUnknownDeliveryStatus(current, normalizedHistory),
@@ -2484,14 +2576,21 @@ export function ThreadShell({
         mode: "hydration",
       },
     ).messages;
-    const mergedHistory = mergeHistory(historySource);
-    if (canAdoptHistory(messages)) {
+    const mergedHistory = prependedFromSource ?? mergeHistory(historySource);
+    if (prependedFromSource !== null || canAdoptHistory(messages)) {
       pendingHistoryLineageCommitRef.current.set(chatId, {
         lineage: historyLineage,
         messages: mergedHistory,
       });
     }
     setMessages((current) => {
+      const prepended =
+        current === historySource
+          ? prependedFromSource
+          : prependOlderHistoryPrefix(current, normalizedHistory);
+      if (prepended !== null) {
+        return prepended;
+      }
       if (canAdoptHistory(current)) {
         return messagesReady && current !== historySource ? mergeHistory(current) : mergedHistory;
       }
@@ -2513,6 +2612,9 @@ export function ThreadShell({
     hasPendingToolCalls,
     historyKey,
     viewingHistoricalWindow,
+    pendingReveal?.status,
+    userMessageOffset,
+    forkBoundaryMessageCount,
   ]);
 
   useEffect(() => {
@@ -2828,6 +2930,28 @@ export function ThreadShell({
         void refreshRecoveryProjection();
       }
       if (
+        (error.kind === "turn_rejected"
+          || error.kind === "connection_closed"
+          || error.kind === "message_too_big")
+        && error.chatId === chatId
+        && error.turnId
+        && pendingRootApprovalRef.current?.turnId === error.turnId
+      ) {
+        const failedApprovalId = pendingRootApprovalRef.current.approvalId;
+        pendingRootApprovalRef.current = null;
+        setRootApprovalResetSignal((count) => count + 1);
+        if (
+          error.kind === "turn_rejected"
+          && (error.reason === "approval_stale"
+            || error.reason === "invalid_approval_decision"
+            || error.reason === "approval_source_unavailable")
+        ) {
+          setDismissedRootApprovalIds((prev) =>
+            prev.includes(failedApprovalId) ? prev : [...prev, failedApprovalId],
+          );
+        }
+      }
+      if (
         error.kind === "turn_rejected"
         && error.chatId === chatId
         && pendingRecoveryInvalidationRef.current?.kind === "input"
@@ -2860,7 +2984,8 @@ export function ThreadShell({
       wasPageHiddenRef.current = false;
       if (!historyKey || !chatId || client.status !== "open" || loading) return;
       if (
-        !turnActive
+        !isMobileRuntimeActive()
+        && !turnActive
         && !hasPendingToolCalls
         && !client.hasUnsettledRun(chatId)
         && !historyError
@@ -3319,7 +3444,6 @@ export function ThreadShell({
   // the shell moves to a new or temporary chat so it cannot reappear later.
   useEffect(() => {
     if (!historyKey || temporary) setAssetsInspectorOpen(false);
-    if (!historyKey) setSummaryInspectorOpen(false);
   }, [historyKey, temporary]);
 
   useEffect(() => {
@@ -3349,15 +3473,11 @@ export function ThreadShell({
   const handleCloseAssets = useCallback(() => {
     setAssetsInspectorOpen(false);
   }, []);
-  const handleCloseSummary = useCallback(() => {
-    setSummaryInspectorOpen(false);
-  }, []);
   const handleCloseInspectorDialog = useCallback(() => {
     handleCloseChildHistory();
     handleCloseFilePreview();
     handleCloseAssets();
-    handleCloseSummary();
-  }, [handleCloseAssets, handleCloseChildHistory, handleCloseFilePreview, handleCloseSummary]);
+  }, [handleCloseAssets, handleCloseChildHistory, handleCloseFilePreview]);
 
   const handleToggleAssetsInspector = useCallback(() => {
     if (!historyKey || temporary) return;
@@ -3369,17 +3489,6 @@ export function ThreadShell({
     setAssetsInspectorOpen(true);
     setInspectorCollapsed(false);
   }, [assetsInspectorOpen, historyKey, inspectorCollapsed, inspectorTab, temporary]);
-
-  const handleToggleSummaryInspector = useCallback(() => {
-    if (!historyKey || !inspectorDocked) return;
-    if (summaryInspectorOpen && inspectorTab === "summary" && !inspectorCollapsed) {
-      setSummaryInspectorOpen(false);
-      return;
-    }
-    setSelectedInspector("summary");
-    setSummaryInspectorOpen(true);
-    setInspectorCollapsed(false);
-  }, [historyKey, inspectorCollapsed, inspectorDocked, inspectorTab, summaryInspectorOpen]);
 
   const handleToggleInspectorPanel = useCallback(() => {
     if (inspectorOpen) {
@@ -3469,23 +3578,28 @@ export function ThreadShell({
             summary={riskyApproval.summary}
             approvalId={riskyApproval.approvalId}
             busy={turnActive || booting || preparingFull}
+            resetSignal={rootApprovalResetSignal}
             onApprove={() => {
               if (!chatId || !riskyApproval.approvalId) return;
-              client.sendApprovalDecision(
+              const approvalId = riskyApproval.approvalId;
+              const turnId = client.sendApprovalDecision(
                 chatId,
-                riskyApproval.approvalId,
+                approvalId,
                 "approve",
                 session?.key,
               );
+              pendingRootApprovalRef.current = { turnId, approvalId };
             }}
             onCancel={() => {
               if (!chatId || !riskyApproval.approvalId) return;
-              client.sendApprovalDecision(
+              const approvalId = riskyApproval.approvalId;
+              const turnId = client.sendApprovalDecision(
                 chatId,
-                riskyApproval.approvalId,
+                approvalId,
                 "deny",
                 session?.key,
               );
+              pendingRootApprovalRef.current = { turnId, approvalId };
             }}
           />
         ) : null}
@@ -3659,9 +3773,11 @@ export function ThreadShell({
         nextWorkspaceScope={nextWorkspaceScope}
         nextTurnSettingsPending={workspaceNextTurnPending}
         nextTurnSettingsError={nextTurnSettingsError}
+        onDismissNextTurnSettingsError={() => setNextTurnSettingsError(null)}
         onBeforeNewTurnSend={session || historyKey ? awaitNextTurnSettings : undefined}
         workspaceAccessModeUnknownBlocked={hasUnknownMessageSend}
         workspaceError={workspaceError}
+        onDismissWorkspaceError={onDismissWorkspaceError}
         onPickWorkspaceFolder={
           workspaceControls?.can_pick_folder ? pickWorkspaceFolder : undefined
         }
@@ -3729,10 +3845,7 @@ export function ThreadShell({
           aria-label={t("thread.generatedAssets.open")}
           aria-pressed={assetsInspectorAvailable && inspectorOpen && inspectorTab === "assets"}
           onClick={handleToggleAssetsInspector}
-          className={cn(
-            "host-no-drag h-8 w-8 shrink-0 rounded-full text-muted-foreground/85 hover:bg-accent/40 hover:text-foreground",
-            assetsInspectorAvailable && inspectorOpen && inspectorTab === "assets" && "bg-accent/45 text-foreground",
-          )}
+          className="host-no-drag h-8 w-8 shrink-0 rounded-full text-muted-foreground/85 hover:bg-accent/40 hover:text-foreground"
         >
           <Images className="h-4 w-4" aria-hidden />
         </Button>
@@ -3744,28 +3857,38 @@ export function ThreadShell({
         aria-label={t("thread.inspector.toggle", { defaultValue: "Toggle side panel" })}
         aria-pressed={inspectorOpen}
         onClick={handleToggleInspectorPanel}
-        className={cn(
-          "host-no-drag h-8 w-8 shrink-0 rounded-full text-muted-foreground/85 hover:bg-accent/40 hover:text-foreground",
-          inspectorOpen && "bg-accent/45 text-foreground",
-        )}
+        className="host-no-drag h-8 w-8 shrink-0 rounded-full text-muted-foreground/85 hover:bg-accent/40 hover:text-foreground"
       >
         <PanelRight className="h-4 w-4" aria-hidden />
       </Button>
     </>
   ) : undefined;
-  // Hide the session summary toggle when the viewport is too narrow to dock the
-  // side panel beside the chat column without overlapping messages.
-  const sessionInfoAction = historyKey && inspectorDocked ? (
+  const effectiveChatPaneWidth =
+    chatPaneWidth > 0
+      ? chatPaneWidth
+      : shellWidth > 0
+        ? Math.max(0, shellWidth - (inspectorOpen && inspectorDocked ? 440 : 0))
+        : 0;
+  const canFitSessionSummary = effectiveChatPaneWidth >= SESSION_SUMMARY_MIN_PANE_WIDTH;
+  const sessionSummaryInGutter = effectiveChatPaneWidth >= SESSION_SUMMARY_GUTTER_MIN_WIDTH;
+  const sessionSummaryVisible =
+    Boolean(historyKey) && sessionSummaryOpen && canFitSessionSummary && !inspectorModal;
+
+  // Session summary stays in the chat toolbar and toggles a non-overlapping
+  // card container within the chat space (automatically hidden when space is
+  // too narrow to display without colliding with the chat history).
+  const sessionInfoAction = historyKey ? (
     <Button
       type="button"
       variant="ghost"
       size="icon"
       aria-label={t("thread.header.sessionInfo")}
-      aria-pressed={summaryInspectorAvailable && inspectorOpen && inspectorTab === "summary"}
-      onClick={handleToggleSummaryInspector}
+      aria-pressed={sessionSummaryVisible}
+      onClick={() => setSessionSummaryOpen((open) => !open)}
       className={cn(
-        "host-no-drag h-8 w-8 shrink-0 rounded-full text-muted-foreground/85 hover:bg-accent/40 hover:text-foreground",
-        summaryInspectorAvailable && inspectorOpen && inspectorTab === "summary" && "bg-accent/45 text-foreground",
+        "host-no-drag h-8 w-8 shrink-0 rounded-full text-muted-foreground/85",
+        "hover:bg-accent/40 hover:text-foreground",
+        sessionSummaryVisible && "bg-accent/45 text-foreground",
       )}
     >
       <ListTodo className="h-4 w-4 stroke-[1.75]" aria-hidden />
@@ -3857,25 +3980,8 @@ export function ThreadShell({
     });
   }
 
-  if (summaryInspectorAvailable && historyKey && inspectorDocked) {
-    inspectorTabs.push({
-      id: "summary",
-      icon: ListTodo,
-      label: t("thread.sessionInfo.title", { defaultValue: "Session summary" }),
-      closeLabel: t("common.close", { defaultValue: "Close" }),
-      content: (
-        <SessionSummaryPanel
-          key={historyKey}
-          sessionKey={historyKey}
-          token={token}
-          title={title}
-          active={inspectorVisible && inspectorTab === "summary"}
-          modal={!inspectorDocked}
-          onClose={handleCloseSummary}
-        />
-      ),
-    });
-  }
+  const rightPanelActionsInInspector =
+    inspectorOpen && inspectorDocked && headerPortalTarget === undefined;
 
   const threadHeader = !hideHeader ? (
     <ThreadHeader
@@ -3892,7 +3998,7 @@ export function ThreadShell({
       minimal={!session && !conversationLoading}
       promptNavigatorAction={promptNavigatorAction}
       sessionInfoAction={sessionInfoAction}
-      generatedAssetsAction={generatedAssetsAction}
+      generatedAssetsAction={rightPanelActionsInInspector ? undefined : generatedAssetsAction}
       temporaryChatEnabled={temporaryChatEnabled}
       temporaryChatDisabled={booting || turnActive}
       onTemporaryChatEnabledChange={
@@ -3903,7 +4009,10 @@ export function ThreadShell({
 
   return (
     <section ref={shellRef} className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden">
-      <div className="relative flex min-w-0 flex-1 flex-col overflow-hidden">
+      <div
+        ref={chatPaneRef}
+        className="relative flex min-w-0 flex-1 flex-col overflow-hidden"
+      >
         {hideHeaderTitle && inlineHandle && !temporary && session?.handle ? (
           <div
             aria-label={`Session @${session.handle.name}`}
@@ -3919,63 +4028,96 @@ export function ThreadShell({
           </div>
         ) : null}
         {headerPortalTarget === undefined ? threadHeader : null}
-        <FilePreviewAvailabilityProvider
-          resolve={historyKey ? resolveFilePreviewAvailability : undefined}
-        >
-          <ThreadViewport
-            ref={viewportRef}
-            messages={viewportMessages}
-            temporary={temporary}
-            obscured={inspectorModal}
-            isStreaming={viewingHistoricalWindow ? false : turnActive}
-            runStartedAt={viewingHistoricalWindow ? null : currentRunStartedAt}
-            retryStatus={viewingHistoricalWindow ? null : retryStatus}
-            emptyState={emptyState}
-            composer={(
-              <div hidden={!composerActive} data-testid={composerActive ? "active-pane-composer" : undefined}>
-                {composer}
+        <div className="relative flex min-h-0 flex-1 overflow-hidden">
+          <FilePreviewAvailabilityProvider
+            resolve={historyKey ? resolveFilePreviewAvailability : undefined}
+          >
+            <ThreadViewport
+              ref={viewportRef}
+              messages={viewportMessages}
+              temporary={temporary}
+              obscured={inspectorModal}
+              isStreaming={viewingHistoricalWindow ? false : turnActive}
+              runStartedAt={viewingHistoricalWindow ? null : currentRunStartedAt}
+              retryStatus={viewingHistoricalWindow ? null : retryStatus}
+              emptyState={emptyState}
+              composer={(
+                <div hidden={!composerActive} data-testid={composerActive ? "active-pane-composer" : undefined}>
+                  {composer}
+                </div>
+              )}
+              activeTurnId={viewingHistoricalWindow ? null : viewportTurnId}
+              activeTurnStartedHere={viewingHistoricalWindow ? false : activeTurnStartedHere}
+              conversationKey={historyKey}
+              conversationReady={messagesReady}
+              conversationLoading={conversationLoading}
+              showScrollToBottomButton={!!session}
+              cliApps={cliApps}
+              mcpPresets={mcpPresets}
+              slashCommands={availableSlashCommands}
+              forkBoundaryMessageCount={viewportForkBoundaryMessageCount}
+              hasMoreBefore={hasMoreBefore}
+              loadingOlder={loadingOlder}
+              hasMoreAfter={hasMoreAfter}
+              loadingNewer={loadingNewer}
+              tailActivityPending={tailActivityPending || (viewingHistoricalWindow && turnActive)}
+              userMessageOffset={viewportUserMessageOffset}
+              onLoadOlder={loadOlder}
+              onLoadNewer={loadNewer}
+              onGoToLatest={handleGoToLatest}
+              sessionPrompts={sessionPrompts}
+              sessionPromptTotal={effectivePromptTotal}
+              hasMorePromptsBefore={promptIndexHasMoreBefore}
+              loadingMorePrompts={loadingPromptIndex}
+              onLoadMorePrompts={handleLoadMorePrompts}
+              onRevealPrompt={handleRevealPrompt}
+              pendingReveal={pendingReveal}
+              onPendingRevealHandled={clearPendingReveal}
+              onRetryReveal={handleRetryReveal}
+              onDismissRevealError={handleDismissRevealError}
+              sessionTurns={sessionTurns}
+              sessionTurnTotal={sessionTurnTotal}
+              onNeedSessionTurns={handleNeedSessionTurns}
+              onJumpToTurn={handleJumpToTurn}
+              onOpenFilePreview={historyKey ? handleOpenFilePreview : undefined}
+              onForkFromMessage={onForkChat && !showingOpeningPage ? handleForkFromMessage : undefined}
+              onOpenChildHistory={handleOpenChildHistory}
+              delegatedStatusAvailable={delegatedStatusAvailable}
+              onQuoteSelection={session ? handleQuoteSelection : undefined}
+            />
+          </FilePreviewAvailabilityProvider>
+          {sessionSummaryVisible && historyKey ? (
+            sessionSummaryInGutter ? (
+              <div
+                data-testid="session-summary-gutter"
+                className="pointer-events-none absolute inset-y-0 right-0 z-20 flex w-[16.5rem] items-start justify-end py-3 pr-4 pl-2"
+              >
+                <div className="pointer-events-auto max-h-full w-full">
+                  <SessionSummaryCard
+                    sessionKey={historyKey}
+                    token={token}
+                    title={title}
+                    active={sessionSummaryVisible}
+                    onClose={() => setSessionSummaryOpen(false)}
+                  />
+                </div>
               </div>
-            )}
-            activeTurnId={viewingHistoricalWindow ? null : viewportTurnId}
-            activeTurnStartedHere={viewingHistoricalWindow ? false : activeTurnStartedHere}
-            conversationKey={historyKey}
-            conversationReady={messagesReady}
-            conversationLoading={conversationLoading}
-            showScrollToBottomButton={!!session}
-            cliApps={cliApps}
-            mcpPresets={mcpPresets}
-            slashCommands={availableSlashCommands}
-            forkBoundaryMessageCount={forkBoundaryMessageCount}
-            hasMoreBefore={hasMoreBefore}
-            loadingOlder={loadingOlder}
-            hasMoreAfter={hasMoreAfter}
-            loadingNewer={loadingNewer}
-            tailActivityPending={tailActivityPending || (viewingHistoricalWindow && turnActive)}
-            userMessageOffset={userMessageOffset}
-            onLoadOlder={loadOlder}
-            onLoadNewer={loadNewer}
-            onGoToLatest={handleGoToLatest}
-            sessionPrompts={sessionPrompts}
-            sessionPromptTotal={effectivePromptTotal}
-            hasMorePromptsBefore={promptIndexHasMoreBefore}
-            loadingMorePrompts={loadingPromptIndex}
-            onLoadMorePrompts={handleLoadMorePrompts}
-            onRevealPrompt={handleRevealPrompt}
-            pendingReveal={pendingReveal}
-            onPendingRevealHandled={clearPendingReveal}
-            onRetryReveal={handleRetryReveal}
-            onDismissRevealError={handleDismissRevealError}
-            sessionTurns={sessionTurns}
-            sessionTurnTotal={sessionTurnTotal}
-            onNeedSessionTurns={handleNeedSessionTurns}
-            onJumpToTurn={handleJumpToTurn}
-            onOpenFilePreview={historyKey ? handleOpenFilePreview : undefined}
-            onForkFromMessage={onForkChat && !showingOpeningPage ? handleForkFromMessage : undefined}
-            onOpenChildHistory={handleOpenChildHistory}
-            delegatedStatusAvailable={delegatedStatusAvailable}
-            onQuoteSelection={session ? handleQuoteSelection : undefined}
-          />
-        </FilePreviewAvailabilityProvider>
+            ) : (
+              <aside
+                data-testid="session-summary-rail"
+                className="flex w-[16.5rem] shrink-0 items-start py-3 pr-4 pl-2"
+              >
+                <SessionSummaryCard
+                  sessionKey={historyKey}
+                  token={token}
+                  title={title}
+                  active={sessionSummaryVisible}
+                  onClose={() => setSessionSummaryOpen(false)}
+                />
+              </aside>
+            )
+          ) : null}
+        </div>
       </div>
       {headerPortalTarget && headerActive
         ? createPortal(threadHeader, headerPortalTarget)
@@ -3985,11 +4127,11 @@ export function ThreadShell({
         selected={inspectorTab}
         containerWidth={shellWidth}
         visible={inspectorVisible}
+        headerActions={rightPanelActionsInInspector ? generatedAssetsAction : undefined}
         onSelect={setSelectedInspector}
         onClose={(id) => {
           if (id === "file") handleCloseFilePreview();
           else if (id === "assets") handleCloseAssets();
-          else if (id === "summary") handleCloseSummary();
           else handleCloseChildHistory();
         }}
       />

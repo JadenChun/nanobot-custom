@@ -1379,7 +1379,7 @@ describe("AgentActivityCluster", () => {
     expect(screen.queryByText("Web research")).not.toBeInTheDocument();
   });
 
-  it("renders reasoning as a single flat activity row", () => {
+  it("renders streaming reasoning as a Thinking… row with its live body below", () => {
     render(
       <AgentActivityCluster
         messages={[{
@@ -1396,9 +1396,12 @@ describe("AgentActivityCluster", () => {
       />,
     );
 
-    expect(screen.getByText("Planning a focused search for official sources")).toBeInTheDocument();
-    expect(screen.queryByText("Thinking…")).not.toBeInTheDocument();
-    expect(screen.queryByText("Thinking")).not.toBeInTheDocument();
+    const disclosure = screen.getByRole("button", { name: "Reasoning" });
+    expect(disclosure).toHaveTextContent("Thinking…");
+    expect(disclosure).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByTestId("reasoning-live-stream")).toHaveTextContent(
+      /Planning.*a focused search.*for official sources/,
+    );
   });
 
   it("discloses a reasoning row inside the existing outer activity fold", async () => {
@@ -2359,5 +2362,72 @@ describe("AgentActivityCluster", () => {
     expect(container.innerHTML).not.toContain("private-payload");
     expect(container.textContent).not.toMatch(/run_cli_app\(|browser_fill\(|third_party_sync\(/);
     expect(container.textContent).toMatch(/<redacted>|••••/);
+  });
+
+  it("discloses full shell commands, MCP parameters/errors, and grouped tool items underneath each action line", () => {
+    const execLine = 'exec({"command":"cd /tmp/work && python3 run.py\\nAPI_KEY=sk-proj-secret1234567890 echo done"})';
+    const mcpLine = 'mcp_comfy_generate_image({"workflow":"qwen_image_2_1","width":720,"height":1280})';
+    const readA = 'read_file({"path":"/home/alice/project/a.ts"})';
+    const readB = 'read_file({"path":"/home/alice/project/b.ts"})';
+
+    render(
+      <AgentActivityCluster
+        messages={[
+          {
+            id: "trace-expandable",
+            role: "tool",
+            kind: "trace",
+            content: [execLine, mcpLine, readA, readB].join("\n"),
+            traces: [execLine, mcpLine, readA, readB],
+            toolEvents: [
+              {
+                phase: "end",
+                call_id: "c1",
+                name: "exec",
+                arguments: { command: "cd /tmp/work && python3 run.py\nAPI_KEY=sk-proj-secret1234567890 echo done" },
+                result: "ok",
+              },
+              {
+                phase: "error",
+                call_id: "c2",
+                name: "mcp_comfy_generate_image",
+                arguments: { workflow: "qwen_image_2_1", width: 720, height: 1280 },
+                error: "Width must be a multiple of 32",
+              },
+            ],
+            createdAt: 1,
+          },
+        ]}
+        isTurnStreaming
+        hasBodyBelow={false}
+      />,
+    );
+
+    // Details are collapsed by default so the timeline stays clean.
+    expect(screen.queryByTestId("activity-detail-panel")).not.toBeInTheDocument();
+
+    // Expand shell command row -> full redacted command + result
+    const shellToggle = screen.getByRole("button", { name: /Ran command cd \/tmp\/work/i });
+    expect(shellToggle).toHaveAttribute("aria-expanded", "false");
+    fireEvent.click(shellToggle);
+    expect(shellToggle).toHaveAttribute("aria-expanded", "true");
+    const shellBody = document.getElementById(shellToggle.getAttribute("aria-controls")!)!;
+    expect(shellBody).toHaveTextContent("python3 run.py");
+    expect(shellBody).toHaveTextContent("echo done");
+    expect(shellBody).not.toHaveTextContent("sk-proj-secret1234567890");
+
+    // Expand MCP row -> parameters + failure message
+    const mcpToggle = screen.getByRole("button", { name: /qwen_image_2_1.*Comfy/i });
+    fireEvent.click(mcpToggle);
+    const mcpBody = document.getElementById(mcpToggle.getAttribute("aria-controls")!)!;
+    expect(mcpBody).toHaveTextContent("Width must be a multiple of 32");
+    expect(mcpBody).toHaveTextContent("720");
+
+    // Expand grouped read_file row -> both individual paths
+    const readToggle = screen.getByRole("button", { name: /Reading file · 2 files/i });
+    fireEvent.click(readToggle);
+    const readBody = document.getElementById(readToggle.getAttribute("aria-controls")!)!;
+    expect(readBody).toHaveTextContent("~/project/a.ts");
+    expect(readBody).toHaveTextContent("~/project/b.ts");
   });
 });

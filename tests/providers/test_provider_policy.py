@@ -17,6 +17,7 @@ from nanobot.providers.openai_compat_provider import OpenAICompatProvider
 from nanobot.providers.provider_policy import (
     DEFAULT_ESTIMATED_COMPAT_MAX_REQUEST_BYTES,
     ESTIMATED_COMPAT_POLICY,
+    OPENAI_COMPAT_DEFAULT_POLICY,
     ProviderPolicy,
     RequestAccountingPolicy,
     resolve_provider_policy,
@@ -118,9 +119,17 @@ def test_registry_preset_declares_local_compatibility() -> None:
     assert local is not None
     assert local.policy == ESTIMATED_COMPAT_POLICY
 
+    openai = find_by_name("openai")
+    assert openai is not None
+    assert openai.policy == ProviderPolicy()
+
+    for name in ("custom", "deepseek", "openrouter", "opencode", "vllm", "ollama"):
+        spec = find_by_name(name)
+        assert spec is not None
+        assert spec.policy == OPENAI_COMPAT_DEFAULT_POLICY
+
     dynamic = create_dynamic_spec("acme-local")
-    assert dynamic.policy.request_accounting is RequestAccountingPolicy.STRICT
-    assert dynamic.policy.max_request_bytes is None
+    assert dynamic.policy == OPENAI_COMPAT_DEFAULT_POLICY
 
 
 def test_provider_config_accepts_policy_overrides_and_rejects_invalid_cap() -> None:
@@ -167,8 +176,8 @@ def test_custom_provider_opts_into_policy_through_config_only() -> None:
     assert snapshot.provider.policy == snapshot.policy
 
 
-def test_custom_provider_without_policy_fields_stays_strict() -> None:
-    config = Config.model_validate({
+def test_custom_provider_defaults_to_estimated_compat_and_can_opt_into_strict() -> None:
+    default_config = Config.model_validate({
         "providers": {"acme_local": {"apiBase": "http://127.0.0.1:9999/v1"}},
         "modelPresets": {
             "primary": {
@@ -180,9 +189,91 @@ def test_custom_provider_without_policy_fields_stays_strict() -> None:
         },
     })
 
-    snapshot = build_provider_snapshot(config, preset_name="primary")
+    default_snapshot = build_provider_snapshot(default_config, preset_name="primary")
+    assert default_snapshot.policy == OPENAI_COMPAT_DEFAULT_POLICY
+    assert default_snapshot.provider.policy == OPENAI_COMPAT_DEFAULT_POLICY
 
-    assert snapshot.policy == ProviderPolicy()
+    strict_config = Config.model_validate({
+        "providers": {
+            "acme_local": {
+                "apiBase": "http://127.0.0.1:9999/v1",
+                "requestAccounting": "strict",
+            },
+        },
+        "modelPresets": {
+            "primary": {
+                "provider": "acme_local",
+                "model": MODEL,
+                "maxTokens": 128,
+                "contextWindowTokens": 8_192,
+            },
+        },
+    })
+
+    strict_snapshot = build_provider_snapshot(strict_config, preset_name="primary")
+    assert strict_snapshot.policy == ProviderPolicy()
+    assert strict_snapshot.provider.policy == ProviderPolicy()
+
+
+def test_custom_openai_compat_provider_uses_token_estimate_not_utf8_byte_ceiling() -> None:
+    """Custom OpenAI-compatible providers (e.g. CommandCode DeepSeek) do not trip
+    the 1-byte-per-token strict ceiling on large non-OpenAI prompts."""
+    config = Config.model_validate({
+        "providers": {
+            "commandcode": {
+                "apiBase": "https://api.commandcode.ai/provider/v1",
+                "apiKey": "fixture",
+            },
+        },
+        "modelPresets": {
+            "primary": {
+                "provider": "commandcode",
+                "model": "deepseek/deepseek-v4.1-flash",
+                "maxTokens": 65_536,
+                "contextWindowTokens": 1_000_000,
+            },
+        },
+    })
+
+    snapshot = build_provider_snapshot(config, preset_name="primary")
+    provider = snapshot.provider
+    assert isinstance(provider, OpenAICompatProvider)
+    assert provider.policy == OPENAI_COMPAT_DEFAULT_POLICY
+    assert provider.supports_usage_anchor is True
+    assert provider.supports_source_summary is True
+
+    # ~950 KB of realistic English prose is ~240k tokens, well under the
+    # 1,000,000 context window (933,440 input limit), even though its UTF-8
+    # byte count exceeds 933,440.
+    large_text = "frame review continuity check approved set " * 22_500
+    assert len(large_text.encode("utf-8")) > 933_440
+    body = provider._build_kwargs(
+        [{"role": "user", "content": large_text}],
+        None,
+        "deepseek/deepseek-v4.1-flash",
+        65_536,
+        0.6,
+        None,
+        None,
+    )
+    measurement = provider.validate_finalized_request(
+        body,
+        transport="openai_chat_completions_stream",
+        model="deepseek/deepseek-v4.1-flash",
+        provider_context=ProviderCallContext(
+            request_limits=ProviderRequestLimits(
+                total_tokens=1_000_000,
+                completion_reserve_tokens=65_536,
+                safety_buffer_tokens=1_024,
+            )
+        ),
+        completion_reserve_tokens=65_536,
+        policy=provider._request_budget_policy,
+    )
+    assert measurement is not None
+    assert measurement.fits
+    assert measurement.policy == RequestAccountingPolicy.ESTIMATED_COMPAT.value
+    assert measurement.input_tokens < 400_000
 
 
 def test_accounting_is_selected_by_policy_not_provider_name() -> None:

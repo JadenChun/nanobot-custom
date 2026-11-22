@@ -176,6 +176,13 @@
       "managedFolderAccess": "受管理的資料夾存取",
       "currentModel": "目前設定",
       "brandLogos": "品牌 Logo",
+      "notificationSound": "通知音效",
+      "notificationTest": "傳送測試",
+      "testNotificationBody": "通知功能正常。",
+      "testNotification": "傳送測試通知",
+      "permissionDenied": "請在裝置或瀏覽器設定中允許通知。",
+      "notifierUnavailable": "無法使用通知。請檢查系統通知設定。",
+      "notificationSent": "已傳送測試通知。",
       "browserNotifications": "任務通知",
       "cliAppsCatalog": "目錄",
       "cliAppsFilter": "篩選",
@@ -1586,6 +1593,10 @@
     "cancel": "取消"
   },
   "errors": {
+    "approvalRejected": {
+      "title": "核准已失效",
+      "body": "此核准要求在閘道上已失效，例如在閘道重新啟動後。請傳送新訊息以繼續。"
+    },
     "messageTooBig": {
       "title": "訊息過大",
       "body": "上一則訊息超過大小限制，因此伺服器拒絕接收。請移除部分圖片或改用較小的檔案，再重新送出。"

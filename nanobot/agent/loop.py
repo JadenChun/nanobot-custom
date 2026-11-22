@@ -2409,6 +2409,12 @@ class AgentLoop:
             message_metadata=ctx.msg.metadata,
             session_metadata=ctx.session.metadata,
         )
+        route_source = ctx.delivery.route.metadata.get(WEBUI_DISPLAY_SOURCE_KEY)
+        source_state = (
+            ctx.run_context.execution_owner.read_snapshot().state
+            if ctx.run_context is not None and ctx.run_context.execution_owner is not None
+            else (route_source if isinstance(route_source, SourceState) else None)
+        )
         return RequestContext(
             channel=ctx.delivery.route.channel,
             chat_id=ctx.delivery.route.chat_id,
@@ -2423,9 +2429,7 @@ class AgentLoop:
             workspace=scope.project_path,
             workspace_scope=scope,
             persistent_session=ctx.session.policy.persist and not ctx.ephemeral,
-            source_state=(ctx.run_context.execution_owner.read_snapshot().state
-                          if ctx.run_context is not None and ctx.run_context.execution_owner is not None
-                          else None),
+            source_state=source_state,
             media_root=self.media_root,
         )
 
@@ -3735,6 +3739,11 @@ class AgentLoop:
             approval_granted=bool(run_context.policy.approval_granted),
             context_manager=run_context.policy.context_manager,
             effect_authority=run_context.policy.effect_authority,
+            permissions=(
+                self.tools_config.permissions
+                if self.tools_config is not None
+                else None
+            ),
         )
         tool_policy: ToolPolicy = risky_policy
         if run_context.internal_tool_policy is not None:
@@ -7110,14 +7119,9 @@ class AgentLoop:
         ctx.runtime = runtime
         if ctx.on_runtime_admitted is not None:
             await ctx.on_runtime_admitted(runtime)
-        nodes = () if ctx.fresh_history else source_nodes(writer.owner.read_snapshot().events)
-        ctx.run_context.source_history = SourceTranscript(nodes)
-        ctx.history = ctx.run_context.source_history.messages()
         ctx.pending_summary = None
         ctx.provider_state = None
         await ctx.delivery.runtime_admitted(runtime)
-        ctx.request_context = self._request_context_for_turn(ctx)
-        ctx.runtime_context_blocks = await self._resolve_runtime_context_for_turn(ctx)
         ctx.input_persisted_early = self._persist_user_message_early(
             ctx.msg, session, run_id=ctx.run_context.run_id, trace_owner=ctx)
         if ctx.kind is TurnKind.USER and ctx.input_persisted_early:
@@ -7128,9 +7132,14 @@ class AgentLoop:
             )
         if pending_followup_id(ctx.msg) is not None:
             await self._publish_stop_target_for_session(ctx.session_key)
+        ctx.request_context = self._request_context_for_turn(ctx)
+        ctx.runtime_context_blocks = await self._resolve_runtime_context_for_turn(ctx)
         # Keep the full recovery history until the runner has admitted its
         # invocation-specific artifact verifier and checkpoint dependencies.
-        if not ctx.fresh_history:
+        if ctx.fresh_history:
+            ctx.run_context.source_history = SourceTranscript(())
+            ctx.history = []
+        else:
             ctx.run_context.source_history = SourceTranscript(tuple(
                 node for node in source_nodes(writer.owner.read_snapshot().events)
                 if node.event_id != ctx.run_context.source_input_event_id

@@ -27,6 +27,7 @@ object NativeNetwork {
     external fun mediaRead(handle: Long, streamId: Long, buffer: ByteArray): Int
     external fun mediaClose(handle: Long, streamId: Long): Int
     external fun mediaPurge(handle: Long): Int
+    external fun networkChanged(handle: Long): Int
     external fun stop(handle: Long): Int
     external fun lastError(): String
 }

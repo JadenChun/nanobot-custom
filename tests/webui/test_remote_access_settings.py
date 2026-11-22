@@ -249,16 +249,20 @@ def test_tailscale_readiness_route(tmp_path: Path, monkeypatch) -> None:
     config_path = tmp_path / "config.json"
     save_config(Config(), config_path)
     settings = WebUISettingsConfig(config_path)
+    seen_ports: list[int | None] = []
     monkeypatch.setattr(
         "nanobot.remote.tailscale.tailscale_status",
-        lambda: {
-            "available": True,
-            "connected": True,
-            "serve_mapped": True,
-            "dns_name": "desktop.tailnet.ts.net",
-            "origin": "https://desktop.tailnet.ts.net",
-            "error": "",
-        },
+        lambda *, expected_port=None: (
+            seen_ports.append(expected_port)
+            or {
+                "available": True,
+                "connected": True,
+                "serve_mapped": True,
+                "dns_name": "desktop.tailnet.ts.net",
+                "origin": "https://desktop.tailnet.ts.net",
+                "error": "",
+            }
+        ),
     )
     response = handle_remote_access(
         settings,
@@ -266,4 +270,5 @@ def test_tailscale_readiness_route(tmp_path: Path, monkeypatch) -> None:
         "/api/settings/remote-access/tailscale",
     )
     assert response.status_code == 200
+    assert seen_ports == [None]
     assert json.loads(response.body)["origin"] == "https://desktop.tailnet.ts.net"

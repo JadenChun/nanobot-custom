@@ -256,15 +256,10 @@
         var(--host-glass-start),
         var(--host-glass-end)
       );
-    background-attachment: fixed, fixed;
-    -webkit-backdrop-filter: saturate(185%) blur(34px);
-    backdrop-filter: saturate(185%) blur(34px);
   }
 
   .host-sidebar-glass {
-    background: hsl(var(--sidebar) / 0.94);
-    -webkit-backdrop-filter: saturate(145%) blur(18px);
-    backdrop-filter: saturate(145%) blur(18px);
+    background: hsl(var(--sidebar) / 0.96);
     box-shadow: 14px 0 32px -30px rgb(0 0 0 / 0.12);
   }
 
@@ -425,22 +420,20 @@
   }
 
   /**
-   * Keep the transcript and composer visually continuous. The scrollport owns
-   * the fade because overflow clips its contents before an adjacent overlay
-   * can soften the edge. The matching in-flow gap keeps the last line fully
-   * visible once the user reaches the bottom.
+   * Keep the transcript and composer visually continuous without putting a
+   * `mask-image` on the scrolling container (which deopts GPU scrolling and
+   * forces a full-viewport alpha composite on every scroll/stream frame).
+   * The matching in-flow gap keeps the last line fully visible once the user
+   * reaches the bottom.
    */
   .thread-message-viewport {
-    -webkit-mask-image: linear-gradient(
-      to bottom,
-      #000 0,
-      #000 calc(100% - var(--thread-composer-fade-height)),
-      transparent 100%
-    );
-    mask-image: linear-gradient(
-      to bottom,
-      #000 0,
-      #000 calc(100% - var(--thread-composer-fade-height)),
+    contain: layout style paint;
+  }
+  .thread-message-bottom-fade {
+    height: var(--thread-composer-fade-height);
+    background: linear-gradient(
+      to top,
+      hsl(var(--background)) 0%,
       transparent 100%
     );
   }

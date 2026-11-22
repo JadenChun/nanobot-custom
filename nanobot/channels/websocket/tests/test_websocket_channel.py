@@ -7194,3 +7194,10 @@ async def test_concurrent_new_webui_submissions_reserve_only_one_turn(
         and payload.get("reason") == "busy_new_request"
         for payload in payloads
     )
+
+
+def test_websocket_channel_enables_live_tool_hints_by_default() -> None:
+    """WebUI activity timelines require live tool-start hints even when global send_tool_hints is False."""
+    bus = MagicMock()
+    channel = WebSocketChannel({"enabled": True, "allowFrom": ["*"]}, bus, gateway=_basic_handler(bus))
+    assert channel.progress_transport_defaults() == (True, True)

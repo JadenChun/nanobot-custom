@@ -811,6 +811,33 @@ def test_mixed_preupgrade_and_stamped_history_shows_full_history_for_gen0(
     index = session_turn_index(KEY, limit=50, expected_source=gen0)
     assert index is not None and index["total_turn_count"] == 10
 
+    # Jumping around an older pre-upgrade prompt must resolve from the full
+    # adoptable history instead of rebuilding an origin-only index and 404ing.
+    around = build_webui_thread_response(
+        KEY,
+        expected_source=gen0,
+        limit=4,
+        direction="around",
+        prompt_id="legacy:2:0",
+    )
+    assert around is not None
+    around_users = [m["content"] for m in around["messages"] if m["role"] == "user"]
+    assert "Prompt 2" in around_users
+    assert around["page"]["target_prompt_id"] == "legacy:2:0"
+    assert around["page"]["has_more_after"] is True
+    assert around["page"]["after_cursor"]
+
+    newer = build_webui_thread_response(
+        KEY,
+        expected_source=gen0,
+        limit=4,
+        direction="after",
+        after=around["page"]["after_cursor"],
+    )
+    assert newer is not None
+    newer_users = [m["content"] for m in newer["messages"] if m["role"] == "user"]
+    assert any(text in newer_users for text in ("Prompt 3", "Prompt 4", "Prompt 5"))
+
 
 def test_mixed_history_never_adopts_foreign_origin_or_reset_lifetime(
     isolated_webui_dir: Path,

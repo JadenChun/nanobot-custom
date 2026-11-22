@@ -449,7 +449,7 @@ export function ModelPresetBadge({
         }}
         className={cn(
           pickerWidthClassName,
-          "max-h-[var(--radix-popover-content-available-height)] origin-[var(--radix-popover-content-transform-origin)] overflow-y-auto p-1.5 scrollbar-thin scrollbar-track-transparent data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[state=closed]:slide-out-to-bottom-1 data-[state=open]:slide-in-from-bottom-1 duration-200 ease-out motion-reduce:animate-none",
+          "max-h-[var(--radix-popover-content-available-height)] origin-[var(--radix-popover-content-transform-origin)] overflow-y-auto p-1.5 scrollbar-thin scrollbar-track-transparent data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[state=closed]:slide-out-to-bottom-1 data-[state=open]:slide-in-from-bottom-1 duration-100 ease-out motion-reduce:animate-none",
         )}
       >
         <h2 id={pickerTitleId} className="border-b border-border/55 px-2.5 pb-2 pt-1.5 text-sm font-semibold">
@@ -606,6 +606,7 @@ function ReasoningEffortPills({ control, labelFor }: ReasoningEffortPillsProps) 
   const { t } = useTranslation();
   const sliderId = useId();
   const [preview, setPreview] = useState<number | null>(null);
+  const previewRef = useRef<number | null>(null);
   const pointer = useRef<number | null>(null);
   const efforts: (string | null)[] = [null, ...control.options];
   const committed = Math.max(0, efforts.indexOf(control.value));
@@ -623,11 +624,27 @@ function ReasoningEffortPills({ control, labelFor }: ReasoningEffortPillsProps) 
       control.onChange(efforts[index]);
     }
   };
+  const setPreviewIndex = (index: number) => {
+    previewRef.current = index;
+    setPreview(index);
+  };
+  const indexFromPointer = (input: HTMLInputElement, clientX: number): number | null => {
+    if (last <= 0 || !Number.isFinite(clientX)) return null;
+    const rect = input.getBoundingClientRect();
+    if (rect.width <= 0) return null;
+    const ratio = Math.min(1, Math.max(0, (clientX - rect.left) / rect.width));
+    return Math.round(ratio * last);
+  };
   const endPreview = (event: PointerEvent<HTMLInputElement>, apply: boolean) => {
     if (pointer.current !== event.pointerId) return;
     pointer.current = null;
+    const target = previewRef.current ?? event.currentTarget.valueAsNumber;
+    previewRef.current = null;
     setPreview(null);
-    if (apply) commit(event.currentTarget.valueAsNumber);
+    if (event.currentTarget.hasPointerCapture?.(event.pointerId)) {
+      event.currentTarget.releasePointerCapture?.(event.pointerId);
+    }
+    if (apply && Number.isFinite(target)) commit(target);
   };
 
   return (
@@ -656,20 +673,31 @@ function ReasoningEffortPills({ control, labelFor }: ReasoningEffortPillsProps) 
           onChange={(event) => {
             const index = event.target.valueAsNumber;
             if (pointer.current === null) commit(index);
-            else setPreview(index);
+            else setPreviewIndex(index);
           }}
           onPointerDown={(event) => {
-            if (event.button !== 0) {
+            if (event.pointerType === "mouse" && event.button !== 0) {
               event.preventDefault();
               return;
             }
             pointer.current = event.pointerId;
-            event.currentTarget.setPointerCapture?.(event.pointerId);
+            try {
+              event.currentTarget.setPointerCapture?.(event.pointerId);
+            } catch {
+              // Synthetic or already-ended pointers cannot be captured.
+            }
+            const next = indexFromPointer(event.currentTarget, event.clientX);
+            if (next !== null) setPreviewIndex(next);
+          }}
+          onPointerMove={(event) => {
+            if (pointer.current !== event.pointerId) return;
+            const next = indexFromPointer(event.currentTarget, event.clientX);
+            if (next !== null) setPreviewIndex(next);
           }}
           onPointerUp={(event) => endPreview(event, true)}
           onPointerCancel={(event) => endPreview(event, false)}
           onLostPointerCapture={(event) => endPreview(event, false)}
-          className="block h-6 w-full cursor-pointer touch-pan-y accent-foreground focus-visible:rounded focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring/50"
+          className="block h-6 w-full cursor-grab touch-none accent-foreground active:cursor-grabbing focus-visible:rounded focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring/50"
         />
       </div>
       <div className="flex items-center justify-between gap-0.5">

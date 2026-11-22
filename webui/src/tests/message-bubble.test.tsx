@@ -951,7 +951,7 @@ describe("MessageBubble", () => {
     expect(screen.queryByText("Code")).not.toBeInTheDocument();
   });
 
-  it("renders streaming reasoning as one compact activity line", () => {
+  it("renders streaming reasoning with a Thinking… header and live expanded body", () => {
     const message: UIMessage = {
       id: "a-reasoning-streaming",
       role: "assistant",
@@ -963,19 +963,19 @@ describe("MessageBubble", () => {
 
     const { container } = render(<MessageBubble message={message} />);
 
-    const preview = screen.getByText("Step 1: parse intent. Step 2: compute.");
-    expect(preview).toBeInTheDocument();
+    const header = screen.getByText("Thinking…");
+    expect(header).toBeInTheDocument();
     expect(container.querySelector(".reasoning-sheen-stripe")).not.toBeInTheDocument();
-    expect(preview).toHaveClass("streaming-text-sheen");
-    expect(preview).toHaveAttribute(
-      "data-sheen-text",
+    expect(header).toHaveClass("streaming-text-sheen");
+    expect(header).toHaveAttribute("data-sheen-text", "Thinking…");
+    const disclosure = screen.getByRole("button", { name: "Reasoning" });
+    expect(disclosure).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByTestId("reasoning-live-stream")).toHaveTextContent(
       "Step 1: parse intent. Step 2: compute.",
     );
-    expect(screen.queryByText("Thinking…")).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /thinking/i })).not.toBeInTheDocument();
   });
 
-  it("keeps completed reasoning on one line above the answer", () => {
+  it("keeps completed reasoning collapsed to a compact Thought row above the answer", () => {
     const message: UIMessage = {
       id: "a-reasoning-done",
       role: "assistant",
@@ -983,16 +983,16 @@ describe("MessageBubble", () => {
       createdAt: Date.now(),
       reasoning: "hidden until expanded",
       reasoningStreaming: false,
+      latencyMs: 10_000,
     };
 
     render(<MessageBubble message={message} />);
 
-    const preview = screen.getByText("hidden until expanded");
-    expect(preview).toBeInTheDocument();
+    const label = screen.getByText("Thought for 10s");
+    expect(label).toBeInTheDocument();
     expect(screen.getByText("The answer is 42.")).toBeInTheDocument();
-    expect(preview.closest('[data-testid="activity-step"]')?.parentElement).toHaveClass("mb-2");
-    expect(screen.queryByText("Thinking")).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /thinking/i })).not.toBeInTheDocument();
+    expect(label.closest('[data-testid="activity-step"]')?.parentElement).toHaveClass("mb-2");
+    expect(screen.queryByText("hidden until expanded")).not.toBeInTheDocument();
   });
 
   it("keeps expanded reasoning separate from the assistant answer", async () => {
@@ -1029,7 +1029,7 @@ describe("MessageBubble", () => {
     expect(within(reasoning!).getByText("Check the supplied evidence.")).toBeInTheDocument();
   });
 
-  it("compacts reasoning markdown into plain single-line text", () => {
+  it("does not leak raw markdown into the collapsed reasoning header", () => {
     const message: UIMessage = {
       id: "a-reasoning-md",
       role: "assistant",
@@ -1041,8 +1041,9 @@ describe("MessageBubble", () => {
 
     const { container } = render(<MessageBubble message={message} />);
 
-    expect(screen.getByText("Section title Body line.")).toBeInTheDocument();
+    expect(screen.getByText("Thought")).toBeInTheDocument();
     expect(container.textContent).not.toContain("###");
+    expect(container.textContent).not.toContain("Section title");
     expect(container.querySelector("h3")).not.toBeInTheDocument();
   });
 

@@ -100,12 +100,14 @@ class WebUIMediaGateway:
         payload: str,
         *,
         request: WsRequest | None = None,
+        max_response_bytes: int | None = None,
     ) -> Response:
         return serve_signed_media(
             sig,
             payload,
             secret=self.secret,
             request=request,
+            max_response_bytes=max_response_bytes,
             media_dir=self._media_dir,
         )
 

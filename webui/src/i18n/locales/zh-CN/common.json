@@ -203,6 +203,13 @@
       "fileEditDisplay": "文件编辑显示",
       "codeWrap": "代码换行",
       "brandLogos": "品牌 Logo",
+      "notificationSound": "通知声音",
+      "notificationTest": "送达测试",
+      "testNotificationBody": "通知功能正常。",
+      "testNotification": "发送测试通知",
+      "permissionDenied": "请在设备或浏览器设置中允许通知。",
+      "notifierUnavailable": "通知不可用。请检查系统通知设置。",
+      "notificationSent": "已发送测试通知。",
       "browserNotifications": "任务通知",
       "maxResults": "最大结果数",
       "timeout": "超时",
@@ -1586,6 +1593,10 @@
     "cancel": "取消"
   },
   "errors": {
+    "approvalRejected": {
+      "title": "审批已失效",
+      "body": "此审批请求在网关上已失效，例如在网关重启后。请发送新消息以继续。"
+    },
     "messageTooBig": {
       "title": "消息过大",
       "body": "服务端因超过大小限制拒收了上一条消息。可移除部分图片或使用更小的图片后重试。"

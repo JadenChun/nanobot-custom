@@ -374,6 +374,11 @@ class SkillsLoader:
                     "Use `skills/<name>/SKILL.md` for these bundled skills. "
                     "The built-in `read_file` tool resolves that agents-relative path."
                 )
+            elif source == "library":
+                lines.append(
+                    "Use `read_file` by joining this library root and the relative `SKILL.md` path; "
+                    "shell commands cannot access configured skill repositories."
+                )
             for entry in entries:
                 skill_name = entry["name"]
                 meta = self._get_skill_meta(skill_name)

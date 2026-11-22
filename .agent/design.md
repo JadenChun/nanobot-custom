@@ -46,3 +46,8 @@ context survives. Read the note before reopening the topic.
   5.4 MB canonical in the staging workspace). Removing it is a persistence
   migration across 12 production modules, deferred until the session-load
   simplification (WI-1 … WI-8) has been measured.
+- [`../docs/mobile-notification-architecture-plan.md`](../docs/mobile-notification-architecture-plan.md) —
+  mobile stays fully self-contained on private Tailscale with no SaaS relay:
+  Android stays on `RunKeepAliveService` only (no FCM), and future personal
+  self-signed iOS builds will use direct outbound desktop-to-APNs wake-up
+  pushes (`.p8` key stored locally on desktop, opaque payloads).

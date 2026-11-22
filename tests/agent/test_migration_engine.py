@@ -82,6 +82,7 @@ def engine_config(tmp_path, monkeypatch):
     config.agents.defaults.model = 'synthetic-model'
     config.agents.defaults.model_preset = None
     config.agents.defaults.max_tool_iterations = 4
+    config.tools.permissions.profile = 'strict'
     config.tools.agent_browser.enabled = False
     config.tools.agent_device.enabled = False
     config.tools.desktop_use.enabled = False

@@ -240,3 +240,85 @@ async def test_runner_throttles_repeated_workspace_bypass_attempts():
         "expected at least one escalated workspace_violation event, got: "
         f"{result.tool_events}"
     )
+
+
+@pytest.mark.asyncio
+async def test_workspace_violation_recovers_and_stops_cleanly_under_fail_on_tool_error():
+    """REQ-3 & REQ-4: Under fail_on_tool_error=True, first workspace_violation recovers;
+    escalated/terminal failure strips the internal retry hint from final_content.
+    """
+    provider = MagicMock()
+    provider.chat_with_retry = AsyncMock(side_effect=[
+        LLMResponse(
+            content=None,
+            tool_calls=[ToolCallRequest(
+                id="call_outside_1",
+                name="read_file",
+                arguments={"path": "/outside/secret.txt"},
+            )],
+        ),
+        LLMResponse(
+            content="I cannot access files outside the workspace; here is what I can do instead.",
+            tool_calls=[],
+        ),
+    ])
+    tools = MagicMock()
+    tools.get_definitions.return_value = []
+    tools.execute = AsyncMock(
+        side_effect=PermissionError(
+            "Path /outside/secret.txt is outside allowed directory /workspace"
+        )
+    )
+
+    runner = AgentRunner()
+    recover_result = await runner.run(make_run_spec(
+        provider,
+        initial_messages=[{"role": "user", "content": "check outside"}],
+        tools=tools,
+        model="test-model",
+        max_iterations=4,
+        max_tool_result_chars=_MAX_TOOL_RESULT_CHARS,
+        fail_on_tool_error=True,
+    ))
+
+    assert recover_result.stop_reason == "completed"
+    assert recover_result.tool_events[0]["status"] == "error"
+    assert "workspace_violation" in recover_result.tool_events[0]["detail"]
+    assert recover_result.final_content == (
+        "I cannot access files outside the workspace; here is what I can do instead."
+    )
+
+    escalate_provider = MagicMock()
+    escalate_provider.chat_with_retry = AsyncMock(side_effect=[
+        LLMResponse(
+            content=None,
+            tool_calls=[ToolCallRequest(
+                id=f"call_outside_{i}",
+                name="exec",
+                arguments={"command": f"cat /outside/secret.txt # try {i}"},
+            )],
+        )
+        for i in range(3)
+    ])
+    escalate_tools = MagicMock()
+    escalate_tools.get_definitions.return_value = []
+    escalate_tools.execute = AsyncMock(
+        return_value=ToolResult.error(
+            "Error: Command blocked by safety guard (path outside working dir)"
+        )
+    )
+    escalate_result = await runner.run(make_run_spec(
+        escalate_provider,
+        initial_messages=[{"role": "user", "content": "read outside"}],
+        tools=escalate_tools,
+        model="test-model",
+        max_iterations=5,
+        max_tool_result_chars=_MAX_TOOL_RESULT_CHARS,
+        fail_on_tool_error=True,
+    ))
+
+    assert escalate_result.stop_reason == "tool_error"
+    assert escalate_result.final_content
+    assert "[Analyze the error above and try a different approach.]" not in (
+        escalate_result.final_content
+    )

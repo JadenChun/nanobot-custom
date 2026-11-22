@@ -228,6 +228,7 @@ class WebUICommandTransport(Protocol):
     def is_allowed(self, sender_id: str) -> bool: ...
 
     async def revalidate_mobile_connection(self, connection: Any) -> bool: ...
+    async def refresh_mobile_connection(self, connection: Any, access_token: str) -> bool: ...
 
     def webui_subscribers(self, chat_id: str) -> tuple[ServerConnection, ...]: ...
 
@@ -241,7 +242,12 @@ class WebUICommandTransport(Protocol):
 
     def webui_clear_stream_buffers(self, chat_id: str) -> None: ...
 
-    async def webui_hydrate(self, chat_id: str) -> None: ...
+    async def webui_hydrate(
+        self,
+        chat_id: str,
+        *,
+        connection: ServerConnection | None = None,
+    ) -> None: ...
 
     async def webui_send_event(
         self,
@@ -280,6 +286,8 @@ class WebUICommandTransport(Protocol):
         *,
         scope: str | None = None,
         workspace_scope: WorkspaceScopePayload | None = None,
+        next_workspace_scope: WorkspaceScopePayload | None = None,
+        next_turn_revision: int | None = None,
         workspace_access_request: FolderAccessRequest | None = None,
         workspace_permissions: WorkspacePermissionProjection | None = None,
     ) -> None: ...
@@ -388,6 +396,12 @@ class WebUICommandRouter:
         return (
             connection in self._webui_connections
             and self._http_router.workspace_controls_available(connection)
+        )
+
+    def _workspace_scope_controls_available(self, connection: ServerConnection) -> bool:
+        return (
+            self.workspace_controls_available(connection)
+            or _typed_owner_mobile_identity(connection) is not None
         )
 
     async def send_webui_protocol_error(
@@ -702,6 +716,28 @@ class WebUICommandRouter:
     ) -> None:
         """Execute one typed WebUI command."""
         if _typed_mobile_identity(connection) is not None:
+            if envelope.get("type") == "auth_refresh":
+                new_token = envelope.get("access_token")
+                refresh_fn = getattr(self._transport, "refresh_mobile_connection", None)
+                refreshed = (
+                    isinstance(new_token, str)
+                    and bool(new_token)
+                    and callable(refresh_fn)
+                    and await refresh_fn(connection, new_token)
+                )
+                if refreshed:
+                    await self._transport.webui_send_event(connection, "auth_refreshed")
+                    return
+                await self._transport.webui_send_event(
+                    connection,
+                    "error",
+                    detail="access_expired",
+                )
+                try:
+                    await connection.close(1008, "access expired")
+                except Exception:
+                    pass
+                return
             if not await self._transport.revalidate_mobile_connection(connection):
                 await self._transport.webui_send_event(
                     connection,
@@ -732,7 +768,7 @@ class WebUICommandRouter:
                 connection,
                 lambda: self._workspaces.scope_for_new_chat(
                     envelope,
-                    controls_available=self.workspace_controls_available(connection),
+                    controls_available=self._workspace_scope_controls_available(connection),
                 ),
             )
             if scope is None:
@@ -839,7 +875,7 @@ class WebUICommandRouter:
             fields = self._session_projection.attach_fields(webui_session_key(chat_id), source=source)
             fields.update(attempt_fields)
             await self._transport.webui_send_event(connection, "attached", chat_id=chat_id, **fields)
-            await self._transport.webui_hydrate(chat_id)
+            await self._transport.webui_hydrate(chat_id, connection=connection)
             return
         if command_type == "set_sidebar_state":
             if connection not in self._webui_connections:
@@ -897,7 +933,7 @@ class WebUICommandRouter:
                     lambda: self._workspaces.set_next_turn_scope(
                         chat_id,
                         envelope,
-                        controls_available=self.workspace_controls_available(connection),
+                        controls_available=self._workspace_scope_controls_available(connection),
                     ),
                     chat_id=chat_id,
                 )
@@ -931,7 +967,7 @@ class WebUICommandRouter:
                     envelope,
                     chat_id=chat_id,
                     chat_running=websocket_turn_wall_started_at(chat_id) is not None,
-                    controls_available=self.workspace_controls_available(connection),
+                    controls_available=self._workspace_scope_controls_available(connection),
                 ),
                 chat_id=chat_id,
             )
@@ -1152,11 +1188,15 @@ class WebUICommandRouter:
                     raise InputAttemptConflictError("Input attempt source unavailable")
                 attempt = InputAttempt.parse_message(envelope["input_attempt"], principal=principal,
                     session_key=webui_session_key(chat_id), turn_id=turn_id, text=content)
-                read = await asyncio.to_thread(sessions.read_existing_canonical_source,
-                    webui_session_key(chat_id), expected_binding={
+                read = await asyncio.to_thread(
+                    sessions.read_existing_canonical_source,
+                    webui_session_key(chat_id),
+                    expected_binding={
                         "store_identity": attempt.source.store_identity,
                         "incarnation": attempt.source.incarnation, "generation": attempt.source.generation,
-                    })
+                    },
+                    header_only=True,
+                )
                 if read is None or InputAttemptSource.from_state(read[1].state) != attempt.source:
                     raise InputAttemptConflictError("Input attempt source unavailable")
                 current_source_token = attempt.source.token
@@ -1694,8 +1734,13 @@ class WebUICommandRouter:
                         )
                     )
                     if should_persist_scope:
-                        self._workspaces.persist_scope(chat_id, scope)
-                        self._workspaces.remember_request_defaults(chat_id, scope)
+                        def _persist_scope_and_defaults() -> None:
+                            self._workspaces.persist_scope(chat_id, scope)
+                            self._workspaces.remember_request_defaults(
+                                chat_id, scope, skip_if_unchanged=True,
+                            )
+
+                        await asyncio.to_thread(_persist_scope_and_defaults)
                 accepted = True
             finally:
                 if not accepted and queued_owner is not None:

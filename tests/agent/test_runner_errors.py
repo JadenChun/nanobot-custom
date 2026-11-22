@@ -552,6 +552,111 @@ async def test_context_repo_exec_denial_allows_one_safe_tool_recovery(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("repeat_denied_command", [False, True])
+async def test_managed_repo_exec_denial_recovers_with_read_file_and_stops_cleanly_on_repeat(
+    tmp_path, monkeypatch, repeat_denied_command,
+):
+    from nanobot.agent.runner import AgentRunner
+    from nanobot.agent.tools.filesystem import ReadFileTool
+    from nanobot.agent.tools.registry import ToolRegistry
+    from nanobot.agent.tools.shell import ExecTool
+    from nanobot.context_repo import ContextRepoManager, ResourceAccessPolicy
+    from nanobot.security.folder_grants import FolderGrantStore
+    from nanobot.utils.runtime import CONTEXT_REPO_EXEC_DISABLED_MESSAGE
+
+    workspace = tmp_path / "workspace"
+    shared = tmp_path / "shared"
+    instance = tmp_path / "instance"
+    workspace.mkdir()
+    (shared / "skills" / "media-generation").mkdir(parents=True)
+    skill_md = shared / "skills" / "media-generation" / "SKILL.md"
+    skill_md.write_text("# Media Generation Skill\n", encoding="utf-8")
+    store = FolderGrantStore(
+        agent_home=workspace,
+        instance_root=instance,
+        path=instance / "folder-grants.json",
+    )
+    manager = ContextRepoManager.from_config(context_repos=[{
+        "path": str(shared), "readOnly": True, "allowExec": False,
+    }])
+    policy = ResourceAccessPolicy(
+        workspace=workspace,
+        context_manager=manager,
+        restrict_to_workspace=True,
+        folder_grants=store.view,
+        sandbox_default=True,
+    )
+    tools = ToolRegistry()
+    exec_tool = ExecTool(working_dir=str(workspace), resource_policy=policy)
+    spawn = AsyncMock(side_effect=AssertionError("denied command reached process launch"))
+    monkeypatch.setattr(exec_tool, "_spawn", spawn)
+    tools.register(exec_tool)
+    tools.register(ReadFileTool(workspace=workspace, resource_policy=policy))
+
+    first_call = LLMResponse(content=None, tool_calls=[ToolCallRequest(
+        id="blocked-sed",
+        name="exec",
+        arguments={"command": f"sed -n '1,120p' {skill_md}"},
+    )])
+    second_call = (
+        LLMResponse(content=None, tool_calls=[ToolCallRequest(
+            id="blocked-cat",
+            name="exec",
+            arguments={"command": f"cat {skill_md}"},
+        )])
+        if repeat_denied_command
+        else LLMResponse(content=None, tool_calls=[ToolCallRequest(
+            id="safe-read",
+            name="read_file",
+            arguments={"path": str(skill_md)},
+        )])
+    )
+    provider = MagicMock(spec=LLMProvider)
+    provider.chat_with_retry = AsyncMock(side_effect=[
+        first_call,
+        second_call,
+        LLMResponse(content="Here is the skill summary from SKILL.md."),
+    ])
+
+    result = await AgentRunner().run(make_run_spec(
+        provider,
+        initial_messages=[{"role": "user", "content": "inspect the shared media skill"}],
+        tools=tools,
+        model="test-model",
+        max_iterations=5,
+        max_tool_result_chars=_MAX_TOOL_RESULT_CHARS,
+        fail_on_tool_error=True,
+    ))
+
+    assert provider.chat_with_retry.await_count == (2 if repeat_denied_command else 3)
+    spawn.assert_not_awaited()
+    assert "[Analyze the error above and try a different approach.]" not in (
+        result.final_content or ""
+    )
+    if repeat_denied_command:
+        assert result.stop_reason == "tool_error"
+        assert result.final_content == CONTEXT_REPO_EXEC_DISABLED_MESSAGE
+        assert [(e["name"], e["status"]) for e in result.tool_events] == [
+            ("exec", "error"),
+            ("exec", "error"),
+        ]
+    else:
+        assert result.stop_reason == "completed"
+        assert result.final_content == "Here is the skill summary from SKILL.md."
+        assert [(e["name"], e["status"]) for e in result.tool_events] == [
+            ("exec", "error"),
+            ("read_file", "ok"),
+        ]
+        assert "Media Generation Skill" in next(
+            msg["content"] for msg in result.messages if msg.get("tool_call_id") == "safe-read"
+        )
+    denied_tool_msg = next(
+        msg["content"] for msg in result.messages if msg.get("tool_call_id") == "blocked-sed"
+    )
+    assert "managed_repository_policy" in denied_tool_msg
+
+
+@pytest.mark.asyncio
 async def test_runner_preserves_successful_exec_output_that_starts_with_error():
     from nanobot.agent.runner import AgentRunner
 

@@ -1,6 +1,8 @@
 import {
+  Component,
   forwardRef,
   type ReactNode,
+  type RefObject,
   useCallback,
   useEffect,
   useImperativeHandle,
@@ -104,6 +106,13 @@ interface ThreadViewportProps {
   onOpenChildHistory?: (child: DelegatedChildReference, trigger: HTMLButtonElement) => void;
   delegatedStatusAvailable?: boolean;
   onQuoteSelection?: (text: string) => void;
+  /** Override virtualization (defaults to true in real browser layout engines). */
+  virtualize?: boolean;
+}
+
+function isVirtualizationSupported(): boolean {
+  if (typeof window === "undefined" || typeof ResizeObserver === "undefined") return false;
+  return !("happyDOM" in window) && !navigator.userAgent.includes("HappyDOM");
 }
 
 const NEAR_BOTTOM_PX = 48;
@@ -123,7 +132,119 @@ export const HISTORY_WINDOW_INCREMENT = 120;
 
 interface HistoryScrollAnchor {
   key: string;
-  offsetTop: number;
+  element: HTMLElement;
+  /** Last observed offset of the anchor relative to the scrollport top (`rect.top - viewport.top`). */
+  viewportTop: number;
+  /** Top of the anchor in scroll-content coordinates (`scrollTop + (rect.top - viewport.top)`).
+   *  Invariant under user scrolling so ResizeObserver / async prepends never snap back
+   *  against active momentum scrolling. */
+  documentTop: number;
+  scrollHeight: number;
+}
+
+interface PrependScrollSnapshot {
+  anchorElement: HTMLElement | null;
+  anchorKey: string | null;
+  anchorViewportTop: number;
+  scrollHeight: number;
+}
+
+interface PrependScrollAnchorBoundaryProps {
+  firstMessageId: string | null;
+  messageCount: number;
+  enabled: boolean;
+  scrollRef: RefObject<HTMLDivElement | null>;
+  contentRef: RefObject<HTMLDivElement | null>;
+  onRestoreScroll: (nextTop: number, anchor: HistoryScrollAnchor | null) => void;
+  children: ReactNode;
+}
+
+/**
+ * Captures the exact visible anchor geometry synchronously immediately before
+ * React mutates the DOM for a prepend (`getSnapshotBeforeUpdate`) and restores
+ * `scrollTop` synchronously before paint (`componentDidUpdate`), preventing
+ * scroll drift or relocation during continuous infinite scrolling.
+ */
+class PrependScrollAnchorBoundary extends Component<PrependScrollAnchorBoundaryProps> {
+  getSnapshotBeforeUpdate(
+    prevProps: PrependScrollAnchorBoundaryProps,
+  ): PrependScrollSnapshot | null {
+    if (
+      !this.props.enabled
+      || prevProps.firstMessageId === null
+      || this.props.firstMessageId === prevProps.firstMessageId
+      || this.props.messageCount <= prevProps.messageCount
+    ) {
+      return null;
+    }
+    const scroller = this.props.scrollRef.current;
+    const content = this.props.contentRef.current;
+    if (!scroller || !content) return null;
+    const viewport = scroller.getBoundingClientRect();
+    const anchorElement = visibleHistoryUnit(content, viewport);
+    return {
+      anchorElement,
+      anchorKey: anchorElement?.dataset.threadDisplayUnit ?? null,
+      anchorViewportTop: anchorElement
+        ? anchorElement.getBoundingClientRect().top - viewport.top
+        : 0,
+      scrollHeight: scroller.scrollHeight,
+    };
+  }
+
+  componentDidUpdate(
+    _prevProps: PrependScrollAnchorBoundaryProps,
+    _prevState: Readonly<Record<string, never>>,
+    snapshot: PrependScrollSnapshot | null,
+  ): void {
+    if (!snapshot) return;
+    const scroller = this.props.scrollRef.current;
+    const content = this.props.contentRef.current;
+    if (!scroller || !content) return;
+
+    let element: HTMLElement | null =
+      snapshot.anchorElement?.isConnected && content.contains(snapshot.anchorElement)
+        ? snapshot.anchorElement
+        : null;
+    if (!element && snapshot.anchorKey) {
+      element = Array.from(
+        content.querySelectorAll<HTMLElement>(THREAD_DISPLAY_UNIT_SELECTOR),
+      ).find((candidate) => candidate.dataset.threadDisplayUnit === snapshot.anchorKey) ?? null;
+    }
+
+    const viewport = scroller.getBoundingClientRect();
+    let delta = 0;
+    let nextViewportTop = 0;
+    if (element) {
+      nextViewportTop = element.getBoundingClientRect().top - viewport.top;
+      delta = nextViewportTop - snapshot.anchorViewportTop;
+    } else {
+      delta = scroller.scrollHeight - snapshot.scrollHeight;
+    }
+
+    const maxScrollTop = Math.max(0, scroller.scrollHeight - scroller.clientHeight);
+    const nextTop = Math.abs(delta) >= 0.5
+      ? Math.min(maxScrollTop, Math.max(0, scroller.scrollTop + delta))
+      : scroller.scrollTop;
+    const restoredViewportTop = element
+      ? nextViewportTop - (nextTop - scroller.scrollTop)
+      : 0;
+    const nextAnchor: HistoryScrollAnchor | null =
+      element && snapshot.anchorKey
+        ? {
+            key: snapshot.anchorKey,
+            element,
+            viewportTop: restoredViewportTop,
+            documentTop: scroller.scrollTop + nextViewportTop,
+            scrollHeight: scroller.scrollHeight,
+          }
+        : null;
+    this.props.onRestoreScroll(nextTop, nextAnchor);
+  }
+
+  render() {
+    return this.props.children;
+  }
 }
 
 const THREAD_DISPLAY_UNIT_SELECTOR = "[data-thread-display-unit]";
@@ -146,7 +267,7 @@ function visibleHistoryUnit(
     const left = Math.max(viewport.left, contentBounds.left);
     const right = Math.min(viewport.right, contentBounds.right);
     const x = left + Math.max(0, right - left) / 2;
-    const offsets = [1, Math.min(32, viewport.height / 3), viewport.height / 2];
+    const offsets = [1, 12, 24, Math.min(36, viewport.height / 3), viewport.height / 2];
     for (const offset of offsets) {
       for (const target of document.elementsFromPoint(x, viewport.top + offset)) {
         const unit = target instanceof Element
@@ -172,8 +293,16 @@ export function windowMessages(messages: UIMessage[], visibleCount: number): UIM
   let start = Math.max(0, messages.length - visibleCount);
   while (
     start > 0
-    && isAgentActivityMember(messages[start])
-    && isAgentActivityMember(messages[start - 1])
+    && (
+      (
+        isAgentActivityMember(messages[start])
+        && isAgentActivityMember(messages[start - 1])
+      )
+      || (
+        Boolean(messages[start].turnId)
+        && messages[start].turnId === messages[start - 1].turnId
+      )
+    )
   ) {
     start -= 1;
   }
@@ -202,6 +331,17 @@ function isKeyboardEditableElement(element: Element | null): element is HTMLElem
 function isThreadDisclosureTarget(target: EventTarget | null): boolean {
   return target instanceof Element
     && target.closest("[data-thread-disclosure]") !== null;
+}
+
+function findThreadDisclosureUnit(
+  target: EventTarget | null,
+  content: HTMLElement | null,
+): HTMLElement | null {
+  if (!(target instanceof Element) || !content) return null;
+  const disclosure = target.closest("[data-thread-disclosure]");
+  if (!disclosure) return null;
+  const unit = disclosure.closest<HTMLElement>(THREAD_DISPLAY_UNIT_SELECTOR);
+  return unit && content.contains(unit) ? unit : null;
 }
 
 function isKeyboardControl(element: Element | null): boolean {
@@ -312,6 +452,7 @@ export const ThreadViewport = forwardRef<ThreadViewportHandle, ThreadViewportPro
   onOpenChildHistory,
   delegatedStatusAvailable = true,
   onQuoteSelection,
+  virtualize = isVirtualizationSupported(),
 }, ref) {
   const { t } = useTranslation();
   const scrollRef = useRef<HTMLDivElement | null>(null);
@@ -337,7 +478,15 @@ export const ThreadViewport = forwardRef<ThreadViewportHandle, ThreadViewportPro
   const pendingPromptJumpRef = useRef<string | null>(null);
   const restoreScrollAfterPrependRef =
     useRef<{ height: number; top: number } | null>(null);
+  const handledPrependCommitRef = useRef(false);
   const historyScrollAnchorRef = useRef<HistoryScrollAnchor | null>(null);
+  const virtualScrollToPromptRef = useRef<((promptId: string) => boolean) | null>(null);
+  const registerVirtualScrollToPrompt = useCallback(
+    (handler: ((promptId: string) => boolean) | null) => {
+      virtualScrollToPromptRef.current = handler;
+    },
+    [],
+  );
   const composerInputScrollTopRef = useRef<number | null>(null);
   const composerDockHeightRef = useRef(0);
   const [atBottom, setAtBottom] = useState(true);
@@ -352,6 +501,47 @@ export const ThreadViewport = forwardRef<ThreadViewportHandle, ThreadViewportPro
   // paths would extend the window, moving the transcript twice for one gesture
   // and reading as a flash. Coalesce them within a single frame.
   const earlierLoadFrameRef = useRef<number | null>(null);
+  const pendingOlderLoadBaseLengthRef = useRef<number | null>(null);
+  const prevMessagesMetaRef = useRef<{
+    conversationKey: string | null;
+    firstId: string | null;
+    length: number;
+  }>({
+    conversationKey,
+    firstId: messages[0]?.id ?? null,
+    length: messages.length,
+  });
+  const currentFirstMessageId = messages[0]?.id ?? null;
+  const prevMeta = prevMessagesMetaRef.current;
+  const isSameConversation = prevMeta.conversationKey === conversationKey;
+  const prependedCount =
+    isSameConversation
+    && messages.length > prevMeta.length
+    && currentFirstMessageId !== prevMeta.firstId
+    && prevMeta.length > 0
+      ? messages.length - prevMeta.length
+      : 0;
+  const effectiveVisibleMessageCount = !isSameConversation
+    ? INITIAL_HISTORY_WINDOW
+    : prependedCount > 0 && visibleMessageCount >= prevMeta.length
+      ? Math.max(visibleMessageCount + prependedCount, messages.length)
+      : visibleMessageCount;
+  useLayoutEffect(() => {
+    prevMessagesMetaRef.current = {
+      conversationKey,
+      firstId: currentFirstMessageId,
+      length: messages.length,
+    };
+    if (effectiveVisibleMessageCount !== visibleMessageCount) {
+      setVisibleMessageCount(effectiveVisibleMessageCount);
+    }
+  }, [
+    conversationKey,
+    currentFirstMessageId,
+    effectiveVisibleMessageCount,
+    messages.length,
+    visibleMessageCount,
+  ]);
   const threadMotionRef = useRef<ThreadMotionCoordinator | null>(null);
   if (threadMotionRef.current === null) {
     const camera = new ThreadCameraController(() => scrollRef.current);
@@ -403,8 +593,8 @@ export const ThreadViewport = forwardRef<ThreadViewportHandle, ThreadViewportPro
       : viewportFrameRef.current;
   }, [hasMessages]);
   const visibleMessages = useMemo(
-    () => windowMessages(messages, visibleMessageCount),
-    [messages, visibleMessageCount],
+    () => (virtualize ? messages : windowMessages(messages, effectiveVisibleMessageCount)),
+    [effectiveVisibleMessageCount, messages, virtualize],
   );
   const hiddenMessageCount = messages.length - visibleMessages.length;
   const hiddenUserMessageCount =
@@ -429,11 +619,8 @@ export const ThreadViewport = forwardRef<ThreadViewportHandle, ThreadViewportPro
   const scrollViewportStyle =
     keyboardInsetBottom > 0 ? { bottom: keyboardInsetBottom } : undefined;
 
-  const yieldCameraToUser = useCallback(() => {
-    threadMotionRef.current?.takeUserControl();
-  }, []);
-
-  const captureHistoryScrollAnchor = useCallback(() => {
+  const captureHistoryScrollAnchor = useCallback((preferredElement?: HTMLElement | null) => {
+    if (virtualize) return false;
     const scroller = scrollRef.current;
     const content = messageContentRef.current;
     if (!scroller || !content) {
@@ -441,42 +628,121 @@ export const ThreadViewport = forwardRef<ThreadViewportHandle, ThreadViewportPro
       return false;
     }
     const viewport = scroller.getBoundingClientRect();
-    const element = visibleHistoryUnit(content, viewport);
+    const candidate =
+      preferredElement
+      && preferredElement.isConnected
+      && content.contains(preferredElement)
+        ? preferredElement
+        : null;
+    const element = candidate ?? visibleHistoryUnit(content, viewport);
     const key = element?.dataset.threadDisplayUnit;
     if (!element || !key) {
       historyScrollAnchorRef.current = null;
       return false;
     }
+    const viewportTop = element.getBoundingClientRect().top - viewport.top;
     historyScrollAnchorRef.current = {
       key,
-      offsetTop: element.getBoundingClientRect().top - viewport.top,
+      element,
+      viewportTop,
+      documentTop: scroller.scrollTop + viewportTop,
+      scrollHeight: scroller.scrollHeight,
     };
     return true;
-  }, []);
+  }, [virtualize]);
+
+  const yieldCameraToUser = useCallback((preferredAnchor?: HTMLElement | null) => {
+    threadMotionRef.current?.takeUserControl();
+    if (preferredAnchor) {
+      captureHistoryScrollAnchor(preferredAnchor);
+    }
+  }, [captureHistoryScrollAnchor]);
+
+  const ensureHistoryScrollAnchor = useCallback(() => {
+    const scroller = scrollRef.current;
+    const content = messageContentRef.current;
+    const current = historyScrollAnchorRef.current;
+    if (
+      scroller
+      && content
+      && current
+      && current.element.isConnected
+      && content.contains(current.element)
+    ) {
+      const viewport = scroller.getBoundingClientRect();
+      const bounds = current.element.getBoundingClientRect();
+      if (bounds.bottom > viewport.top && bounds.top < viewport.bottom) {
+        // Keep the existing documentTop intact so any layout shift above the
+        // anchor that occurs before ResizeObserver fires is still compensated
+        // instead of being absorbed as scroll drift.
+        current.viewportTop = bounds.top - viewport.top;
+        return true;
+      }
+    }
+    return captureHistoryScrollAnchor();
+  }, [captureHistoryScrollAnchor]);
 
   const reconcileHistoryScrollAnchor = useCallback(() => {
+    if (virtualize) return false;
     const scroller = scrollRef.current;
     const content = messageContentRef.current;
     const anchor = historyScrollAnchorRef.current;
     if (!scroller || !content || !anchor) return false;
-    const element = Array.from(
-      content.querySelectorAll<HTMLElement>("[data-thread-display-unit]"),
-    ).find((candidate) => candidate.dataset.threadDisplayUnit === anchor.key);
+    let element: HTMLElement | null =
+      anchor.element.isConnected && content.contains(anchor.element)
+        ? anchor.element
+        : null;
     if (!element) {
+      element = Array.from(
+        content.querySelectorAll<HTMLElement>(THREAD_DISPLAY_UNIT_SELECTOR),
+      ).find((candidate) => candidate.dataset.threadDisplayUnit === anchor.key) ?? null;
+    }
+    if (!element) {
+      const heightDelta = scroller.scrollHeight - anchor.scrollHeight;
       historyScrollAnchorRef.current = null;
+      if (heightDelta > 0.5) {
+        const maxScrollTop = Math.max(0, scroller.scrollHeight - scroller.clientHeight);
+        const nextTop = Math.min(maxScrollTop, Math.max(0, scroller.scrollTop + heightDelta));
+        threadMotionRef.current?.jumpTo(nextTop);
+        return true;
+      }
       return false;
     }
 
-    const nextOffset =
-      element.getBoundingClientRect().top
-      - scroller.getBoundingClientRect().top;
-    const delta = nextOffset - anchor.offsetTop;
-    if (Math.abs(delta) < 0.5) return true;
+    const nextViewportTop =
+      element.getBoundingClientRect().top - scroller.getBoundingClientRect().top;
+    const nextDocumentTop = scroller.scrollTop + nextViewportTop;
+    const delta = nextDocumentTop - anchor.documentTop;
+    const prevViewportTop = anchor.viewportTop;
+    anchor.element = element;
+    anchor.documentTop = nextDocumentTop;
+    anchor.viewportTop = nextViewportTop;
+    anchor.scrollHeight = scroller.scrollHeight;
+    if (Math.abs(delta) < 0.5 || Math.abs(nextViewportTop - prevViewportTop) < 0.5) {
+      return true;
+    }
     const maxScrollTop = Math.max(0, scroller.scrollHeight - scroller.clientHeight);
     const nextTop = Math.min(maxScrollTop, Math.max(0, scroller.scrollTop + delta));
     threadMotionRef.current?.jumpTo(nextTop);
+    anchor.viewportTop =
+      element.getBoundingClientRect().top - scroller.getBoundingClientRect().top;
     return true;
-  }, []);
+  }, [virtualize]);
+
+  const handlePrependScrollRestore = useCallback(
+    (nextTop: number, anchor: HistoryScrollAnchor | null) => {
+      handledPrependCommitRef.current = true;
+      restoreScrollAfterPrependRef.current = null;
+      if (anchor) {
+        historyScrollAnchorRef.current = anchor;
+      }
+      const el = scrollRef.current;
+      if (el && Math.abs(el.scrollTop - nextTop) >= 0.5) {
+        threadMotionRef.current?.jumpTo(nextTop);
+      }
+    },
+    [],
+  );
 
   const scrollToBottomNow = useCallback((smooth = false) => {
     historyScrollAnchorRef.current = null;
@@ -508,7 +774,7 @@ export const ThreadViewport = forwardRef<ThreadViewportHandle, ThreadViewportPro
 
   const loadEarlierMessages = useCallback(() => {
     const el = scrollRef.current;
-    if (el) {
+    if (el && !virtualize) {
       if (captureHistoryScrollAnchor()) {
         restoreScrollAfterPrependRef.current = null;
       } else {
@@ -527,7 +793,7 @@ export const ThreadViewport = forwardRef<ThreadViewportHandle, ThreadViewportPro
       return;
     }
     if (hasMoreBefore && onLoadOlder && !loadingOlder) {
-      setVisibleMessageCount((count) => count + HISTORY_WINDOW_INCREMENT);
+      pendingOlderLoadBaseLengthRef.current = messages.length;
       void onLoadOlder();
     }
   }, [
@@ -537,6 +803,7 @@ export const ThreadViewport = forwardRef<ThreadViewportHandle, ThreadViewportPro
     loadingOlder,
     messages.length,
     onLoadOlder,
+    virtualize,
   ]);
 
   const loadNewerMessages = useCallback(() => {
@@ -553,7 +820,7 @@ export const ThreadViewport = forwardRef<ThreadViewportHandle, ThreadViewportPro
     if (!el || !hasMessages || pendingConversationScrollRef.current) return;
     if (!threadMotionRef.current?.isBrowsingHistory()) return;
     if (el.scrollTop > historyPrefetchDistance(el)) return;
-    if (hiddenMessageCount <= 0 && !hasMoreBefore) return;
+    if (hiddenMessageCount <= 0 && (!hasMoreBefore || loadingOlder || !onLoadOlder)) return;
     // An input handler and the scroll event that follows it both land here for
     // the same gesture. Only the first one in a frame extends the window.
     if (earlierLoadFrameRef.current !== null) return;
@@ -561,14 +828,28 @@ export const ThreadViewport = forwardRef<ThreadViewportHandle, ThreadViewportPro
       earlierLoadFrameRef.current = null;
     });
     loadEarlierMessages();
-  }, [hasMessages, hasMoreBefore, hiddenMessageCount, loadEarlierMessages]);
+  }, [
+    hasMessages,
+    hasMoreBefore,
+    hiddenMessageCount,
+    loadEarlierMessages,
+    loadingOlder,
+    onLoadOlder,
+  ]);
 
-  // A page can land while the user is still inside the prefetch zone (short
-  // page, fast fling). No further scroll event would fire, so chain the next
-  // page here instead of leaving the user stuck at the top.
+  // A page can land while the user is still very close to the top (short page
+  // or fast fling). Only chain the next page when still within one viewport of
+  // the top — never cascade multiple fetches when the user is still screens away.
   useEffect(() => {
     if (loadingOlder || !hasMoreBefore || !onLoadOlder) return undefined;
-    const frame = window.requestAnimationFrame(() => maybeLoadEarlierFromScroll());
+    const baseLength = pendingOlderLoadBaseLengthRef.current;
+    if (baseLength === null || messages.length <= baseLength) return undefined;
+    const frame = window.requestAnimationFrame(() => {
+      pendingOlderLoadBaseLengthRef.current = null;
+      const el = scrollRef.current;
+      if (!el || el.scrollTop > Math.max(400, el.clientHeight)) return;
+      maybeLoadEarlierFromScroll();
+    });
     return () => window.cancelAnimationFrame(frame);
   }, [
     hasMoreBefore,
@@ -576,6 +857,7 @@ export const ThreadViewport = forwardRef<ThreadViewportHandle, ThreadViewportPro
     maybeLoadEarlierFromScroll,
     messages.length,
     onLoadOlder,
+    virtualize,
   ]);
 
   const maybeLoadNewerFromScroll = useCallback(() => {
@@ -604,6 +886,11 @@ export const ThreadViewport = forwardRef<ThreadViewportHandle, ThreadViewportPro
 
   const jumpToUserPrompt = useCallback((promptId: string) => {
     if (navigateToVisiblePrompt(promptId)) return;
+    if (virtualScrollToPromptRef.current) {
+      threadMotionRef.current?.takeUserControl();
+      setAtBottom(false);
+      if (virtualScrollToPromptRef.current(promptId)) return;
+    }
     const index = messages.findIndex(
       (message) => message.id === promptId || message.promptId === promptId,
     );
@@ -706,6 +993,11 @@ export const ThreadViewport = forwardRef<ThreadViewportHandle, ThreadViewportPro
     pendingGoToLatestScrollRef.current = false;
     historyScrollAnchorRef.current = null;
     restoreScrollAfterPrependRef.current = null;
+    pendingOlderLoadBaseLengthRef.current = null;
+    if (earlierLoadFrameRef.current !== null) {
+      window.cancelAnimationFrame(earlierLoadFrameRef.current);
+      earlierLoadFrameRef.current = null;
+    }
     threadMotionRef.current?.reset();
     setAtBottom(true);
     setHighlightedPromptId(null);
@@ -768,7 +1060,13 @@ export const ThreadViewport = forwardRef<ThreadViewportHandle, ThreadViewportPro
     });
   }, [activeTurnId, activeTurnStartedHere, conversationReady, messages]);
 
+  const visibleFirstMessageId = visibleMessages[0]?.id ?? null;
   useLayoutEffect(() => {
+    if (virtualize || handledPrependCommitRef.current) {
+      handledPrependCommitRef.current = false;
+      restoreScrollAfterPrependRef.current = null;
+      return;
+    }
     const pending = restoreScrollAfterPrependRef.current;
     const el = scrollRef.current;
     restoreScrollAfterPrependRef.current = null;
@@ -776,12 +1074,19 @@ export const ThreadViewport = forwardRef<ThreadViewportHandle, ThreadViewportPro
     if (reconcileHistoryScrollAnchor()) return;
     if (!pending) return;
     const delta = el.scrollHeight - pending.height;
+    if (Math.abs(delta) < 0.5) return;
     const nextTop = Math.min(
       Math.max(0, el.scrollHeight - el.clientHeight),
-      Math.max(0, pending.top + delta),
+      Math.max(0, el.scrollTop + delta),
     );
     threadMotionRef.current?.jumpTo(nextTop);
-  }, [reconcileHistoryScrollAnchor, visibleMessages.length, messages.length]);
+  }, [
+    reconcileHistoryScrollAnchor,
+    virtualize,
+    visibleFirstMessageId,
+    visibleMessages.length,
+    messages.length,
+  ]);
 
   useEffect(() => {
     if (!highlightedPromptId) return undefined;
@@ -799,6 +1104,13 @@ export const ThreadViewport = forwardRef<ThreadViewportHandle, ThreadViewportPro
     const scrollEl = scrollRef.current;
     const mounted = scrollEl ? findPromptElement(scrollEl, targetId) : null;
     if (!mounted) {
+      if (virtualScrollToPromptRef.current?.(targetId)) {
+        threadMotionRef.current?.takeUserControl();
+        setAtBottom(false);
+        setHighlightedPromptId(targetId);
+        onPendingRevealHandled?.(pendingReveal.requestId);
+        return;
+      }
       const index = messages.findIndex(
         (message) =>
           message.role === "user"
@@ -874,9 +1186,13 @@ export const ThreadViewport = forwardRef<ThreadViewportHandle, ThreadViewportPro
 
   useLayoutEffect(() => {
     threadMotionRef.current?.invalidateGeometry();
-  }, [composer, hasMessages, visibleMessages.length]);
+  }, [hasComposer, hasMessages, visibleMessages.length]);
 
   useEffect(() => () => {
+    if (earlierLoadFrameRef.current !== null) {
+      window.cancelAnimationFrame(earlierLoadFrameRef.current);
+      earlierLoadFrameRef.current = null;
+    }
     conversationHandoffAnimationRef.current?.cancel();
     threadMotionRef.current?.dispose();
   }, []);
@@ -893,6 +1209,13 @@ export const ThreadViewport = forwardRef<ThreadViewportHandle, ThreadViewportPro
       threadMotionRef.current?.invalidateGeometry();
     };
     const reconcileObservedGeometry = () => {
+      if (virtualize && threadMotionRef.current?.isBrowsingHistory()) {
+        // Virtualized item measurements resize messageContent continuously
+        // during scroll. Avoid synchronous forced layout reads on every item
+        // resize while the user is actively browsing history.
+        threadMotionRef.current.invalidateGeometry();
+        return;
+      }
       reconcileHistoryScrollAnchor();
       threadMotionRef.current?.reconcileObservedGeometry();
     };
@@ -910,25 +1233,46 @@ export const ThreadViewport = forwardRef<ThreadViewportHandle, ThreadViewportPro
       observer?.disconnect();
       window.removeEventListener("resize", invalidateGeometry);
     };
-  }, [hasMessages, reconcileHistoryScrollAnchor]);
+  }, [hasMessages, reconcileHistoryScrollAnchor, virtualize]);
+
+  const scrollHandlersRef = useRef({
+    hasMoreAfter,
+    ensureHistoryScrollAnchor,
+    maybeLoadEarlierFromScroll,
+    maybeLoadNewerFromScroll,
+    yieldCameraToUser,
+  });
+  scrollHandlersRef.current = {
+    hasMoreAfter,
+    ensureHistoryScrollAnchor,
+    maybeLoadEarlierFromScroll,
+    maybeLoadNewerFromScroll,
+    yieldCameraToUser,
+  };
 
   useEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
 
     const onScroll = (allowHistoryLoad = true) => {
+      const {
+        hasMoreAfter: moreAfter,
+        ensureHistoryScrollAnchor: ensureAnchor,
+        maybeLoadEarlierFromScroll: loadEarlier,
+        maybeLoadNewerFromScroll: loadNewer,
+      } = scrollHandlersRef.current;
       const distance = el.scrollHeight - el.scrollTop - el.clientHeight;
       const near = distance < NEAR_BOTTOM_PX;
-      const owner = threadMotionRef.current?.observeScroll(near && !hasMoreAfter) ?? "automatic";
-      const logicallyAtBottom = !hasMoreAfter && (owner === "automatic" || (owner === "navigation" && near));
+      const owner = threadMotionRef.current?.observeScroll(near && !moreAfter) ?? "automatic";
+      const logicallyAtBottom = !moreAfter && (owner === "automatic" || (owner === "navigation" && near));
       setAtBottom((current) =>
         current === logicallyAtBottom ? current : logicallyAtBottom,
       );
-      if (owner === "user" || hasMoreAfter) {
-        captureHistoryScrollAnchor();
+      if (owner === "user" || moreAfter) {
+        ensureAnchor();
         if (allowHistoryLoad) {
-          maybeLoadEarlierFromScroll();
-          maybeLoadNewerFromScroll();
+          loadEarlier();
+          loadNewer();
         }
       } else if (near) {
         historyScrollAnchorRef.current = null;
@@ -941,13 +1285,14 @@ export const ThreadViewport = forwardRef<ThreadViewportHandle, ThreadViewportPro
       direction: ThreadScrollDirection | null,
     ) => {
       if (!direction) return;
+      const canScroll = canScrollInDirection(el, direction);
       threadMotionRef.current?.handleUserScrollIntent(
-        canScrollInDirection(el, direction),
+        canScroll,
         direction === "forward",
       );
-      if (direction === "backward" && el.scrollTop <= historyPrefetchDistance(el)) {
+      if (direction === "backward" && !canScroll) {
         threadMotionRef.current?.takeUserControl();
-        maybeLoadEarlierFromScroll();
+        scrollHandlersRef.current.maybeLoadEarlierFromScroll();
       }
     };
     const handleWheel = (event: WheelEvent) => {
@@ -961,11 +1306,15 @@ export const ThreadViewport = forwardRef<ThreadViewportHandle, ThreadViewportPro
       handleDirectionalInput(directionFromDelta(event.deltaY));
     };
     const handlePointerDown = (event: PointerEvent) => {
-      if (
-        event.button === 0
-        && (event.target === el || isThreadDisclosureTarget(event.target))
-      ) {
-        yieldCameraToUser();
+      if (event.button !== 0) return;
+      if (event.target === el) {
+        scrollHandlersRef.current.yieldCameraToUser();
+        return;
+      }
+      if (isThreadDisclosureTarget(event.target)) {
+        scrollHandlersRef.current.yieldCameraToUser(
+          findThreadDisclosureUnit(event.target, messageContentRef.current),
+        );
       }
     };
     let lastTouchY: number | null = null;
@@ -998,7 +1347,9 @@ export const ThreadViewport = forwardRef<ThreadViewportHandle, ThreadViewportPro
         (event.key === "Enter" || event.key === " ")
         && isThreadDisclosureTarget(event.target)
       ) {
-        yieldCameraToUser();
+        scrollHandlersRef.current.yieldCameraToUser(
+          findThreadDisclosureUnit(event.target, messageContentRef.current),
+        );
         return;
       }
       if (isKeyboardControl(event.target as Element | null)) return;
@@ -1022,14 +1373,7 @@ export const ThreadViewport = forwardRef<ThreadViewportHandle, ThreadViewportPro
       el.removeEventListener("pointerdown", handlePointerDown);
       el.removeEventListener("keydown", handleKeyDown);
     };
-  }, [
-    captureHistoryScrollAnchor,
-    hasMessages,
-    hasMoreAfter,
-    maybeLoadEarlierFromScroll,
-    maybeLoadNewerFromScroll,
-    yieldCameraToUser,
-  ]);
+  }, [hasMessages]);
 
   return (
     <div
@@ -1065,47 +1409,71 @@ export const ThreadViewport = forwardRef<ThreadViewportHandle, ThreadViewportPro
           )}
         >
           {hasMessages ? (
-            <div
-              ref={messageRegionRef}
-              data-testid="thread-message-region"
-              className={cn(
-                "thread-message-viewport thread-viewport-scrollbar relative row-start-1 flex min-h-0 min-w-0 flex-col",
-                "scroll-auto justify-start overflow-x-hidden px-3 pb-0 pt-3 sm:px-4",
-                "[overflow-anchor:none] [scrollbar-width:none]",
-                "[&::-webkit-scrollbar]:hidden",
-                obscured
-                  ? "overflow-hidden"
-                  : hasVerticalOverflow ? "overflow-y-auto" : "overflow-hidden",
-              )}
-            >
+            <>
               <div
-                ref={messageContentRef}
-                className="mx-auto w-full max-w-[49.5rem]"
+                ref={messageRegionRef}
+                data-testid="thread-message-region"
+                className={cn(
+                  "thread-message-viewport thread-viewport-scrollbar relative col-start-1 row-start-1 flex min-h-0 min-w-0 flex-col",
+                  "scroll-auto justify-start overflow-x-hidden px-3 pb-0 pt-3 sm:px-4",
+                  !virtualize && (!atBottom || hasMoreAfter)
+                    ? "[overflow-anchor:auto]"
+                    : "[overflow-anchor:none]",
+                  "[scrollbar-width:none] [&::-webkit-scrollbar]:hidden",
+                  obscured
+                    ? "overflow-hidden"
+                    : hasVerticalOverflow ? "overflow-y-auto" : "overflow-hidden",
+                )}
               >
-                <ThreadMessages
-                  messages={visibleMessages}
-                  temporary={temporary}
-                  isStreaming={isStreaming}
-                  revealLatestHistoryMessage={revealLatestHistoryMessage}
-                  activeTurnId={activeTurnId}
-                  runStartedAt={runStartedAt}
-                  retryStatus={retryStatus}
-                  hiddenUserMessageCount={hiddenUserMessageCount}
-                  cliApps={cliApps}
-                  mcpPresets={mcpPresets}
-                  slashCommands={slashCommands}
-                  forkBoundaryMessageCount={visibleForkBoundaryMessageCount}
-                  onOpenFilePreview={onOpenFilePreview}
-                  onForkFromMessage={onForkFromMessage}
-                  onOpenChildHistory={onOpenChildHistory}
-                  delegatedStatusAvailable={delegatedStatusAvailable}
-                  onQuoteSelection={onQuoteSelection}
-                  highlightedPromptId={highlightedPromptId}
-                />
+                <div
+                  ref={messageContentRef}
+                  className="mx-auto w-full max-w-[49.5rem]"
+                >
+                  <PrependScrollAnchorBoundary
+                    firstMessageId={visibleFirstMessageId}
+                    messageCount={visibleMessages.length}
+                    enabled={
+                      !virtualize
+                      && !pendingConversationScrollRef.current
+                      && (!atBottom || hasMoreAfter || Boolean(threadMotionRef.current?.isBrowsingHistory()))
+                    }
+                    scrollRef={scrollRef}
+                    contentRef={messageContentRef}
+                    onRestoreScroll={handlePrependScrollRestore}
+                  >
+                    <ThreadMessages
+                      messages={visibleMessages}
+                      temporary={temporary}
+                      isStreaming={isStreaming}
+                      revealLatestHistoryMessage={revealLatestHistoryMessage}
+                      activeTurnId={activeTurnId}
+                      runStartedAt={runStartedAt}
+                      retryStatus={retryStatus}
+                      hiddenUserMessageCount={hiddenUserMessageCount}
+                      cliApps={cliApps}
+                      mcpPresets={mcpPresets}
+                      slashCommands={slashCommands}
+                      forkBoundaryMessageCount={visibleForkBoundaryMessageCount}
+                      onOpenFilePreview={onOpenFilePreview}
+                      onForkFromMessage={onForkFromMessage}
+                      onOpenChildHistory={onOpenChildHistory}
+                      delegatedStatusAvailable={delegatedStatusAvailable}
+                      onQuoteSelection={onQuoteSelection}
+                      highlightedPromptId={highlightedPromptId}
+                      scrollRef={messageRegionRef}
+                      virtualize={virtualize}
+                      onRegisterScrollToPrompt={registerVirtualScrollToPrompt}
+                    />
+                  </PrependScrollAnchorBoundary>
+                </div>
+                <div aria-hidden className="thread-message-end-gap shrink-0 [overflow-anchor:none]" />
+                <div ref={bottomRef} aria-hidden className="h-px shrink-0 [overflow-anchor:none]" />
               </div>
-              <div aria-hidden className="thread-message-end-gap shrink-0" />
-              <div ref={bottomRef} aria-hidden className="h-px shrink-0" />
-            </div>
+              <div
+                aria-hidden
+                className="thread-message-bottom-fade pointer-events-none col-start-1 row-start-1 z-10 w-full self-end"
+              />
+            </>
           ) : (
             <div
               ref={emptyStateRef}
@@ -1244,15 +1612,18 @@ export const ThreadViewport = forwardRef<ThreadViewportHandle, ThreadViewportPro
           messages={visibleMessages}
           scrollRef={scrollRef}
           bottomOffset={scrollButtonBottom}
-          onJumpToPrompt={navigateToVisiblePrompt}
+          onJumpToPrompt={jumpToUserPrompt}
           sessionPrompts={sessionPrompts}
           totalPromptCount={sessionPromptTotal}
           hasMoreBefore={hasMoreBefore}
+          loadingOlder={loadingOlder}
+          onLoadOlder={onLoadOlder ? loadEarlierMessages : undefined}
           hasMoreAfter={hasMoreAfter}
           hasMorePromptsBefore={hasMorePromptsBefore}
           loadingMorePrompts={loadingMorePrompts}
           onLoadMorePrompts={onLoadMorePrompts}
           onRevealPrompt={onRevealPrompt}
+          pendingReveal={pendingReveal}
           sessionTurns={sessionTurns}
           totalTurnCount={sessionTurnTotal}
           onNeedSessionTurns={onNeedSessionTurns}

@@ -1414,6 +1414,8 @@ class WebUIWorkspaceController:
         self,
         chat_id: str,
         scope: WorkspaceScope,
+        *,
+        skip_if_unchanged: bool = False,
     ) -> int:
         """Record accepted chat defaults once, in server acceptance order."""
         sessions = self._sessions
@@ -1430,6 +1432,14 @@ class WebUIWorkspaceController:
             if type(candidate) is dict:
                 current = cast(dict[str, Any], candidate)
         revision = current.get("revision")
+        if (
+            skip_if_unchanged
+            and type(revision) is int
+            and revision > 0
+            and current.get("project_path") == str(scope.project_path)
+            and current.get("access_mode") == scope.access_mode
+        ):
+            return revision
         next_revision = (revision if type(revision) is int and revision >= 0 else 0) + 1
         sessions.upsert_session_metadata(
             key,
@@ -1757,15 +1767,26 @@ class WebUIWorkspaceController:
         """Persist after accepted message dispatch; staging may update existing state only."""
         session_key = webui_session_key(chat_id)
         if self._sessions is not None:
-            self._sessions.upsert_session_metadata(
-                session_key,
-                {"webui": True, WORKSPACE_SCOPE_METADATA_KEY: scope.metadata()},
-                create_if_absent=create_if_absent,
+            scope_meta = scope.metadata()
+            payload = self._sessions.read_session_metadata(session_key)
+            raw_meta = payload.get("metadata") if isinstance(payload, dict) else None
+            metadata = cast(dict[str, Any], raw_meta) if isinstance(raw_meta, dict) else None
+            needs_upsert = (
+                metadata is None
+                or metadata.get("webui") is not True
+                or metadata.get(WORKSPACE_SCOPE_METADATA_KEY) != scope_meta
             )
-            self._sessions.consume_next_turn_preferences(
-                session_key,
-                {"workspace_scope": scope.metadata()},
-            )
+            if needs_upsert:
+                self._sessions.upsert_session_metadata(
+                    session_key,
+                    {"webui": True, WORKSPACE_SCOPE_METADATA_KEY: scope_meta},
+                    create_if_absent=create_if_absent,
+                )
+            if metadata is None or metadata.get("next_turn_preferences") is not None:
+                self._sessions.consume_next_turn_preferences(
+                    session_key,
+                    {"workspace_scope": scope_meta},
+                )
         self._draft_scopes.pop(session_key, None)
         if scope.access_mode == "full":
             self._deferred_full_sources.pop(chat_id, None)

@@ -203,6 +203,13 @@
       "fileEditDisplay": "Exibição de edição de arquivo",
       "codeWrap": "Quebra de linha no código",
       "brandLogos": "Logos de marca",
+      "notificationSound": "Som de notificação",
+      "notificationTest": "Teste de entrega",
+      "testNotificationBody": "As notificações estão funcionando.",
+      "testNotification": "Enviar notificação de teste",
+      "permissionDenied": "Permita notificações nas configurações do dispositivo ou navegador.",
+      "notifierUnavailable": "Notificações indisponíveis. Verifique as configurações do sistema.",
+      "notificationSent": "Notificação de teste enviada.",
       "browserNotifications": "Notificações de tarefas",
       "maxResults": "Máx. de resultados",
       "timeout": "Tempo limite",
@@ -1586,6 +1593,10 @@
     "cancel": "Cancelar"
   },
   "errors": {
+    "approvalRejected": {
+      "title": "A aprovação não está mais ativa",
+      "body": "Esta solicitação de aprovação não está mais ativa no gateway, por exemplo, após uma reinicialização. Envie uma nova mensagem para continuar."
+    },
     "messageTooBig": {
       "title": "Mensagem grande demais",
       "body": "O servidor rejeitou sua última mensagem porque ela excedeu o limite de tamanho. Remova algumas imagens ou tente arquivos menores e envie novamente."

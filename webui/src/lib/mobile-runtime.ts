@@ -47,6 +47,7 @@ export interface MobileTransport {
   onEvent(listener: (event: MobileEvent) => void): Promise<() => void>;
   openLogin(): Promise<void>;
   refresh(): Promise<boolean>;
+  logout?(): Promise<void>;
   remoteStatus?(): Promise<Record<string, unknown>>;
   remoteDevices?(): Promise<Record<string, unknown>>;
   remoteRevoke?(installationId: string): Promise<Record<string, unknown>>;
@@ -55,6 +56,7 @@ export interface MobileTransport {
   wsSend(wsId: number, data: Uint8Array, kind?: "text" | "binary"): Promise<void>;
   wsClose(wsId: number): Promise<void>;
   wsPing?(wsId: number): Promise<boolean>;
+  wsRefreshAuth?(wsId: number): Promise<boolean>;
   stop(): Promise<void>;
 }
 
@@ -177,6 +179,13 @@ export function createMobileRuntime(transport: MobileTransport): MobileRuntime &
     return result;
   };
   let renewalTimer: ReturnType<typeof setTimeout> | null = null;
+  let lastRefreshedAt = 0;
+
+  const refreshCredentials = async (): Promise<boolean> => {
+    const ok = await transport.refresh().catch(() => false);
+    if (ok) lastRefreshedAt = Date.now();
+    return ok;
+  };
 
   const scheduleRenewal = (payload: Record<string, unknown>): void => {
     if (disposed) return;
@@ -274,10 +283,12 @@ export function createMobileRuntime(transport: MobileTransport): MobileRuntime &
       if (listening) void listening.then((remove) => remove()).catch(() => undefined);
     },
     async handshake() {
-      // Rotate the access token first: refresh invalidates every previous token
-      // for this installation, so a token inherited from an earlier session can
-      // be minutes from expiry and would kill the socket right after connect.
-      await transport.refresh().catch(() => false);
+      // Rotate the access token unless a recent refresh already succeeded
+      // (e.g., during renew()/recover() right before reconnect), avoiding
+      // redundant double-rotation round-trips.
+      if (Date.now() - lastRefreshedAt >= 15_000) {
+        await refreshCredentials();
+      }
       const response = await request({ operation: "mobile_handshake", method: "GET", path: "/mobile/v1/handshake" });
       if (response.status !== 200) throw new MobileRuntimeError(`handshake_status_${response.status}`);
       const payload = JSON.parse(decodeBase64(response.bodyBase64)) as Record<string, unknown>;
@@ -341,11 +352,20 @@ export function createMobileRuntime(transport: MobileTransport): MobileRuntime &
       const active = [...sockets].filter((socket) => !socket.isRetired());
       const work = credentialMaintenance.then(async () => {
         if (disposed || active.every((socket) => socket.isRetired())) return;
-        const refreshed = await transport.refresh().catch(() => false);
+        const refreshed = await refreshCredentials();
         if (!refreshed || disposed) return;
+        let keptOpen = false;
         for (const socket of active) {
+          const rotatedInBand = await socket.refreshAuthInBand();
+          if (rotatedInBand) {
+            keptOpen = true;
+            continue;
+          }
           socket.close();
           if (socket.isRetired()) sockets.delete(socket);
+        }
+        if (keptOpen && !disposed) {
+          scheduleRenewal({});
         }
       });
       credentialMaintenance = work.catch(() => undefined);
@@ -405,18 +425,35 @@ class MobileWebSocket {
     return this.retired;
   }
 
+  async refreshAuthInBand(): Promise<boolean> {
+    if (this.retired || this.readyState !== 1 || !this.wsId) return false;
+    const refreshAuth = this.runtime.transport.wsRefreshAuth;
+    if (!refreshAuth) return false;
+    try {
+      return Boolean(await refreshAuth.call(this.runtime.transport, this.wsId));
+    } catch {
+      return false;
+    }
+  }
+
   async recover(): Promise<void> {
     if (this.retired) return;
     const wsId = this.wsId;
+    let confirmedDead = false;
     if (this.readyState === 1 && wsId) {
       const ping = this.runtime.transport.wsPing;
       if (!ping) return;
       const healthy = await ping.call(this.runtime.transport, wsId).catch(() => false);
       if (this.retired || this.wsId !== wsId) return;
       if (healthy) return;
+      confirmedDead = true;
     }
     const refreshed = await this.runtime.transport.refresh().catch(() => false);
-    if (!refreshed || this.retired) return;
+    if (this.retired) return;
+    // If ping already proved the native socket is dead, close it even when
+    // refresh fails (e.g., Tailscale still waking up) so the client transitions
+    // to reconnecting instead of staying stuck in a false "open" zombie state.
+    if (!refreshed && !confirmedDead) return;
     this.close();
   }
 

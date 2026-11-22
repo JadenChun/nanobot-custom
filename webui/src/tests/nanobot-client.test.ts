@@ -3070,6 +3070,22 @@ describe("mobile run keepalive and centralized task notifications", () => {
     expect(start).not.toHaveBeenCalled();
   });
 
+  it("emits one owned completion across reconciliation and a terminal replay", () => {
+    const { client, socket } = createClient();
+    const notify = vi.fn();
+    client.onTaskNotification(notify);
+    client.sendMessage("chat-17", "work", undefined, { turnId: "turn-42" });
+    socket.fakeCloseWithCode(1006);
+    client.connect();
+    lastSocket().fakeOpen();
+    const snapshot = { activitySnapshotAvailable: true, observedTurnIds: ["turn-42"], activeTurnId: null, hasPendingToolCalls: false };
+    for (const id of ["chat-17", "chat-17", "chat-18"]) {
+      client.reconcileCanonicalCompletion(id, client.getRunGeneration(id), ["turn-42"], snapshot);
+    }
+    lastSocket().fakeMessage({ event: "turn_end", chat_id: "chat-17", turn_id: "turn-42", outcome: "completed" });
+    expect(notify.mock.calls).toEqual([[{ kind: "turn_end", chatId: "chat-17", turnId: "turn-42", outcome: "completed" }]]);
+  });
+
   it("does not stop keepalive on a socket drop", () => {
     const stop = vi.fn();
     window.nanobotMobileRunKeepAlive = { start: vi.fn(), stop };
@@ -3111,7 +3127,7 @@ describe("mobile run keepalive and centralized task notifications", () => {
     expect(stop).toHaveBeenCalledWith("chat-6");
   });
 
-  it("does not start keepalive when task notifications are disabled", () => {
+  it("starts keepalive for phone-started runs even when task notifications are disabled", () => {
     const start = vi.fn();
     window.nanobotMobileRunKeepAlive = { start, stop: vi.fn() };
     writeLocalPreferences({ ...DEFAULT_LOCAL_PREFS, browserNotifications: false });
@@ -3119,7 +3135,7 @@ describe("mobile run keepalive and centralized task notifications", () => {
 
     client.sendMessage("chat-7", "hello", undefined, { turnId: "turn-7" });
 
-    expect(start).not.toHaveBeenCalled();
+    expect(start).toHaveBeenCalledWith("chat-7");
   });
 
   it("notifies and stops keepalive when recovery fails", () => {
@@ -3190,6 +3206,52 @@ describe("bounded mobile recovery", () => {
     expect(client.status).toBe("connecting");
     lastSocket().fakeOpen();
     expect(client.status).toBe("open");
+  });
+
+  it("keeps retrying across transient reauth network errors beyond 3 attempts", async () => {
+    const reauth = vi.fn().mockRejectedValue(new Error("network offline"));
+    const client = new NanobotClient({
+      url: "ws://test",
+      reconnect: true,
+      maxBackoffMs: 1_000,
+      onReauth: reauth,
+      socketFactory: (url) => new FakeSocket(url) as unknown as WebSocket,
+    });
+    client.connect();
+    lastSocket().fakeOpen();
+
+    lastSocket().fakeCloseWithCode(1006);
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      await vi.advanceTimersByTimeAsync(1_000);
+    }
+
+    expect(reauth).toHaveBeenCalledTimes(4);
+    expect(client.status).toBe("reconnecting");
+
+    reauth.mockResolvedValue("ws://recovered");
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(lastSocket().url).toBe("ws://recovered");
+    lastSocket().fakeOpen();
+    expect(client.status).toBe("open");
+  });
+
+  it("force-closes a half-open socket when retry() is invoked", async () => {
+    const client = new NanobotClient({
+      url: "ws://test",
+      reconnect: true,
+      socketFactory: (url) => new FakeSocket(url) as unknown as WebSocket,
+    });
+    client.connect();
+    const first = lastSocket();
+    first.fakeOpen();
+    const closeSpy = vi.spyOn(first, "close");
+
+    await client.retry();
+
+    expect(closeSpy).toHaveBeenCalledOnce();
+    expect(FakeSocket.instances.length).toBeGreaterThan(1);
+    expect(lastSocket()).not.toBe(first);
+    expect(client.status).toBe("connecting");
   });
 });
 

@@ -1012,6 +1012,7 @@ class JsonlSessionStore:
             self.sessions_root = root
             self._managed_namespace_access = _managed_access
             self._saved_source_proofs: dict[str, SavedSourceProof] = {}
+            self._snapshot_cache: dict[str, tuple[PrivateFileVersion, SourceSnapshot]] = {}
             self._migration_lock = FileLock(
                 str(root / ".workspace-migration.lock"),
                 timeout=_SESSION_MIGRATION_LOCK_TIMEOUT_SECONDS,
@@ -1062,6 +1063,50 @@ class JsonlSessionStore:
 
     def forget_saved_source(self, key: str) -> None:
         self._saved_source_proofs.pop(key, None)
+        self._snapshot_cache.pop(key, None)
+
+    def cached_source_snapshot(
+        self,
+        key: str,
+        expected_version: PrivateFileVersion | None,
+    ) -> "SourceSnapshot | None":
+        """Return a hot in-memory SourceSnapshot when the on-disk file version still matches."""
+        if expected_version is None:
+            return None
+        entry = self._snapshot_cache.get(key)
+        if entry is None or entry[0] != expected_version:
+            return None
+        from nanobot.session.source_store import SourceSnapshot
+
+        cached = entry[1]
+        return SourceSnapshot(
+            state=cached.state,
+            header=deepcopy(cached.header),
+            events=list(cached.events),
+            checkpoint=deepcopy(cached.checkpoint),
+        )
+
+    def remember_source_snapshot(
+        self,
+        key: str,
+        version: PrivateFileVersion,
+        snapshot: "SourceSnapshot",
+    ) -> None:
+        """Retain a bounded hot snapshot cache for active canonical sessions."""
+        from nanobot.session.source_store import SourceSnapshot
+
+        self._snapshot_cache.pop(key, None)
+        self._snapshot_cache[key] = (
+            version,
+            SourceSnapshot(
+                state=snapshot.state,
+                header=deepcopy(snapshot.header),
+                events=list(snapshot.events),
+                checkpoint=deepcopy(snapshot.checkpoint),
+            ),
+        )
+        while len(self._snapshot_cache) > 16:
+            self._snapshot_cache.pop(next(iter(self._snapshot_cache)))
 
     @contextmanager
     def locked_session_files(self) -> Generator[Path, None, None]:
@@ -1244,22 +1289,37 @@ class JsonlSessionStore:
                         body_offset=header_bytes_len + 1,
                     ),
                 )
+                backend.remember_source_snapshot(key, version, snapshot)
                 from nanobot.session.canonical_event_index import (
                     build_event_offsets_from_bytes,
                     write_event_index,
                 )
 
                 body_offset = header_bytes_len + 1
+                raw_lines = prepared.text.split("\n")
+                # Line 0 is the header; lines 1..N are events (with trailing empty after final \n).
+                event_lines = raw_lines[1:-1] if raw_lines and raw_lines[-1] == "" else raw_lines[1:]
+                if len(event_lines) == len(snapshot.events):
+                    offsets: dict[str, tuple[int, int]] = {}
+                    rel_pos = 0
+                    for ev, line_str in zip(snapshot.events, event_lines, strict=True):
+                        line_len = len(line_str.encode("utf-8"))
+                        ev_id = ev.get("_event_id")
+                        if isinstance(ev_id, str) and ev_id:
+                            offsets[ev_id] = (rel_pos, line_len)
+                        rel_pos += line_len + 1
+                else:
+                    offsets = build_event_offsets_from_bytes(
+                        prepared.text.encode("utf-8"),
+                        body_offset=body_offset,
+                    )
                 write_event_index(
                     backend,
                     key,
                     state=snapshot.state,
                     file_version=version,
                     body_offset=body_offset,
-                    events=build_event_offsets_from_bytes(
-                        prepared.text.encode("utf-8"),
-                        body_offset=body_offset,
-                    ),
+                    events=offsets,
                 )
         return snapshot
 
@@ -3307,20 +3367,55 @@ class SessionManager:
         key: str,
         *,
         expected_binding: WorkspaceAccessSourceBinding | None = None,
+        header_only: bool = False,
     ) -> "tuple[JsonlSessionStore, SourceSnapshot] | None":
-        """Read one active canonical source without creating or caching a Session."""
+        """Read one active canonical source without creating or caching a Session.
+
+        When *header_only* is True, use the cached header proof fast path so
+        callers that only validate ``SourceState`` avoid parsing settled events.
+        """
         cached = self.get_cached(key)
         if cached is not None and not cached.policy.persist:
             return None
         try:
             if self._mode_resolver is None and self._store is self._jsonl_store:
                 backend = self._jsonl_store
-                snapshot = backend.read_canonical_snapshot(key)
+                if header_only:
+                    from nanobot.session.source_store import SourceSnapshot
+
+                    header_state = backend.source.read_source_header_state(key)
+                    snapshot = (
+                        SourceSnapshot(
+                            state=header_state[0],
+                            header=header_state[1],
+                            events=[],
+                            checkpoint=None,
+                        )
+                        if header_state is not None
+                        else None
+                    )
+                else:
+                    snapshot = backend.read_canonical_snapshot(key)
             else:
                 backend = self.source_backend(key)
                 if backend is None:
                     return None
-                snapshot = backend.source.load_source_snapshot(key)
+                if header_only:
+                    from nanobot.session.source_store import SourceSnapshot
+
+                    header_state = backend.source.read_source_header_state(key)
+                    snapshot = (
+                        SourceSnapshot(
+                            state=header_state[0],
+                            header=header_state[1],
+                            events=[],
+                            checkpoint=None,
+                        )
+                        if header_state is not None
+                        else None
+                    )
+                else:
+                    snapshot = backend.source.load_source_snapshot(key)
         except FileNotFoundError:
             return None
         if snapshot is None or snapshot.state.session_key != key:

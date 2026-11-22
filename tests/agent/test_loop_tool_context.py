@@ -344,6 +344,7 @@ async def test_unapproved_context_recording_call_is_not_dispatched(
         tool_calls=[ToolCallRequest(id="unapproved", name="cron", arguments={"action": "add"})],
     )])
     loop = await admitted_async(tmp_path, _build_loop(provider))
+    loop.tools_config.permissions.profile = "strict"
     recording = _ContextRecordingTool()
     original_cron = loop.tools.get("cron")
     assert original_cron is not None

@@ -10,6 +10,13 @@ import {
 describe("local preferences", () => {
   beforeEach(() => localStorage.clear());
 
+  it("defaults existing notification settings to audible and persists mute", () => {
+    localStorage.setItem(LOCAL_PREFS_STORAGE_KEY, JSON.stringify({ browserNotifications: true }));
+    expect(readLocalPreferences().notificationSound).toBe(true);
+    writeLocalPreferences({ ...readLocalPreferences(), notificationSound: false });
+    expect(readLocalPreferences().notificationSound).toBe(false);
+  });
+
   it("enables third-party brand logos by default and migrates the previous default", () => {
     expect(DEFAULT_LOCAL_PREFS.brandLogos).toBe(true);
     expect(readLocalPreferences().brandLogos).toBe(true);

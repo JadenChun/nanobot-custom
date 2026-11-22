@@ -135,6 +135,13 @@ def _with_retry_hint(payload: str) -> str:
     return payload + _RETRY_HINT
 
 
+def strip_retry_hint(payload: str) -> str:
+    """Remove the model-only retry hint before surfacing a terminal tool error as assistant text."""
+    if payload.endswith(_RETRY_HINT):
+        return payload[: -len(_RETRY_HINT)]
+    return payload
+
+
 async def execute_tool_calls(
     tools: ToolRegistry,
     tool_calls: list[ToolCallRequest],

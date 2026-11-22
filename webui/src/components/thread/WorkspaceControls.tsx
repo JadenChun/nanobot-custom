@@ -2,12 +2,20 @@ import {
   useCallback,
   useEffect,
   useId,
-  useLayoutEffect,
   useRef,
   useState,
   type ReactNode,
 } from "react";
-import { Check, ChevronDown, Folder, Loader2, Monitor, ShieldCheck } from "lucide-react";
+import {
+  Check,
+  ChevronDown,
+  Folder,
+  FolderOpen,
+  Loader2,
+  Monitor,
+  ShieldCheck,
+  X,
+} from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import { Button } from "@/components/ui/button";
@@ -21,13 +29,11 @@ import {
   floatingItemClassName,
   floatingItemFocusClassName,
 } from "@/components/ui/floating-surface";
-import { Input } from "@/components/ui/input";
 import {
   Popover,
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
-import { WorkspaceManagementDialog } from "@/components/settings/folders/WorkspaceManagementDialog";
 import type {
   EffectiveWorkspaceAccess,
   WorkspaceAccessMode,
@@ -35,7 +41,6 @@ import type {
   WorkspaceScopePayload,
   WorkspacesPayload,
 } from "@/lib/types";
-import { getRuntimeHost } from "@/lib/runtime";
 import { cn } from "@/lib/utils";
 import { isMobileRuntimeActive } from "@/lib/mobile-runtime";
 import {
@@ -45,14 +50,6 @@ import {
   sameWorkspacePath,
   shortWorkspacePath,
 } from "@/lib/workspace";
-
-function workspacePathPlaceholder(defaultWorkspacePath: string, macPlaceholder: string): string {
-  const normalized = defaultWorkspacePath.trim().replace(/\\/g, "/");
-  const windowsDrive = normalized.match(/^([A-Za-z]):\//)?.[1];
-  if (windowsDrive) return `${windowsDrive.toUpperCase()}:\\path\\to\\project`;
-  if (normalized.startsWith("/Users/")) return macPlaceholder;
-  return "/home/name/project";
-}
 
 function commandAccessLabel(
   access: EffectiveWorkspaceAccess,
@@ -93,17 +90,15 @@ export function WorkspaceProjectPicker({
   isHero = false,
   connected = false,
   disabled,
-  ownerKey = null,
   scope,
   defaultScope,
   controls,
   workspaces = null,
   error,
+  onDismissError,
   nextTurnScope = null,
   nextTurnPending = false,
   turnActive = false,
-  onPickFolder,
-  onRefreshWorkspaces = async () => {},
   onChange,
 }: {
   compact?: boolean;
@@ -120,6 +115,7 @@ export function WorkspaceProjectPicker({
   controls: WorkspacesPayload["controls"] | null;
   workspaces?: WorkspacesPayload | null;
   error?: string | null;
+  onDismissError?: () => void;
   /** Detached choice for the next turn; the active turn keeps ``scope``. */
   nextTurnScope?: WorkspaceScopePayload | null;
   /** A next-turn acknowledgement is still in flight. */
@@ -133,27 +129,8 @@ export function WorkspaceProjectPicker({
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   const pickerTitleId = useId();
-  const [managementOpen, setManagementOpen] = useState(false);
-  const [pathDraft, setPathDraft] = useState("");
-  const [pathError, setPathError] = useState<string | null>(null);
-  const [pickingFolder, setPickingFolder] = useState(false);
-  const pendingBrowseRef = useRef<{ cancelled: boolean } | null>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
-  const pathInputRef = useRef<HTMLInputElement>(null);
-  const pathErrorId = useId();
-  const readableRepositories = (workspaces?.management?.repositories ?? [])
-    .filter((repository) => repository.exists && repository.effective_access.read);
-
-  const folderTitle = (project: WorkspaceScopePayload) =>
-    readableRepositories.find((repository) => sameWorkspacePath(repository.path, project.project_path))
-      ?.name.trim()
-    || project.project_name?.trim()
-    || projectNameFromPath(project.project_path);
   const activeScope = scope ?? defaultScope;
-  const isAgentHome = !!activeScope && !!defaultScope
-    && sameWorkspacePath(activeScope.project_path, defaultScope.project_path);
-  const folderName = activeScope && !isAgentHome ? folderTitle(activeScope) : "";
-  const currentPath = activeScope?.project_path ?? defaultScope?.project_path ?? "";
   // While a turn runs the picker edits the *next* turn instead of the admitted
   // one, so its own selection is the readable label.
   const pendingNextScope = nextTurnScope && (
@@ -163,22 +140,10 @@ export function WorkspaceProjectPicker({
   )
     ? nextTurnScope
     : null;
-  const nextFolderName = pendingNextScope
-    ? folderTitle(pendingNextScope)
-    : "";
   const showNextTurnSelection = turnActive && pendingNextScope !== null;
   const visible = !!defaultScope
     && !!onChange;
   const canChangeFocus = controls?.can_change_project !== false;
-  const pickFolder = getRuntimeHost().pickFolder ?? onPickFolder;
-  const browseEligible = visible && !disabled && canChangeFocus && !!pickFolder;
-  const canManage = controls?.can_manage_folders === true || controls?.can_manage_catalog === true;
-
-  useEffect(() => {
-    if (!open) return;
-    setPathDraft(isAgentHome ? "" : currentPath);
-    setPathError(null);
-  }, [currentPath, isAgentHome, open]);
 
   useEffect(() => {
     if (disabled) setOpen(false);
@@ -190,21 +155,11 @@ export function WorkspaceProjectPicker({
     return () => window.cancelAnimationFrame(frame);
   }, [disabled, error, visible]);
 
-  useEffect(() => {
-    if (!open || !(pathError || error)) return;
-    const frame = window.requestAnimationFrame(() => pathInputRef.current?.focus());
-    return () => window.cancelAnimationFrame(frame);
-  }, [error, open, pathError]);
-
   const applyProjectPath = useCallback(
     (projectPath: string, projectName?: string) => {
       const base = scope ?? defaultScope;
       const trimmed = projectPath.trim();
-      if (!base || !onChange) return;
-      if (!trimmed || !isAbsoluteWorkspacePath(trimmed)) {
-        setPathError(t("workspace.dialog.absolutePathRequired"));
-        return;
-      }
+      if (!base || !onChange || !trimmed || !isAbsoluteWorkspacePath(trimmed)) return;
       const managed = workspaces?.managed_access === true
         || base.effective_access?.policy === "managed";
       const acknowledged = { ...base };
@@ -219,106 +174,43 @@ export function WorkspaceProjectPicker({
           ? acknowledged.restrict_to_workspace
           : managed || base.access_mode === "restricted",
       });
-      setPathError(null);
       setOpen(false);
     },
-    [defaultScope, onChange, scope, t, workspaces?.managed_access],
+    [defaultScope, onChange, scope, workspaces?.managed_access],
   );
-
-  const currentApplyProjectPathRef = useRef(applyProjectPath);
-  useLayoutEffect(() => {
-    currentApplyProjectPathRef.current = applyProjectPath;
-  }, [applyProjectPath]);
-
-  const revokePendingBrowse = useCallback((mounted: boolean) => {
-    const pending = pendingBrowseRef.current;
-    if (!pending) return;
-    pending.cancelled = true;
-    pendingBrowseRef.current = null;
-    if (mounted) setPickingFolder(false);
-  }, []);
-
-  const committedBrowseLifetimeRef = useRef({
-    ownerKey,
-    projectPath: currentPath,
-    accessMode: activeScope?.access_mode,
-    turnActive,
-  });
-  useLayoutEffect(() => {
-    const previous = committedBrowseLifetimeRef.current;
-    const focusChanged = previous.accessMode !== activeScope?.access_mode
-      || (previous.projectPath !== currentPath
-        && !sameWorkspacePath(previous.projectPath, currentPath));
-    // A browse that spans a run boundary is ambiguous: its picker owner is no
-    // longer the admitted turn. Discard it rather than applying a stale path.
-    const turnBoundaryChanged = previous.turnActive !== turnActive;
-    const lifetimeChanged = previous.ownerKey !== ownerKey || focusChanged
-      || turnBoundaryChanged || !browseEligible;
-    committedBrowseLifetimeRef.current = {
-      ownerKey,
-      projectPath: currentPath,
-      accessMode: activeScope?.access_mode,
-      turnActive,
-    };
-    if (lifetimeChanged) {
-      const hadPendingBrowse = pendingBrowseRef.current !== null;
-      revokePendingBrowse(true);
-      if (hadPendingBrowse && turnBoundaryChanged) setOpen(false);
-    }
-  }, [activeScope?.access_mode, browseEligible, currentPath, ownerKey, revokePendingBrowse, turnActive]);
-
-  useLayoutEffect(() => () => revokePendingBrowse(false), [revokePendingBrowse]);
-
-  const browseForFolder = useCallback(async () => {
-    if (!pickFolder || disabled) return;
-    const pending = { cancelled: false };
-    pendingBrowseRef.current = pending;
-    setPickingFolder(true);
-    setPathError(null);
-    try {
-      const picked = await pickFolder();
-      if (pending.cancelled || pendingBrowseRef.current !== pending) return;
-      if (picked) {
-        setPathDraft(picked);
-        currentApplyProjectPathRef.current(picked);
-      }
-    } catch (reason) {
-      if (pending.cancelled || pendingBrowseRef.current !== pending) return;
-      setPathError(reason instanceof Error
-        ? reason.message
-        : t("workspace.dialog.browseFailed", { defaultValue: "Folder picker unavailable. Paste a path instead." }));
-    } finally {
-      if (pendingBrowseRef.current === pending) {
-        pendingBrowseRef.current = null;
-        setPickingFolder(false);
-      }
-    }
-  }, [disabled, pickFolder, t]);
 
   if (!visible || !defaultScope || !onChange) return null;
 
   const pickerTitle = t("workspace.picker.chooseProject", { defaultValue: "Choose project folder" });
-  const pathAccessibleLabel = isAgentHome
-    ? pickerTitle
-    : t("workspace.picker.workingIn", {
-        folder: folderName,
-        defaultValue: "Working in: {{folder}}",
-      });
-  const triggerAccessibleLabel = showNextTurnSelection
-    ? nextFolderName ? t("workspace.picker.nextTurn", {
-        folder: nextFolderName,
-        defaultValue: "Next turn: {{folder}}",
-      }) : pickerTitle
-    : pathAccessibleLabel;
-  const displayedFolderName = showNextTurnSelection ? nextFolderName : folderName;
-  const showTriggerLabel = !line || Boolean(displayedFolderName);
-  const triggerTitle = [
-    triggerAccessibleLabel,
-    displayedFolderName ? (showNextTurnSelection ? pendingNextScope?.project_path : currentPath) : null,
-    showNextTurnSelection ? t("workspace.picker.nextTurnHint", {
-      defaultValue: "The running turn keeps its folder. This choice applies to the next turn.",
-    }) : null,
-  ].filter(Boolean).join("\n");
+  const readableRepositories = (workspaces?.management?.repositories ?? [])
+    .filter((repository) => repository.exists && repository.effective_access.read);
+  const displayedScope = showNextTurnSelection ? pendingNextScope : activeScope;
+  const selectedScope = displayedScope
+    && !sameWorkspacePath(displayedScope.project_path, defaultScope.project_path)
+    ? displayedScope
+    : null;
+  const selectedRepository = selectedScope && readableRepositories.find(
+    (repository) => sameWorkspacePath(repository.path, selectedScope.project_path),
+  );
+  const folderName = selectedScope
+    ? selectedRepository?.name.trim() || selectedScope.project_name?.trim()
+      || projectNameFromPath(selectedScope.project_path)
+    : "";
+  // With no project chosen, the trigger is only a folder icon so the idle
+  // composer does not repeat the picker prompt.
+  const showTriggerLabel = Boolean(folderName);
+  const triggerAccessibleLabel = folderName
+    ? showNextTurnSelection
+      ? t("workspace.picker.nextTurn", { folder: folderName, defaultValue: "Next turn: {{folder}}" })
+      : t("workspace.picker.workingIn", { folder: folderName, defaultValue: "Working in: {{folder}}" })
+    : pickerTitle;
+  const nextTurnHint = showNextTurnSelection
+    ? t("workspace.picker.nextTurnHint", {
+        defaultValue: "The running turn keeps its folder. This choice applies to the next turn.",
+      })
+    : null;
+  const triggerTitle = [triggerAccessibleLabel, selectedScope?.project_path, nextTurnHint]
+    .filter(Boolean).join("\n");
   const effectiveAccess = activeScope?.effective_access;
   const currentAccess = effectiveAccess
     ? effectiveAccessLabel(effectiveAccess, t)
@@ -328,14 +220,39 @@ export function WorkspaceProjectPicker({
       ?? (activeScope?.access_mode === "full"
         ? t("workspace.permissionV2.unavailable", { defaultValue: "Access unavailable" })
         : t("thread.composer.workspace.default", { defaultValue: "Sandbox" }));
+  const listItems: Array<{
+    key: string;
+    name: string;
+    path: string;
+    selected: boolean;
+    subtitle?: string;
+  }> = [
+    ...(selectedScope && !selectedRepository
+      ? [{
+          key: `selected:${selectedScope.project_path}`,
+          name: folderName,
+          path: selectedScope.project_path,
+          selected: true,
+          subtitle: currentAccess,
+        }]
+      : []),
+    ...readableRepositories.map((repository) => ({
+      key: repository.name,
+      name: repository.name.trim() || projectNameFromPath(repository.path),
+      path: repository.path,
+      selected: repository === selectedRepository,
+    })),
+  ];
+  const canClearDirectly = !!selectedScope && !disabled && canChangeFocus;
+  const clearProject = () => applyProjectPath(defaultScope.project_path, defaultScope.project_name);
 
   return (
     <>
       <div className={cn(
         line
-          ? "flex min-w-0 items-center"
+          ? "flex min-w-0 items-center gap-0.5"
           : inline || compact
-            ? "inline-flex min-w-0"
+            ? "inline-flex min-w-0 items-center gap-0.5"
             : "flex min-w-0 items-center gap-2 rounded-b-[28px] bg-muted/45 px-3 py-1.5 dark:bg-white/[0.045] sm:px-4",
       )}>
         <Popover open={open} onOpenChange={setOpen}>
@@ -343,7 +260,7 @@ export function WorkspaceProjectPicker({
             <button
               ref={triggerRef}
               type="button"
-              disabled={disabled || pickingFolder || !canChangeFocus}
+              disabled={disabled || !canChangeFocus}
               aria-label={triggerAccessibleLabel}
               title={triggerTitle}
               className={cn(
@@ -356,10 +273,14 @@ export function WorkspaceProjectPicker({
                     )
                   : inline
                     ? cn(
-                        "inline-flex min-w-0 items-center gap-1.5 rounded-control border border-transparent font-semibold text-muted-foreground shadow-none dark:text-foreground/70",
+                        "inline-flex min-w-0 items-center gap-1.5 rounded-control border border-transparent bg-transparent font-semibold text-muted-foreground shadow-none dark:text-foreground/70",
                         isHero ? "h-8 text-[12px]" : "h-9 text-[12.5px]",
                         "hover:bg-foreground/[0.045] hover:text-foreground dark:hover:bg-white/[0.06]",
                         "max-w-[min(15rem,45vw)] justify-start px-1.5",
+                        !showTriggerLabel && cn(
+                          "justify-center px-0",
+                          isHero ? "w-8" : "w-9",
+                        ),
                       )
                     : cn(
                         "inline-flex rounded-full text-[12px] font-medium text-muted-foreground/90 hover:text-foreground",
@@ -367,16 +288,18 @@ export function WorkspaceProjectPicker({
                           ? "thread-composer-action touch-target h-9 min-w-0 max-w-[9rem] items-center justify-start gap-1.5 border border-border/55 bg-card/70 px-2.5"
                           : "h-8 min-w-0 max-w-full items-center gap-2 px-2.5 sm:max-w-[28rem]",
                         compact ? "hover:bg-muted/65" : "hover:bg-background/70",
-                        (connected || !isAgentHome) && "text-primary",
+                        connected && "text-primary",
                       ),
               )}
             >
-              {pickingFolder || nextTurnPending
+              {nextTurnPending
                 ? <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" aria-hidden />
-                : <Folder className={cn("shrink-0", !line && compact ? "h-4 w-4" : "h-3.5 w-3.5")} aria-hidden />}
+                : selectedScope
+                  ? <FolderOpen className={cn("shrink-0", !line && compact ? "h-4 w-4" : "h-3.5 w-3.5")} aria-hidden />
+                  : <Folder className={cn("shrink-0", !line && compact ? "h-4 w-4" : "h-3.5 w-3.5")} aria-hidden />}
               {showTriggerLabel ? (
                 <span className="thread-composer-project-label min-w-0 truncate">
-                  {displayedFolderName || pickerTitle}
+                  {folderName}
                 </span>
               ) : null}
               {!compact && showTriggerLabel ? (
@@ -390,184 +313,131 @@ export function WorkspaceProjectPicker({
             sideOffset={8}
             aria-labelledby={pickerTitleId}
             onOpenAutoFocus={(event) => event.preventDefault()}
-            className="w-[min(31rem,calc(100vw-1rem))] space-y-3 p-3 sm:p-4"
+            className="max-h-[var(--radix-popover-content-available-height)] w-[min(20rem,calc(100vw-2rem))] space-y-1.5 overflow-y-auto overscroll-contain p-1.5"
           >
             <h2 id={pickerTitleId} className="border-b border-border/55 px-2.5 pb-2 pt-1.5 text-sm font-semibold">
               {pickerTitle}
             </h2>
-            {!isAgentHome ? (
-              <>
-                <div className="space-y-1 rounded-control bg-muted/35 px-3 py-2.5">
-                  <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-                    {t("workspace.picker.currentFolder", { defaultValue: "Current folder" })}
-                  </p>
-                  <p className="break-all text-[12px] font-medium" title={currentPath}>{currentPath}</p>
-                  <p className="text-[11px] text-muted-foreground">{currentAccess}</p>
-                </div>
-                {showNextTurnSelection && pendingNextScope ? (
-                  <div className="space-y-1 rounded-control border border-primary/30 bg-primary/[0.06] px-3 py-2.5">
-                    <p className="text-[11px] font-semibold uppercase tracking-wide text-primary">
-                      {t("workspace.picker.nextTurnLabel", { defaultValue: "Next turn" })}
-                    </p>
-                    <p className="break-all text-[12px] font-medium" title={pendingNextScope.project_path}>
-                      {pendingNextScope.project_path}
-                    </p>
-                    {nextTurnPending ? (
-                      <p role="status" className="text-[11px] text-muted-foreground">
-                        {t("workspace.picker.nextTurnPending", { defaultValue: "Saving the next folder…" })}
-                      </p>
-                    ) : null}
-                  </div>
-                ) : null}
-
-                <button
-                  type="button"
-                  disabled={disabled || !canChangeFocus}
-                  onClick={() => applyProjectPath(defaultScope.project_path, defaultScope.project_name)}
-                  className={cn(
-                    floatingItemClassName,
-                    floatingItemFocusClassName,
-                    "flex min-h-[48px] w-full cursor-default gap-3 px-3 py-2.5 focus:bg-muted/55",
-                  )}
-                >
-                  <span className="grid h-8 w-8 shrink-0 place-items-center rounded-control bg-muted text-foreground/80">
-                    <Folder className="h-4 w-4" aria-hidden />
-                  </span>
-                  <span className="min-w-0 flex-1 text-left">
-                    <span className="block truncate text-[13px] font-semibold text-foreground">
-                      {t("workspace.picker.clearProject", { defaultValue: "Clear project folder" })}
-                    </span>
-                  </span>
-                </button>
-              </>
-            ) : null}
-
-            {readableRepositories.length > 0 ? (
-              <div className="space-y-1">
-                <p className="px-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-                  {t("workspace.picker.readableProjects", { defaultValue: "Readable known projects" })}
-                </p>
-                <div className="max-h-40 space-y-1 overflow-y-auto overscroll-contain pr-1">
-                  {readableRepositories.map((repository) => (
+            {listItems.length > 0 ? (
+              <div className="max-h-48 space-y-0.5 overflow-y-auto overscroll-contain scrollbar-thin scrollbar-track-transparent">
+                {listItems.map((item) => (
+                  <div
+                    key={item.key}
+                    className={cn(
+                      "flex min-h-9 w-full items-center gap-1 rounded-lg transition-colors",
+                      item.selected
+                        ? "bg-primary/10 text-primary"
+                        : "hover:bg-muted/55",
+                    )}
+                  >
                     <button
-                      key={repository.name}
                       type="button"
                       disabled={disabled || !canChangeFocus}
-                      onClick={() => applyProjectPath(repository.path, repository.name)}
-                      title={repository.path}
-                      aria-current={sameWorkspacePath(repository.path, currentPath) ? "true" : undefined}
+                      onClick={() => applyProjectPath(item.path, item.name)}
+                      title={item.path}
+                      aria-current={item.selected ? "true" : undefined}
                       className={cn(
                         floatingItemClassName,
                         floatingItemFocusClassName,
-                        "flex min-h-[44px] w-full cursor-default gap-3 px-3 py-2 text-left focus:bg-muted/55",
-                        sameWorkspacePath(repository.path, currentPath) && "bg-primary/10 text-primary",
+                        "flex min-h-9 min-w-0 flex-1 cursor-pointer items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left hover:bg-transparent focus:bg-muted/55",
+                        item.selected && "text-primary focus:bg-primary/15",
                       )}
                     >
+                      {item.selected ? (
+                        nextTurnPending
+                          ? <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-primary" aria-hidden />
+                          : <FolderOpen className="h-3.5 w-3.5 shrink-0 text-primary" aria-hidden />
+                      ) : (
+                        <Folder className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden />
+                      )}
                       <span className="min-w-0 flex-1">
-                        <span className="block truncate text-[12px] font-medium">{repository.name}</span>
-                        <span className="block break-all text-[10.5px] text-muted-foreground">{shortWorkspacePath(repository.path)}</span>
+                        <span className={cn(
+                          "block truncate text-[13px] leading-snug",
+                          item.selected ? "font-semibold text-primary" : "font-medium text-foreground",
+                        )}>
+                          {item.name}
+                        </span>
+                        <span className="block truncate font-mono text-[10.5px] leading-tight text-muted-foreground/80">
+                          {shortWorkspacePath(item.path)}
+                        </span>
+                        {item.subtitle ? (
+                          <span className="block truncate text-[10px] leading-tight text-muted-foreground/80">
+                            {item.subtitle}
+                          </span>
+                        ) : null}
                       </span>
-                      <span className="max-w-[45%] text-right text-[10px] text-muted-foreground">
-                        {effectiveAccessLabel(repository.effective_access, t)}
-                      </span>
-                      {sameWorkspacePath(repository.path, currentPath)
-                        ? <Check className="h-4 w-4 shrink-0 text-primary" aria-hidden />
-                        : null}
                     </button>
-                  ))}
-                </div>
+                    {item.selected ? (
+                      <button
+                        type="button"
+                        disabled={disabled || !canChangeFocus}
+                        aria-label={t("workspace.picker.clearProject", { defaultValue: "Clear project folder" })}
+                        title={t("workspace.picker.clearProject", { defaultValue: "Clear project folder" })}
+                        onClick={clearProject}
+                        className="mr-1.5 grid h-6.5 w-6.5 shrink-0 place-items-center rounded-md text-primary/75 transition-colors hover:bg-primary/15 hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-45"
+                      >
+                        <X className="h-3.5 w-3.5" aria-hidden />
+                      </button>
+                    ) : null}
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="px-2.5 py-2 text-[11.5px] leading-relaxed text-muted-foreground">
+                {t("workspace.picker.noConfiguredFolders", {
+                  defaultValue: "No configured folders yet. Add folders in Settings.",
+                })}
+              </p>
+            )}
+
+            {error ? (
+              <div
+                role="alert"
+                className="flex items-start justify-between gap-2 rounded-md border border-destructive/35 bg-destructive/8 px-2.5 py-1.5 text-[11.5px] font-medium text-destructive"
+              >
+                <span className="min-w-0 flex-1 [overflow-wrap:anywhere]">{error}</span>
+                {onDismissError ? (
+                  <button
+                    type="button"
+                    aria-label={t("thread.composer.reattachDismiss", { defaultValue: "Dismiss" })}
+                    onClick={onDismissError}
+                    className="grid h-4 w-4 shrink-0 place-items-center rounded text-destructive/80 hover:bg-destructive/15 hover:text-destructive"
+                  >
+                    <X className="h-3 w-3" aria-hidden />
+                  </button>
+                ) : null}
               </div>
             ) : null}
 
-            <div className="space-y-2 border-t border-border/50 pt-3">
-              <div className="space-y-1.5">
-                <label htmlFor="workspace-manual-path" className="text-[11.5px] font-medium">
-                  {t("workspace.dialog.manual", { defaultValue: "Paste path" })}
-                </label>
-                <div className="flex items-center gap-2">
-                  <Input
-                    id="workspace-manual-path"
-                    ref={pathInputRef}
-                    value={pathDraft}
-                    disabled={disabled}
-                    onChange={(event) => {
-                      setPathDraft(event.target.value);
-                      setPathError(null);
-                    }}
-                    placeholder={workspacePathPlaceholder(
-                      defaultScope.project_path,
-                      t("workspace.dialog.manualPlaceholder"),
-                    )}
-                    aria-invalid={pathError || error ? true : undefined}
-                    aria-describedby={pathError || error ? pathErrorId : undefined}
-                    className="h-9 min-w-0 rounded-full border-border/55 bg-background/80 px-3 text-[12.5px]"
-                  />
-                  <Button
-                    type="button"
-                    variant="outline"
-                    disabled={!pickFolder || disabled || pickingFolder || !canChangeFocus}
-                    title={!pickFolder
-                      ? t("workspace.dialog.browseUnavailable", { defaultValue: "Browsing is unavailable here. Paste a path instead." })
-                      : undefined}
-                    onClick={() => void browseForFolder()}
-                    className="h-9 shrink-0 rounded-full px-3 text-[12px]"
-                  >
-                    {t("workspace.dialog.browse", { defaultValue: "Browse…" })}
-                  </Button>
-                  <Button
-                    type="button"
-                    disabled={disabled || !canChangeFocus || !pathDraft.trim()}
-                    onClick={() => applyProjectPath(pathDraft)}
-                    className="h-9 shrink-0 rounded-full px-3 text-[12px]"
-                  >
-                    {t("workspace.dialog.usePath", { defaultValue: "Use folder" })}
-                  </Button>
-                </div>
-              </div>
-              {pathError || error ? (
-                <p id={pathErrorId} role="alert" className="text-[11.5px] font-medium text-destructive">
-                  {pathError ?? error}
-                </p>
-              ) : null}
-              {!line && !disabled ? (
-                <p className="text-[11px] text-muted-foreground">
-                  {turnActive
-                    ? t("workspace.picker.nextTurnHint", {
-                        defaultValue: "The running turn keeps its folder. This choice applies to the next turn.",
-                      })
-                    : t("workspace.picker.chooseProject", { defaultValue: "Choose project folder" })}
-                </p>
-              ) : null}
-              {!canChangeFocus && !disabled ? (
-                <p className="text-[11px] text-muted-foreground">
-                  {t("workspace.picker.focusUnavailable", { defaultValue: "Folder focus cannot be changed from this connection." })}
-                </p>
-              ) : null}
-            </div>
-            {canManage && workspaces?.management ? (
-              <button
-                type="button"
-                onClick={() => {
-                  setOpen(false);
-                  setManagementOpen(true);
-                }}
-                className="flex min-h-9 w-full items-center justify-center rounded-control border border-border/55 px-3 text-[12px] font-medium text-foreground transition-colors hover:bg-muted/45 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-              >
-                {t("workspace.management.open", { defaultValue: "Manage folders and repositories" })}
-              </button>
+            {!canChangeFocus && !disabled ? (
+              <p className="px-2 text-[11px] text-muted-foreground">
+                {t("workspace.picker.focusUnavailable", { defaultValue: "Folder focus cannot be changed from this connection." })}
+              </p>
             ) : null}
           </PopoverContent>
         </Popover>
+        {canClearDirectly ? (
+          <button
+            type="button"
+            aria-label={t("workspace.picker.clearProject", { defaultValue: "Clear project folder" })}
+            title={t("workspace.picker.clearProject", { defaultValue: "Clear project folder" })}
+            onClick={clearProject}
+            className={cn(
+              "grid shrink-0 place-items-center rounded-md text-muted-foreground/75 transition-colors hover:bg-foreground/[0.06] hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring dark:text-foreground/60 dark:hover:bg-white/[0.08]",
+              line ? "h-5 w-5" : "h-6 w-6",
+            )}
+          >
+            <X className={cn(line ? "h-3 w-3" : "h-3.5 w-3.5")} aria-hidden />
+          </button>
+        ) : null}
         {!line && !inline ? (
           <span className={cn("min-w-0 truncate text-[10.5px] text-muted-foreground", compact && "sr-only")} title={currentAccess}>
             {currentAccess}
           </span>
         ) : null}
-        {!line && !inline && !disabled && showNextTurnSelection ? (
+        {!line && !inline && !disabled && nextTurnHint ? (
           <span className={cn("text-[10.5px] text-muted-foreground", compact && "sr-only")}>
-            {t("workspace.picker.nextTurnHint", {
-              defaultValue: "The running turn keeps its folder. This choice applies to the next turn.",
-            })}
+            {nextTurnHint}
           </span>
         ) : null}
         {!line && !inline && !canChangeFocus && !disabled ? (
@@ -576,18 +446,21 @@ export function WorkspaceProjectPicker({
           </span>
         ) : null}
         {!open && error ? (
-          <span role="alert" className="min-w-0 truncate text-[11.5px] font-medium text-destructive">
-            {error}
+          <span role="alert" className="inline-flex min-w-0 items-center gap-1 text-[11.5px] font-medium text-destructive">
+            <span className="min-w-0 max-h-24 overflow-y-auto [overflow-wrap:anywhere]">{error}</span>
+            {onDismissError ? (
+              <button
+                type="button"
+                aria-label={t("thread.composer.reattachDismiss", { defaultValue: "Dismiss" })}
+                onClick={onDismissError}
+                className="grid h-4 w-4 shrink-0 place-items-center rounded text-destructive/80 hover:bg-destructive/15 hover:text-destructive"
+              >
+                <X className="h-3 w-3" aria-hidden />
+              </button>
+            ) : null}
           </span>
         ) : null}
       </div>
-      <WorkspaceManagementDialog
-        open={managementOpen}
-        onOpenChange={setManagementOpen}
-        workspaces={workspaces}
-        onRefreshWorkspaces={onRefreshWorkspaces}
-        onPickFolder={pickFolder}
-      />
     </>
   );
 }
@@ -651,7 +524,7 @@ export function WorkspaceAccessMenu({
   }
 
   return (
-    <DropdownMenu>
+    <DropdownMenu modal={false}>
       <DropdownMenuTrigger asChild disabled={disabled || !onChange}>
         <Button
           type="button"
@@ -788,6 +661,7 @@ export function WorkspacePermissionV2Control({
     ? (optimisticMode ?? permissions?.mode) === "full"
     : permissions?.mode === "full";
   const busy = loading || pending || disabled;
+  const triggerDisabled = loading || disabled;
   const label = unavailable
     ? t("workspace.permissionV2.unavailable", { defaultValue: "Access unavailable" })
     : isRetiring
@@ -884,8 +758,8 @@ export function WorkspacePermissionV2Control({
 
   return (
     <div className="flex min-w-0 flex-col items-start">
-      <DropdownMenu>
-        <DropdownMenuTrigger asChild disabled={busy}>
+      <DropdownMenu modal={false}>
+        <DropdownMenuTrigger asChild disabled={triggerDisabled}>
           <Button
             type="button"
             variant="ghost"
@@ -894,7 +768,7 @@ export function WorkspacePermissionV2Control({
             aria-busy={loading || pending}
             aria-pressed={isFull}
             title={unavailableCopy ? `${label}. ${unavailableCopy}` : label}
-            disabled={busy}
+            disabled={triggerDisabled}
             className={cn(
               "thread-composer-access touch-target whitespace-nowrap rounded-control border border-transparent font-semibold shadow-none",
               mobile
@@ -923,7 +797,14 @@ export function WorkspacePermissionV2Control({
             ) : null}
           </Button>
         </DropdownMenuTrigger>
-        <DropdownMenuContent align="start" className="w-[min(22rem,calc(100vw-1rem))]">
+        <DropdownMenuContent
+          align="start"
+          className={cn(
+            unavailable || isRetiring || isRestrictedRetiring
+              ? "w-[min(22rem,calc(100vw-1rem))]"
+              : "w-56",
+          )}
+        >
           {unavailable ? (
             <div role="status" className="space-y-1 px-3 py-2">
               <p className="text-[13px] font-semibold text-foreground">{label}</p>
@@ -954,22 +835,13 @@ export function WorkspacePermissionV2Control({
                 {t("workspace.permissionV2.retryRestricted", { defaultValue: "Retry returning to Sandbox" })}
               </Button>
             </div>
-          ) : isFull && !mobile ? (
-            <div className="space-y-2 px-3 py-2">
-              <p className="text-[12px] font-semibold text-foreground">{t("workspace.permissionV2.fullIndicator", { defaultValue: "Full access" })}</p>
-              <p className="text-[11.5px] leading-relaxed text-muted-foreground">{t("workspace.permissionV2.fullReach", { defaultValue: "Files and commands across this device under your OS account permissions." })}</p>
-              {actionFailed ? <p role="alert" className="text-[11px] text-destructive">{t("workspace.permissionV2.actionFailed", { defaultValue: "Access could not be updated. Refresh this chat before retrying." })}</p> : null}
-              <Button type="button" variant="outline" disabled={busy} onClick={() => void changeMode("restricted")} className="h-9 w-full rounded-control">
-                {t("workspace.permissionV2.returnRestricted", { defaultValue: "Return to Sandbox" })}
-              </Button>
-            </div>
           ) : (
-            <div className="space-y-2 p-2">
+            <div className="space-y-1 p-1.5">
               <AccessMenuItem
                 icon={<ShieldCheck className="h-4 w-4" />}
                 label={t("thread.composer.workspace.default", { defaultValue: "Sandbox" })}
                 selected={!isFull && (permissions?.mode === "restricted" || draftRestricted)}
-                disabled={isFull && busy}
+                disabled={busy}
                 onSelect={() => {
                   if (isFull) void changeMode("restricted");
                 }}
@@ -981,10 +853,10 @@ export function WorkspacePermissionV2Control({
                 disabled={(!isFull && !fullAvailable) || busy}
                 warning
                 onSelect={() => {
-                  if (isFull) {
-                    void changeMode("full");
-                  } else {
+                  if (!isFull) {
                     selectFullAccess();
+                  } else if (mobile) {
+                    void changeMode("full");
                   }
                 }}
               />
@@ -998,8 +870,14 @@ export function WorkspacePermissionV2Control({
                   </p>
                 </div>
               ) : null}
-              {!isFull && !canEnableFull && reasonCopy ? <p className="px-2 py-1 text-[11px] leading-relaxed text-muted-foreground">{reasonCopy}</p> : null}
-              {actionFailed ? <p role="alert" className="px-2 py-1 text-[11px] text-destructive">{t("workspace.permissionV2.actionFailed", { defaultValue: "Access could not be updated. Refresh this chat before retrying." })}</p> : null}
+              {!isFull && !canEnableFull && reasonCopy ? (
+                <p className="px-2 py-1 text-[11px] leading-relaxed text-muted-foreground">{reasonCopy}</p>
+              ) : null}
+              {actionFailed ? (
+                <p role="alert" className="px-2 py-1 text-[11px] text-destructive">
+                  {t("workspace.permissionV2.actionFailed", { defaultValue: "Access could not be updated. Refresh this chat before retrying." })}
+                </p>
+              ) : null}
             </div>
           )}
         </DropdownMenuContent>

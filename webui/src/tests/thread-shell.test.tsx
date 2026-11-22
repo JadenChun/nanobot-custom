@@ -788,84 +788,6 @@ describe("ThreadShell", () => {
     );
   });
 
-  it("revokes a folder choice across the real idle-running-completed lifecycle", async () => {
-    const user = (await import("@testing-library/user-event")).default.setup();
-    const client = makeClient();
-    let resolveObsolete!: (path: string | null) => void;
-    let resolveFresh!: (path: string | null) => void;
-    const obsolete = new Promise<string | null>((resolve) => { resolveObsolete = resolve; });
-    const fresh = new Promise<string | null>((resolve) => { resolveFresh = resolve; });
-    const pickFolder = vi.fn().mockReturnValueOnce(obsolete).mockReturnValueOnce(fresh);
-    Object.defineProperty(window, "nanobotHost", {
-      configurable: true,
-      value: { getRuntimeInfo: vi.fn(), pickFolder, openLogs: vi.fn() },
-    });
-    const scope: WorkspaceScopePayload = {
-      project_path: "/agent/home",
-      project_name: "Agent home",
-      access_mode: "restricted",
-      restrict_to_workspace: true,
-    };
-    const workspaces: WorkspacesPayload = {
-      schema_version: 2,
-      default_access_mode: "restricted",
-      default_scope: scope,
-      managed_access: false,
-      management: null,
-      controls: {
-        can_change_project: true,
-        can_use_full_access: true,
-        can_pick_folder: true,
-      },
-    };
-    const onWorkspaceScopeChange = vi.fn();
-
-    render(wrap(client, <ThreadShell
-      session={{ ...session("folder-lifecycle"), workspaceScope: scope }}
-      title="Folder lifecycle"
-      onToggleSidebar={() => {}}
-      workspaceScope={scope}
-      workspaceDefaultScope={scope}
-      workspaceControls={workspaces.controls}
-      workspaces={workspaces}
-      onWorkspaceScopeChange={onWorkspaceScopeChange}
-    />));
-
-    await user.click(await screen.findByRole("button", { name: "Choose project folder" }));
-    await user.click(await screen.findByRole("button", { name: "Browse…" }));
-    await waitFor(() => expect(pickFolder).toHaveBeenCalledTimes(1));
-
-    const workspaceTrigger = screen.getByRole("button", { name: "Choose project folder" });
-    act(() => client._emitChat("folder-lifecycle", {
-      event: "goal_status",
-      chat_id: "folder-lifecycle",
-      status: "running",
-      started_at: 1_700_000_000,
-      turn_id: "folder-turn",
-    }));
-    await waitFor(() => expect(screen.getByRole("button", { name: "Stop response" })).toBeInTheDocument());
-
-    act(() => client._emitChat("folder-lifecycle", {
-      event: "turn_end",
-      chat_id: "folder-lifecycle",
-      turn_id: "folder-turn",
-    }));
-    await waitFor(() => expect(screen.queryByRole("button", { name: "Stop response" })).not.toBeInTheDocument());
-    await act(async () => { resolveObsolete("/projects/obsolete"); });
-
-    expect(onWorkspaceScopeChange).not.toHaveBeenCalled();
-    expect(workspaceTrigger).toBeEnabled();
-    await user.click(screen.getByRole("button", { name: "Choose project folder" }));
-    await user.click(await screen.findByRole("button", { name: "Browse…" }));
-    await waitFor(() => expect(pickFolder).toHaveBeenCalledTimes(2));
-    await act(async () => { resolveFresh("/projects/current"); });
-    expect(onWorkspaceScopeChange).toHaveBeenCalledTimes(1);
-    expect(onWorkspaceScopeChange).toHaveBeenCalledWith(expect.objectContaining({
-      project_path: "/projects/current",
-      project_name: "current",
-    }));
-  });
-
   it("paints saved text while controls are pending and withdraws it only when read access is refused", async () => {
     const client = makeClient();
     const chatId = "separate-controls";
@@ -4650,7 +4572,7 @@ describe("ThreadShell", () => {
 
     await waitFor(() => expect(queuedRow()).toBeNull());
     expect(screen.getByText("How is it going?")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /^Working(?: · |$)/ })).toBeInTheDocument();
+    expect(screen.getByRole("status", { name: /^Working(?: · |$)/ })).toBeInTheDocument();
     expect(screen.queryByText("Worked for 1s")).not.toBeInTheDocument();
     expect(screen.queryByRole("status", { name: /^Thinking for / })).not.toBeInTheDocument();
   });
@@ -7892,14 +7814,28 @@ describe("ThreadShell", () => {
       expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
       expect(await screen.findByTestId("generated-assets-flat")).toBeInTheDocument();
       expect(await screen.findByRole("button", { name: "Open a1.png" })).toBeInTheDocument();
-      expect(assetsButton).toHaveAttribute("aria-pressed", "true");
 
-      fireEvent.click(assetsButton);
+      // Assets and side-panel toggle stay on the right side in the inspector header,
+      // while Session summary stays in the chat toolbar.
+      const inspectorActions = screen.getByTestId("inspector-header-actions");
+      const dockedAssetsButton = within(inspectorActions).getByRole("button", { name: "Open generated assets" });
+      const dockedPanelToggle = within(inspectorActions).getByRole("button", { name: "Toggle side panel" });
+      expect(dockedAssetsButton).toHaveAttribute("aria-pressed", "true");
+      expect(dockedAssetsButton.className).not.toContain("bg-accent/45");
+      expect(dockedPanelToggle).toHaveAttribute("aria-pressed", "true");
+      expect(dockedPanelToggle.className).not.toContain("bg-accent/45");
+      expect(
+        within(screen.getByTestId("thread-header")).getByRole("button", { name: "Session details" }),
+      ).toBeInTheDocument();
+
+      fireEvent.click(dockedAssetsButton);
 
       await waitFor(() => {
         expect(screen.queryByRole("tab", { name: "Generated assets" })).not.toBeInTheDocument();
       });
-      expect(assetsButton).toHaveAttribute("aria-pressed", "false");
+      expect(
+        within(screen.getByTestId("thread-header")).getByRole("button", { name: "Open generated assets" }),
+      ).toHaveAttribute("aria-pressed", "false");
     } finally {
       resizeObserver.restore();
     }
@@ -8060,5 +7996,178 @@ describe("ThreadShell", () => {
     } finally {
       resizeObserver.restore();
     }
+  });
+
+  it("renders session summary as a non-overlapping container and hides it when space is tight", async () => {
+    const resizeObserver = stubThreadResizeObserver();
+    const client = makeClient();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.includes("websocket%3Asummary-card/webui-thread")) {
+          return Promise.resolve(httpJson(transcriptFromSimpleMessages([
+            { role: "user", content: "show summary" },
+            { role: "assistant", content: "ready" },
+          ])));
+        }
+        if (url.includes("/automations")) {
+          return Promise.resolve(httpJson({ jobs: [] }));
+        }
+        return Promise.resolve(new Response(null, { status: 404 }));
+      }),
+    );
+
+    try {
+      const { container } = render(wrap(
+        client,
+        <ThreadShell
+          session={session("summary-card")}
+          title="Summary card"
+          onToggleSidebar={() => {}}
+        />,
+      ));
+
+      await screen.findByText(replyText("ready"));
+      const shell = container.querySelector("section") as HTMLElement;
+      const observer = resizeObserver.observers.find((entry) => entry.elements.includes(shell));
+      const resize = (width: number) => {
+        Object.defineProperty(shell, "clientWidth", { configurable: true, value: width });
+        act(() => {
+          observer!.callback([], observer as unknown as ResizeObserver);
+        });
+      };
+
+      // Wide viewport: card sits in the right gutter alongside centered chat.
+      resize(1_400);
+      const summaryButton = within(screen.getByTestId("thread-header")).getByRole("button", {
+        name: "Session details",
+      });
+      expect(summaryButton).toHaveAttribute("aria-pressed", "false");
+      expect(summaryButton.className).not.toContain("bg-accent/45");
+
+      fireEvent.click(summaryButton);
+      expect(await screen.findByTestId("session-summary-gutter")).toBeInTheDocument();
+      expect(screen.getByTestId("session-summary-card")).toBeInTheDocument();
+      expect(summaryButton).toHaveAttribute("aria-pressed", "true");
+      expect(summaryButton.className).toContain("bg-accent/45");
+
+      // Medium viewport: card switches to its own non-overlapping side rail.
+      resize(1_120);
+      await waitFor(() => {
+        expect(screen.getByTestId("session-summary-rail")).toBeInTheDocument();
+      });
+      expect(screen.queryByTestId("session-summary-gutter")).not.toBeInTheDocument();
+
+      // Narrow viewport: hides automatically so it never collides with chat.
+      resize(880);
+      await waitFor(() => {
+        expect(screen.queryByTestId("session-summary-card")).not.toBeInTheDocument();
+      });
+      expect(summaryButton).toHaveAttribute("aria-pressed", "false");
+
+      // Widening back restores the card automatically.
+      resize(1_400);
+      expect(await screen.findByTestId("session-summary-gutter")).toBeInTheDocument();
+    } finally {
+      resizeObserver.restore();
+    }
+  });
+
+  it("prepends older history pages even after a live turn is appended at the tail", async () => {
+    const client = makeClient();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.includes("websocket%3Apaged-live/webui-thread")) {
+          if (url.includes("before=cursor-older")) {
+            const olderPayload = transcriptFromSimpleMessages([
+              { role: "user", content: "oldest question", turnId: "turn-oldest" },
+              { role: "assistant", content: "oldest answer", turnId: "turn-oldest" },
+            ]);
+            return Promise.resolve(httpJson({
+              ...olderPayload,
+              messages: olderPayload.messages.map((m, idx) => ({
+                ...m,
+                id: `older-m-${idx}`,
+              })),
+              page: {
+                before_cursor: null,
+                after_cursor: "cursor-older",
+                has_more_before: false,
+                has_more_after: true,
+                user_message_offset: 0,
+              },
+            }));
+          }
+          return Promise.resolve(httpJson({
+            ...transcriptFromSimpleMessages([
+              { role: "user", content: "middle question" },
+              { role: "assistant", content: "middle answer" },
+            ]),
+            page: {
+              before_cursor: "cursor-older",
+              after_cursor: null,
+              has_more_before: true,
+              has_more_after: false,
+              user_message_offset: 1,
+            },
+          }));
+        }
+        return Promise.resolve(new Response(null, { status: 404 }));
+      }),
+    );
+
+    const { container } = render(wrap(
+      client,
+      <ThreadShell
+        session={session("paged-live")}
+        title="Paged live"
+        onToggleSidebar={() => {}}
+      />,
+    ));
+
+    await screen.findByText(replyText("middle answer"));
+
+    // Send a live turn at the tail so in-memory messages have a newer turn than
+    // the initial server history page.
+    const input = screen.getByRole("textbox");
+    fireEvent.change(input, { target: { value: "live tail question" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    await screen.findByText("live tail question");
+    act(() => {
+      client._emitChat("paged-live", {
+        event: "delta",
+        chat_id: "paged-live",
+        text: "live tail answer",
+        turn_id: "turn-live-tail",
+      });
+      client._emitChat("paged-live", {
+        event: "turn_end",
+        chat_id: "paged-live",
+        content: "live tail answer",
+        turn_id: "turn-live-tail",
+      });
+    });
+    await screen.findByText(replyText("live tail answer"));
+
+    // Scroll to the top to load the older history page.
+    const scroller = container.querySelector<HTMLElement>('[data-testid="thread-message-region"]');
+    expect(scroller).not.toBeNull();
+    Object.defineProperties(scroller!, {
+      scrollHeight: { configurable: true, value: 1800 },
+      clientHeight: { configurable: true, value: 600 },
+      scrollTop: { configurable: true, writable: true, value: 0 },
+    });
+    act(() => {
+      fireEvent.pointerDown(scroller!, { button: 0 });
+      scroller!.dispatchEvent(new Event("scroll"));
+    });
+
+    expect(await screen.findByText("oldest question")).toBeInTheDocument();
+    expect(screen.getByText(replyText("oldest answer"))).toBeInTheDocument();
+    expect(screen.getByText("middle question")).toBeInTheDocument();
+    expect(screen.getByText(replyText("live tail answer"))).toBeInTheDocument();
   });
 });

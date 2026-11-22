@@ -3449,6 +3449,10 @@ async def test_static_serves_index_when_dist_present(
         spa = await _http_get("http://127.0.0.1:29905/sessions/abc")
         assert spa.status_code == 200
         assert "nbweb" in spa.text
+        # Missing hashed Vite asset must return 404, not index.html.
+        missing_chunk = await _http_get("http://127.0.0.1:29905/assets/SettingsView-stale.js")
+        assert missing_chunk.status_code == 404
+        assert "nbweb" not in missing_chunk.text
     finally:
         await channel.stop()
         await server_task

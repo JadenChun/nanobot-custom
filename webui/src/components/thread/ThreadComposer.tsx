@@ -283,6 +283,7 @@ interface ThreadComposerProps {
   nextTurnSettingsPending?: boolean;
   /** A next-turn setting change was refused; the previous choice still applies. */
   nextTurnSettingsError?: string | null;
+  onDismissNextTurnSettingsError?: () => void;
   /**
    * Settle any in-flight next-turn setting before a queued row is admitted.
    * Rejects when the choice was refused so the row stays ready to retry.
@@ -291,6 +292,7 @@ interface ThreadComposerProps {
   /** UNKNOWN input disposition blocks persistent-chat access mutations, not known live controls. */
   workspaceAccessModeUnknownBlocked?: boolean;
   workspaceError?: string | null;
+  onDismissWorkspaceError?: () => void;
   onPickWorkspaceFolder?: () => Promise<string | null>;
   onWorkspaceScopeChange?: (scope: WorkspaceScopePayload) => void;
   workspacePermissions?: WorkspacePermissionProjection | null;
@@ -1084,9 +1086,11 @@ export function ThreadComposer({
   nextWorkspaceScope = null,
   nextTurnSettingsPending = false,
   nextTurnSettingsError = null,
+  onDismissNextTurnSettingsError,
   onBeforeNewTurnSend,
   workspaceAccessModeUnknownBlocked = false,
   workspaceError = null,
+  onDismissWorkspaceError,
   onPickWorkspaceFolder,
   onWorkspaceScopeChange,
   workspacePermissions = null,
@@ -1123,6 +1127,14 @@ export function ThreadComposer({
     end: number;
   } | null>(null);
   const [inlineError, setInlineError] = useState<string | null>(null);
+  const [dismissedNextTurnError, setDismissedNextTurnError] = useState<string | null>(null);
+  useEffect(() => {
+    if (!nextTurnSettingsError) setDismissedNextTurnError(null);
+  }, [nextTurnSettingsError]);
+  const visibleNextTurnSettingsError =
+    nextTurnSettingsError && nextTurnSettingsError !== dismissedNextTurnError
+      ? nextTurnSettingsError
+      : null;
   const [sendPending, setSendPending] = useState(false);
   const pendingSendRef = useRef<symbol | null>(null);
   const draftViewVersionRef = useRef(0);
@@ -2824,6 +2836,7 @@ export function ThreadComposer({
       controls={workspaceControls}
       workspaces={workspaces}
       error={workspaceError}
+      onDismissError={onDismissWorkspaceError}
       nextTurnScope={nextWorkspaceScope}
       nextTurnPending={nextTurnSettingsPending}
       turnActive={isStreaming}
@@ -2842,6 +2855,7 @@ export function ThreadComposer({
       controls={workspaceControls}
       workspaces={workspaces}
       error={workspaceError}
+      onDismissError={onDismissWorkspaceError}
       nextTurnScope={nextWorkspaceScope}
       nextTurnPending={nextTurnSettingsPending}
       turnActive={isStreaming}
@@ -3194,22 +3208,35 @@ export function ThreadComposer({
             </button>
           </div>
         ) : null}
-        {nextTurnSettingsError && !inlineError ? (
+        {visibleNextTurnSettingsError && !inlineError ? (
           <div
             role="alert"
             data-testid="composer-next-turn-error"
-            className="mx-3 mb-1 rounded-md border border-destructive/40 bg-destructive/8 px-2.5 py-1 text-[11.5px] font-medium text-destructive"
+            className="mx-3 mb-1 flex items-center justify-between gap-2 rounded-md border border-destructive/40 bg-destructive/8 px-2.5 py-1 text-[11.5px] font-medium text-destructive"
           >
-            {t("workspace.picker.nextTurnFailed", {
-              defaultValue: "The folder change was not saved. The previous choice is still in effect; your draft is intact.",
-            })}
+            <span className="min-w-0 flex-1">
+              {t("workspace.picker.nextTurnFailed", {
+                defaultValue: "The folder change was not saved. The previous choice is still in effect; your draft is intact.",
+              })}
+            </span>
+            <button
+              type="button"
+              aria-label={t("thread.composer.reattachDismiss", { defaultValue: "Dismiss" })}
+              onClick={() => {
+                setDismissedNextTurnError(visibleNextTurnSettingsError);
+                onDismissNextTurnSettingsError?.();
+              }}
+              className="grid h-5 w-5 shrink-0 place-items-center rounded text-destructive/80 transition-colors hover:bg-destructive/15 hover:text-destructive"
+            >
+              <X className="h-3.5 w-3.5" aria-hidden />
+            </button>
           </div>
         ) : null}
         {inlineError ? (
           <div
             role="alert"
             className={cn(
-              "mx-3 mb-1 max-h-24 overflow-hidden rounded-md border border-destructive/40 bg-destructive/8 px-2.5 py-1",
+              "mx-3 mb-1 max-h-24 overflow-y-auto [overflow-wrap:anywhere] rounded-md border border-destructive/40 bg-destructive/8 px-2.5 py-1",
               "text-[11.5px] font-medium text-destructive transition-[max-height,margin,padding,opacity] [transition-duration:220ms] ease-out motion-reduce:transition-none",
               voiceErrorFading && "mb-0 max-h-0 border-transparent py-0 opacity-0",
             )}

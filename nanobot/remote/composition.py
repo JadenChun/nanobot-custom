@@ -14,6 +14,7 @@ from nanobot.config.paths import get_data_dir
 from nanobot.config.schema import RemoteAccessConfig
 from nanobot.remote.client import RemoteAccessClient
 from nanobot.remote.edge import MediaResult, MobileGatewayEdge, OwnerAccessValidator
+from nanobot.remote.protocol import MAX_MEDIA_RESPONSE_BYTES
 from nanobot.webui.media_gateway import WebUIMediaGateway
 
 
@@ -69,6 +70,7 @@ def build_mobile_edge(
             sig,
             payload,
             request=WsRequest(f"/api/media/{sig}/{payload}", headers),
+            max_response_bytes=MAX_MEDIA_RESPONSE_BYTES,
         )
         content_type = ""
         for key, value in response.headers.raw_items():

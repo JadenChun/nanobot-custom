@@ -32,7 +32,10 @@ export function ThinkingReasoningShell({
 }: ThinkingReasoningShellProps) {
   return (
     <div
-      className="flex w-full max-w-[45rem] animate-in flex-col fade-in duration-300 motion-reduce:animate-none"
+      className={cn(
+        "flex w-full max-w-[45rem] flex-col",
+        active && "animate-in fade-in duration-300 motion-reduce:animate-none",
+      )}
       data-state={active ? "thinking" : "done"}
     >
       {hasDetails ? (
@@ -99,7 +102,10 @@ export function ThinkingReasoningShell({
               : "pointer-events-none grid-rows-[0fr] opacity-0",
           )}
         >
-          <div className="relative min-h-0 overflow-hidden">
+          <div
+            className="relative min-h-0 overflow-hidden"
+            style={!expanded ? { contentVisibility: "hidden" } : undefined}
+          >
             <div
               ref={viewportRef}
               data-testid={expanded ? "agent-activity-scroll" : undefined}
@@ -111,21 +117,21 @@ export function ThinkingReasoningShell({
                 active ? "max-h-[min(42vh,360px)]" : "max-h-[min(60vh,520px)]",
               )}
             >
-              <div ref={contentRef} className="flex flex-col gap-0.5">
+              <div ref={contentRef} className="flex flex-col gap-1 pl-1.5">
                 {children}
               </div>
             </div>
             {fadeTop ? (
               <span
                 data-testid="activity-scroll-fade-top"
-                className="pointer-events-none absolute inset-x-0 top-1.5 z-10 h-3.5 bg-gradient-to-b from-background to-transparent"
+                className="pointer-events-none absolute inset-x-0 top-1.5 z-10 h-5 bg-gradient-to-b from-background via-background/70 to-transparent"
                 aria-hidden
               />
             ) : null}
             {fadeBottom ? (
               <span
                 data-testid="activity-scroll-fade-bottom"
-                className="pointer-events-none absolute inset-x-0 bottom-0 z-10 h-3.5 bg-gradient-to-t from-background to-transparent"
+                className="pointer-events-none absolute inset-x-0 bottom-0 z-10 h-5 bg-gradient-to-t from-background via-background/70 to-transparent"
                 aria-hidden
               />
             ) : null}

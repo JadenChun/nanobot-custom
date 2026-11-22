@@ -88,7 +88,7 @@ def _is_live_progress_event(progress_event: "ProgressEvent | None") -> bool:
 
 # Outbound delivery is isolated per connection.  A bounded queue keeps a slow
 # or suspended terminal from retaining an unbounded stream in server memory.
-_OUTBOUND_QUEUE_MAX_FRAMES = 256
+_OUTBOUND_QUEUE_MAX_FRAMES = 1024
 _OUTBOUND_QUEUE_MAX_BYTES = 8 * 1024 * 1024
 _OUTBOUND_SEND_TIMEOUT_S = 10.0
 _OUTBOUND_CLOSE_TIMEOUT_S = 1.0
@@ -439,6 +439,10 @@ class WebSocketChannel(BaseChannel):
         self._stream_text_buffers: dict[tuple[str, str], list[str]] = {}
         self._reasoning_text_buffers: dict[tuple[str, str], list[str]] = {}
 
+    def progress_transport_defaults(self) -> tuple[bool, bool]:
+        """WebUI activity timelines require live tool-start hints and progress."""
+        return True, True
+
     # -- Subscription bookkeeping -------------------------------------------
 
     def webui_subscribers(self, chat_id: str) -> tuple[ServerConnection, ...]:
@@ -460,11 +464,23 @@ class WebSocketChannel(BaseChannel):
     def webui_clear_stream_buffers(self, chat_id: str) -> None:
         self._clear_stream_buffers(chat_id)
 
-    async def webui_hydrate(self, chat_id: str) -> None:
-        await self._hydrate_after_subscribe(chat_id)
+    async def webui_hydrate(
+        self,
+        chat_id: str,
+        *,
+        connection: ServerConnection | None = None,
+    ) -> None:
+        await self._hydrate_after_subscribe(chat_id, connection=connection)
 
     async def revalidate_mobile_connection(self, connection: ServerConnection) -> bool:
         return await self.gateway.endpoint.revalidate_mobile_connection(connection)
+
+    async def refresh_mobile_connection(
+        self,
+        connection: ServerConnection,
+        access_token: str,
+    ) -> bool:
+        return await self.gateway.endpoint.refresh_mobile_connection(connection, access_token)
 
     async def _revalidate_raw_mobile_frame(self, connection: ServerConnection) -> bool:
         return await self.revalidate_mobile_connection(connection)
@@ -583,9 +599,49 @@ class WebSocketChannel(BaseChannel):
             if self._connection_outbound.get(connection) is state:
                 self._connection_outbound.pop(connection, None)
 
-    async def _hydrate_after_subscribe(self, chat_id: str) -> None:
+    async def _hydrate_after_subscribe(
+        self,
+        chat_id: str,
+        *,
+        connection: ServerConnection | None = None,
+    ) -> None:
         """Replay persisted or actively running per-chat state after subscribe."""
         await self._outbound.hydrate(chat_id)
+        if connection is None:
+            return
+        # Replay any in-flight reasoning/answer stream buffers only to the
+        # newly attaching connection so other already-attached tabs never get
+        # duplicate deltas.
+        for (buf_chat_id, stream_id), chunks in list(self._reasoning_text_buffers.items()):
+            if buf_chat_id != chat_id or not chunks:
+                continue
+            body: dict[str, Any] = {
+                "event": "reasoning_delta",
+                "chat_id": chat_id,
+                "text": "".join(chunks),
+            }
+            if stream_id:
+                body["stream_id"] = stream_id
+            await self._safe_send_to(
+                connection,
+                json.dumps(body, ensure_ascii=False),
+                label=" reasoning_replay ",
+            )
+        for (buf_chat_id, stream_id), chunks in list(self._stream_text_buffers.items()):
+            if buf_chat_id != chat_id or not chunks:
+                continue
+            body = {
+                "event": "delta",
+                "chat_id": chat_id,
+                "text": "".join(chunks),
+            }
+            if stream_id:
+                body["stream_id"] = stream_id
+            await self._safe_send_to(
+                connection,
+                json.dumps(body, ensure_ascii=False),
+                label=" stream_replay ",
+            )
 
     async def _send_event(
         self,
@@ -1043,17 +1099,17 @@ class WebSocketChannel(BaseChannel):
                 except asyncio.QueueEmpty:
                     return
                 try:
+                    if not await self._mobile_delivery_allowed(connection):
+                        self.logger.debug("dropping outbound frame for stale mobile connection")
+                        self._schedule_connection_retirement(
+                            connection,
+                            state,
+                            close_connection=True,
+                            close_code=1008,
+                            close_reason="mobile access is no longer current",
+                        )
+                        return
                     async with asyncio.timeout(_OUTBOUND_SEND_TIMEOUT_S):
-                        if not await self._mobile_delivery_allowed(connection):
-                            self.logger.debug("dropping outbound frame for stale mobile connection")
-                            self._schedule_connection_retirement(
-                                connection,
-                                state,
-                                close_connection=True,
-                                close_code=1008,
-                                close_reason="mobile access is no longer current",
-                            )
-                            return
                         await connection.send(frame.raw)
                 except asyncio.CancelledError:
                     raise
@@ -1605,6 +1661,8 @@ class WebSocketChannel(BaseChannel):
         *,
         scope: str | None = None,
         workspace_scope: WorkspaceScopePayload | None = None,
+        next_workspace_scope: WorkspaceScopePayload | None = None,
+        next_turn_revision: int | None = None,
         workspace_access_request: FolderAccessRequest | None = None,
         workspace_permissions: WorkspacePermissionProjection | None = None,
     ) -> None:
@@ -1617,6 +1675,10 @@ class WebSocketChannel(BaseChannel):
             body["scope"] = scope
         if workspace_scope is not None:
             body["workspace_scope"] = workspace_scope
+        if next_workspace_scope is not None:
+            body["next_workspace_scope"] = next_workspace_scope
+        if next_turn_revision is not None:
+            body["next_turn_revision"] = next_turn_revision
         raw = json.dumps(body, ensure_ascii=False)
         from nanobot.webui.http_utils import is_local_browser_request, is_loopback_host
 

@@ -1,4 +1,5 @@
-import { type Dispatch, type SetStateAction } from "react";
+import { useClient } from "@/providers/ClientProvider";
+import { useState, type Dispatch, type SetStateAction } from "react";
 import {
   Bot,
   ChevronRight,
@@ -22,6 +23,7 @@ import {
 } from "@/components/settings/shared/SettingsControls";
 import { TokenUsageHeatmap } from "@/components/settings/TokenUsageHeatmap";
 import { ToggleButton } from "@/components/settings/ToggleButton";
+import { Button } from "@/components/ui/button";
 import { SegmentedControl } from "@/components/ui/segmented-control";
 import { useLogoFallback } from "@/hooks/useLogoFallback";
 import type {
@@ -32,6 +34,7 @@ import type {
 } from "@/lib/local-preferences";
 import { providerBrand, providerDisplayLabel } from "@/lib/provider-brand";
 import {
+  showTaskNotification,
   requestTaskNotificationPermission,
   taskNotificationsSupported,
 } from "@/lib/task-notifications";
@@ -56,6 +59,26 @@ export function OverviewSettings({
 }) {
   const { t } = useTranslation();
   const tx = (key: string, fallback: string) => t(key, { defaultValue: fallback });
+  const { client } = useClient();
+  const [feedback, setFeedback] = useState("");
+  const [sendingTest, setSendingTest] = useState(false);
+
+  async function sendTestNotification() {
+    if (sendingTest) return;
+    setSendingTest(true);
+    setFeedback("");
+    try {
+      const sent = await showTaskNotification({
+        t,
+        sound: localPrefs.notificationSound,
+        requestMutation: (action, payload) => client.requestMutation(action, payload),
+      });
+      setFeedback(t(sent ? "settings.rows.notificationSent" : "settings.rows.notifierUnavailable"));
+    } finally {
+      setSendingTest(false);
+    }
+  }
+
   const activePresetName = settings.agent.model_preset;
   const activePreset =
     activePresetName && activePresetName !== "default"
@@ -216,15 +239,21 @@ export function OverviewSettings({
               checked={localPrefs.browserNotifications}
               disabled={!taskNotificationsSupported()}
               onChange={(enabled) => {
+                setFeedback("");
                 if (!enabled) {
                   onChangeLocalPrefs((prev) => ({ ...prev, browserNotifications: false }));
                   return;
                 }
-                void requestTaskNotificationPermission().then((granted) => {
+                void (async () => {
+                  if (window.__TAURI_INTERNALS__ !== undefined) {
+                    const probe = await client.requestMutation<{ available: boolean }>("desktop.notify", { checkOnly: true });
+                    if (!probe.available) { setFeedback(t("settings.rows.notifierUnavailable")); return; }
+                  }
+                  const granted = await requestTaskNotificationPermission();
                   if (granted) {
                     onChangeLocalPrefs((prev) => ({ ...prev, browserNotifications: true }));
-                  }
-                });
+                  } else setFeedback(t("settings.rows.permissionDenied"));
+                })().catch(() => setFeedback(t("settings.rows.notifierUnavailable")));
               }}
               ariaLabel={tx("settings.rows.browserNotifications", "Task notifications")}
               label={localPrefs.browserNotifications
@@ -232,6 +261,21 @@ export function OverviewSettings({
                 : tx("settings.values.off", "Off")}
             />
           </SettingsRow>
+          {localPrefs.browserNotifications && <>
+            <SettingsRow title={t("settings.rows.notificationSound")}>
+              <ToggleButton checked={localPrefs.notificationSound}
+                onChange={(notificationSound) => onChangeLocalPrefs((prev) => ({ ...prev, notificationSound }))}
+                ariaLabel={t("settings.rows.notificationSound")}
+                label={t(localPrefs.notificationSound ? "settings.values.on" : "settings.values.off")} />
+            </SettingsRow>
+            <SettingsRow title={t("settings.rows.notificationTest")}>
+              <Button type="button" variant="outline" size="sm" disabled={sendingTest} onClick={sendTestNotification}>
+                {t("settings.rows.testNotification")}
+              </Button>
+            </SettingsRow>
+
+          </>}
+          {feedback && <p role="status" className="px-4 pb-3 text-sm">{feedback}</p>}
         </SettingsGroup>
       </section>
 

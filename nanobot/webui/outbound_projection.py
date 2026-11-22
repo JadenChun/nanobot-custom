@@ -123,6 +123,8 @@ class WebUIOutboundTransport(Protocol):
         *,
         scope: str | None = None,
         workspace_scope: WorkspaceScopePayload | None = None,
+        next_workspace_scope: WorkspaceScopePayload | None = None,
+        next_turn_revision: int | None = None,
         workspace_access_request: FolderAccessRequest | None = None,
         workspace_permissions: WorkspacePermissionProjection | None = None,
     ) -> None: ...

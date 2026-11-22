@@ -176,6 +176,13 @@
       "managedFolderAccess": "管理対象のフォルダーアクセス",
       "currentModel": "現在の設定",
       "brandLogos": "ブランドロゴ",
+      "notificationSound": "通知音",
+      "notificationTest": "配信テスト",
+      "testNotificationBody": "通知は正常に機能しています。",
+      "testNotification": "テスト通知を送信",
+      "permissionDenied": "端末またはブラウザーの設定で通知を許可してください。",
+      "notifierUnavailable": "通知を利用できません。システムの通知設定を確認してください。",
+      "notificationSent": "テスト通知を送信しました。",
       "browserNotifications": "タスク通知",
       "cliAppsCatalog": "カタログ",
       "cliAppsFilter": "フィルター",
@@ -1586,6 +1593,10 @@
     "cancel": "キャンセル"
   },
   "errors": {
+    "approvalRejected": {
+      "title": "承認は無効になりました",
+      "body": "ゲートウェイの再起動などにより、この承認リクエストは無効になりました。続けるには新しいメッセージを送信してください。"
+    },
     "messageTooBig": {
       "title": "メッセージが大きすぎます",
       "body": "サイズ上限を超えたため、直前のメッセージはサーバーに拒否されました。画像を減らすか、より小さいファイルに差し替えて再送してください。"

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hmac
+import time
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
@@ -161,6 +162,7 @@ class WebUIGatewayEndpoint:
         identity = attached_mobile_identity(connection)
         if identity is None:
             return True
+        from nanobot.remote.client import OwnerUnavailableError
         from nanobot.remote.edge import AccessIdentity
 
         if not isinstance(identity, AccessIdentity):
@@ -175,11 +177,50 @@ class WebUIGatewayEndpoint:
                 return False
             mobile_edge.authorize_target(request, identity.origin)
             fresh = await mobile_edge.revalidate_mobile_access(identity, token)
+        except OwnerUnavailableError:
+            # Brief owner restart/IPC timeout should not permanently revoke
+            # scopes or kick active mobile sockets with 1008 while unexpired.
+            return time.time() < identity.expires_at
         except Exception:
             from dataclasses import replace
 
             setattr(connection, "mobile_identity", replace(identity, scopes=()))
             return False
+        setattr(connection, "mobile_identity", fresh)
+        return True
+
+    async def refresh_mobile_connection(
+        self,
+        connection: ServerConnection,
+        access_token: str,
+    ) -> bool:
+        """Rotate the pinned access token of an active mobile WebSocket in place."""
+        identity = attached_mobile_identity(connection)
+        if identity is None:
+            return False
+        from nanobot.remote.edge import AccessIdentity
+
+        if not isinstance(identity, AccessIdentity):
+            return False
+        mobile_edge = self._current_mobile_edge()
+        if mobile_edge is None or not access_token:
+            return False
+        try:
+            request = getattr(connection, "request", None)
+            if not isinstance(request, WsRequest):
+                return False
+            mobile_edge.authorize_target(request, identity.origin)
+            fresh = await mobile_edge.validator.validate_uncached(access_token)
+            if (
+                fresh.installation_id != identity.installation_id
+                or not fresh.origin
+                or fresh.origin != identity.origin
+                or not fresh.allows("chat.read")
+            ):
+                return False
+        except Exception:
+            return False
+        setattr(connection, "mobile_access_token", access_token)
         setattr(connection, "mobile_identity", fresh)
         return True
 

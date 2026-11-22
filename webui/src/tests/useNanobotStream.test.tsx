@@ -3293,7 +3293,7 @@ describe("useNanobotStream", () => {
     ]);
   });
 
-  it("suppresses redundant stream confirmation after assistant media", () => {
+  it("deduplicates repeated caption after assistant media while keeping post-media activity visible", () => {
     const fake = fakeClient();
     const { result } = renderHook(() => useNanobotStream("chat-img-result", EMPTY_MESSAGES), {
       wrapper: wrap(fake.client),
@@ -3307,19 +3307,28 @@ describe("useNanobotStream", () => {
         media_urls: [{ url: "/api/media/sig/image", name: "generated.png" }],
       });
       fake.emit("chat-img-result", {
-        event: "message",
-        chat_id: "chat-img-result",
-        text: "message()",
-        kind: "tool_hint",
-      });
-      fake.emit("chat-img-result", {
         event: "delta",
         chat_id: "chat-img-result",
-        text: "发送成功",
+        text: "image ready",
       });
       fake.emit("chat-img-result", {
         event: "stream_end",
         chat_id: "chat-img-result",
+      });
+      fake.emit("chat-img-result", {
+        event: "reasoning_delta",
+        chat_id: "chat-img-result",
+        text: "Inspecting the output next.",
+      });
+      fake.emit("chat-img-result", {
+        event: "reasoning_end",
+        chat_id: "chat-img-result",
+      });
+      fake.emit("chat-img-result", {
+        event: "message",
+        chat_id: "chat-img-result",
+        text: 'read_file({"path":"generated.png"})',
+        kind: "tool_hint",
       });
       fake.emit("chat-img-result", {
         event: "turn_end",
@@ -3327,9 +3336,12 @@ describe("useNanobotStream", () => {
       });
     });
 
-    expect(result.current.messages).toHaveLength(1);
+    expect(result.current.messages).toHaveLength(3);
     expect(result.current.messages[0].content).toBe("image ready");
     expect(result.current.messages[0].media).toHaveLength(1);
+    expect(result.current.messages[1].reasoning).toBe("Inspecting the output next.");
+    expect(result.current.messages[2].kind).toBe("trace");
+    expect(result.current.messages[2].content).toBe('read_file({"path":"generated.png"})');
   });
 
   it("stops the active turn without adding a user slash command bubble", () => {

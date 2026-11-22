@@ -142,7 +142,7 @@
           "content": "The image edit is complete.",
           "turnId": "turn-media-distinct",
           "turnPhase": "answer",
-          "turnSeq": 5
+          "turnSeq": 4
         }
       ]
     },
@@ -1024,6 +1024,201 @@
           "content": "Final answer segment.",
           "latencyMs": 12,
           "turnId": "turn-interleaved-answer",
+          "turnPhase": "answer",
+          "turnSeq": 6
+        }
+      ]
+    },
+    {
+      "name": "media_then_more_activity_and_followup",
+      "chat_id": "fixture-media-activity",
+      "initial_messages": [
+        {
+          "id": "fixture-user-media-activity",
+          "role": "user",
+          "content": "Show the previews and keep checking.",
+          "turnId": "turn-media-activity",
+          "turnPhase": "user",
+          "turnSeq": 1,
+          "createdAt": 1700000000000
+        }
+      ],
+      "live_events": [
+        {
+          "event": "message",
+          "chat_id": "fixture-media-activity",
+          "text": "Preview attached.",
+          "media_urls": [
+            {
+              "url": "/api/media/preview.png",
+              "name": "preview.png"
+            }
+          ],
+          "turn_id": "turn-media-activity",
+          "turn_phase": "answer",
+          "turn_seq": 2
+        },
+        {
+          "event": "message",
+          "chat_id": "fixture-media-activity",
+          "text": "read_file()",
+          "kind": "tool_hint",
+          "turn_id": "turn-media-activity",
+          "turn_phase": "activity",
+          "turn_seq": 3
+        },
+        {
+          "event": "reasoning_delta",
+          "chat_id": "fixture-media-activity",
+          "text": "Checking media route.",
+          "turn_id": "turn-media-activity",
+          "turn_phase": "reasoning",
+          "turn_seq": 4
+        },
+        {
+          "event": "reasoning_end",
+          "chat_id": "fixture-media-activity",
+          "turn_id": "turn-media-activity",
+          "turn_phase": "reasoning",
+          "turn_seq": 5
+        },
+        {
+          "event": "delta",
+          "chat_id": "fixture-media-activity",
+          "text": "Verified the route.",
+          "turn_id": "turn-media-activity",
+          "turn_phase": "answer",
+          "turn_seq": 6
+        },
+        {
+          "event": "stream_end",
+          "chat_id": "fixture-media-activity",
+          "turn_id": "turn-media-activity",
+          "turn_phase": "answer",
+          "turn_seq": 7
+        },
+        {
+          "event": "turn_end",
+          "chat_id": "fixture-media-activity",
+          "latency_ms": 25,
+          "turn_id": "turn-media-activity",
+          "turn_phase": "complete",
+          "turn_seq": 8
+        }
+      ],
+      "transcript": [
+        {
+          "event": "user",
+          "chat_id": "fixture-media-activity",
+          "text": "Show the previews and keep checking.",
+          "created_at_ms": 1700000000000,
+          "turn_id": "turn-media-activity",
+          "turn_phase": "user",
+          "turn_seq": 1
+        },
+        {
+          "event": "message",
+          "chat_id": "fixture-media-activity",
+          "text": "Preview attached.",
+          "media_urls": [
+            {
+              "url": "/api/media/preview.png",
+              "name": "preview.png"
+            }
+          ],
+          "turn_id": "turn-media-activity",
+          "turn_phase": "answer",
+          "turn_seq": 2
+        },
+        {
+          "event": "message",
+          "chat_id": "fixture-media-activity",
+          "text": "read_file()",
+          "kind": "tool_hint",
+          "turn_id": "turn-media-activity",
+          "turn_phase": "activity",
+          "turn_seq": 3
+        },
+        {
+          "event": "reasoning_delta",
+          "chat_id": "fixture-media-activity",
+          "text": "Checking media route.",
+          "turn_id": "turn-media-activity",
+          "turn_phase": "reasoning",
+          "turn_seq": 4
+        },
+        {
+          "event": "reasoning_end",
+          "chat_id": "fixture-media-activity",
+          "turn_id": "turn-media-activity",
+          "turn_phase": "reasoning",
+          "turn_seq": 5
+        },
+        {
+          "event": "delta",
+          "chat_id": "fixture-media-activity",
+          "text": "Verified the route.",
+          "turn_id": "turn-media-activity",
+          "turn_phase": "answer",
+          "turn_seq": 6
+        },
+        {
+          "event": "stream_end",
+          "chat_id": "fixture-media-activity",
+          "turn_id": "turn-media-activity",
+          "turn_phase": "answer",
+          "turn_seq": 7
+        },
+        {
+          "event": "turn_end",
+          "chat_id": "fixture-media-activity",
+          "latency_ms": 25,
+          "turn_id": "turn-media-activity",
+          "turn_phase": "complete",
+          "turn_seq": 8
+        }
+      ],
+      "expected": [
+        {
+          "role": "user",
+          "content": "Show the previews and keep checking.",
+          "turnId": "turn-media-activity",
+          "turnPhase": "user",
+          "turnSeq": 1
+        },
+        {
+          "role": "assistant",
+          "content": "Preview attached.",
+          "media": [
+            {
+              "kind": "image",
+              "url": "/api/media/preview.png",
+              "name": "preview.png"
+            }
+          ],
+          "turnId": "turn-media-activity",
+          "turnPhase": "answer",
+          "turnSeq": 2
+        },
+        {
+          "role": "tool",
+          "content": "read_file()",
+          "kind": "trace",
+          "traces": [
+            "read_file()"
+          ],
+          "activitySegmentId": "segment-1",
+          "turnId": "turn-media-activity",
+          "turnPhase": "activity",
+          "turnSeq": 3
+        },
+        {
+          "role": "assistant",
+          "content": "Verified the route.",
+          "reasoning": "Checking media route.",
+          "activitySegmentId": "segment-1",
+          "latencyMs": 25,
+          "turnId": "turn-media-activity",
           "turnPhase": "answer",
           "turnSeq": 6
         }

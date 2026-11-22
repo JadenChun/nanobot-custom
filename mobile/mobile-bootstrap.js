@@ -5,41 +5,88 @@
 
   var capacitor = window.Capacitor;
   if (capacitor) {
-    var localNotifications = capacitor.Plugins && capacitor.Plugins.LocalNotifications;
-    if (!localNotifications && capacitor.registerPlugin) {
-      localNotifications = capacitor.registerPlugin("LocalNotifications");
-    }
-    if (localNotifications) {
-      window.nanobotMobileNotifications = {
-        requestPermission: async function () {
-          try {
-            var result = await localNotifications.requestPermissions();
-            return !!result && result.display === "granted";
-          } catch (_) {
-            return false;
-          }
-        },
-        notify: async function (options) {
-          try {
-            await localNotifications.schedule({
-              notifications: [{
-                id: Math.floor(Date.now() % 2147483647),
-                title: options.title || "Kohaku",
-                body: options.body || "",
-                // This is an immediate notification, not a scheduled alarm.
-                // Without this, Capacitor asks for exact-alarm access on
-                // Android 12+, which blocks delivery when the app is in the
-                // background and can leave the promise pending forever.
-                isExactNotification: false,
-                smallIcon: "ic_stat_nanobot",
-                largeIcon: "ic_nanobot_notification"
-              }]
+    try {
+      var localNotifications = capacitor.Plugins && capacitor.Plugins.LocalNotifications;
+      if (!localNotifications && capacitor.registerPlugin) {
+        localNotifications = capacitor.registerPlugin("LocalNotifications");
+      }
+      if (localNotifications) {
+        var alertChannel = "kohaku_task_alerts";
+        var silentChannel = "kohaku_task_alerts_silent";
+        // Android 7 has no channels. Its notifications use per-alert sounds.
+        var channelReady = Promise.resolve()
+          .then(function () {
+            return localNotifications.createChannel({
+              id: alertChannel, name: "Task updates", importance: 4, vibration: true
             });
-          } catch (_) {
-            // Notifications are optional; keep chat usable if the OS blocks them.
-          }
+          })
+          .then(function () { return true; }, function (error) {
+            return error && error.code === "UNAVAILABLE";
+          });
+
+        if (typeof localNotifications.addListener === "function") {
+          Promise.resolve()
+            .then(function () {
+              return localNotifications.addListener("localNotificationActionPerformed", function (action) {
+                var extra = action.notification && action.notification.extra;
+                if (!extra || typeof extra.chatId !== "string" || !extra.chatId) return;
+                window.location.hash = extra.temporary
+                  ? "#/temporary/" + encodeURIComponent(extra.chatId)
+                  : "#/chat/" + encodeURIComponent("websocket:" + extra.chatId);
+              });
+            })
+            .catch(function () {});
         }
-      };
+
+        function notificationId(key) {
+          var hash = 2166136261;
+          for (var i = 0; i < key.length; i++) {
+            hash = Math.imul(hash ^ key.charCodeAt(i), 16777619);
+          }
+          // Reserve low IDs for native services, including the run keepalive.
+          return 65536 + (hash >>> 0) % (2147483648 - 65536);
+        }
+
+        window.nanobotMobileNotifications = {
+          requestPermission: async function () {
+            try {
+              var result = await localNotifications.requestPermissions();
+              return !!result && result.display === "granted";
+            } catch (_) {
+              return false;
+            }
+          },
+          notify: async function (options) {
+            if (!await channelReady) return false;
+            try {
+              var audible = options.sound !== false;
+              await localNotifications.schedule({
+                notifications: [{
+                  id: notificationId(options.tag || options.chatId || "kohaku-test"),
+                  title: options.title || "Kohaku",
+                  body: options.body || "",
+                  channelId: audible ? alertChannel : silentChannel,
+                  // Android 7 ignores channel sound settings.
+                  sound: audible ? undefined : "kohaku_silent.wav",
+                  extra: options.chatId ? {
+                    chatId: options.chatId,
+                    ...(options.temporary ? { temporary: true } : {})
+                  } : {},
+                  isExactNotification: false,
+                  foreground: true,
+                  smallIcon: "ic_stat_nanobot",
+                  largeIcon: "ic_nanobot_notification"
+                }]
+              });
+              return true;
+            } catch (_) {
+              return false;
+            }
+          }
+        };
+      }
+    } catch (_) {
+      // Optional notification setup must never block mobile transport boot.
     }
   }
 
@@ -81,37 +128,60 @@
         return false;
       }
     },
+    logout: async function () {
+      try {
+        await plugin.logout({ serverReachable: true });
+      } catch (_) {
+        try {
+          await plugin.logout({ serverReachable: false });
+        } catch (_) {}
+      }
+      window.location.reload();
+    },
     wsOpen: async function (path, headers) {
       var result = await plugin.wsOpen({ operation: "mobile_ws", path: path, headers: headers });
       return result.wsId;
     },
-    wsSend: async function (wsId, data, kind) {
-      var chunkBytes = 256 * 1024;
-      var frameKind = kind || "text";
-      var encode = function (bytes) {
-        var binary = "";
-        for (var i = 0; i < bytes.length; i += 1) binary += String.fromCharCode(bytes[i]);
-        return btoa(binary);
-      };
-      if (data.length <= chunkBytes) {
-        await plugin.wsSend({ wsId: wsId, kind: frameKind, dataBase64: encode(data) });
-        return;
-      }
-      await plugin.wsSendBegin({ wsId: wsId, kind: frameKind });
-      try {
-        for (var offset = 0; offset < data.length; offset += chunkBytes) {
-          var chunk = data.subarray(offset, Math.min(offset + chunkBytes, data.length));
-          await plugin.wsSendChunk({ wsId: wsId, dataBase64: encode(chunk) });
+    wsSend: (function () {
+      var sendChains = Object.create(null);
+      return function (wsId, data, kind) {
+        var chunkBytes = 256 * 1024;
+        var frameKind = kind || "text";
+        var encode = function (bytes) {
+          var binary = "";
+          for (var i = 0; i < bytes.length; i += 1) binary += String.fromCharCode(bytes[i]);
+          return btoa(binary);
+        };
+        if (data.length <= chunkBytes) {
+          return plugin.wsSend({ wsId: wsId, kind: frameKind, dataBase64: encode(data) });
         }
-        await plugin.wsSendEnd({ wsId: wsId });
-      } catch (error) {
-        await plugin.wsSendEnd({ wsId: wsId, discard: true }).catch(function () {});
-        throw error;
-      }
-    },
+        var previous = sendChains[wsId] || Promise.resolve();
+        var next = previous.catch(function () {}).then(async function () {
+          await plugin.wsSendBegin({ wsId: wsId, kind: frameKind });
+          try {
+            for (var offset = 0; offset < data.length; offset += chunkBytes) {
+              var chunk = data.subarray(offset, Math.min(offset + chunkBytes, data.length));
+              await plugin.wsSendChunk({ wsId: wsId, dataBase64: encode(chunk) });
+            }
+            await plugin.wsSendEnd({ wsId: wsId });
+          } catch (error) {
+            await plugin.wsSendEnd({ wsId: wsId, discard: true }).catch(function () {});
+            throw error;
+          }
+        });
+        sendChains[wsId] = next;
+        return next.finally(function () {
+          if (sendChains[wsId] === next) delete sendChains[wsId];
+        });
+      };
+    })(),
     wsClose: async function (wsId) { await plugin.wsClose({ wsId: wsId }); },
     wsPing: async function (wsId) {
       var result = await plugin.wsPing({ wsId: wsId });
+      return Boolean(result && result.ok);
+    },
+    wsRefreshAuth: async function (wsId) {
+      var result = await plugin.wsRefreshAuth({ wsId: wsId });
       return Boolean(result && result.ok);
     },
     stop: async function () { await plugin.stop(); }
@@ -626,8 +696,12 @@
           var link = await plugin.pendingPairingLink();
           if (!link || !link.origin) return;
           await begin(link);
-        } catch (_) {
-          /* A malformed pending link is ignored until the user retries. */
+        } catch (error) {
+          var linkError = String(error && error.message ? error.message : error);
+          if (linkError && state === "idle") {
+            ui.status.textContent = "Invalid pairing link: " + linkError;
+            ui.status.classList.add("is-error");
+          }
         }
       }, 1000);
     }
@@ -787,6 +861,14 @@
           finishCancellation();
           return;
         }
+        if (/keystore|corrupt|invalidated|mismatch/i.test(message)) {
+          try {
+            await plugin.logout({ serverReachable: false });
+          } catch (_) {}
+          if (stopped || run !== generation) return;
+          finishCancellation();
+          return;
+        }
         fail("Pairing cancellation failed: " + message);
       }
     }
@@ -801,8 +883,22 @@
         identity = await loadIdentity();
       } catch (error) {
         if (generation !== startupGeneration || state !== "idle") return;
-        fail(String(error && error.message ? error.message : error));
-        return;
+        var idError = String(error && error.message ? error.message : error);
+        // Recover from corrupted/invalidated local Keystore custody by clearing
+        // local state once before falling back to an error screen.
+        if (/keystore|corrupt|invalidated|mismatch/i.test(idError)) {
+          try {
+            await plugin.logout({ serverReachable: false });
+            identity = await loadIdentity();
+          } catch (retryError) {
+            if (generation !== startupGeneration || state !== "idle") return;
+            fail(String(retryError && retryError.message ? retryError.message : retryError || error));
+            return;
+          }
+        } else {
+          fail(idError);
+          return;
+        }
       }
       if (generation !== startupGeneration || state !== "idle") return;
       if (identity.origin) {
@@ -815,6 +911,7 @@
         typeof plugin.connectTailscale === "function"
       ) {
         setPill(ui.node, "Checking", "is-warn");
+        var tailscaleResolved = false;
         for (var attempt = 0; attempt < 8; attempt += 1) {
           if (generation !== startupGeneration || state !== "idle") return;
           try {
@@ -829,10 +926,12 @@
             }
             if (readiness && readiness.state === "ready") {
               setPill(ui.node, "Connected", "is-ok");
+              tailscaleResolved = true;
               break;
             }
             if (readiness && readiness.state === "error") {
               setPill(ui.node, "Not connected", "is-warn");
+              tailscaleResolved = true;
               break;
             }
           } catch (_) {
@@ -840,7 +939,7 @@
           }
           await new Promise(function (resolve) { setTimeout(resolve, 1000); });
         }
-        if (generation === startupGeneration && state === "idle") {
+        if (!tailscaleResolved && generation === startupGeneration && state === "idle") {
           setPill(ui.node, "Connects when pairing");
         }
       }
@@ -877,7 +976,7 @@
     async function connectTarget(link) {
       setSplashStatus("Connecting to Tailscale…");
       await transport.start(link.origin, link.installationId, "nanobot-" + String(link.installationId).slice(-6));
-      for (var i = 0; i < 180; i += 1) {
+      for (var i = 0; i < 40; i += 1) {
         var status = await plugin.status();
         if (status && status.state === "ready") {
           setSplashStatus("Verifying server…");
@@ -890,7 +989,7 @@
         if (i === 10) setSplashStatus("Still connecting to Tailscale…");
         await new Promise(function (resolve) { setTimeout(resolve, 500); });
       }
-      throw new Error("native transport readiness timeout");
+      throw new Error("Timed out connecting to Tailscale. Check your connection and retry.");
     }
 
     var activeHandshakeProbe = null;
@@ -1035,6 +1134,8 @@
     }
 
     function presentReauth(link, initialMessage) {
+      var splash = document.querySelector(".boot-splash");
+      if (splash) splash.remove();
       var stale = document.querySelector(".mobile-reauth");
       if (stale) stale.remove();
       var panel = textElement("section", "mobile-pairing mobile-reauth");
@@ -1048,11 +1149,79 @@
       status.setAttribute("aria-live", "polite");
       card.appendChild(status);
       var actions = textElement("div", "mobile-pairing-actions");
+      var disposed = false;
+      var retrying = false;
+      var pollTimer = null;
+
+      function cleanup() {
+        disposed = true;
+        if (pollTimer !== null) {
+          clearInterval(pollTimer);
+          pollTimer = null;
+        }
+        window.removeEventListener("nanobot-native-resume", onAutoResume);
+        window.removeEventListener("online", onAutoResume);
+        panel.remove();
+      }
+
+      async function attemptReconnect() {
+        if (disposed || retrying) return;
+        retrying = true;
+        retry.disabled = true;
+        status.classList.remove("is-error");
+        status.textContent = "Connecting to the server...";
+        try {
+          await connectTarget(link);
+          var access = await requireValidAccess();
+          if (disposed) return;
+          if (access === "revoked") return;
+          if (access === "repair") {
+            cleanup();
+            await discardInvalidPairing();
+            presentPairing();
+            return;
+          }
+          if (access === "unreachable") {
+            status.textContent = "Still can't reach this desktop. Check Tailscale and retry.";
+            status.classList.add("is-error");
+            return;
+          }
+          cleanup();
+          resolveReady();
+        } catch (error) {
+          if (disposed) return;
+          status.textContent = String(error && error.message ? error.message : error);
+          status.classList.add("is-error");
+        } finally {
+          retrying = false;
+          retry.disabled = false;
+        }
+      }
+
+      function onAutoResume() {
+        if (disposed || retrying) return;
+        void plugin.status().then(function (current) {
+          if (disposed || retrying) return;
+          if (current && current.state === "ready") {
+            void attemptReconnect();
+          }
+        }).catch(function () {});
+      }
+
+      function startLoginWatch() {
+        if (pollTimer !== null) return;
+        pollTimer = setInterval(onAutoResume, 2000);
+      }
+
+      window.addEventListener("nanobot-native-resume", onAutoResume);
+      window.addEventListener("online", onAutoResume);
+
       var login = textElement("button", "mobile-pairing-button", "Open Tailscale login");
       login.type = "button";
       login.addEventListener("click", function () {
         status.classList.remove("is-error");
         status.textContent = "Opening Tailscale sign-in...";
+        startLoginWatch();
         void plugin.openLogin().catch(function (error) {
           var message = String(error && error.message ? error.message : error);
           if (message.indexOf("no approved login URL") === 0) {
@@ -1068,30 +1237,26 @@
       var retry = textElement("button", "mobile-pairing-button", "Retry");
       retry.type = "button";
       retry.addEventListener("click", function () {
-        status.classList.remove("is-error");
-        status.textContent = "Connecting to the server...";
-        void connectTarget(link).then(function () {
-          return requireValidAccess();
-        }).then(async function (access) {
-          if (access === "revoked") return;
-          if (access === "repair") {
-            await discardInvalidPairing();
-            presentPairing();
-            return;
-          }
-          if (access === "unreachable") {
-            status.textContent = "Still can't reach this desktop. Check Tailscale and retry.";
-            status.classList.add("is-error");
-            return;
-          }
-          panel.remove();
-          resolveReady();
-        }).catch(function (error) {
-          status.textContent = String(error && error.message ? error.message : error);
-          status.classList.add("is-error");
-        });
+        void attemptReconnect();
       });
       actions.appendChild(retry);
+      var unpair = textElement("button", "mobile-pairing-button mobile-pairing-button-secondary", "Unpair / Switch server");
+      unpair.type = "button";
+      unpair.addEventListener("click", function () {
+        unpair.disabled = true;
+        retry.disabled = true;
+        login.disabled = true;
+        status.classList.remove("is-error");
+        status.textContent = "Clearing saved pairing...";
+        cleanup();
+        void (async function () {
+          try {
+            await plugin.logout({ serverReachable: false });
+          } catch (_) {}
+          presentPairing();
+        })();
+      });
+      actions.appendChild(unpair);
       card.appendChild(actions);
       document.body.appendChild(panel);
     }

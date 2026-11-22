@@ -2,16 +2,40 @@
 
 from __future__ import annotations
 
-import difflib
 import hashlib
 import json
-import re
 import uuid
 from collections.abc import Callable, Collection
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
+from nanobot.agent.launch_confinement import (
+    LAUNCH_CONFINEMENT_UNPROVEN as _LAUNCH_CONFINEMENT_UNPROVEN,
+)
+from nanobot.agent.launch_confinement import (
+    LaunchConfinementAttestation,
+    LaunchConfinementAttestor,
+    launch_confinement_covers,
+    nested_launch_id,
+    nested_launch_path,
+    register_launch_confinement_attestor,
+    resolve_launch_confinement_attestor,
+    unregister_launch_confinement_attestor,
+)
+from nanobot.agent.permission_rules import (
+    EXTERNAL_EXEC_PATTERNS,
+    LOCAL_DESTRUCTIVE_EXEC_PATTERNS,
+    READ_ONLY_DESKTOP_ACTIONS,
+    RISKY_EXEC_PATTERNS,
+    WriteTargetGuard,
+    changed_line_count,
+    is_agent_state_file,
+    is_autonomous_managed_path,
+    is_large_replacement,
+    match_exec_risk_reason,
+    match_explicit_rule,
+)
 from nanobot.agent.tools.base import Tool
 from nanobot.agent.tools.filesystem import EditCandidate, EditContentBinding, EditFileTool
 from nanobot.agent.tools.shell import ExecTool
@@ -22,146 +46,25 @@ from nanobot.providers.base import ToolCallRequest
 
 if TYPE_CHECKING:
     from nanobot.agent.tools.registry import ToolRegistry
+    from nanobot.config.schema import PermissionProfile, ToolPermissionsConfig
+
+__all__ = [
+    "CompositeToolPolicy",
+    "DelegatedReadOnlyPolicy",
+    "LaunchConfinementAttestation",
+    "LaunchConfinementAttestor",
+    "RiskyActionPolicy",
+    "ToolPolicy",
+    "ToolPolicyDecision",
+    "nested_launch_id",
+    "nested_launch_path",
+    "register_launch_confinement_attestor",
+    "resolve_launch_confinement_attestor",
+    "unregister_launch_confinement_attestor",
+]
 
 _APPROVAL_REQUIRED = "approval_required"
 _POLICY_BLOCKED = "policy_blocked"
-# A reduced-protection nested agent launch is refused, not approved, when the
-# launch path cannot prove outer confinement and process ownership.
-_LAUNCH_CONFINEMENT_UNPROVEN = "launch_confinement_unproven"
-
-# Desktop control actions that only observe the local screen. Every other
-# action, and every action value that is not an exact match, emits global
-# input events or is unknown, so it needs the same exact-effect approval as
-# other state-changing tools.
-_READ_ONLY_DESKTOP_ACTIONS = frozenset({"info", "screenshot", "cursor_position", "wait"})
-
-# External agent launches that lower their own sandbox or approval protection.
-# A launch that keeps the tool's default protection is not listed and stays an
-# ordinary command. These patterns match the lowercased command, so every
-# alternative is written in lowercase, including values such as
-# ``bypassPermissions`` and ``danger-full-access``.
-_REDUCED_PROTECTION_LAUNCHES = (
-    re.compile(
-        r"\bcodex\b[^|;&\n]*?"
-        r"(?:--yolo\b|--dangerously-bypass-approvals-and-sandbox\b|--full-auto\b)"
-    ),
-    re.compile(
-        r"\bcodex\b[^|;&\n]*?"
-        r"(?:--sandbox[= ]+[\\'\"]*danger-full-access\b"
-        r"|--ask-for-approval[= ]+[\\'\"]*never\b)"
-    ),
-    # Codex config overrides that select a full-access sandbox or disable approval.
-    re.compile(
-        r"\bcodex\b[^|;&\n]*?(?:-c\s+|--config\s+|--config=)[\\'\"]*"
-        r"(?:sandbox_mode|approval_policy)\s*=\s*[\\'\"]*"
-        r"(?:danger-full-access|never)\b"
-    ),
-    re.compile(
-        r"\bclaude\b[^|;&\n]*?"
-        r"(?:--dangerously-skip-permissions\b"
-        r"|--permission-mode[= ]+[\\'\"]*bypasspermissions\b)"
-    ),
-    re.compile(r"\bgemini\b[^|;&\n]*?(?:--yolo\b|\s-y\b)"),
-)
-
-# A tmux command starts or types into a process the shell executor does not own.
-_TMUX_LAUNCH_COMMANDS = re.compile(
-    r"\btmux\b[^|;&\n]*\b(?:send-keys|new-session|new-window|respawn-pane|split-window)\b"
-)
-
-
-def nested_launch_path(command: str) -> str | None:
-    """Classify a reduced-protection nested launch and its launch path.
-
-    Returns ``"shell"`` for a direct launch the shell executor starts itself,
-    ``"tmux"`` when the launch is typed into a tmux session, and ``None`` when
-    the command does not lower a nested agent's protection.
-    """
-    lower = command.strip().lower()
-    if not lower:
-        return None
-    if not any(pattern.search(lower) for pattern in _REDUCED_PROTECTION_LAUNCHES):
-        return None
-    return "tmux" if _TMUX_LAUNCH_COMMANDS.search(lower) else "shell"
-
-
-def nested_launch_id(
-    command: str, working_dir: str | None = None, workspace: Path | str | None = None,
-) -> str:
-    """Identity of one nested launch: the exact command and effective directory.
-
-    The policy and the executor resolve the same directory from the same
-    workspace, so one launch has one identity on both sides of the boundary.
-    """
-    base = Path(str(workspace if workspace is not None else Path.cwd())).expanduser()
-    target = Path(working_dir).expanduser() if working_dir else base
-    if not target.is_absolute():
-        target = base / target
-    payload = json.dumps(
-        {"command": " ".join(command.split()), "cwd": str(target.resolve(strict=False))},
-        sort_keys=True,
-        separators=(",", ":"),
-    )
-    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
-
-
-@dataclass(frozen=True, slots=True)
-class LaunchConfinementAttestation:
-    """Executor statement that confinement and process ownership hold for one launch."""
-
-    launch_id: str
-    path: str
-    sandbox: str
-    process_owner: str
-
-    def covers(self, launch_id: str, path: str) -> bool:
-        """True only for the attested launch, path, and non-empty providers."""
-        return (
-            bool(launch_id)
-            and launch_id == self.launch_id
-            and path == self.path
-            and bool(self.sandbox)
-            and bool(self.process_owner)
-        )
-
-
-LaunchConfinementAttestor = Callable[[str, str | None], LaunchConfinementAttestation | None]
-
-# Executors register the attestor they can honestly issue for their workspace.
-_LAUNCH_CONFINEMENT_ATTESTORS: dict[str, LaunchConfinementAttestor] = {}
-
-
-def _workspace_key(workspace: Path | str | None) -> str | None:
-    if workspace is None:
-        return None
-    raw = str(workspace)
-    if not raw:
-        return None
-    try:
-        return str(Path(raw).expanduser().resolve(strict=False))
-    except (OSError, RuntimeError, ValueError):
-        return raw
-
-
-def register_launch_confinement_attestor(
-    workspace: Path | str, attestor: LaunchConfinementAttestor,
-) -> None:
-    key = _workspace_key(workspace)
-    if key is not None:
-        _LAUNCH_CONFINEMENT_ATTESTORS[key] = attestor
-
-
-def unregister_launch_confinement_attestor(workspace: Path | str) -> None:
-    key = _workspace_key(workspace)
-    if key is not None:
-        _LAUNCH_CONFINEMENT_ATTESTORS.pop(key, None)
-
-
-def resolve_launch_confinement_attestor(
-    workspace: Path | None,
-) -> LaunchConfinementAttestor | None:
-    key = _workspace_key(workspace)
-    return None if key is None else _LAUNCH_CONFINEMENT_ATTESTORS.get(key)
 
 
 @dataclass(slots=True)
@@ -265,6 +168,7 @@ class CompositeToolPolicy(ToolPolicy):
             if assessed is not None:
                 target = assessed
         return None, target
+
 
 @dataclass(slots=True)
 class DelegatedReadOnlyPolicy(ToolPolicy):
@@ -406,7 +310,7 @@ class _EffectAssessment:
 
 @dataclass(slots=True)
 class RiskyActionPolicy(ToolPolicy):
-    """Require approval for risky or hard-to-undo tool batches."""
+    """Evaluate tool permissions, hard confinement guards, and exact-effect approvals."""
 
     workspace: Path
     # Retained descriptive inputs for internal compatibility. Neither public
@@ -427,33 +331,25 @@ class RiskyActionPolicy(ToolPolicy):
     launch_confinement_attestor: LaunchConfinementAttestor | None = field(
         default=None, repr=False, compare=False,
     )
+    # Declarative tool permissions (profile + allow/ask/deny rules).
+    # ``None`` retains legacy ``strict`` evaluation for direct callers/tests;
+    # AgentLoop passes ``tools_config.permissions`` (default ``autonomous``).
+    permissions: ToolPermissionsConfig | None = None
     _tools: ToolRegistry | None = field(default=None, repr=False, compare=False)
-    _assessed_write_targets: dict[str, Path] = field(
-        default_factory=dict, init=False, repr=False, compare=False,
-    )
-    _denied_write_targets: set[str] = field(
-        default_factory=set, init=False, repr=False, compare=False,
-    )
+    _write_guard: WriteTargetGuard = field(init=False, repr=False, compare=False)
     _risky_calls: dict[str, tuple[str, str]] = field(
         default_factory=dict, init=False, repr=False, compare=False,
     )
 
-    _RISKY_EXEC_PATTERNS = (
-        (re.compile(r"\brm\s+-[rf]{1,2}\b"), "delete files or directories"),
-        (re.compile(r"\bgit\s+reset\b"), "reset git history"),
-        (re.compile(r"\bgit\s+clean\b"), "remove untracked files"),
-        (re.compile(r"\bgit\b[^|;&\n]*\bbranch\b[^|;&\n]*(?:\s-D\b|\s-d\b|--delete\b)"), "delete a git branch"),
-        (re.compile(r"\bgit\b[^|;&\n]*\bpush\b[^|;&\n]*\s--delete\b"), "delete a git branch"),
-        (re.compile(r"\bgit\b[^|;&\n]*\bpush\b[^|;&\n]*(?:^|\s)\+?:[^\s|;&]+"), "delete a git branch"),
-        (re.compile(r"\bgit\b[^|;&\n]*\bpush\b[^|;&\n]*\s--mirror\b"), "delete git branches through a mirror push"),
-        (re.compile(r"\bgit\s+push\b"), "push commits to a remote repository"),
-        (re.compile(r"\bgit\s+checkout\b[^|;&\n]*\s+-f\b"), "force checkout changes"),
-        (re.compile(r"\bdrop\s+table\b"), "drop database tables"),
-        (re.compile(r"\bdelete\s+from\b"), "delete database rows"),
-        (re.compile(r"\btruncate\s+table\b"), "truncate database tables"),
-        (re.compile(r"\b(kubectl|helm)\b[^|;&\n]*\b(apply|delete|upgrade|rollback)\b"), "change deployed infrastructure"),
-        (re.compile(r"\b(npm|pnpm|yarn|bun)\b[^|;&\n]*\bpublish\b"), "publish a package"),
-    )
+    _LOCAL_DESTRUCTIVE_EXEC_PATTERNS = LOCAL_DESTRUCTIVE_EXEC_PATTERNS
+    _EXTERNAL_EXEC_PATTERNS = EXTERNAL_EXEC_PATTERNS
+    _RISKY_EXEC_PATTERNS = RISKY_EXEC_PATTERNS
+
+    def __post_init__(self) -> None:
+        self._write_guard = WriteTargetGuard(
+            workspace=self.workspace,
+            resolver=self.write_target_resolver,
+        )
 
     def for_tools(self, tools: ToolRegistry) -> RiskyActionPolicy:
         def resolve_target(name: str, raw_path: str) -> Path | None:
@@ -471,17 +367,20 @@ class RiskyActionPolicy(ToolPolicy):
             "agent_browser", "agent_device", "desktop_use",
         }
 
+    def batch_has_mutation(self, tool_calls: list[ToolCallRequest]) -> bool:
+        return any(tc.name in self.mutating_tool_names() for tc in tool_calls)
+
     async def evaluate(
         self,
         *,
         messages: list[dict[str, Any]],
         tool_calls: list[ToolCallRequest],
     ) -> ToolPolicyDecision:
+        _ = messages
         if not tool_calls:
             return ToolPolicyDecision()
 
-        self._assessed_write_targets.clear()
-        self._denied_write_targets.clear()
+        self._write_guard.clear()
         self._risky_calls.clear()
         blocked: list[tuple[str, str]] = []
         for tool_call in tool_calls:
@@ -504,28 +403,6 @@ class RiskyActionPolicy(ToolPolicy):
         if blocked:
             return self._request_approval(*blocked[0])
         return ToolPolicyDecision()
-
-    def _request_approval(self, effect_id: str, summary: str) -> ToolPolicyDecision:
-        """One decision identifies one concrete effect, never an entire batch."""
-        approval_id = uuid.uuid4().hex
-        response = (
-            "I'm about to take a risky action and want your approval first. "
-            f"Planned action: {summary}. Approval ID: {approval_id}. "
-            "Reply with the approval control to continue or deny."
-        )
-        return ToolPolicyDecision(
-            action="respond",
-            stop_reason=_APPROVAL_REQUIRED,
-            response=response,
-            metadata={
-                "reasons": [summary],
-                "summary": summary,
-                "requires_approval": True,
-                "approval_id": approval_id,
-                "effect_id": effect_id or None,
-            },
-            requires_approval=True,
-        )
 
     def authorize_dispatch(
         self, tool_call: ToolCallRequest, arguments: dict[str, Any],
@@ -561,6 +438,23 @@ class RiskyActionPolicy(ToolPolicy):
             )
         return self._request_approval(effect_id, reason)
 
+    def validate_write_target(self, tool_call: ToolCallRequest, tool: Any) -> str | None:
+        """Recheck the assessed target through the tool immediately before dispatch."""
+        error, _target = self.validate_write_target_binding(tool_call, tool)
+        return str(error.content) if isinstance(error, ToolOutcome) else error
+
+    def validate_write_target_binding(
+        self,
+        tool_call: ToolCallRequest,
+        tool: Any,
+        params: Any = None,
+    ) -> tuple[str | ToolOutcome | None, Path | None]:
+        """Recheck and return the assessed target for the mutation boundary."""
+        return self._write_guard.validate_binding(tool_call, tool, params)
+
+    def _effective_profile(self) -> PermissionProfile:
+        return "strict" if self.permissions is None else self.permissions.profile
+
     def _prepare_effect_call(self, call: ToolCallRequest) -> ToolCallRequest | None:
         tools = self._tools
         if tools is None:
@@ -580,15 +474,32 @@ class RiskyActionPolicy(ToolPolicy):
     ) -> _EffectAssessment | ToolPolicyDecision:
         if call.name == "edit_file":
             raw_path = str(call.arguments.get("path") or "")
-            path = self._assess_write_target(call, raw_path)
+            path = self._write_guard.assess(call, raw_path)
             if path is None:
                 return _EffectAssessment()
             candidate = EditFileTool.prepare_edit(path, **call.arguments)
             if isinstance(candidate, str):
                 return _EffectAssessment(refusal=candidate)
-            reason = self._risky_edit_reason(path, candidate, bool(call.arguments.get("replace_all")))
+            explicit = match_explicit_rule(
+                self.permissions, call, workspace=self.workspace, target_path=path,
+            )
+            if explicit == "deny":
+                return self._refuse_denied_rule(call, target_path=path)
+            if explicit == "allow":
+                edit_reason: str | None = None
+            elif explicit == "ask":
+                edit_reason = (
+                    self._risky_edit_reason(path, candidate, bool(call.arguments.get("replace_all")))
+                    or f"edit {path.name}"
+                )
+            elif self._effective_profile() == "strict":
+                edit_reason = self._risky_edit_reason(
+                    path, candidate, bool(call.arguments.get("replace_all")),
+                )
+            else:
+                edit_reason = None
             return _EffectAssessment(
-                reason=reason or previous_reason,
+                reason=edit_reason or previous_reason,
                 edit_target=path,
                 edit_binding=candidate.content_binding(),
             )
@@ -606,99 +517,127 @@ class RiskyActionPolicy(ToolPolicy):
                 return _EffectAssessment(reason=reason, exec_cwd=check)
         return _EffectAssessment(reason=reason)
 
-    def batch_has_mutation(self, tool_calls: list[ToolCallRequest]) -> bool:
-        return any(tc.name in self.mutating_tool_names() for tc in tool_calls)
-
     def _risky_reason(self, tool_call: ToolCallRequest) -> str | ToolPolicyDecision | None:
+        profile = self._effective_profile()
         if tool_call.name == "exec":
             command, working_dir = ExecTool.request_location(**tool_call.arguments)
             if not command:
                 return None
             launch_path = nested_launch_path(command)
+            if launch_path is not None and not launch_confinement_covers(
+                workspace=self.workspace,
+                command=command,
+                working_dir=working_dir,
+                launch_path=launch_path,
+                attestor=self.launch_confinement_attestor,
+            ):
+                # Hard non-bypassable invariant regardless of profile or rules.
+                return self._refuse_launch(launch_path)
+            explicit = match_explicit_rule(
+                self.permissions, tool_call, workspace=self.workspace, command=command,
+            )
+            if explicit == "deny":
+                return self._refuse_denied_rule(tool_call, detail=command)
+            if explicit == "allow":
+                return None
+            if explicit == "ask":
+                return (
+                    match_exec_risk_reason(command, include_local=True)
+                    or f"run shell command: {command.strip()[:80]}"
+                )
+            if profile == "autonomous":
+                return None
             if launch_path is not None:
-                if not self._launch_confinement_covers(command, working_dir, launch_path):
-                    return self._refuse_launch(launch_path)
-                # Exact approval is required in addition to the attestation.
                 return "launch a nested agent with reduced sandbox or approval protections"
-            return self._risky_exec_reason(command, working_dir)
+            return match_exec_risk_reason(command, include_local=(profile == "strict"))
+
         if tool_call.name == "write_file":
             raw_path = str(tool_call.arguments.get("path") or "")
-            resolved = self._assess_write_target(tool_call, raw_path)
+            resolved = self._write_guard.assess(tool_call, raw_path)
             if resolved is None:
                 return None
-            return self._risky_write_reason(
-                raw_path,
-                str(tool_call.arguments.get("content") or ""),
-                resolved,
+            explicit = match_explicit_rule(
+                self.permissions, tool_call, workspace=self.workspace, target_path=resolved,
             )
+            if explicit == "deny":
+                return self._refuse_denied_rule(tool_call, target_path=resolved)
+            if explicit == "allow":
+                return None
+            if explicit == "ask":
+                return (
+                    self._risky_write_reason(
+                        raw_path, str(tool_call.arguments.get("content") or ""), resolved,
+                    )
+                    or f"write {resolved.name}"
+                )
+            if profile != "strict":
+                return None
+            return self._risky_write_reason(
+                raw_path, str(tool_call.arguments.get("content") or ""), resolved,
+            )
+
+        explicit = match_explicit_rule(self.permissions, tool_call, workspace=self.workspace)
+        if explicit == "deny":
+            return self._refuse_denied_rule(tool_call)
+        if explicit == "allow":
+            return None
+
         if tool_call.name == "cron":
-            return "schedule a recurring automation"
+            return "schedule a recurring automation" if (explicit == "ask" or profile == "strict") else None
         if tool_call.name == "agent_browser":
-            # Browser classification is deliberately conservative: only the
-            # WP2 read/navigation primitives are autonomous.  Unknown and
-            # generic actions (click/type/submit/evaluate/etc.) require the
-            # same exact-effect approval as other side effects.
+            if explicit == "ask":
+                return "perform a browser action"
+            if profile == "autonomous":
+                return None
             from nanobot.agent.tools.agent_browser import classify_browser_action
 
             args: object = tool_call.arguments.get("args") or []
             if classify_browser_action(args) != "read_navigation":
                 return "perform a state-changing browser action"
+            return None
         if tool_call.name == "agent_device":
-            # Device inspection is safe; interaction, app/system controls, and
-            # unknown commands require exact-effect approval.
+            if explicit == "ask":
+                return "perform a device action"
+            if profile == "autonomous":
+                return None
             from nanobot.agent.tools.agent_device import classify_device_action
 
             args = tool_call.arguments.get("args") or []
             if classify_device_action(args) != "read_navigation":
                 return "perform a state-changing device action"
+            return None
         if tool_call.name == "desktop_use":
-            # Desktop control emits global input events. Only the exact
-            # read-only action names stay autonomous; any other value,
-            # including a non-string or unknown action, needs approval.
+            if explicit == "ask":
+                return "perform a desktop input action"
+            if profile == "autonomous":
+                return None
             action = tool_call.arguments.get("action")
-            if not isinstance(action, str) or action not in _READ_ONLY_DESKTOP_ACTIONS:
+            if not isinstance(action, str) or action not in READ_ONLY_DESKTOP_ACTIONS:
                 return "perform a state-changing desktop input action"
-        return None
-
-    def _risky_exec_reason(self, command: str, working_dir: str | None = None) -> str | None:
-        _ = working_dir
-        lower = command.strip().lower()
-        if not lower:
             return None
-        # The ordinary shell policy applies to every shell call. A Git word,
-        # an autoPush repository, or a benign segment never exempts an effect.
-        for pattern, label in self._RISKY_EXEC_PATTERNS:
-            if pattern.search(lower):
-                return label
-        return None
+        return f"run tool {tool_call.name}" if explicit == "ask" else None
 
-    def _launch_confinement_covers(
-        self, command: str, working_dir: str | None, launch_path: str,
-    ) -> bool:
-        """True only when the executor attests this launch's confinement."""
-        if launch_path != "shell":
-            # A tmux command types into a process the shell executor neither
-            # confines for that launch nor owns; it cannot attest either.
-            return False
-        attestation = self._launch_confinement_attestation(command, working_dir)
-        if attestation is None:
-            return False
-        return attestation.covers(
-            nested_launch_id(command, working_dir, self.workspace), launch_path,
+    def _request_approval(self, effect_id: str, summary: str) -> ToolPolicyDecision:
+        """One decision identifies one concrete effect, never an entire batch."""
+        approval_id = uuid.uuid4().hex
+        response = (
+            "I'm about to take a risky action and want your approval first. "
+            f"Planned action: {summary}. Approval ID: {approval_id}. "
+            "Reply with the approval control to continue or deny."
         )
-
-    def _launch_confinement_attestation(
-        self, command: str, working_dir: str | None,
-    ) -> LaunchConfinementAttestation | None:
-        attestor = self.launch_confinement_attestor or resolve_launch_confinement_attestor(
-            self.workspace,
+        return ToolPolicyDecision(
+            action="respond",
+            stop_reason=_APPROVAL_REQUIRED,
+            response=response,
+            metadata={
+                "reasons": [summary],
+                "summary": summary,
+                "requires_approval": True,
+                "approval_id": approval_id,
+                "effect_id": effect_id or None,
+            },
+            requires_approval=True,
         )
-        if attestor is None:
-            return None
-        try:
-            return attestor(command, working_dir)
-        except (OSError, ValueError):
-            return None
 
     def _refuse_launch(self, launch_path: str) -> ToolPolicyDecision:
         """Typed refusal that precedes every process start for this launch."""
@@ -725,11 +664,32 @@ class RiskyActionPolicy(ToolPolicy):
             requires_approval=False,
         )
 
-    def _resolve_workspace_path(self, raw_path: str) -> Path:
-        candidate = Path(raw_path).expanduser()
-        if not candidate.is_absolute():
-            candidate = self.workspace / candidate
-        return candidate.resolve()
+    def _refuse_denied_rule(
+        self,
+        tool_call: ToolCallRequest,
+        *,
+        target_path: Path | None = None,
+        detail: str | None = None,
+    ) -> ToolPolicyDecision:
+        target_label = (
+            target_path.name
+            if target_path is not None
+            else (detail.strip()[:80] if detail else tool_call.name)
+        )
+        summary = f"tool {tool_call.name!r} ({target_label}) is denied by permission rules"
+        return ToolPolicyDecision(
+            action="respond",
+            stop_reason=_POLICY_BLOCKED,
+            response=f"Blocked by permission policy: {summary}.",
+            metadata={
+                "reason_id": "permission_rule_denied",
+                "reasons": [summary],
+                "summary": summary,
+                "tool": tool_call.name,
+                "requires_approval": False,
+            },
+            requires_approval=False,
+        )
 
     def _effect_fingerprint(
         self, tool_call: ToolCallRequest, assessment: _EffectAssessment | None = None,
@@ -744,8 +704,11 @@ class RiskyActionPolicy(ToolPolicy):
         }
         if tool_call.name in {"write_file", "edit_file"}:
             raw_path = str(arguments.get("path") or "")
-            target = (assessment.edit_target if assessment is not None and assessment.edit_target
-                      else self._resolve_write_target(tool_call.name, raw_path))
+            target = (
+                assessment.edit_target
+                if assessment is not None and assessment.edit_target
+                else self._write_guard.resolve(tool_call.name, raw_path)
+            )
             if target is not None:
                 payload["target"] = str(target)
         if assessment is not None:
@@ -762,138 +725,11 @@ class RiskyActionPolicy(ToolPolicy):
         )
         return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
-    def _resolve_write_target(self, tool_name: str, raw_path: str) -> Path | None:
-        if not raw_path:
-            return None
-        if self.write_target_resolver is not None:
-            try:
-                return self.write_target_resolver(tool_name, raw_path)
-            except (OSError, PermissionError, ValueError):
-                return None
-        return self._resolve_workspace_path(raw_path)
-
-    def _assess_write_target(self, call: ToolCallRequest, raw_path: str) -> Path | None:
-        target = self._resolve_write_target(call.name, raw_path)
-        if target is None:
-            # Never let a later hook turn a denied target into an unbound write.
-            self._denied_write_targets.add(call.id)
-        else:
-            self._assessed_write_targets[call.id] = target
-        return target
-
-    def validate_write_target(self, tool_call: ToolCallRequest, tool: Any) -> str | None:
-        """Recheck the assessed target through the tool immediately before dispatch."""
-        error, _target = self.validate_write_target_binding(tool_call, tool)
-        return str(error.content) if isinstance(error, ToolOutcome) else error
-
-    def validate_write_target_binding(
-        self,
-        tool_call: ToolCallRequest,
-        tool: Any,
-        params: Any = None,
-    ) -> tuple[str | ToolOutcome | None, Path | None]:
-        """Recheck and return the assessed target for the mutation boundary."""
-        if tool_call.id in self._denied_write_targets:
-            self._denied_write_targets.discard(tool_call.id)
-            raw_path = ""
-            if isinstance(params, dict):
-                raw_path = str(cast(dict[object, object], params).get("path") or "")
-            if not raw_path and isinstance(tool_call.arguments, dict):
-                raw_path = str(
-                    cast(dict[object, object], tool_call.arguments).get("path") or ""
-                )
-            explain = getattr(tool, "write_refusal", None)
-            if raw_path and callable(explain):
-                refusal = cast(Callable[[str], str | ToolOutcome | None], explain)(raw_path)
-                if refusal is not None:
-                    return refusal, None
-            return "write target was not assessable and remains unauthorized", None
-        assessed = self._assessed_write_targets.pop(tool_call.id, None)
-        if assessed is None:
-            if tool_call.name in {"write_file", "edit_file"}:
-                return "write target was not assessed", None
-            return None, None
-        raw_path = ""
-        if isinstance(params, dict):
-            raw_path = str(cast(dict[object, object], params).get("path") or "")
-        if not raw_path:
-            arguments = tool_call.arguments
-            if isinstance(arguments, dict):
-                raw_path = str(cast(dict[object, object], arguments).get("path") or "")
-        if not raw_path:
-            return None, None
-        resolver = getattr(tool, "resolve_write_path", None)
-        if not callable(resolver):
-            return None, None
-        try:
-            resolved = cast(Callable[[str], str | Path], resolver)(raw_path)
-            current = Path(resolved).expanduser().resolve(strict=False)
-        except (OSError, PermissionError, ValueError):
-            return f"Error: write target is no longer accessible: {raw_path}", None
-        if current != assessed:
-            return (
-                f"Error: write target changed before dispatch: {raw_path}. "
-                "Retry the request so the new target can be assessed."
-            ), None
-        return None, assessed
-
     def _changed_line_count(self, before: str, after: str) -> tuple[int, int]:
-        before_lines = before.splitlines()
-        after_lines = after.splitlines()
-        total = max(len(before_lines), len(after_lines), 1)
-        # Exclude unchanged context before the matcher can treat repeated
-        # lines as noise (e.g. a one-line change above a generated section).
-        start, before_end, after_end = 0, len(before_lines), len(after_lines)
-        while start < min(before_end, after_end) and before_lines[start] == after_lines[start]:
-            start += 1
-        while before_end > start and after_end > start and before_lines[before_end - 1] == after_lines[after_end - 1]:
-            before_end -= 1
-            after_end -= 1
-        matcher = difflib.SequenceMatcher(a=before_lines[start:before_end], b=after_lines[start:after_end])
-        changed = 0
-        for tag, i1, i2, j1, j2 in matcher.get_opcodes():
-            if tag != "equal":
-                changed += max(i2 - i1, j2 - j1)
-        return changed, total
-
-    # Files at or below this many lines are considered trivial state; a full
-    # rewrite is not "risky" because there is nothing of substance to lose.
-    # The absolute ``changed > 200`` guard still catches genuinely large edits.
-    _SMALL_FILE_LINE_THRESHOLD = 10
+        return changed_line_count(before, after)
 
     def _is_large_replacement(self, before: str, after: str) -> bool:
-        changed, total = self._changed_line_count(before, after)
-        return changed > 200 or (total > self._SMALL_FILE_LINE_THRESHOLD and changed / total > 0.5)
-
-    def _is_agent_state_file(self, path: Path) -> bool:
-        """Memory files the agent manages freely — no size checks."""
-        return "memory" in path.parts
-
-    def _is_autonomous_managed_path(self, path: Path) -> bool:
-        """Writable managed paths already have finer-grained repo policy checks."""
-        target = self.context_manager.find_target_repo_for_path(path)
-        repo = self.context_manager.find_repo_for_path(path)
-        if target and (repo is None or len(str(target.path or "")) >= len(str(repo.path))):
-            rel = target.rel_path(path)
-            return bool(
-                rel
-                and not target.is_protected(rel)
-                and not target.requires_proposal(rel)
-                and target.is_writable(rel)
-            )
-
-        if repo:
-            rel = repo.rel_path(path)
-            return bool(
-                rel
-                and not repo.read_only
-                and not repo.is_protected(rel)
-                and not repo.requires_proposal(rel)
-                and not repo.blocks_direct_store_edit(rel)
-                and repo.is_writable(rel)
-            )
-
-        return False
+        return is_large_replacement(before, after)
 
     def _risky_write_reason(
         self,
@@ -903,8 +739,8 @@ class RiskyActionPolicy(ToolPolicy):
     ) -> str | None:
         if not raw_path:
             return None
-        path = resolved_path or self._resolve_workspace_path(raw_path)
-        if self._is_agent_state_file(path) or self._is_autonomous_managed_path(path):
+        path = resolved_path or self._write_guard.resolve_workspace_path(raw_path)
+        if is_agent_state_file(path) or is_autonomous_managed_path(self.context_manager, path):
             return None
         if not path.exists() or not path.is_file():
             return None
@@ -912,21 +748,20 @@ class RiskyActionPolicy(ToolPolicy):
             old_content = path.read_text(encoding="utf-8")
         except Exception:
             return f"overwrite existing file {path.name}"
-        if self._is_large_replacement(old_content, new_content):
+        if is_large_replacement(old_content, new_content):
             return f"overwrite a large portion of {path.name}"
         return None
 
     def _risky_edit_reason(
         self, path: Path, candidate: EditCandidate, replace_all: bool,
     ) -> str | None:
-        if self._is_agent_state_file(path) or self._is_autonomous_managed_path(path):
+        if is_agent_state_file(path) or is_autonomous_managed_path(self.context_manager, path):
             return None
         if replace_all:
             return f"apply a bulk replace in {path.name}"
-
         if candidate.before is None:
             return None
-        if self._is_large_replacement(
+        if is_large_replacement(
             candidate.before.decode("utf-8"), candidate.after.decode("utf-8"),
         ):
             return f"edit a large portion of {path.name}"

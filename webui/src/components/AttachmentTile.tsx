@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { FileIcon, ImageIcon, Loader2, PlaySquare } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
@@ -15,12 +15,23 @@ interface AttachmentTileProps {
 
 export function AttachmentTile({ attachment, className, inline = false, variant = "default" }: AttachmentTileProps) {
   const { t } = useTranslation();
+  const imgRef = useRef<HTMLImageElement | null>(null);
   const [failed, setFailed] = useState(false);
   const [imageLoaded, setImageLoaded] = useState(false);
   const media = useMediaSource(attachment.url);
   const resolvedUrl = media.src;
   const hasUrl = typeof resolvedUrl === "string" && resolvedUrl.length > 0;
   const label = attachmentLabel(attachment, t);
+
+  useLayoutEffect(() => {
+    setFailed(false);
+    const node = imgRef.current;
+    if (node && node.complete && node.naturalWidth > 0) {
+      setImageLoaded(true);
+      return;
+    }
+    setImageLoaded(false);
+  }, [resolvedUrl]);
 
   if (attachment.kind === "image" && hasUrl && !failed) {
     return (
@@ -34,15 +45,18 @@ export function AttachmentTile({ attachment, className, inline = false, variant 
           href={resolvedUrl}
           target="_blank"
           rel="noreferrer noopener"
-          className="relative block bg-muted/20"
+          className={cn(
+            "relative block bg-muted/20",
+            !imageLoaded && (variant === "compact" ? "min-h-24 min-w-24" : "min-h-40 min-w-40"),
+          )}
           aria-label={attachment.name
             ? t("message.openAttachment", { name: attachment.name })
             : t("lightbox.open", { defaultValue: "Open image" })}
         >
           <img
+            ref={imgRef}
             src={resolvedUrl}
             alt={attachment.name ?? ""}
-            loading="lazy"
             decoding="async"
             draggable={false}
             onLoad={() => setImageLoaded(true)}
@@ -55,10 +69,7 @@ export function AttachmentTile({ attachment, className, inline = false, variant 
           />
           {imageLoaded ? null : (
             <span
-              className={cn(
-                "absolute inset-0 grid place-items-center bg-muted/40",
-                variant === "compact" ? "min-h-24" : "min-h-40",
-              )}
+              className="absolute inset-0 grid place-items-center bg-muted/40"
               aria-busy="true"
               aria-label={t("message.mediaLoading", { defaultValue: "Loading media…" })}
             >
@@ -84,6 +95,7 @@ export function AttachmentTile({ attachment, className, inline = false, variant 
         <video
           src={resolvedUrl}
           controls
+          playsInline
           preload="metadata"
           className={cn(
             "block w-full bg-black",

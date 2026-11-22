@@ -1,10 +1,16 @@
 package ai.nanobot.mobile.network
 
 import android.Manifest
+import android.app.NotificationChannel
+import android.app.NotificationManager
 import android.app.Activity
+import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkCapabilities
 import android.net.Uri
 import android.provider.MediaStore
 import android.provider.OpenableColumns
@@ -56,6 +62,7 @@ import java.io.ByteArrayOutputStream
 )
 class NativeNetworkPlugin : Plugin() {
     private companion object {
+        private const val NOTIFICATION_GRACE_MS = 2_000L
         private const val TAG = "NanobotNetwork"
         private const val HOSTNAME_PREFIX = "nanobot-"
         private const val MAX_DNS_LABEL_LENGTH = 63
@@ -96,6 +103,79 @@ class NativeNetworkPlugin : Plugin() {
     private val mediaHandles by lazy { MediaHandleStore(context) }
     private val attachmentLimits = AttachmentLimits()
     private var pendingCameraFile: java.io.File? = null
+    private var networkCallback: ConnectivityManager.NetworkCallback? = null
+
+    private val stopIdleKeepAlive = Runnable {
+        if (RunKeepAliveRegistry.isEmpty()) RunKeepAliveService.stop(context.applicationContext)
+    }
+
+    override fun load() {
+        super.load()
+        // Capacitor keeps the default tone when createChannel omits sound.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val silent = NotificationChannel(
+                "kohaku_task_alerts_silent", "Task updates (silent)", NotificationManager.IMPORTANCE_DEFAULT
+            )
+            silent.setSound(null, null)
+            silent.enableVibration(false)
+            context.getSystemService(NotificationManager::class.java).createNotificationChannel(silent)
+        }
+        registerNetworkCallback()
+    }
+
+    override fun handleOnResume() {
+        super.handleOnResume()
+        notifyNativeNetworkChanged()
+    }
+
+    private fun registerNetworkCallback() {
+        try {
+            val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+                ?: return
+            val callback = object : ConnectivityManager.NetworkCallback() {
+                override fun onAvailable(network: Network) {
+                    notifyNativeNetworkChanged()
+                }
+
+                override fun onLost(network: Network) {
+                    notifyNativeNetworkChanged()
+                }
+
+                override fun onCapabilitiesChanged(network: Network, caps: NetworkCapabilities) {
+                    notifyNativeNetworkChanged()
+                }
+            }
+            cm.registerDefaultNetworkCallback(callback)
+            networkCallback = callback
+        } catch (exception: Exception) {
+            Log.w(TAG, "could not register default network callback", exception)
+        }
+    }
+
+    private fun unregisterNetworkCallback() {
+        val callback = networkCallback ?: return
+        networkCallback = null
+        try {
+            val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+            cm?.unregisterNetworkCallback(callback)
+        } catch (_: Exception) {
+            // ignore unregister errors on teardown
+        }
+    }
+
+    private fun notifyNativeNetworkChanged() {
+        val current = transportHandle
+        if (current == 0L) return
+        operationExecutor.execute {
+            try {
+                if (transportHandle == current) {
+                    NativeNetwork.networkChanged(current)
+                }
+            } catch (_: Throwable) {
+                // Best-effort flush on OS network handoff.
+            }
+        }
+    }
 
     @PluginMethod
     fun abiVersion(call: PluginCall) {
@@ -114,6 +194,7 @@ class NativeNetworkPlugin : Plugin() {
             call.reject("chatId is required")
             return
         }
+        mainHandler.removeCallbacks(stopIdleKeepAlive)
         RunKeepAliveRegistry.add(chatId)
         try {
             RunKeepAliveService.start(context.applicationContext)
@@ -135,12 +216,8 @@ class NativeNetworkPlugin : Plugin() {
         if (RunKeepAliveRegistry.isEmpty()) {
             // Let the completion notification cross the bridge before the
             // foreground service is removed.
-            val appContext = context.applicationContext
-            mainHandler.postDelayed({
-                if (RunKeepAliveRegistry.isEmpty()) {
-                    RunKeepAliveService.stop(appContext)
-                }
-            }, 300)
+            mainHandler.removeCallbacks(stopIdleKeepAlive)
+            mainHandler.postDelayed(stopIdleKeepAlive, NOTIFICATION_GRACE_MS)
         }
         call.resolve()
     }
@@ -964,6 +1041,7 @@ class NativeNetworkPlugin : Plugin() {
             return
         }
         val status = NativeNetwork.cancel(current, requestId)
+        requests.abandon(requestId)
         if (status != 0) {
             call.reject(NativeNetwork.lastError())
             return
@@ -1125,6 +1203,36 @@ class NativeNetworkPlugin : Plugin() {
             return
         }
         val status = NativeNetwork.wsPing(current, wsId)
+        if (status != 0) {
+            call.reject(NativeNetwork.lastError())
+            return
+        }
+        call.resolve(JSObject().put("ok", true))
+    }
+
+    @PluginMethod
+    fun wsRefreshAuth(call: PluginCall) {
+        val current = transportHandle
+        val wsId = callLong(call, "wsId")
+        if (current == 0L || wsId == null) {
+            call.reject("transport and wsId are required")
+            return
+        }
+        val token = try {
+            custody.load()?.accessToken
+        } catch (_: Exception) {
+            null
+        }
+        if (token.isNullOrBlank()) {
+            call.reject("no current access token")
+            return
+        }
+        val frame = JSONObject()
+            .put("type", "auth_refresh")
+            .put("access_token", token)
+            .toString()
+            .toByteArray(StandardCharsets.UTF_8)
+        val status = NativeNetwork.wsSend(current, wsId, 0, frame)
         if (status != 0) {
             call.reject(NativeNetwork.lastError())
             return
@@ -1403,6 +1511,7 @@ class NativeNetworkPlugin : Plugin() {
     }
 
     override fun handleOnDestroy() {
+        unregisterNetworkCallback()
         RunKeepAliveRegistry.clear()
         RunKeepAliveService.stop(context.applicationContext)
         stopInternal()
@@ -1414,26 +1523,37 @@ class NativeNetworkPlugin : Plugin() {
     private fun startPoller() {
         pollTask = pollExecutor.scheduleWithFixedDelay(
             {
-                val current = transportHandle
-                if (current == 0L) {
-                    return@scheduleWithFixedDelay
-                }
-                val bytes = NativeNetwork.pollEvent(current) ?: return@scheduleWithFixedDelay
-                val event = JSONObject(String(bytes, StandardCharsets.UTF_8))
-                logTransportEvent(event)
-                if (current != transportHandle) return@scheduleWithFixedDelay
-                val requestId = event.optLong("request_id", 0L)
-                val publish: (JSONObject) -> Unit = { admitted ->
-                    val jsEvent = JSObject(admitted, admitted.keys().asSequence().toList().toTypedArray())
-                    mainHandler.post {
-                        if (current == transportHandle) notifyListeners("networkEvent", jsEvent)
+                try {
+                    // Drain up to 64 queued events per tick so LLM token bursts
+                    // never back up behind a 50 events/sec cap and trigger Go's
+                    // event-queue-full WebSocket disconnect.
+                    for (drained in 0 until 64) {
+                        val current = transportHandle
+                        if (current == 0L) {
+                            return@scheduleWithFixedDelay
+                        }
+                        val bytes = NativeNetwork.pollEvent(current) ?: return@scheduleWithFixedDelay
+                        val event = JSONObject(String(bytes, StandardCharsets.UTF_8))
+                        logTransportEvent(event)
+                        if (current != transportHandle) return@scheduleWithFixedDelay
+                        val requestId = event.optLong("request_id", 0L)
+                        val publish: (JSONObject) -> Unit = { admitted ->
+                            val jsEvent = JSObject(admitted, admitted.keys().asSequence().toList().toTypedArray())
+                            mainHandler.post {
+                                if (current == transportHandle) notifyListeners("networkEvent", jsEvent)
+                            }
+                        }
+                        if (event.optString("type") in setOf("http_response", "http_error")) {
+                            val requestOwner = requests
+                            requestOwner.dispatch(requestId, event, publish)
+                        } else {
+                            publish(event)
+                        }
                     }
-                }
-                if (event.optString("type") in setOf("http_response", "http_error")) {
-                    val requestOwner = requests
-                    if (!requestOwner.dispatch(requestId, event, publish)) return@scheduleWithFixedDelay
-                } else {
-                    publish(event)
+                } catch (t: Throwable) {
+                    // Never allow an uncaught exception to permanently cancel
+                    // the ScheduledExecutorService poller task.
+                    Log.e(TAG, "native event poller error", t)
                 }
             },
             0,
@@ -1656,7 +1776,12 @@ class NativeNetworkPlugin : Plugin() {
                     ""
                 }
                 val safeCode = if (code in setOf(
-                    "pairing_expired", "pairing_not_found", "pairing_consumed", "device_revoked",
+                    "pairing_expired",
+                    "pairing_not_found",
+                    "pairing_consumed",
+                    "pairing_rejected",
+                    "device_revoked",
+                    "upgrade_required",
                 )) " $code" else ""
                 throw IllegalStateException("HTTP $status$safeCode")
             }

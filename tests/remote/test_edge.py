@@ -1100,3 +1100,52 @@ async def test_standard_dispatch_is_owner_only_and_forwards_the_exact_path(edge_
     assert allowed is not None and allowed.status_code == 200
     assert body(allowed) == {"path": "/api/settings?section=models"}
     assert seen == [("install-owner", "GET", "/api/settings?section=models")]
+
+
+@pytest.mark.asyncio
+async def test_large_signed_video_supports_preview_and_tail_seek(edge_setup, tmp_path):
+    import logging
+    import re
+
+    from nanobot.config.schema import RemoteAccessConfig
+    from nanobot.remote.composition import build_mobile_edge
+    from nanobot.webui.media_api import sign_media_path
+    from nanobot.webui.media_gateway import WebUIMediaGateway
+
+    owner, _, pair = edge_setup
+    limit = 8 * 1024 * 1024
+    fixture = (
+        Path(__file__).resolve().parents[2]
+        / "mobile/android/app/src/androidTest/assets/red-blue.mp4"
+    )
+    padding = 2 * limit
+    data = fixture.read_bytes() + (padding + 8).to_bytes(4, "big") + b"free" + bytes(padding)
+    clip = tmp_path / "clip.mp4"
+    clip.write_bytes(data)
+    media = WebUIMediaGateway(
+        workspace_path=tmp_path,
+        logger=logging.getLogger(__name__),
+        media_dir=lambda _: tmp_path,
+    )
+    url = sign_media_path(clip, secret=media.secret, media_dir=lambda _: tmp_path)
+    assert url
+    edge = build_mobile_edge(RemoteAccessConfig(socket_path=str(owner.socket_path)), None, media)
+    path = url.replace("/api/media/", "/mobile/v1/media/")
+
+    async def check_range(start: int) -> int:
+        response = await edge.handle(
+            None, request(path, pair.access_token, [("Range", f"bytes={start}-")]),
+        )
+        assert response is not None and response.status_code == 206
+        match = re.fullmatch(r"bytes (\d+)-(\d+)/(\d+)", response.headers["Content-Range"])
+        assert match
+        first, end, total = map(int, match.groups())
+        assert (first, total) == (start, len(data))
+        assert 0 < end - first + 1 <= limit
+        assert int(response.headers["Content-Length"]) == end - first + 1
+        assert response.headers["Content-Type"] == "video/mp4"
+        assert response.body == data[start : end + 1]
+        return end + 1
+
+    await check_range(await check_range(0))
+    assert await check_range(len(data) - 4096) == len(data)

@@ -27,6 +27,7 @@ from nanobot.agent.turn import TurnContext
 from nanobot.bus.events import OutboundMessage
 from nanobot.config.paths import get_workspace_path
 from nanobot.security.workspace_access import current_tool_workspace
+from nanobot.webui.metadata import WEBUI_DISPLAY_SOURCE_KEY
 
 if TYPE_CHECKING:
     from nanobot.context_repo.policy import ResourceAccessPolicy
@@ -143,11 +144,17 @@ class MessageTool(Tool):
                 target.channel, target.chat_id,
             )
             routing = current or RequestContext(channel=target.channel, chat_id=target.chat_id or "")
+            source_state = routing.source_state
+            if source_state is None and context.execution_owner is not None:
+                source_state = context.execution_owner.read_snapshot().state
+            elif source_state is None and context.source_writer is not None:
+                source_state = context.source_writer.committed_state
             request_token = bind_request_context(replace(
                 routing, channel=target.channel, chat_id=target.chat_id or "",
                 session_key=context.session_key,
                 message_id=target.message_id or (routing.message_id if same_target else None),
                 metadata=dict(routing.metadata) if same_target else {},
+                source_state=source_state,
             ))
         token = _CURRENT_MESSAGE_RECORDS.set(captured or (records, context.delivery.message_send_lock))
         before = len(records)
@@ -309,10 +316,19 @@ class MessageTool(Tool):
                 return ToolResult.error(f"Error: media path is not allowed: {str(e)}")
 
         metadata = dict(default_metadata) if same_target else {}
+        metadata.pop(WEBUI_DISPLAY_SOURCE_KEY, None)
         if message_id:
             metadata["message_id"] = message_id
         if media:
             metadata["_record_channel_delivery"] = True
+        if (
+            same_target
+            and channel == "websocket"
+            and request_ctx is not None
+            and request_ctx.source_state is not None
+            and request_ctx.source_state.session_key == f"websocket:{chat_id}"
+        ):
+            metadata[WEBUI_DISPLAY_SOURCE_KEY] = request_ctx.source_state
 
         msg = OutboundMessage(
             channel=channel,

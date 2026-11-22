@@ -1514,17 +1514,19 @@ async def test_sync_close_cancellation_preserves_active_error_only() -> None:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("provider_name", "spec_name"),
-    [("vllm", "vllm"), ("local_manager", "openai"), ("custom", "local_manager")],
+    ("provider_name", "spec_name", "expected"),
+    [
+        ("vllm", "vllm", "estimated_compat"),
+        ("local_manager", "openai", "strict"),
+        ("custom", "local_manager", "estimated_compat"),
+    ],
 )
 async def test_policy_comes_from_declared_spec_not_provider_name(
     provider_name: str,
     spec_name: str,
+    expected: str,
 ) -> None:
     provider = _local_provider(provider_name=provider_name, spec_name=spec_name)
-    expected = (
-        "estimated_compat" if spec_name == "local_manager" else "strict"
-    )
     assert provider._request_budget_policy == expected
     body = provider._build_kwargs(
         [{"role": "user", "content": "界" * 2_000}],

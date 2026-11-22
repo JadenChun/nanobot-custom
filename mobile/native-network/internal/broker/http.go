@@ -123,6 +123,14 @@ func (c *Core) doHTTP(
 		request.Header = headers.Clone()
 
 		response, err := client.Do(request)
+		if err != nil && method == http.MethodGet && ctx.Err() == nil && isStaleConnError(err) {
+			client.CloseIdleConnections()
+			retryReq, reqErr := http.NewRequestWithContext(ctx, method, current.String(), nil)
+			if reqErr == nil {
+				retryReq.Header = headers.Clone()
+				response, err = client.Do(retryReq)
+			}
+		}
 		if err != nil {
 			c.emitHTTPError(id, classifyHTTPError(err), err.Error(), 0)
 			return
@@ -173,8 +181,22 @@ func (c *Core) doHTTP(
 
 func (c *Core) removeRequest(id uint64) {
 	c.mu.Lock()
+	cancel, ok := c.requests[id]
 	delete(c.requests, id)
 	c.mu.Unlock()
+	if ok && cancel != nil {
+		cancel()
+	}
+}
+
+func isStaleConnError(err error) bool {
+	if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
+		return true
+	}
+	lower := strings.ToLower(err.Error())
+	return strings.Contains(lower, "connection reset") ||
+		strings.Contains(lower, "broken pipe") ||
+		strings.Contains(lower, "use of closed network connection")
 }
 
 func (c *Core) emitHTTPError(id uint64, code, message string, status int) {

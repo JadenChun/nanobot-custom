@@ -916,7 +916,60 @@ describe("App layout", () => {
           can_manage_catalog: false,
           can_discover_repositories: false,
         },
-        management: null,
+        management: {
+          grants_revision: 1,
+          grants: [],
+          repositories: [
+            {
+              name: "alpha",
+              path: "/projects/alpha",
+              purpose: "",
+              kind: "project",
+              knowledge_repos: [],
+              auto_sync: false,
+              sync_paths: [],
+              exists: true,
+              effective_access: {
+                policy: "managed",
+                source: "grant",
+                grant_root: "/projects",
+                exists: true,
+                read: true,
+                write: true,
+                commands: {
+                  requested: true,
+                  available: true,
+                  backend: "native",
+                  reason: null,
+                },
+              },
+            },
+            {
+              name: "beta",
+              path: "/projects/beta",
+              purpose: "",
+              kind: "project",
+              knowledge_repos: [],
+              auto_sync: false,
+              sync_paths: [],
+              exists: true,
+              effective_access: {
+                policy: "managed",
+                source: "grant",
+                grant_root: "/projects",
+                exists: true,
+                read: true,
+                write: true,
+                commands: {
+                  requested: true,
+                  available: true,
+                  backend: "native",
+                  reason: null,
+                },
+              },
+            },
+          ],
+        },
       },
     });
     window.history.replaceState(null, "", "/#/chat/websocket%3Aexisting-chat");
@@ -932,10 +985,7 @@ describe("App layout", () => {
       target: { value: "keep this draft while switching folders" },
     });
     fireEvent.click(folderControl);
-    fireEvent.change(await screen.findByLabelText("Paste path"), {
-      target: { value: "/projects/beta" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: "Use folder" }));
+    fireEvent.click(await screen.findByRole("button", { name: /beta/ }));
 
     await waitFor(() => expect(setWorkspaceScopeSpy).toHaveBeenCalledWith("existing-chat", {
       project_path: "/projects/beta",
@@ -956,8 +1006,7 @@ describe("App layout", () => {
       "keep this draft while switching folders",
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "Working in: beta" }));
-    fireEvent.click(await screen.findByRole("button", { name: /Clear project folder/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Clear project folder" }));
     await waitFor(() => expect(setWorkspaceScopeSpy).toHaveBeenLastCalledWith("existing-chat", {
       project_path: "/agent/home",
       project_name: "Agent home",
@@ -1024,7 +1073,7 @@ describe("App layout", () => {
     );
     mockFetchRoutes({
       "/api/workspaces": {
-        schema_version: 1,
+        schema_version: 2,
         default_access_mode: "restricted",
         default_scope: {
           project_path: "C:\\workspace",
@@ -1033,6 +1082,36 @@ describe("App layout", () => {
           restrict_to_workspace: true,
         },
         controls: { can_change_project: true, can_use_full_access: true },
+        management: {
+          grants_revision: 1,
+          grants: [],
+          repositories: [
+            {
+              name: "missing-project",
+              path: "C:\\missing-project",
+              purpose: "",
+              kind: "project",
+              knowledge_repos: [],
+              auto_sync: false,
+              sync_paths: [],
+              exists: true,
+              effective_access: {
+                policy: "managed",
+                source: "grant",
+                grant_root: "C:\\",
+                exists: true,
+                read: true,
+                write: true,
+                commands: {
+                  requested: true,
+                  available: true,
+                  backend: "native",
+                  reason: null,
+                },
+              },
+            },
+          ],
+        },
       },
     });
 
@@ -1040,10 +1119,7 @@ describe("App layout", () => {
 
     await waitFor(() => expect(connectSpy).toHaveBeenCalled());
     fireEvent.click(await screen.findByRole("button", { name: "Choose project folder" }));
-    fireEvent.change(await screen.findByLabelText("Paste path"), {
-      target: { value: "C:\\missing-project" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: "Use folder" }));
+    fireEvent.click(await screen.findByRole("button", { name: /missing-project/ }));
 
     const message = screen.getByLabelText("Message input");
     fireEvent.change(message, { target: { value: "keep this first message" } });
@@ -1057,10 +1133,6 @@ describe("App layout", () => {
       "The gateway rejected this project or access mode. Choose an existing project or a different access mode, then try again.",
     );
     fireEvent.click(projectButton);
-    const projectPath = await screen.findByLabelText("Paste path");
-    expect(projectPath).toHaveValue("");
-    expect(projectPath).toHaveAttribute("aria-invalid", "true");
-    expect(projectPath).toHaveFocus();
     expect(screen.getByRole("alert")).toHaveTextContent(
       "The gateway rejected this project or access mode. Choose an existing project or a different access mode, then try again.",
     );

@@ -4,7 +4,11 @@
  * The Android shell calls `window.__nanobotHandleBack()` for a hardware back
  * press. Handlers are registered by mounted surfaces (sidebars, previews,
  * lightboxes) and run from the most recently mounted to the oldest, so the
- * topmost surface closes first. `Escape` and `popstate` use the same stack.
+ * topmost surface closes first. `Escape` uses the same stack.
+ *
+ * Browser history traversal (`popstate` / `hashchange`) is handled by the shell
+ * router directly so navigating forward or switching settings sections never
+ * triggers an in-app "close/back" handler.
  */
 type BackHandler = () => boolean;
 
@@ -21,9 +25,6 @@ function runBackHandlers(): boolean {
 function installBackListeners(): void {
   if (installed || typeof window === "undefined") return;
   installed = true;
-  window.addEventListener("popstate", () => {
-    runBackHandlers();
-  });
   window.addEventListener("keydown", (event) => {
     if (event.defaultPrevented || event.key !== "Escape") return;
     if (runBackHandlers()) event.preventDefault();

@@ -93,6 +93,8 @@ _PAIRING_STATUS = {
     "pairing_denied": 403,
     "device_revoked": 403,
     "remote_access_disabled": 503,
+    "serve_unverified": 503,
+    "upgrade_required": 426,
     "pairing_rejected": 403,
     "owner_required": 403,
     "bad_request": 400,
@@ -556,6 +558,7 @@ class MobileGatewayEdge:
                 return http_json_response({"error": "media_too_large"}, status=413)
             headers = [
                 ("Content-Type", result.media_type),
+                ("Content-Length", str(len(result.body))),
                 ("Cache-Control", "no-store"),
                 *result.headers.items(),
             ]

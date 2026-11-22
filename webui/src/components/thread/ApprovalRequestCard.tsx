@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Loader2, ShieldAlert } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
@@ -11,6 +11,8 @@ export interface ApprovalRequestCardProps {
   requestLabel?: string;
   description?: string;
   busy?: boolean;
+  /** Increment to clear the local submitting spinner after a rejected send. */
+  resetSignal?: number;
   onApprove: () => void;
   onCancel: () => void;
 }
@@ -26,11 +28,15 @@ export function ApprovalRequestCard({
   requestLabel,
   description,
   busy = false,
+  resetSignal = 0,
   onApprove,
   onCancel,
 }: ApprovalRequestCardProps) {
   const { t } = useTranslation();
   const [pending, setPending] = useState<"approve" | "cancel" | null>(null);
+  useEffect(() => {
+    setPending(null);
+  }, [approvalId, resetSignal]);
   const disabled = busy || pending !== null || !approvalId;
   const approvalDescription = description ?? (approvalId
     ? t("approval.description", {

@@ -69,10 +69,20 @@ func (c *Core) OpenMediaStream(path, rangeHeader string) (uint64, error) {
 	}
 
 	c.mu.Lock()
+	state := c.state
+	started := c.started
+	testMode := c.testMode
 	client := c.httpClient
 	token := c.mediaToken
 	ctx := c.ctx
+	busy := len(c.mediaStreams) >= mediaStreamLimit
 	c.mu.Unlock()
+	if busy {
+		return 0, ErrBusy
+	}
+	if !testMode && (!started || state != "ready") {
+		return 0, ErrUnavailable
+	}
 	if client == nil || ctx == nil {
 		return 0, ErrUnavailable
 	}
@@ -98,6 +108,27 @@ func (c *Core) OpenMediaStream(path, rangeHeader string) (uint64, error) {
 		cancel()
 		return 0, fmt.Errorf("%w: media request failed", ErrUnavailable)
 	}
+	if response.StatusCode == http.StatusRequestEntityTooLarge && rangeHeader == "" {
+		response.Body.Close()
+		part := request.Clone(reqCtx)
+		part.Header.Set("Range", "bytes=0-")
+		response, err = client.Do(part)
+		if err == nil && response.StatusCode != http.StatusPartialContent {
+			response.Body.Close()
+			err = errMediaStream
+		}
+		if err != nil {
+			cancel()
+			return 0, err
+		}
+	}
+	if response.StatusCode == http.StatusPartialContent {
+		response, err = completeMediaRange(client, request, response)
+		if err != nil {
+			cancel()
+			return 0, err
+		}
+	}
 	stream := &mediaStream{
 		body:    response.Body,
 		cancel:  cancel,
@@ -108,6 +139,79 @@ func (c *Core) OpenMediaStream(path, rangeHeader string) (uint64, error) {
 		stream.body, stream.closer = c.cachingBody(sig, payload, response.Body, response.Header)
 	}
 	return c.storeMediaStream(stream)
+}
+
+// completeMediaRange exposes the entire requested range to the WebView.
+func completeMediaRange(client *http.Client, request *http.Request, first *http.Response) (*http.Response, error) {
+	start, next, total, err := mediaPartRange(first)
+	if err != nil {
+		first.Body.Close()
+		return nil, err
+	}
+	requestedStart, length, partial, err := parseSingleRange(request.Header.Get("Range"), total)
+	end := requestedStart + length
+	if err != nil || start != requestedStart || next > end {
+		first.Body.Close()
+		return nil, errMediaStream
+	}
+	if partial && next == end {
+		return first, nil
+	}
+	body := first.Body
+	if next < end {
+		reader, writer := io.Pipe()
+		body = reader
+		go func() {
+			part := first.Body
+			for {
+				_, copyErr := io.CopyN(writer, part, next-start)
+				part.Close()
+				if copyErr == io.EOF {
+					copyErr = io.ErrUnexpectedEOF
+				}
+				if copyErr != nil || next == end {
+					writer.CloseWithError(copyErr)
+					return
+				}
+				start = next
+				partRequest := request.Clone(request.Context())
+				partRequest.Header.Set("Range", fmt.Sprintf("bytes=%d-%d", start, end-1))
+				response, openErr := client.Do(partRequest)
+				if openErr != nil {
+					writer.CloseWithError(openErr)
+					return
+				}
+				firstByte, nextByte, partTotal, rangeErr := mediaPartRange(response)
+				if rangeErr != nil || firstByte != start || nextByte > end || partTotal != total {
+					response.Body.Close()
+					writer.CloseWithError(errMediaStream)
+					return
+				}
+				part, next = response.Body, nextByte
+			}
+		}()
+	}
+
+	headers := first.Header.Clone()
+	headers.Set("Content-Length", strconv.FormatInt(length, 10))
+	status := http.StatusOK
+	if partial {
+		status = http.StatusPartialContent
+		headers.Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", requestedStart, end-1, total))
+	} else {
+		headers.Del("Content-Range")
+	}
+	return &http.Response{StatusCode: status, Header: headers, Body: body}, nil
+}
+
+// mediaPartRange returns the start, exclusive end, and file size of one response.
+func mediaPartRange(response *http.Response) (int64, int64, int64, error) {
+	var first, last, total int64
+	_, err := fmt.Sscanf(response.Header.Get("Content-Range"), "bytes %d-%d/%d", &first, &last, &total)
+	if err != nil || response.StatusCode != http.StatusPartialContent || first < 0 || last < first || last >= total {
+		return 0, 0, 0, errMediaStream
+	}
+	return first, last + 1, total, nil
 }
 
 // MediaStreamInfo reports the upstream status and response headers.
@@ -195,6 +299,9 @@ func (c *Core) storeMediaStream(stream *mediaStream) (uint64, error) {
 	if len(c.mediaStreams) >= mediaStreamLimit {
 		c.mu.Unlock()
 		_ = stream.body.Close()
+		if stream.closer != nil {
+			stream.closer()
+		}
 		if stream.cancel != nil {
 			stream.cancel()
 		}
@@ -510,8 +617,8 @@ func (c *Core) reserveMediaCache(n int64) bool {
 	if n <= 0 {
 		return true
 	}
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	c.mediaCacheMu.Lock()
+	defer c.mediaCacheMu.Unlock()
 	if c.mediaCacheBudget <= 0 || n > c.mediaCacheBudget {
 		return false
 	}
@@ -528,12 +635,12 @@ func (c *Core) releaseMediaCache(n int64) {
 	if n <= 0 {
 		return
 	}
-	c.mu.Lock()
+	c.mediaCacheMu.Lock()
 	c.mediaCacheReserve -= n
 	if c.mediaCacheReserve < 0 {
 		c.mediaCacheReserve = 0
 	}
-	c.mu.Unlock()
+	c.mediaCacheMu.Unlock()
 }
 
 type mediaMeta struct {
@@ -574,6 +681,8 @@ func (c *Core) trimMediaCache() {
 	if root == "" {
 		return
 	}
+	c.mediaCacheMu.Lock()
+	defer c.mediaCacheMu.Unlock()
 	type entry struct {
 		path string
 		size int64
@@ -585,7 +694,8 @@ func (c *Core) trimMediaCache() {
 		if err != nil || info == nil || !info.Mode().IsRegular() {
 			return nil
 		}
-		if strings.HasSuffix(path, ".meta.json") {
+		name := info.Name()
+		if strings.HasSuffix(name, ".meta.json") || strings.Contains(name, ".part-") {
 			return nil
 		}
 		entries = append(entries, entry{path: path, size: info.Size(), mod: info.ModTime()})

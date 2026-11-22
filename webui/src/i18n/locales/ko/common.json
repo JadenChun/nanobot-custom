@@ -176,6 +176,13 @@
       "managedFolderAccess": "관리되는 폴더 접근",
       "currentModel": "현재 구성",
       "brandLogos": "브랜드 로고",
+      "notificationSound": "알림 소리",
+      "notificationTest": "전송 테스트",
+      "testNotificationBody": "알림이 정상적으로 작동합니다.",
+      "testNotification": "테스트 알림 보내기",
+      "permissionDenied": "기기 또는 브라우저 설정에서 알림을 허용하세요.",
+      "notifierUnavailable": "알림을 사용할 수 없습니다. 시스템 알림 설정을 확인하세요.",
+      "notificationSent": "테스트 알림을 보냈습니다.",
       "browserNotifications": "작업 알림",
       "cliAppsCatalog": "카탈로그",
       "cliAppsFilter": "필터",
@@ -1586,6 +1593,10 @@
     "cancel": "취소"
   },
   "errors": {
+    "approvalRejected": {
+      "title": "승인이 만료되었습니다",
+      "body": "게이트웨이 재시작 등의 이유로 이 승인 요청이 더 이상 유효하지 않습니다. 계속하려면 새 메시지를 보내세요."
+    },
     "messageTooBig": {
       "title": "메시지가 너무 큽니다",
       "body": "마지막 메시지가 서버의 크기 제한을 초과하여 거부되었습니다. 이미지를 줄이거나 더 작은 파일로 바꿔서 다시 보내 주세요."

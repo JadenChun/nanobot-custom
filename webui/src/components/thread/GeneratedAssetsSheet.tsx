@@ -8,12 +8,12 @@ import {
   Link2,
   Loader2,
   MoreHorizontal,
-  Play,
   RefreshCcw,
   X,
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
+import { AssetPreview } from "@/components/AssetPreview";
 import { ImageLightbox } from "@/components/ImageLightbox";
 import { ThreadInspectorDialog } from "@/components/thread/ThreadInspector";
 import { Button } from "@/components/ui/button";
@@ -34,7 +34,6 @@ import { useSessionGeneratedAssets } from "@/hooks/useSessionGeneratedAssets";
 import { copyTextToClipboard } from "@/lib/clipboard";
 import { fmtDateTime } from "@/lib/format";
 import { mediaLink } from "@/lib/media-links";
-import { useMobileMediaUrl } from "@/lib/mobile-media";
 import type { GeneratedAsset, GeneratedAssetGroup, UIImage } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
@@ -93,6 +92,7 @@ export function GeneratedAssetsPanel({
   const { i18n, t } = useTranslation();
   const [view, setView] = useState<ViewMode>("flat");
   const [lightbox, setLightbox] = useState<LightboxState | null>(null);
+  const [previewRefresh, setPreviewRefresh] = useState(0);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
   const {
     groups,
@@ -171,6 +171,10 @@ export function GeneratedAssetsPanel({
   const activeNext = libraryMode ? libraryNext : next;
   const activeRefresh = libraryMode ? refreshLibrary : refresh;
   const activeLoadMore = libraryMode ? loadMoreLibrary : loadMore;
+  const refreshAssets = () => {
+    activeRefresh();
+    setPreviewRefresh((value) => value + 1);
+  };
 
   const openGroup = (group: MediaGroup, index: number) => {
     setLightbox({ images: group.assets, index });
@@ -211,7 +215,7 @@ export function GeneratedAssetsPanel({
               size="icon"
               aria-label={t("thread.generatedAssets.refresh")}
               disabled={activeLoading}
-              onClick={activeRefresh}
+              onClick={refreshAssets}
               className="h-8 w-8 rounded-full text-muted-foreground hover:bg-accent/40 hover:text-foreground"
             >
               <RefreshCcw className={cn("h-4 w-4", activeLoading && "animate-spin")} />
@@ -256,7 +260,7 @@ export function GeneratedAssetsPanel({
             <p className="text-sm text-muted-foreground">
               {t("thread.generatedAssets.loadFailed")}
             </p>
-            <Button type="button" variant="outline" size="sm" onClick={activeRefresh}>
+            <Button type="button" variant="outline" size="sm" onClick={refreshAssets}>
               {t("thread.generatedAssets.retry")}
             </Button>
           </div>
@@ -272,6 +276,7 @@ export function GeneratedAssetsPanel({
           </div>
         ) : view === "flat" ? (
           <div
+            key={previewRefresh}
             data-testid="generated-assets-flat"
             className="grid grid-cols-2 gap-2 sm:grid-cols-3"
           >
@@ -285,7 +290,7 @@ export function GeneratedAssetsPanel({
             ))}
           </div>
         ) : view === "library" ? (
-          <div data-testid="generated-assets-library" className="space-y-7">
+          <div key={previewRefresh} data-testid="generated-assets-library" className="space-y-7">
             {librarySessions.map((session) => (
               <section key={session.sessionKey} className="space-y-2">
                 <div
@@ -308,7 +313,7 @@ export function GeneratedAssetsPanel({
             ))}
           </div>
         ) : (
-          <div data-testid="generated-assets-groups" className="space-y-7">
+          <div key={previewRefresh} data-testid="generated-assets-groups" className="space-y-7">
             {mediaGroups.map((group) => (
               <AssetGroupSection
                 key={group.id}
@@ -474,9 +479,7 @@ function AssetThumbnail({
   onClick: () => void;
 }) {
   const { t } = useTranslation();
-  const [failed, setFailed] = useState(false);
   const [copied, setCopied] = useState<"link" | "path" | null>(null);
-  const url = useMobileMediaUrl(asset.url);
 
   const copy = (kind: "link" | "path") => {
     const value = kind === "link" ? mediaLink(asset.url) : (asset.path ?? "");
@@ -502,38 +505,10 @@ function AssetThumbnail({
         aria-label={t("thread.generatedAssets.openAsset", { name: asset.name })}
         onClick={onClick}
       >
-        {url && !failed ? (
-          asset.kind === "video" ? (
-            <>
-              <video
-                src={url}
-                muted
-                playsInline
-                preload="metadata"
-                aria-label={asset.name}
-                onError={() => setFailed(true)}
-                className="h-full w-full object-cover transition-transform duration-200 group-hover:scale-[1.02]"
-              />
-              <span className="absolute inset-0 grid place-items-center bg-black/20">
-                <Play className="h-6 w-6 fill-white text-white/90" aria-hidden />
-              </span>
-            </>
-          ) : (
-            <img
-              src={url}
-              alt={asset.name}
-              loading="lazy"
-              decoding="async"
-              draggable={false}
-              onError={() => setFailed(true)}
-              className="h-full w-full object-cover transition-transform duration-200 group-hover:scale-[1.02]"
-            />
-          )
-        ) : (
-          <span className="grid h-full place-items-center px-2 text-center text-[10px] text-muted-foreground">
-            {asset.name}
-          </span>
-        )}
+        <AssetPreview
+          asset={asset}
+          className="transition-transform duration-200 group-hover:scale-[1.02]"
+        />
       </button>
       <span className="pointer-events-none absolute left-1.5 top-1.5 rounded-full bg-black/65 px-1.5 py-0.5 text-[10px] font-medium text-white">
         {badge}

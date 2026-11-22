@@ -37,8 +37,19 @@ describe("desktop task notifications", () => {
       title: "Kohaku",
       body: "Task completed",
       tag: "nanobot-turn-chat",
+      sound: true,
     });
     expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("delivers titled alerts while minimized and honors mute", async () => {
+    vi.spyOn(document, "visibilityState", "get").mockReturnValue("hidden");
+    document.dispatchEvent(new Event("visibilitychange"));
+    const mutate = vi.fn().mockResolvedValue({ ok: true });
+    await showTaskNotification({ event: completed, t, threadTitle: "Release review", sound: false, requestMutation: mutate });
+    expect(mutate).toHaveBeenCalledWith("desktop.notify", {
+      title: "Kohaku · Release review", body: "Task completed", tag: "nanobot-turn-chat", sound: false,
+    });
   });
 
   it("sends no unauthenticated request without the mutation control", () => {

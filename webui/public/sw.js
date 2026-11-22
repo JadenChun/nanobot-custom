@@ -6,6 +6,7 @@ const NETWORK_FIRST_STATIC_PATHS = new Set([
   "/",
   "/manifest.json",
   ASSET_MANIFEST_PATH,
+  "/brand/kohaku_notification_badge.png",
   "/brand/nanobot_apple_touch.png",
   "/brand/nanobot_favicon_32.png",
   "/brand/nanobot_icon_192.png",
@@ -120,16 +121,20 @@ self.addEventListener("activate", (event) => {
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();
   event.waitUntil((async () => {
-    const windows = await clients.matchAll({ type: "window", includeUncontrolled: true });
+    const { chatId, temporary } = event.notification.data || {};
+    const target = typeof chatId === "string" && chatId
+      ? (temporary ? "/#/temporary/" + encodeURIComponent(chatId) : "/#/chat/" + encodeURIComponent("websocket:" + chatId))
+      : "/";
+    const windows = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
     for (const client of windows) {
       if ("focus" in client) {
+        if (chatId) await client.navigate(target);
         await client.focus();
         return;
       }
     }
-    if (clients.openWindow) {
-      const target = event.notification.data && event.notification.data.url;
-      await clients.openWindow(typeof target === "string" ? target : "/");
+    if (self.clients.openWindow) {
+      await self.clients.openWindow(target);
     }
   })());
 });

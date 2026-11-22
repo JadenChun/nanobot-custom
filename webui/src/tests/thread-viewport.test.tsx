@@ -1702,6 +1702,168 @@ describe("ThreadViewport", () => {
     }
   });
 
+  it("does not snap scrollTop backward when ResizeObserver fires mid-scroll", () => {
+    const resizeObserver = stubResizeObserver();
+    let hitTarget: Element | null = null;
+    const hitTest = stubElementsFromPoint(() => hitTarget ? [hitTarget] : []);
+    try {
+      const { container } = render(
+        <ThreadViewport
+          messages={makeLongMessages(300)}
+          isStreaming={false}
+          composer={<div />}
+        />,
+      );
+
+      const scroller = getScroller(container);
+      let scrollHeight = 6_000;
+      Object.defineProperties(scroller, {
+        scrollHeight: { configurable: true, get: () => scrollHeight },
+        clientHeight: { configurable: true, value: 600 },
+        scrollTop: { configurable: true, writable: true, value: 2_000 },
+        getBoundingClientRect: {
+          configurable: true,
+          value: () => DOMRect.fromRect({ y: 0, width: 800, height: 600 }),
+        },
+      });
+
+      const anchor = screen.getByText("message 200")
+        .closest<HTMLElement>("[data-thread-display-unit]");
+      expect(anchor).not.toBeNull();
+      hitTarget = anchor;
+      let anchorDocumentTop = 2_120;
+      Object.defineProperty(anchor, "getBoundingClientRect", {
+        configurable: true,
+        value: () => DOMRect.fromRect({
+          y: anchorDocumentTop - scroller.scrollTop,
+          width: 800,
+          height: 40,
+        }),
+      });
+
+      act(() => {
+        dispatchUserScroll(scroller);
+      });
+
+      // Compositor moves scrollTop upward before the next JS scroll event fires.
+      scroller.scrollTop = 1_940;
+      const content = screen.getByTestId("thread-message-region").firstElementChild;
+      const observer = resizeObserver.observers.find((candidate) =>
+        content ? candidate.elements.includes(content) : false,
+      );
+      expect(observer).toBeDefined();
+
+      // ResizeObserver fires without layout shift above anchor: must NOT snap back to 2000.
+      act(() => {
+        observer?.callback([], observer as unknown as ResizeObserver);
+      });
+      expect(scroller.scrollTop).toBe(1_940);
+
+      // Now older content above anchor grows by +180px while user scrolled another -20px.
+      scroller.scrollTop = 1_920;
+      anchorDocumentTop += 180;
+      scrollHeight += 180;
+      act(() => {
+        observer?.callback([], observer as unknown as ResizeObserver);
+      });
+      // Compensates the +180px shift while preserving the user's -20px scroll.
+      expect(scroller.scrollTop).toBe(2_100);
+    } finally {
+      hitTest.restore();
+      resizeObserver.restore();
+    }
+  });
+
+  it("does not chain another older-page request when loadingOlder finishes without new messages", async () => {
+    const onLoadOlder = vi.fn();
+    const initialMessages = makeLongMessages(40);
+    const props = {
+      isStreaming: false,
+      composer: <div />,
+      hasMoreBefore: true,
+      onLoadOlder,
+    };
+    const { container, rerender } = render(
+      <ThreadViewport {...props} messages={initialMessages} />,
+    );
+    const scroller = getScroller(container);
+    Object.defineProperties(scroller, {
+      scrollHeight: { configurable: true, value: 6000 },
+      clientHeight: { configurable: true, value: 600 },
+      scrollTop: { configurable: true, writable: true, value: 100 },
+    });
+
+    act(() => {
+      dispatchUserScroll(scroller);
+    });
+    expect(onLoadOlder).toHaveBeenCalledTimes(1);
+
+    // loadingOlder toggles true -> false without messages growing (e.g. error or
+    // intermediate commit before ThreadShell adopts historical): must not re-fire.
+    rerender(<ThreadViewport {...props} loadingOlder messages={initialMessages} />);
+    rerender(<ThreadViewport {...props} loadingOlder={false} messages={initialMessages} />);
+    await new Promise((resolve) => window.requestAnimationFrame(() => resolve(undefined)));
+    expect(onLoadOlder).toHaveBeenCalledTimes(1);
+  });
+
+  it("renders an entire turn-aligned older server page without splitting it", () => {
+    const initialTail = makeLongMessages(160).map((m, i) => ({
+      ...m,
+      id: `tail-${i}`,
+      content: `tail ${i}`,
+    }));
+    const onLoadOlder = vi.fn();
+    const { container, rerender } = render(
+      <ThreadViewport
+        messages={initialTail}
+        isStreaming={false}
+        composer={<div />}
+        hasMoreBefore
+        onLoadOlder={onLoadOlder}
+      />,
+    );
+    const scroller = getScroller(container);
+    Object.defineProperties(scroller, {
+      scrollHeight: { configurable: true, value: 6000 },
+      clientHeight: { configurable: true, value: 600 },
+      scrollTop: { configurable: true, writable: true, value: 100 },
+    });
+
+    act(() => {
+      dispatchUserScroll(scroller);
+    });
+    expect(onLoadOlder).toHaveBeenCalledTimes(1);
+
+    // Backend returns a turn-aligned page larger than HISTORY_WINDOW_INCREMENT (145 messages).
+    const olderPage = makeLongMessages(145).map((m, i) => ({
+      ...m,
+      id: `older-${i}`,
+      content: `older ${i}`,
+    }));
+    rerender(
+      <ThreadViewport
+        messages={[...olderPage, ...initialTail]}
+        isStreaming={false}
+        composer={<div />}
+        hasMoreBefore={false}
+        onLoadOlder={onLoadOlder}
+      />,
+    );
+
+    expect(screen.getByText("older 0")).toBeInTheDocument();
+    expect(screen.getByText("tail 159")).toBeInTheDocument();
+  });
+
+  it("keeps messages from the same turn together when windowing history", () => {
+    const messages = makeLongMessages(INITIAL_HISTORY_WINDOW + 10);
+    messages[8] = { ...messages[8], turnId: "shared-turn", role: "user" };
+    messages[9] = { ...messages[9], turnId: "shared-turn", role: "assistant" };
+    messages[10] = { ...messages[10], turnId: "shared-turn", role: "assistant" };
+
+    const visible = windowMessages(messages, INITIAL_HISTORY_WINDOW);
+    expect(visible[0].id).toBe(messages[8].id);
+  });
+
   it("automatically requests older transcript pages near the top", () => {
     const onLoadOlder = vi.fn();
 
@@ -2645,5 +2807,245 @@ describe("ThreadViewport", () => {
     expect(latestBtn).toHaveAttribute("data-tail-activity", "true");
     fireEvent.click(latestBtn);
     expect(onGoToLatest).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows loading feedback on an unloaded prompt rail marker while revealing and allows loading older history without a turn index", async () => {
+    const onLoadOlder = vi.fn();
+    const onRevealPrompt = vi.fn();
+    const tailMessages: UIMessage[] = [
+      { id: "u3", promptId: "evt-3", role: "user", content: "Prompt 3", createdAt: 3 },
+      { id: "a3", role: "assistant", content: "Answer 3", createdAt: 4 },
+      { id: "u4", promptId: "evt-4", role: "user", content: "Prompt 4", createdAt: 5 },
+      { id: "a4", role: "assistant", content: "Answer 4", createdAt: 6 },
+      { id: "u5", promptId: "evt-5", role: "user", content: "Prompt 5", createdAt: 7 },
+      { id: "a5", role: "assistant", content: "Answer 5", createdAt: 8 },
+    ];
+
+    const { container, rerender } = render(
+      <ThreadViewport
+        messages={tailMessages}
+        isStreaming={false}
+        composer={<div />}
+        hasMoreBefore
+        onLoadOlder={onLoadOlder}
+        onRevealPrompt={onRevealPrompt}
+      />,
+    );
+
+    const scroller = getScroller(container);
+    Object.defineProperties(scroller, {
+      scrollHeight: { configurable: true, value: 1800 },
+      clientHeight: { configurable: true, value: 600 },
+      scrollTop: { configurable: true, writable: true, value: 1200 },
+    });
+
+    // Without a prompt/turn index, the rail's top "…" button loads older transcript pages directly.
+    const loadOlderBtn = await screen.findByTestId("prompt-rail-load-older");
+    fireEvent.click(loadOlderBtn);
+    expect(onLoadOlder).toHaveBeenCalledTimes(1);
+
+    // With a prompt index, clicking an unloaded marker triggers reveal and shows loading pulse.
+    rerender(
+      <ThreadViewport
+        messages={tailMessages}
+        isStreaming={false}
+        composer={<div />}
+        hasMoreBefore
+        onLoadOlder={onLoadOlder}
+        onRevealPrompt={onRevealPrompt}
+        sessionPrompts={[
+          { prompt_id: "evt-1", turn_ordinal: 0, prompt_ordinal: 0, label: "Older prompt 1", locator: "loc-1", created_at: 1 },
+          { prompt_id: "evt-3", turn_ordinal: 2, prompt_ordinal: 2, label: "Prompt 3", locator: "loc-3", created_at: 3 },
+          { prompt_id: "evt-4", turn_ordinal: 3, prompt_ordinal: 3, label: "Prompt 4", locator: "loc-4", created_at: 5 },
+          { prompt_id: "evt-5", turn_ordinal: 4, prompt_ordinal: 4, label: "Prompt 5", locator: "loc-5", created_at: 7 },
+        ]}
+        sessionPromptTotal={4}
+        pendingReveal={{
+          requestId: 9,
+          promptId: "evt-1",
+          locator: "loc-1",
+          status: "loading",
+        }}
+      />,
+    );
+
+    const olderMarkerBtn = await screen.findByRole("button", { name: /Older prompt 1/ });
+    expect(olderMarkerBtn).toHaveAttribute("aria-busy", "true");
+    expect(olderMarkerBtn.querySelector('[data-revealing="true"]')).not.toBeNull();
+    fireEvent.click(olderMarkerBtn);
+    expect(onRevealPrompt).toHaveBeenCalledWith({
+      promptId: "evt-1",
+      locator: "loc-1",
+      cursor: null,
+    });
+  });
+
+  it("virtualizes long transcripts with TanStack Virtual instead of mounting every message", () => {
+    const longMessages = makeLongMessages(200);
+    const { container } = render(
+      <ThreadViewport
+        messages={longMessages}
+        isStreaming={false}
+        composer={<div />}
+        virtualize
+      />,
+    );
+
+    const scroller = getScroller(container);
+    Object.defineProperties(scroller, {
+      clientHeight: { configurable: true, value: 600 },
+      scrollTop: { configurable: true, writable: true, value: 0 },
+    });
+
+    const virtualList = screen.getByTestId("thread-virtual-list");
+    expect(virtualList).toBeInTheDocument();
+    const mountedUnits = virtualList.querySelectorAll("[data-thread-display-unit]");
+    expect(mountedUnits.length).toBeLessThan(longMessages.length);
+  });
+
+  it("enables native CSS scroll anchoring when browsing history and skips redundant JS scrollTop writes when native anchoring already compensated", () => {
+    const resizeObserver = stubResizeObserver();
+    let hitTarget: Element | null = null;
+    const hitTest = stubElementsFromPoint(() => (hitTarget ? [hitTarget] : []));
+    const jumpTo = vi.spyOn(ThreadCameraController.prototype, "jumpTo");
+    try {
+      const { container } = render(
+        <ThreadViewport
+          messages={makeLongMessages(300)}
+          isStreaming={false}
+          composer={<div />}
+        />,
+      );
+
+      const scroller = getScroller(container);
+      expect(scroller).toHaveClass("[overflow-anchor:none]");
+
+      let scrollHeight = 6_000;
+      Object.defineProperties(scroller, {
+        scrollHeight: { configurable: true, get: () => scrollHeight },
+        clientHeight: { configurable: true, value: 600 },
+        scrollTop: { configurable: true, writable: true, value: 2_000 },
+        getBoundingClientRect: {
+          configurable: true,
+          value: () => DOMRect.fromRect({ y: 0, width: 800, height: 600 }),
+        },
+      });
+
+      const anchor = screen.getByText("message 200")
+        .closest<HTMLElement>("[data-thread-display-unit]");
+      expect(anchor).not.toBeNull();
+      hitTarget = anchor;
+      let anchorDocumentTop = 2_120;
+      Object.defineProperty(anchor, "getBoundingClientRect", {
+        configurable: true,
+        value: () => DOMRect.fromRect({
+          y: anchorDocumentTop - scroller.scrollTop,
+          width: 800,
+          height: 40,
+        }),
+      });
+
+      act(() => {
+        dispatchUserScroll(scroller);
+      });
+      expect(scroller).toHaveClass("[overflow-anchor:auto]");
+      jumpTo.mockClear();
+
+      // Simulate native CSS overflow-anchor:auto compensating a +180px growth
+      // above the anchor during layout before ResizeObserver fires.
+      anchorDocumentTop += 180;
+      scrollHeight += 180;
+      scroller.scrollTop += 180;
+      const content = screen.getByTestId("thread-message-region").firstElementChild;
+      const observer = resizeObserver.observers.find((candidate) =>
+        content ? candidate.elements.includes(content) : false,
+      );
+      expect(observer).toBeDefined();
+      act(() => {
+        observer?.callback([], observer as unknown as ResizeObserver);
+      });
+
+      // Must NOT double-add +180 or emit a programmatic scrollTop write.
+      expect(scroller.scrollTop).toBe(2_180);
+      expect(jumpTo).not.toHaveBeenCalled();
+    } finally {
+      hitTest.restore();
+      resizeObserver.restore();
+    }
+  });
+
+  it("anchors on the clicked disclosure display unit and does not prematurely expand history on wheel when scrollTop > 0", () => {
+    const resizeObserver = stubResizeObserver();
+    try {
+      const longMessages = makeLongMessages(300);
+      longMessages[220] = {
+        id: "t-220",
+        role: "tool",
+        kind: "trace",
+        content: 'exec({"cmd":"ls"})',
+        traces: ['exec({"cmd":"ls"})'],
+        turnId: "turn-220",
+        createdAt: 220,
+      };
+      const { container } = render(
+        <ThreadViewport
+          messages={longMessages}
+          isStreaming={false}
+          composer={<div />}
+        />,
+      );
+
+      const scroller = getScroller(container);
+      let scrollHeight = 6_000;
+      Object.defineProperties(scroller, {
+        scrollHeight: { configurable: true, get: () => scrollHeight },
+        clientHeight: { configurable: true, value: 600 },
+        scrollTop: { configurable: true, writable: true, value: 800 },
+        getBoundingClientRect: {
+          configurable: true,
+          value: () => DOMRect.fromRect({ y: 0, width: 800, height: 600 }),
+        },
+      });
+
+      // Backward wheel while scrollTop > 0 yields camera to user but waits for
+      // the browser's resulting scroll event to expand the window.
+      act(() => {
+        scroller.dispatchEvent(new WheelEvent("wheel", { deltaY: -120, bubbles: true }));
+      });
+      expect(screen.queryByText("message 139")).not.toBeInTheDocument();
+
+      // Clicking a disclosure pins its enclosing display unit as the scroll anchor.
+      const disclosure = container.querySelector<HTMLElement>("[data-thread-disclosure]");
+      expect(disclosure).not.toBeNull();
+      const disclosureUnit = disclosure!.closest<HTMLElement>("[data-thread-display-unit]");
+      expect(disclosureUnit).not.toBeNull();
+      let unitDocumentTop = 960;
+      Object.defineProperty(disclosureUnit, "getBoundingClientRect", {
+        configurable: true,
+        value: () => DOMRect.fromRect({
+          y: unitDocumentTop - scroller.scrollTop,
+          width: 800,
+          height: 40,
+        }),
+      });
+
+      act(() => {
+        fireEvent.pointerDown(disclosure!, { button: 0 });
+      });
+
+      // Layout above the clicked disclosure unit shifts by +140px without native anchor:
+      unitDocumentTop += 140;
+      scrollHeight += 140;
+      const content = screen.getByTestId("thread-message-region").firstElementChild;
+      const observer = resizeObserver.observers.find((candidate) =>
+        content ? candidate.elements.includes(content) : false,
+      );
+      act(() => {
+        observer?.callback([], observer as unknown as ResizeObserver);
+      });
+      expect(scroller.scrollTop).toBe(940);
+    } finally {
+      resizeObserver.restore();
+    }
   });
 });

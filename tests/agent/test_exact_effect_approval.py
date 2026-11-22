@@ -234,6 +234,8 @@ async def test_public_evidence_never_grants_effect_authority(engine_config, forg
 
 @pytest.mark.parametrize("invalidate", ["expiry", "revoke", "blocked_run", "source_reset", "source_deleted"])
 async def test_changed_pending_owner_refuses_before_provider(engine_config, monkeypatch, invalidate):
+    if invalidate == "expiry":
+        monkeypatch.setattr("nanobot.agent.turn_admission.APPROVAL_TTL_SECONDS", 60.0)
     provider = ScriptedProvider([LLMResponse(content=None, tool_calls=[risky_call("blocked")])])
     loop = AgentLoop.from_config(engine_config, tool_registry=ToolRegistry(), provider=provider)
     backend = upgrade(loop)
@@ -459,6 +461,8 @@ async def test_concurrent_captured_policy_replacements_share_one_sealed_owner(tm
 
 @pytest.mark.parametrize("invalidate", ["revoke", "retire", "run", "cancel", "expiry"])
 async def test_issued_unspent_authority_refuses_stale_run(tmp_path, monkeypatch, invalidate):
+    if invalidate == "expiry":
+        monkeypatch.setattr("nanobot.agent.turn_admission.APPROVAL_TTL_SECONDS", 60.0)
     admission, context, policy = await issued_policy(tmp_path)
     if invalidate == "revoke":
         await admission.revoke("cli:source")
@@ -505,7 +509,7 @@ async def test_snapshot_expiring_while_waiting_cannot_issue_authority(tmp_path, 
     policy = RiskyActionPolicy(workspace=tmp_path)
     decision = await policy.evaluate(messages=[], tool_calls=[risky_call("blocked")])
     pending = await admission.store(session_key="cli:source", channel="cli", chat_id="original",
-        summary="push", effect_id=decision.metadata["effect_id"], run_id="blocked")
+        summary="push", effect_id=decision.metadata["effect_id"], run_id="blocked", ttl_seconds=60.0)
     snapshot = await admission.snapshot_decision("cli:original", ApprovalDecision(
         approval_id=pending.approval_id, decision="approve"))
     monkeypatch.setattr("nanobot.agent.turn_admission.time.time", lambda: pending.expires_at + 1)

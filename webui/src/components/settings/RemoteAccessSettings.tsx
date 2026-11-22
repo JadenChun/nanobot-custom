@@ -400,7 +400,7 @@ export function RemoteAccessSettings({
                     ) : null}
                   </div>
                   <p className="truncate text-xs text-muted-foreground">
-                    Connected until revoked
+                    Authorized until revoked
                     {" · last seen "}
                     {formatLastSeen(device.last_seen_at)}
                   </p>
@@ -523,6 +523,11 @@ export function RemoteAccessSettings({
 
           {step === "waiting" || step === "pending" ? (
             <div className="space-y-4">
+              {error ? (
+                <p className="rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2 text-xs text-destructive">
+                  {error}
+                </p>
+              ) : null}
               <p className="text-xs text-muted-foreground">
                 Only pair your own phone. Full owner control; the desktop must approve it.
               </p>

@@ -203,6 +203,13 @@
       "fileEditDisplay": "File edit display",
       "codeWrap": "Code wrapping",
       "brandLogos": "Brand logos",
+      "notificationSound": "Notification sound",
+      "notificationTest": "Delivery test",
+      "testNotificationBody": "Notifications are working.",
+      "testNotification": "Send test notification",
+      "permissionDenied": "Allow notifications in your device or browser settings.",
+      "notifierUnavailable": "Notifications are unavailable. Check your system notification settings.",
+      "notificationSent": "Test notification sent.",
       "browserNotifications": "Task notifications",
       "maxResults": "Max results",
       "timeout": "Timeout",
@@ -1601,6 +1608,10 @@
     "turnRejected": {
       "title": "Message was not sent",
       "body": "The gateway rejected this message. Review its text or attachments, then try again."
+    },
+    "approvalRejected": {
+      "title": "Approval is no longer active",
+      "body": "This approval request is no longer active on the gateway (for example, after a restart). Send a new message to continue."
     },
     "sessionRecoveryRequired": {
       "title": "Chat needs recovery",

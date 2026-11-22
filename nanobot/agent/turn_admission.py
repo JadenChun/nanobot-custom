@@ -20,7 +20,9 @@ from nanobot.agent.turn import ApprovalDecision, TurnContext
 if TYPE_CHECKING:
     from nanobot.session.source_store import SourceState
 
-APPROVAL_TTL_SECONDS = 15 * 60
+# 0 disables wall-clock expiry so pending approvals stay valid while the user
+# is away until explicitly decided, superseded, or revoked.
+APPROVAL_TTL_SECONDS = 0.0
 
 
 class ApprovalProvenance(str, Enum):
@@ -115,6 +117,10 @@ class ApprovalAdmission:
         self._grant_guard = threading.RLock()
         self._grants: dict[str, tuple[PendingApproval, TurnContext, EffectApprovalAuthority]] = {}
 
+    @staticmethod
+    def _is_expired(pending: PendingApproval) -> bool:
+        return bool(pending.expires_at and pending.expires_at <= time.time())
+
     def _issue(self, pending: PendingApproval, context: TurnContext,
                source_is_current: Callable[[], bool] | None) -> EffectApprovalAuthority:
         used = False
@@ -125,7 +131,7 @@ class ApprovalAdmission:
             with self._grant_guard:
                 held = self._grants.get(pending.approval_id)
                 if (used or held is None or held[2] is not authority
-                        or effect_id != pending.effect_id or pending.expires_at <= time.time()):
+                        or effect_id != pending.effect_id or self._is_expired(pending)):
                     return False
             # Owner/source checks finish before the short authority lock. No
             # await separates them from the atomic one-use decision below.
@@ -139,7 +145,7 @@ class ApprovalAdmission:
                 held = self._grants.get(pending.approval_id)
                 if (
                     used or held is None or held[2] is not authority
-                    or effect_id != pending.effect_id or pending.expires_at <= time.time()
+                    or effect_id != pending.effect_id or self._is_expired(pending)
                 ):
                     return False
                 if spend:
@@ -350,6 +356,7 @@ class ApprovalAdmission:
         effect_id: str | None = None,
         generation: int | None = None,
         source_state: SourceState | None = None,
+        ttl_seconds: float | None = None,
     ) -> PendingApproval:
         async with self._guard:
             identifier = approval_id or uuid.uuid4().hex
@@ -361,6 +368,7 @@ class ApprovalAdmission:
                 if previous.session_key == session_key:
                     self._remove_identity(previous)
             created_at = time.time()
+            effective_ttl = APPROVAL_TTL_SECONDS if ttl_seconds is None else ttl_seconds
             pending = PendingApproval(
                 summary,
                 created_at,
@@ -371,7 +379,7 @@ class ApprovalAdmission:
                 turn_id=turn_id,
                 effect_id=effect_id,
                 generation=generation,
-                expires_at=created_at + APPROVAL_TTL_SECONDS,
+                expires_at=(created_at + effective_ttl) if effective_ttl > 0 else 0.0,
                 source_state=source_state,
             )
             self._pending[identifier] = pending

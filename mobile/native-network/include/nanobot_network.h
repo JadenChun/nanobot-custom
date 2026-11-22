@@ -77,6 +77,9 @@ int32_t nanobot_network_poll_event(int64_t handle, char *out, int32_t capacity);
 /* Returns the retained event size, 0 if none, or -4 for an unknown handle. */
 int32_t nanobot_network_pending_event_size(int64_t handle);
 
+/* Notifies the broker of an OS network change or foreground resume. */
+int32_t nanobot_network_network_changed(int64_t handle);
+
 int32_t nanobot_network_stop(int64_t handle);
 
 /*

@@ -121,6 +121,101 @@ export function SessionSummaryPanel({
   );
 }
 
+export interface SessionSummaryCardProps {
+  sessionKey: string;
+  token: string;
+  title: string;
+  active: boolean;
+  onClose?: () => void;
+  className?: string;
+}
+
+export function SessionSummaryCard({
+  sessionKey,
+  token,
+  title,
+  active,
+  onClose,
+  className,
+}: SessionSummaryCardProps) {
+  const { t } = useTranslation("common");
+  const { jobs, loading, loadFailed, now } = useSessionAutomationJobs(active, token, sessionKey);
+  const automationContent = loading ? (
+    <div className="flex items-center gap-2 rounded-lg bg-muted/40 px-2.5 py-2 text-[12px] text-muted-foreground">
+      <RefreshCcw className="h-3.5 w-3.5 animate-spin" />
+      {t("thread.sessionInfo.loading")}
+    </div>
+  ) : loadFailed ? (
+    <div className="flex items-center gap-2 rounded-lg bg-destructive/10 px-2.5 py-2 text-[12px] text-destructive">
+      <CircleAlert className="h-3.5 w-3.5" />
+      {t("thread.sessionInfo.loadFailed")}
+    </div>
+  ) : jobs.length ? (
+    <div className="space-y-1">
+      {jobs.map((job) => (
+        <AutomationRow key={job.id} job={job} now={now} />
+      ))}
+    </div>
+  ) : (
+    <div className="rounded-lg bg-muted/30 px-2.5 py-2 text-[12px] leading-relaxed text-muted-foreground">
+      {t("thread.sessionInfo.empty")}
+    </div>
+  );
+
+  return (
+    <section
+      aria-label={t("thread.sessionInfo.title")}
+      data-testid="session-summary-card"
+      className={cn(
+        "flex max-h-full w-full flex-col overflow-hidden rounded-xl border border-border/55 bg-card/90 shadow-sm",
+        "dark:border-white/[0.08] dark:bg-card/85",
+        className,
+      )}
+    >
+      <div className="flex items-start justify-between gap-2 px-3.5 py-2.5">
+        <div className="min-w-0">
+          <div className="text-[11.5px] font-medium text-muted-foreground/75">
+            {t("thread.sessionInfo.title")}
+          </div>
+          <div className="mt-0.5 truncate text-[13px] font-medium text-foreground">
+            {title || t("thread.sessionInfo.untitled")}
+          </div>
+        </div>
+        {onClose ? (
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            aria-label={t("common.close", { defaultValue: "Close" })}
+            onClick={onClose}
+            className="-mr-1.5 -mt-0.5 h-6 w-6 shrink-0 rounded-full text-muted-foreground/75 hover:bg-accent/40 hover:text-foreground"
+          >
+            <X className="h-3.5 w-3.5" aria-hidden />
+          </Button>
+        ) : null}
+      </div>
+
+      <div className="h-px bg-border/45" />
+
+      <div className="scrollbar-thin scrollbar-track-transparent min-h-0 flex-1 space-y-2.5 overflow-y-auto px-3.5 py-2.5">
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex min-w-0 items-center gap-1.5">
+            <CalendarClock className="h-3.5 w-3.5 shrink-0 text-muted-foreground/80" />
+            <span className="truncate text-[12.5px] font-medium text-foreground">
+              {t("thread.sessionInfo.automations")}
+            </span>
+          </div>
+          <span className="rounded-full bg-muted/65 px-2 py-0.5 text-[10.5px] tabular-nums text-muted-foreground">
+            {t("thread.sessionInfo.count", { count: jobs.length })}
+          </span>
+        </div>
+
+        {automationContent}
+      </div>
+    </section>
+  );
+}
+
 interface SessionInfoPopoverProps {
   sessionKey: string;
   token: string;
@@ -173,35 +268,35 @@ export function SessionInfoPopover({ sessionKey, token, title }: SessionInfoPopo
       <PopoverContent
         align="end"
         sideOffset={8}
+        data-testid="session-summary-panel"
         onPointerDownOutside={(event) => event.preventDefault()}
         onInteractOutside={(event) => event.preventDefault()}
         onFocusOutside={(event) => event.preventDefault()}
-        className="w-[min(23rem,calc(100vw-1.5rem))] p-0"
+        className="w-[min(23rem,calc(100vw-1.5rem))] overflow-hidden rounded-2xl border border-border/75 bg-popover/98 p-0 shadow-[0_12px_36px_rgba(15,23,42,0.16)] dark:border-white/10 dark:shadow-[0_14px_40px_rgba(0,0,0,0.45)]"
       >
-        <div className="space-y-3 px-4 py-3.5">
-          <div className="flex items-start justify-between gap-2">
-            <div className="min-w-0">
-              <div className="text-[12px] font-normal text-muted-foreground/75">
-                {t("thread.sessionInfo.title")}
-              </div>
-              <div className="mt-0.5 truncate text-[14px] font-medium text-foreground">
-                {title || t("thread.sessionInfo.untitled")}
-              </div>
+        <div className="flex items-start justify-between gap-2 border-b border-border/50 px-4 py-3">
+          <div className="min-w-0">
+            <div className="flex items-center gap-1.5 text-[11.5px] font-medium text-muted-foreground/80">
+              <ListTodo className="h-3.5 w-3.5 shrink-0" aria-hidden />
+              <span>{t("thread.sessionInfo.title")}</span>
             </div>
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              aria-label={t("common.close", { defaultValue: "Close" })}
-              onClick={() => setOpen(false)}
-              className="-mr-1.5 -mt-1 h-7 w-7 shrink-0 rounded-full text-muted-foreground/80 hover:bg-accent/40 hover:text-foreground"
-            >
-              <X className="h-3.5 w-3.5" aria-hidden />
-            </Button>
+            <div className="mt-0.5 truncate text-[13.5px] font-semibold text-foreground">
+              {title || t("thread.sessionInfo.untitled")}
+            </div>
           </div>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            aria-label={t("common.close", { defaultValue: "Close" })}
+            onClick={() => setOpen(false)}
+            className="-mr-1.5 -mt-0.5 h-7 w-7 shrink-0 rounded-full text-muted-foreground/80 hover:bg-accent/40 hover:text-foreground"
+          >
+            <X className="h-3.5 w-3.5" aria-hidden />
+          </Button>
+        </div>
 
-          <div className="h-px bg-border/45" />
-
+        <div className="scrollbar-thin scrollbar-track-transparent max-h-[min(65vh,28rem)] space-y-3 overflow-y-auto px-4 py-3">
           <div className="flex items-center justify-between gap-3">
             <div className="flex min-w-0 items-center gap-2">
               <CalendarClock className="h-3.5 w-3.5 shrink-0 text-muted-foreground/80" />

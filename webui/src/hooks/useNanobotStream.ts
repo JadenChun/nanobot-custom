@@ -435,7 +435,7 @@ export function useNanobotStream(
   const streamTimerRef = useRef<number | null>(null);
   const lastStreamFlushAtRef = useRef(Number.NEGATIVE_INFINITY);
   const mediaReplyTextsRef = useRef(new Map<string | undefined, Set<string>>());
-  const deferredAnswersRef = useRef(new Map<string, string>());
+  const deferredAnswersRef = useRef(new Map<string | undefined, string>());
   const sideChannelTurnIdsRef = useRef<Set<string>>(new Set());
   const liveStopTargetSeenRef = useRef(false);
   const stopTargetRef = useRef(stopTarget);
@@ -833,8 +833,7 @@ export function useNanobotStream(
     const finalAnswerText = options?.finalAnswerText;
     const turn = options?.turn ?? {};
     const source = options?.source;
-    if (events.length === 0 && finalAnswerText === undefined && source === undefined) {
-      if (options?.closeAnswerSegment) closeActiveAssistantStream();
+    if (events.length === 0 && finalAnswerText === undefined && source === undefined && !options?.closeAnswerSegment) {
       return;
     }
     pendingStreamEventsRef.current = [];
@@ -1135,7 +1134,10 @@ export function useNanobotStream(
       const turnId = eventTurnId(ev);
       const unresolvedAdmission = admission?.disposition === "unresolved"
         && admission.turnId === turnId;
-      if (turnId && !unresolvedAdmission) {
+      // Route-level `message_accepted` confirms the gateway received the
+      // submission and clears the transient "Sending…" indicator immediately,
+      // while durable input-attempt admission remains gated on `message_admitted`.
+      if (turnId && (!unresolvedAdmission || ev.event === "message_accepted")) {
         const repairsUncertain = (
           ev.event !== "message_accepted"
           && ev.event !== "user_message"
@@ -1244,16 +1246,25 @@ export function useNanobotStream(
         || ev.event === "stream_end"
       ) setRetryStatus(null);
       if (ev.event === "delta") {
-        const chunk = typeof ev.text === "string" ? ev.text : "";
+        let chunk = typeof ev.text === "string" ? ev.text : "";
         if (!chunk) return;
-        if (mediaReplyTextsRef.current.size > 0) {
-          // Hold correlated text until the stream ends so a repeated caption stays hidden.
-          const turnId = eventTurnId(ev);
-          if (turnId) {
-            const deferred = deferredAnswersRef.current;
-            deferred.set(turnId, (deferred.get(turnId) ?? "") + chunk);
+        const turnId = eventTurnId(ev);
+        const captions = mediaReplyTextsRef.current.get(turnId);
+        if (captions && captions.size > 0) {
+          // Hold correlated text only while it could still be an exact repeat
+          // of an already-sent media caption; diverge to live streaming immediately.
+          const deferred = deferredAnswersRef.current;
+          const combined = (deferred.get(turnId) ?? "") + chunk;
+          const trimmed = combined.trim();
+          const couldMatchCaption =
+            trimmed.length === 0
+            || Array.from(captions).some((caption) => caption.startsWith(trimmed));
+          if (couldMatchCaption) {
+            deferred.set(turnId, combined);
+            return;
           }
-          return;
+          deferred.delete(turnId);
+          chunk = combined;
         }
         clearActivitySegment();
         setIsStreaming(true);
@@ -1268,7 +1279,6 @@ export function useNanobotStream(
       }
 
       if (ev.event === "reasoning_delta") {
-        if (mediaReplyTextsRef.current.size > 0) return;
         const chunk = ev.text;
         if (!chunk) return;
         if (fileEditSegmentRef.current) clearActivitySegment();
@@ -1284,26 +1294,35 @@ export function useNanobotStream(
 
       if (ev.event === "stream_end") {
         const turn = turnFieldsFromEvent(ev, "answer");
-        const mediaReplyTexts = mediaReplyTextsRef.current;
+        const captions = mediaReplyTextsRef.current.get(turn.turnId);
+        const hasTurnMediaCaptions = Boolean(captions && captions.size > 0);
         const mergeNext = ev.resuming === true && ev.merge_next === true;
         const deferred = deferredAnswersRef.current;
         let finalAnswerText = typeof ev.text === "string" ? ev.text : undefined;
-        if (mediaReplyTexts.size > 0 && turn.turnId) {
+        if (deferred.has(turn.turnId)) {
           finalAnswerText ??= deferred.get(turn.turnId);
           deferred.delete(turn.turnId);
           if (mergeNext && finalAnswerText) deferred.set(turn.turnId, finalAnswerText);
         }
         const finalText = finalAnswerText?.trim();
-        if (mediaReplyTexts.size > 0 && (
-          !finalText || mediaReplyTexts.get(turn.turnId)?.has(finalText)
-        )) return;
+        const hasLiveStreamedAnswer =
+          buffer.current !== null
+          || activeAssistantRef.current !== null
+          || pendingStreamEventsRef.current.some((item) => item.kind === "delta");
+        if (hasTurnMediaCaptions && (
+          finalText !== undefined
+            ? (!finalText || captions!.has(finalText))
+            : !hasLiveStreamedAnswer
+        )) {
+          setIsStreaming(true);
+          return;
+        }
         flushPendingStreamEvents({
           closeAnswerSegment: !mergeNext,
           ...(finalAnswerText !== undefined ? { finalAnswerText } : {}),
           turn,
           source: ev.source,
         });
-        if (mediaReplyTexts.size > 0) return;
         if (ev.resuming) {
           setIsStreaming(true);
           return;
@@ -1324,7 +1343,6 @@ export function useNanobotStream(
       flushPendingStreamEvents({ closeAnswerSegment: shouldCloseAnswerBeforeEvent });
 
       if (ev.event === "reasoning_end") {
-        if (mediaReplyTextsRef.current.size > 0) return;
         setMessages((prev) => closeReasoningStream(prev, Date.now()));
         return;
       }
@@ -1550,12 +1568,6 @@ export function useNanobotStream(
       }
 
       if (ev.event === "message") {
-        if (
-          mediaReplyTextsRef.current.size > 0 &&
-          (ev.kind === "tool_hint" || ev.kind === "progress" || ev.kind === "reasoning")
-        ) {
-          return;
-        }
         // Back-compat: a legacy ``kind: "reasoning"`` message (no streaming
         // partner) is treated as one complete delta + immediate end so the
         // bubble renders identically to the streaming path.
@@ -1708,10 +1720,13 @@ export function useNanobotStream(
           });
         });
         if (hasMedia) {
-          const mediaReplyTexts = mediaReplyTextsRef.current;
-          const texts = mediaReplyTexts.get(completedTurn.turnId) ?? new Set<string>();
-          texts.add(ev.text.trim());
-          mediaReplyTexts.set(completedTurn.turnId, texts);
+          const caption = ev.text.trim();
+          if (caption) {
+            const mediaReplyTexts = mediaReplyTextsRef.current;
+            const texts = mediaReplyTexts.get(completedTurn.turnId) ?? new Set<string>();
+            texts.add(caption);
+            mediaReplyTexts.set(completedTurn.turnId, texts);
+          }
         }
         return;
       }

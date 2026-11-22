@@ -31,6 +31,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { isMobileRuntimeActive } from "@/lib/mobile-runtime";
 import { cn } from "@/lib/utils";
 
 const SETTINGS_NAV_ITEMS: Array<{ key: SettingsSectionKey; icon: LucideIcon; fallback: string }> = [
@@ -177,8 +178,8 @@ export function SettingsSidebar({
         </SidebarSelectionHighlight>
       </nav>
 
-      <div className="hidden lg:mt-auto lg:block lg:pt-4">
-        {onLogout && !hostChromeInset ? (
+      <div className={cn(isMobileRuntimeActive() ? "mt-2 block pt-2 lg:mt-auto lg:pt-4" : "hidden lg:mt-auto lg:block lg:pt-4")}>
+        {onLogout && (!hostChromeInset || isMobileRuntimeActive()) ? (
           <Button
             type="button"
             variant="ghost"
@@ -186,7 +187,9 @@ export function SettingsSidebar({
             className="h-9 w-full justify-start gap-2 rounded-control px-2.5 text-[13px] font-medium text-muted-foreground hover:bg-destructive/8 hover:text-destructive"
           >
             <LogOut className="h-4 w-4" aria-hidden />
-            {t("app.account.logout")}
+            {isMobileRuntimeActive()
+              ? t("app.account.unpair", { defaultValue: "Unpair / Switch server" })
+              : t("app.account.logout")}
           </Button>
         ) : null}
       </div>

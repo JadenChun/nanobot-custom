@@ -438,6 +438,12 @@ class PairingService:
             challenge.approved = True
             challenge.state = "approved"
             challenge.result = None
+            if challenge.proof_expires_at is not None:
+                now = int(self.clock())
+                challenge.proof_expires_at = min(
+                    challenge.offer.expires_at,
+                    now + DEVICE_PROOF_TTL_SECONDS,
+                )
             self._save_locked()
             return PairingApproved(
                 pairing_id=challenge.offer.pairing_id,
@@ -564,6 +570,11 @@ class PairingService:
             if challenge.challenge is not None:
                 challenge.challenge = challenge.challenge.model_copy(
                     update={"expires_at": renewed_until},
+                )
+            if challenge.proof_expires_at is not None:
+                challenge.proof_expires_at = min(
+                    renewed_until,
+                    now + DEVICE_PROOF_TTL_SECONDS,
                 )
             self._save_locked()
             if challenge.state == "expired":
@@ -743,17 +754,28 @@ class PairingService:
             if device.revoked:
                 raise PairingDeviceRevokedError("installation is not recoverable")
             now = int(self.clock())
-            recovery = _RecoveryChallenge(
-                installation_id=installation_id,
-                fingerprint=fingerprint,
-                generation=binding.generation,
-                origin=binding.origin,
-                public_key_der=bytes(device_public_key_der),
-                challenge_id=uuid.uuid4().hex,
-                nonce=secrets.token_urlsafe(32),
-                expires_at=now + DEVICE_PROOF_TTL_SECONDS,
-            )
-            self._recoveries[installation_id] = recovery
+            existing = self._recoveries.get(installation_id)
+            if (
+                existing is not None
+                and not existing.consumed
+                and existing.fingerprint == fingerprint
+                and existing.generation == binding.generation
+                and existing.origin == binding.origin
+                and existing.expires_at - now >= DEVICE_PROOF_TTL_SECONDS - 10
+            ):
+                recovery = existing
+            else:
+                recovery = _RecoveryChallenge(
+                    installation_id=installation_id,
+                    fingerprint=fingerprint,
+                    generation=binding.generation,
+                    origin=binding.origin,
+                    public_key_der=bytes(device_public_key_der),
+                    challenge_id=uuid.uuid4().hex,
+                    nonce=secrets.token_urlsafe(32),
+                    expires_at=now + DEVICE_PROOF_TTL_SECONDS,
+                )
+                self._recoveries[installation_id] = recovery
             return DeviceProofClaims(
                 instance_id=state.installation_id,
                 origin=binding.origin,

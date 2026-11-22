@@ -5,7 +5,10 @@ import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
 import org.json.JSONObject
 import java.io.ByteArrayInputStream
+import java.io.FilterInputStream
 import java.io.InputStream
+
+private val contentRangePattern = Regex("""bytes\s+(\d+)-(\d+)/(\d+|\*)""")
 
 /**
  * Streams signed media through the native transport.
@@ -35,7 +38,7 @@ object NativeMediaInterceptor {
         } catch (_: Throwable) {
             0L
         }
-        if (streamId == 0L) return failure(404, "Not Found")
+        if (streamId == 0L) return failure(503, "Service Unavailable")
         val info = try {
             NativeNetwork.mediaInfo(handle, streamId)?.let { JSONObject(String(it)) }
         } catch (_: Throwable) {
@@ -43,7 +46,7 @@ object NativeMediaInterceptor {
         }
         if (info == null) {
             NativeNetwork.mediaClose(handle, streamId)
-            return failure(404, "Not Found")
+            return failure(503, "Service Unavailable")
         }
         val status = info.optInt("status", 200)
         if (status < 200 || status >= 300) {
@@ -61,14 +64,14 @@ object NativeMediaInterceptor {
             "NanobotMedia",
             mediaLogLine(status, info.optBoolean("cached"), headers),
         )
-        val mime = headers["Content-Type"] ?: "application/octet-stream"
+        val mime = headerValue(headers, "Content-Type") ?: "application/octet-stream"
         return WebResourceResponse(
             mime,
             null,
             status,
             reasonPhrase(status),
             headers,
-            MediaStreamInput(handle, streamId),
+            mediaBodyForWebView(MediaStreamInput(handle, streamId), headerValue(headers, "Content-Range")),
         )
     }
 
@@ -89,8 +92,6 @@ object NativeMediaInterceptor {
 
     private fun headerValue(headers: Map<String, String>, name: String): String? =
         headers.entries.firstOrNull { it.key.equals(name, ignoreCase = true) }?.value
-
-    private val contentRangePattern = Regex("""bytes\s+(\d+)-(\d+)/(\d+|\*)""")
 
     private fun contentRangeCounts(value: String): String? {
         val match = contentRangePattern.find(value.trim()) ?: return null
@@ -114,6 +115,29 @@ object NativeMediaInterceptor {
         404 -> "Not Found"
         416 -> "Range Not Satisfiable"
         else -> "Media"
+    }
+}
+
+/**
+ * The WebView seeks on the stream before it reads a range response. Report the
+ * file size and account for the prefix that the gateway already skipped.
+ */
+internal fun mediaBodyForWebView(body: InputStream, contentRange: String?): InputStream {
+    val match = contentRange?.trim()?.let(contentRangePattern::matchEntire)
+        ?: return body
+    val start = match.groupValues[1].toLongOrNull() ?: return body
+    val size = match.groupValues[3].toLongOrNull() ?: return body
+    return object : FilterInputStream(body) {
+        private var prefix = start
+
+        override fun available(): Int = if (size <= Int.MAX_VALUE) size.toInt() else 0
+
+        override fun skip(n: Long): Long {
+            if (n <= 0) return 0
+            val skipped = minOf(n, prefix)
+            prefix -= skipped
+            return if (n == skipped) skipped else skipped + super.skip(n - skipped)
+        }
     }
 }
 
