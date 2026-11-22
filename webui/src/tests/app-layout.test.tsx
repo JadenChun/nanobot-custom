@@ -3619,18 +3619,23 @@ describe("App layout", () => {
     expect(within(sidebar).getByText("Existing chat")).toBeInTheDocument();
   });
 
-  it("refreshes the bootstrap token before REST settings auth expires", async () => {
+  it("preserves the selected chat draft during automatic authentication refresh", async () => {
     vi.useFakeTimers();
+    mockSessions = [{
+      key: "websocket:existing-chat", channel: "websocket", chatId: "existing-chat",
+      title: "Existing topic", preview: "", createdAt: null, updatedAt: null,
+    }];
+    window.history.replaceState(null, "", "/#/chat/websocket%3Aexisting-chat");
     vi.mocked(fetchBootstrap)
       .mockResolvedValueOnce({
         token: "tok-1",
-        api_token: "api-tok-1",
+        api_token: "token-A",
         ws_path: "/",
         expires_in: 30,
       })
       .mockResolvedValueOnce({
         token: "tok-2",
-        api_token: "api-tok-2",
+        api_token: "token-B",
         ws_path: "/",
         expires_in: 300,
       });
@@ -3643,6 +3648,8 @@ describe("App layout", () => {
 
     expect(connectSpy).toHaveBeenCalled();
     expect(fetchBootstrap).toHaveBeenCalledTimes(1);
+    const input = screen.getByRole<HTMLTextAreaElement>("textbox", { name: "Message Existing topic" });
+    fireEvent.change(input, { target: { value: "unsent draft" } });
 
     await act(async () => {
       await vi.advanceTimersByTimeAsync(15_000);
@@ -3650,6 +3657,10 @@ describe("App layout", () => {
 
     expect(fetchBootstrap).toHaveBeenCalledTimes(2);
     expect(updateUrlSpy).toHaveBeenCalledWith("ws://test?token=tok-2");
+    const refreshedInput = screen.getByRole<HTMLTextAreaElement>("textbox", { name: "Message Existing topic" });
+    expect(refreshedInput).toBeEnabled();
+    fireEvent.change(refreshedInput, { target: { value: `${refreshedInput.value} continued` } });
+    expect(refreshedInput).toHaveValue("unsent draft continued");
     unmount();
   });
 

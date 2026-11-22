@@ -1485,7 +1485,16 @@ export function ThreadShell({
   const [assetsInspectorOpen, setAssetsInspectorOpen] = useState(false);
   const [inspectorCollapsed, setInspectorCollapsed] = useState(false);
   const filePreviewEditKeysRef = useRef<Set<string>>(new Set());
-  const draftNamespace = useMemo(() => draftNamespaceFor(token), [token]);
+  // Token renewal keeps the same client and draft owner.
+  const [draftOwner, setDraftOwner] = useState(() => ({
+    client,
+    namespace: draftNamespaceFor(token),
+  }));
+  let draftNamespace = draftOwner.namespace;
+  if (draftOwner.client !== client) {
+    draftNamespace = draftNamespaceFor(token);
+    setDraftOwner({ client, namespace: draftNamespace });
+  }
   const [quotedContext, setQuotedContext] = useState<string | null>(null);
   const [composerFocusSignal, setComposerFocusSignal] = useState(0);
   const shellRef = useRef<HTMLElement | null>(null);
