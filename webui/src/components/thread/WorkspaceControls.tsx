@@ -311,6 +311,7 @@ export function WorkspaceProjectPicker({
       }) : pickerTitle
     : pathAccessibleLabel;
   const displayedFolderName = showNextTurnSelection ? nextFolderName : folderName;
+  const showTriggerLabel = !line || Boolean(displayedFolderName);
   const triggerTitle = [
     triggerAccessibleLabel,
     displayedFolderName ? (showNextTurnSelection ? pendingNextScope?.project_path : currentPath) : null,
@@ -350,6 +351,7 @@ export function WorkspaceProjectPicker({
                 line
                   ? cn(
                       "thread-composer-workspace-trigger relative inline-flex h-7 max-w-full min-w-0 items-center gap-1.5 rounded-md border border-transparent bg-transparent text-[11px] font-medium text-muted-foreground/80 dark:text-foreground/65",
+                      !showTriggerLabel && "w-7 justify-center",
                       "hover:bg-transparent hover:text-foreground active:opacity-70",
                     )
                   : inline
@@ -372,10 +374,12 @@ export function WorkspaceProjectPicker({
               {pickingFolder || nextTurnPending
                 ? <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" aria-hidden />
                 : <Folder className={cn("shrink-0", !line && compact ? "h-4 w-4" : "h-3.5 w-3.5")} aria-hidden />}
-              <span className="thread-composer-project-label min-w-0 truncate">
-                {displayedFolderName || pickerTitle}
-              </span>
-              {!compact ? (
+              {showTriggerLabel ? (
+                <span className="thread-composer-project-label min-w-0 truncate">
+                  {displayedFolderName || pickerTitle}
+                </span>
+              ) : null}
+              {!compact && showTriggerLabel ? (
                 <ChevronDown className="h-3 w-3 shrink-0 text-muted-foreground" aria-hidden />
               ) : null}
             </button>
