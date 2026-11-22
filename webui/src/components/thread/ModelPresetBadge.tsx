@@ -126,6 +126,7 @@ export function ModelPresetBadge({
 }: ModelPresetBadgeProps) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
+  const pickerTitleId = useId();
   const [showAllModels, setShowAllModels] = useState(false);
   const [modelQuery, setModelQuery] = useState("");
   const [motion, setMotion] = useState<PresetMotion | null>(null);
@@ -435,7 +436,7 @@ export function ModelPresetBadge({
         side="top"
         sideOffset={10}
         role="dialog"
-        aria-label={switchModelLabel}
+        aria-labelledby={pickerTitleId}
         onOpenAutoFocus={(event) => {
           event.preventDefault();
           if (showAllModels) return;
@@ -451,9 +452,12 @@ export function ModelPresetBadge({
           "max-h-[var(--radix-popover-content-available-height)] origin-[var(--radix-popover-content-transform-origin)] overflow-y-auto p-1.5 scrollbar-thin scrollbar-track-transparent data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[state=closed]:slide-out-to-bottom-1 data-[state=open]:slide-in-from-bottom-1 duration-200 ease-out motion-reduce:animate-none",
         )}
       >
+        <h2 id={pickerTitleId} className="border-b border-border/55 px-2.5 pb-2 pt-1.5 text-sm font-semibold">
+          {switchModelLabel}
+        </h2>
         {showAllModels ? (
           <div data-testid="model-picker-all">
-            <div className="flex items-center gap-1 pb-1">
+            <div className="flex items-center gap-1 py-1">
               <button
                 type="button"
                 onClick={() => {
@@ -506,7 +510,7 @@ export function ModelPresetBadge({
             ) : null}
           </div>
         ) : (
-          <>
+          <div className="pt-1.5">
             <div
               data-testid="model-picker-active"
               className="flex min-w-0 items-center gap-2.5 rounded-lg bg-muted/55 px-2.5 py-2"
@@ -579,7 +583,7 @@ export function ModelPresetBadge({
                 </button>
               </div>
             ) : null}
-          </>
+          </div>
         )}
       </PopoverContent>
     </Popover>

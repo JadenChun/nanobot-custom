@@ -867,15 +867,27 @@
     } catch (_) {
       target = null;
     }
+    function setSplashStatus(message) {
+      var note = document.querySelector(".boot-splash-status");
+      if (!note) return;
+      note.hidden = false;
+      note.textContent = message;
+    }
+
     async function connectTarget(link) {
+      setSplashStatus("Connecting to Tailscale…");
       await transport.start(link.origin, link.installationId, "nanobot-" + String(link.installationId).slice(-6));
       for (var i = 0; i < 180; i += 1) {
         var status = await plugin.status();
-        if (status && status.state === "ready") return;
+        if (status && status.state === "ready") {
+          setSplashStatus("Verifying server…");
+          return;
+        }
         if (status && status.state === "needs_login") throw new Error("tailnet login required");
         if (status && status.state === "error") {
           throw new Error("native transport failed" + (status.message ? ": " + status.message : ""));
         }
+        if (i === 10) setSplashStatus("Still connecting to Tailscale…");
         await new Promise(function (resolve) { setTimeout(resolve, 500); });
       }
       throw new Error("native transport readiness timeout");

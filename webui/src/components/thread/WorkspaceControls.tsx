@@ -132,6 +132,7 @@ export function WorkspaceProjectPicker({
 }) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
+  const pickerTitleId = useId();
   const [managementOpen, setManagementOpen] = useState(false);
   const [pathDraft, setPathDraft] = useState("");
   const [pathError, setPathError] = useState<string | null>(null);
@@ -140,12 +141,18 @@ export function WorkspaceProjectPicker({
   const triggerRef = useRef<HTMLButtonElement>(null);
   const pathInputRef = useRef<HTMLInputElement>(null);
   const pathErrorId = useId();
+  const readableRepositories = (workspaces?.management?.repositories ?? [])
+    .filter((repository) => repository.exists && repository.effective_access.read);
+
+  const folderTitle = (project: WorkspaceScopePayload) =>
+    readableRepositories.find((repository) => sameWorkspacePath(repository.path, project.project_path))
+      ?.name.trim()
+    || project.project_name?.trim()
+    || projectNameFromPath(project.project_path);
   const activeScope = scope ?? defaultScope;
   const isAgentHome = !!activeScope && !!defaultScope
     && sameWorkspacePath(activeScope.project_path, defaultScope.project_path);
-  const folderName = isAgentHome
-    ? ""
-    : activeScope?.project_name || projectNameFromPath(activeScope?.project_path ?? "");
+  const folderName = activeScope && !isAgentHome ? folderTitle(activeScope) : "";
   const currentPath = activeScope?.project_path ?? defaultScope?.project_path ?? "";
   // While a turn runs the picker edits the *next* turn instead of the admitted
   // one, so its own selection is the readable label.
@@ -157,7 +164,7 @@ export function WorkspaceProjectPicker({
     ? nextTurnScope
     : null;
   const nextFolderName = pendingNextScope
-    ? pendingNextScope.project_name || projectNameFromPath(pendingNextScope.project_path)
+    ? folderTitle(pendingNextScope)
     : "";
   const showNextTurnSelection = turnActive && pendingNextScope !== null;
   const visible = !!defaultScope
@@ -290,23 +297,27 @@ export function WorkspaceProjectPicker({
 
   if (!visible || !defaultScope || !onChange) return null;
 
+  const pickerTitle = t("workspace.picker.chooseProject", { defaultValue: "Choose project folder" });
   const pathAccessibleLabel = isAgentHome
-    ? t("workspace.picker.chooseProject", { defaultValue: "Choose project folder" })
+    ? pickerTitle
     : t("workspace.picker.workingIn", {
         folder: folderName,
-        defaultValue: `Working in: ${folderName}`,
+        defaultValue: "Working in: {{folder}}",
       });
   const triggerAccessibleLabel = showNextTurnSelection
-    ? t("workspace.picker.nextTurn", {
+    ? nextFolderName ? t("workspace.picker.nextTurn", {
         folder: nextFolderName,
-        defaultValue: `Next turn: ${nextFolderName}`,
-      })
+        defaultValue: "Next turn: {{folder}}",
+      }) : pickerTitle
     : pathAccessibleLabel;
-  const triggerTitle = showNextTurnSelection
-    ? t("workspace.picker.nextTurnHint", {
-        defaultValue: "The running turn keeps its folder. This choice applies to the next turn.",
-      })
-    : isAgentHome ? pathAccessibleLabel : currentPath;
+  const displayedFolderName = showNextTurnSelection ? nextFolderName : folderName;
+  const triggerTitle = [
+    triggerAccessibleLabel,
+    displayedFolderName ? (showNextTurnSelection ? pendingNextScope?.project_path : currentPath) : null,
+    showNextTurnSelection ? t("workspace.picker.nextTurnHint", {
+      defaultValue: "The running turn keeps its folder. This choice applies to the next turn.",
+    }) : null,
+  ].filter(Boolean).join("\n");
   const effectiveAccess = activeScope?.effective_access;
   const currentAccess = effectiveAccess
     ? effectiveAccessLabel(effectiveAccess, t)
@@ -316,8 +327,6 @@ export function WorkspaceProjectPicker({
       ?? (activeScope?.access_mode === "full"
         ? t("workspace.permissionV2.unavailable", { defaultValue: "Access unavailable" })
         : t("thread.composer.workspace.default", { defaultValue: "Sandbox" }));
-  const readableRepositories = (workspaces?.management?.repositories ?? [])
-    .filter((repository) => repository.exists && repository.effective_access.read);
 
   return (
     <>
@@ -325,7 +334,7 @@ export function WorkspaceProjectPicker({
         line
           ? "flex min-w-0 items-center"
           : inline || compact
-            ? "inline-flex"
+            ? "inline-flex min-w-0"
             : "flex min-w-0 items-center gap-2 rounded-b-[28px] bg-muted/45 px-3 py-1.5 dark:bg-white/[0.045] sm:px-4",
       )}>
         <Popover open={open} onOpenChange={setOpen}>
@@ -341,7 +350,6 @@ export function WorkspaceProjectPicker({
                 line
                   ? cn(
                       "thread-composer-workspace-trigger relative inline-flex h-7 max-w-full min-w-0 items-center gap-1.5 rounded-md border border-transparent bg-transparent text-[11px] font-medium text-muted-foreground/80 dark:text-foreground/65",
-                      folderName ? "justify-start" : "w-7 justify-center",
                       "hover:bg-transparent hover:text-foreground active:opacity-70",
                     )
                   : inline
@@ -349,19 +357,12 @@ export function WorkspaceProjectPicker({
                         "inline-flex min-w-0 items-center gap-1.5 rounded-control border border-transparent font-semibold text-muted-foreground shadow-none dark:text-foreground/70",
                         isHero ? "h-8 text-[12px]" : "h-9 text-[12.5px]",
                         "hover:bg-foreground/[0.045] hover:text-foreground dark:hover:bg-white/[0.06]",
-                        folderName
-                          ? "max-w-[min(15rem,45vw)] justify-start px-1.5"
-                          : cn("justify-center px-0", isHero ? "w-8" : "w-9"),
+                        "max-w-[min(15rem,45vw)] justify-start px-1.5",
                       )
                     : cn(
                         "inline-flex rounded-full text-[12px] font-medium text-muted-foreground/90 hover:text-foreground",
                         compact
-                          ? cn(
-                              "thread-composer-action touch-target h-9 items-center justify-center border border-transparent",
-                              folderName
-                                ? "max-w-[9rem] justify-start gap-1.5 border-border/55 bg-card/70 px-2.5"
-                                : "w-8",
-                            )
+                          ? "thread-composer-action touch-target h-9 min-w-0 max-w-[9rem] items-center justify-start gap-1.5 border border-border/55 bg-card/70 px-2.5"
                           : "h-8 min-w-0 max-w-full items-center gap-2 px-2.5 sm:max-w-[28rem]",
                         compact ? "hover:bg-muted/65" : "hover:bg-background/70",
                         (connected || !isAgentHome) && "text-primary",
@@ -371,35 +372,11 @@ export function WorkspaceProjectPicker({
               {pickingFolder || nextTurnPending
                 ? <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" aria-hidden />
                 : <Folder className={cn("shrink-0", !line && compact ? "h-4 w-4" : "h-3.5 w-3.5")} aria-hidden />}
-              {line ? (
-                (showNextTurnSelection ? nextFolderName : folderName) ? (
-                  <span className="thread-composer-project-label min-w-0 truncate">
-                    {showNextTurnSelection ? nextFolderName : folderName}
-                  </span>
-                ) : null
-              ) : inline ? (
-                (showNextTurnSelection ? nextFolderName : folderName) ? (
-                  <span className="thread-composer-project-label min-w-0 truncate">
-                    {showNextTurnSelection ? nextFolderName : folderName}
-                  </span>
-                ) : null
-              ) : (
-                <span className={cn("thread-composer-project-label min-w-0 truncate", compact && !folderName && "sr-only")}>
-                  {showNextTurnSelection
-                    ? nextFolderName
-                    : compact && folderName ? folderName : pathAccessibleLabel}
-                </span>
-              )}
-              {line ? (
-                (showNextTurnSelection ? nextFolderName : folderName)
-                  ? <ChevronDown className="h-3 w-3 shrink-0 text-muted-foreground/45" aria-hidden />
-                  : null
-              ) : inline ? (
-                (showNextTurnSelection ? nextFolderName : folderName)
-                  ? <ChevronDown className="ml-1.5 h-3 w-3 shrink-0" aria-hidden />
-                  : null
-              ) : !compact ? (
-                <ChevronDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden />
+              <span className="thread-composer-project-label min-w-0 truncate">
+                {displayedFolderName || pickerTitle}
+              </span>
+              {!compact ? (
+                <ChevronDown className="h-3 w-3 shrink-0 text-muted-foreground" aria-hidden />
               ) : null}
             </button>
           </PopoverTrigger>
@@ -407,15 +384,14 @@ export function WorkspaceProjectPicker({
             align="start"
             side={line ? "top" : "bottom"}
             sideOffset={8}
-            aria-label={t("workspace.picker.chooseProject", { defaultValue: "Choose project folder" })}
+            aria-labelledby={pickerTitleId}
             onOpenAutoFocus={(event) => event.preventDefault()}
             className="w-[min(31rem,calc(100vw-1rem))] space-y-3 p-3 sm:p-4"
           >
-            {isAgentHome ? (
-              <p className="px-2 text-[13px] font-semibold">
-                {t("workspace.picker.chooseProject", { defaultValue: "Choose project folder" })}
-              </p>
-            ) : (
+            <h2 id={pickerTitleId} className="border-b border-border/55 px-2.5 pb-2 pt-1.5 text-sm font-semibold">
+              {pickerTitle}
+            </h2>
+            {!isAgentHome ? (
               <>
                 <div className="space-y-1 rounded-control bg-muted/35 px-3 py-2.5">
                   <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
@@ -460,7 +436,7 @@ export function WorkspaceProjectPicker({
                   </span>
                 </button>
               </>
-            )}
+            ) : null}
 
             {readableRepositories.length > 0 ? (
               <div className="space-y-1">

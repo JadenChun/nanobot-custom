@@ -58,9 +58,14 @@
 
       .boot-splash {
         display: flex;
+        box-sizing: border-box;
         height: 100%;
+        flex-direction: column;
         align-items: center;
         justify-content: center;
+        gap: 8px;
+        padding: 16px;
+        text-align: center;
       }
 
       .boot-splash-inner {
@@ -75,13 +80,27 @@
         color: rgba(10, 10, 10, 0.64);
       }
 
+      .boot-splash-status {
+        max-width: 24rem;
+        margin: 0;
+        color: inherit;
+        font-size: 13px;
+        opacity: 0.75;
+        overflow-wrap: anywhere;
+      }
+
       .boot-dot {
         width: 8px;
         height: 8px;
+        flex-shrink: 0;
         border-radius: 9999px;
         background: currentColor;
         opacity: 0.75;
         animation: boot-pulse 1s ease-in-out infinite;
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        .boot-dot { animation: none; }
       }
 
       @keyframes boot-pulse {
@@ -123,11 +142,12 @@
   </head>
   <body class="bg-background text-foreground antialiased">
     <div id="root">
-      <div class="boot-splash">
+      <div class="boot-splash" role="status">
         <div class="boot-splash-inner">
           <span class="boot-dot" aria-hidden="true"></span>
           <span data-boot-copy>Loading Kohaku…</span>
         </div>
+        <p class="boot-splash-status" hidden></p>
       </div>
     </div>
     <script>

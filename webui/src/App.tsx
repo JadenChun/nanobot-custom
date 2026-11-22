@@ -900,15 +900,10 @@ export default function App() {
 
   if (state.status === "loading") {
     return (
-      <div className="flex h-full w-full items-center justify-center">
-        <div className="flex flex-col items-center gap-3 animate-in fade-in-0 duration-300">
-          <div className="flex items-center gap-2 text-sm text-muted-foreground">
-            <span className="relative flex h-2 w-2">
-              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-foreground/40" />
-              <span className="relative inline-flex h-2 w-2 rounded-full bg-foreground/60" />
-            </span>
-            {t("app.loading.connecting")}
-          </div>
+      <div className="boot-splash" role="status">
+        <div className="boot-splash-inner">
+          <span className="boot-dot" aria-hidden="true" />
+          <span>{t("app.loading.connecting")}</span>
         </div>
       </div>
     );
