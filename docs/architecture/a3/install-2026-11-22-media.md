@@ -50,6 +50,24 @@ Verified after restart:
   reached `ready`, and the WebSocket opened. No fatal exception was logged.
 - Device: `00052141U004256`, Nothing Phone (2a).
 
+## Event-index repair
+
+The uncommitted source carried a defect in the fast event-index writer:
+`nanobot/session/manager.py` read `event_id` instead of `_event_id`, so every
+index was written with `events: {}`. The reader treats an empty map as valid,
+so the index never rebuilt itself, and bounded canonical lookups returned
+nothing. Consolidated display rows then lost their text, and new rows were
+never consolidated.
+
+- Fixed in the checkout: `ev_id = ev.get("_event_id")`.
+- Rebuilt the wheel `wheel-fixed/nanobot_ai-0.3.0-py3-none-any.whl`
+  (`e8ce662effe3772ca38818e0b2f5a8ff03d4cf90282b9181ce881249211b40ec`).
+- Removed the empty `.event-index` entry so the corrected reader rebuilds it.
+- Verified on the frozen source: 26 package-5 and display-parity tests pass,
+  and all 830 WebUI tests pass except the known
+  `test_child_approval_ingress` Stop-message failure that also fails at
+  `7da0c001`.
+
 ## Not verified
 
 - No paired media playback or seek was exercised on the phone after the update.
@@ -60,5 +78,6 @@ Verified after restart:
 
 ## Rollback
 
-Quit Kohaku, then move `venv` aside and rename `venv.pre-media-20261122` to
-`venv`. On Android, install the previous signed APK with `adb install -r`.
+Quit Kohaku, then move `venv` aside and rename `venv.pre-indexfix-20261122` to
+`venv`. Earlier trees remain as `venv.pre-media-20261122`. On Android, install
+the previous signed APK with `adb install -r`.
