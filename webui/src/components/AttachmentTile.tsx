@@ -2,7 +2,9 @@ import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { FileIcon, ImageIcon, Loader2, PlaySquare } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
+import { MobileVideoPlayer } from "@/components/MobileVideoPlayer";
 import { useMediaSource } from "@/lib/mobile-media";
+import { isMobileRuntimeActive } from "@/lib/mobile-runtime";
 import { cn } from "@/lib/utils";
 import type { UIMediaAttachment } from "@/lib/types";
 
@@ -85,6 +87,11 @@ export function AttachmentTile({ attachment, className, inline = false, variant 
   }
 
   if (attachment.kind === "video" && hasUrl) {
+    const videoClassName = cn(
+      "block w-full bg-black",
+      variant === "compact" ? "max-h-40" : "max-h-[26rem]",
+    );
+    const videoLabel = attachment.name ? `${label}: ${attachment.name}` : label;
     return (
       <AttachmentFrame
         attachment={attachment}
@@ -92,17 +99,18 @@ export function AttachmentTile({ attachment, className, inline = false, variant 
         inline={inline}
         variant={variant}
       >
-        <video
-          src={resolvedUrl}
-          controls
-          playsInline
-          preload="metadata"
-          className={cn(
-            "block w-full bg-black",
-            variant === "compact" ? "max-h-40" : "max-h-[26rem]",
-          )}
-          aria-label={attachment.name ? `${t("message.videoAttachment", { defaultValue: "Video attachment" })}: ${attachment.name}` : t("message.videoAttachment", { defaultValue: "Video attachment" })}
-        />
+        {isMobileRuntimeActive() ? (
+          <MobileVideoPlayer key={resolvedUrl} src={resolvedUrl} label={videoLabel} className={videoClassName} />
+        ) : (
+          <video
+            src={resolvedUrl}
+            controls
+            playsInline
+            preload="metadata"
+            className={videoClassName}
+            aria-label={videoLabel}
+          />
+        )}
       </AttachmentFrame>
     );
   }

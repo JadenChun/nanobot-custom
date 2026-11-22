@@ -5,6 +5,7 @@ import { Check, ChevronLeft, ChevronRight, FileText, Link2, Play, X } from "luci
 import { useTranslation } from "react-i18next";
 
 import { AssetPreview, MediaLoadingIndicator } from "@/components/AssetPreview";
+import { MobileVideoPlayer } from "@/components/MobileVideoPlayer";
 import { useMobileBack } from "@/hooks/useMobileBack";
 import { copyTextToClipboard } from "@/lib/clipboard";
 import { mediaLink } from "@/lib/media-links";
@@ -449,11 +450,25 @@ function LightboxSlide({ image, active }: { image: UIImage | null; active: boole
   const src = image?.url;
   const video = image?.kind === "video";
   const mobile = isMobileRuntimeActive();
+  if (video && mobile) {
+    return (
+      <div className="relative flex h-full w-full shrink-0 items-center justify-center">
+        {active && src ? (
+          <MobileVideoPlayer
+            src={src}
+            label={image?.name ?? t("message.videoAttachment", { defaultValue: "Video attachment" })}
+            containerClassName="h-full w-full"
+            className="h-full w-full rounded-compact shadow-2xl"
+          />
+        ) : (
+          <Play className="h-10 w-10 text-white/60" aria-hidden />
+        )}
+      </div>
+    );
+  }
   return (
     <div className="relative flex h-full w-full shrink-0 items-center justify-center">
-      {video && mobile && !active ? (
-        <Play className="h-10 w-10 text-white/60" aria-hidden />
-      ) : src && status !== "error" && (video ? (
+      {src && status !== "error" && (video ? (
         <video
           src={src}
           controls

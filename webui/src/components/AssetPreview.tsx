@@ -2,33 +2,11 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { CircleAlert, Loader2, Play } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
+import { VideoFrame, drawVideoFrame } from "@/components/VideoFrame";
+import { queueMobilePreview, useMobilePreviewVisibility } from "@/lib/mobile-media";
 import { isMobileRuntimeActive } from "@/lib/mobile-runtime";
 import type { UIImage } from "@/lib/types";
 import { cn } from "@/lib/utils";
-
-// Leave room in the Android broker (eight streams) for the open viewer and chat.
-const MOBILE_PREVIEW_LIMIT = 3;
-const waitingPreviews = new Set<() => void>();
-let activePreviews = 0;
-
-function queueMobilePreview(start: () => void) {
-  const run = () => {
-    activePreviews += 1;
-    start();
-  };
-  if (activePreviews < MOBILE_PREVIEW_LIMIT) run();
-  else waitingPreviews.add(run);
-
-  return () => {
-    if (waitingPreviews.delete(run)) return;
-    activePreviews -= 1;
-    const next = waitingPreviews.values().next().value;
-    if (next) {
-      waitingPreviews.delete(next);
-      next();
-    }
-  };
-}
 
 export function MediaLoadingIndicator() {
   const { t } = useTranslation();
@@ -55,31 +33,16 @@ function AssetPreviewContent({ asset, compact = false, className }: AssetPreview
   const mobile = isMobileRuntimeActive();
   const container = useRef<HTMLSpanElement>(null);
   const canvas = useRef<HTMLCanvasElement>(null);
-  const [visible, setVisible] = useState(!mobile);
   const [admitted, setAdmitted] = useState(!mobile);
   const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
   const failPreview = useCallback(() => setStatus("error"), []);
   const url = asset.url;
+  const inViewport = useMobilePreviewVisibility(container, mobile && Boolean(url));
+  const visible = !mobile || inViewport;
   const video = asset.kind === "video";
   const failed = !url || status === "error";
   const showMedia = url && admitted && !failed;
   const mediaClassName = cn("h-full w-full object-cover", className);
-
-  useEffect(() => {
-    const node = container.current;
-    if (!mobile || !node || !url) return;
-    if (typeof IntersectionObserver === "undefined") {
-      setVisible(true);
-      return;
-    }
-    const observer = new IntersectionObserver(([entry]) => {
-      if (!entry?.isIntersecting) return;
-      observer.disconnect();
-      setVisible(true);
-    });
-    observer.observe(node);
-    return () => observer.disconnect();
-  }, [mobile, url]);
 
   useEffect(() => {
     if (mobile && visible && url && status === "loading") {
@@ -97,20 +60,7 @@ function AssetPreviewContent({ asset, compact = false, className }: AssetPreview
               src={url}
               onFrame={(element) => {
                 const target = canvas.current;
-                const context = target?.getContext("2d");
-                if (!target || !context || !element.videoWidth || !element.videoHeight) {
-                  setStatus("error");
-                  return;
-                }
-                const scale = Math.min(1, 384 / Math.max(element.videoWidth, element.videoHeight));
-                target.width = Math.max(1, Math.round(element.videoWidth * scale));
-                target.height = Math.max(1, Math.round(element.videoHeight * scale));
-                try {
-                  context.drawImage(element, 0, 0, target.width, target.height);
-                  setStatus("ready");
-                } catch {
-                  setStatus("error");
-                }
+                setStatus(target && drawVideoFrame(element, target) ? "ready" : "error");
               }}
               onError={failPreview}
             />
@@ -154,42 +104,5 @@ function AssetPreviewContent({ asset, compact = false, className }: AssetPreview
         <MediaLoadingIndicator />
       ) : null}
     </span>
-  );
-}
-
-function VideoFrame({ src, onFrame, onError }: {
-  src: string;
-  onFrame: (video: HTMLVideoElement) => void;
-  onError: () => void;
-}) {
-  const ref = useRef<HTMLVideoElement>(null);
-
-  useEffect(() => {
-    const video = ref.current;
-    if (!video) return;
-    video.src = src;
-    return () => {
-      // A paused preview can hold an open byte range until the video is unloaded.
-      video.removeAttribute("src");
-      video.load();
-    };
-  }, [src]);
-
-  useEffect(() => {
-    const timeout = window.setTimeout(onError, 30_000);
-    return () => window.clearTimeout(timeout);
-  }, [onError]);
-
-  return (
-    <video
-      ref={ref}
-      muted
-      playsInline
-      preload="auto"
-      aria-hidden
-      className="pointer-events-none absolute inset-0 h-full w-full opacity-0"
-      onLoadedData={(event) => onFrame(event.currentTarget)}
-      onError={onError}
-    />
   );
 }
