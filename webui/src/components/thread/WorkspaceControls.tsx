@@ -954,16 +954,11 @@ export function WorkspacePermissionV2Control({
                 {t("workspace.permissionV2.retryRestricted", { defaultValue: "Retry returning to Sandbox" })}
               </Button>
             </div>
-          ) : isFull ? (
+          ) : isFull && !mobile ? (
             <div className="space-y-2 px-3 py-2">
               <p className="text-[12px] font-semibold text-foreground">{t("workspace.permissionV2.fullIndicator", { defaultValue: "Full access" })}</p>
               <p className="text-[11.5px] leading-relaxed text-muted-foreground">{t("workspace.permissionV2.fullReach", { defaultValue: "Files and commands across this device under your OS account permissions." })}</p>
               {actionFailed ? <p role="alert" className="text-[11px] text-destructive">{t("workspace.permissionV2.actionFailed", { defaultValue: "Access could not be updated. Refresh this chat before retrying." })}</p> : null}
-              {mobile ? (
-                <Button type="button" variant="outline" disabled={busy} onClick={() => void changeMode("full")} className="h-9 w-full rounded-control">
-                  {t("workspace.permissionV2.confirmThisDevice", { defaultValue: "Confirm Full on this device" })}
-                </Button>
-              ) : null}
               <Button type="button" variant="outline" disabled={busy} onClick={() => void changeMode("restricted")} className="h-9 w-full rounded-control">
                 {t("workspace.permissionV2.returnRestricted", { defaultValue: "Return to Sandbox" })}
               </Button>
@@ -973,16 +968,25 @@ export function WorkspacePermissionV2Control({
               <AccessMenuItem
                 icon={<ShieldCheck className="h-4 w-4" />}
                 label={t("thread.composer.workspace.default", { defaultValue: "Sandbox" })}
-                selected={permissions?.mode === "restricted" || draftRestricted}
-                onSelect={() => {}}
+                selected={!isFull && (permissions?.mode === "restricted" || draftRestricted)}
+                disabled={isFull && busy}
+                onSelect={() => {
+                  if (isFull) void changeMode("restricted");
+                }}
               />
               <AccessMenuItem
                 icon={<Monitor className="h-4 w-4" />}
                 label={t("thread.composer.workspace.full", { defaultValue: "Full access" })}
-                selected={false}
-                disabled={!fullAvailable || busy}
+                selected={isFull}
+                disabled={(!isFull && !fullAvailable) || busy}
                 warning
-                onSelect={selectFullAccess}
+                onSelect={() => {
+                  if (isFull) {
+                    void changeMode("full");
+                  } else {
+                    selectFullAccess();
+                  }
+                }}
               />
               {isRestrictedRetiring ? (
                 <div role="status" className="space-y-1 rounded-control bg-muted/35 px-3 py-2">
@@ -994,7 +998,7 @@ export function WorkspacePermissionV2Control({
                   </p>
                 </div>
               ) : null}
-              {!canEnableFull && reasonCopy ? <p className="px-2 py-1 text-[11px] leading-relaxed text-muted-foreground">{reasonCopy}</p> : null}
+              {!isFull && !canEnableFull && reasonCopy ? <p className="px-2 py-1 text-[11px] leading-relaxed text-muted-foreground">{reasonCopy}</p> : null}
               {actionFailed ? <p role="alert" className="px-2 py-1 text-[11px] text-destructive">{t("workspace.permissionV2.actionFailed", { defaultValue: "Access could not be updated. Refresh this chat before retrying." })}</p> : null}
             </div>
           )}

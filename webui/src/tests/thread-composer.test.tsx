@@ -5053,7 +5053,7 @@ describe("settings during a running turn", () => {
 });
 
 describe("mobile Full device confirmation", () => {
-  it("offers an explicit confirm action when Full is already active", async () => {
+  it("confirms Full from the selected menu item", async () => {
     const user = userEvent.setup();
     const runtime: MobileRuntime = {
       transport: {} as MobileRuntime["transport"],
@@ -5088,7 +5088,8 @@ describe("mobile Full device confirmation", () => {
     );
 
     await user.click(screen.getByRole("button", { name: "Workspace access mode: Full access" }));
-    await user.click(screen.getByRole("button", { name: "Confirm Full on this device" }));
+    expect(screen.queryByRole("button", { name: "Confirm Full on this device" })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("menuitem", { name: "Full access" }));
     await waitFor(() => expect(onWorkspaceAccessModeChange).toHaveBeenCalledWith("full"));
   });
 });
