@@ -50,14 +50,15 @@ def _read(fd: int, timeout: float) -> bytes:
     return bytes(output)
 
 
-def _wait_for(fd: int, needle: bytes, timeout: float) -> bytes:
+def _wait_for(fd: int, timeout: float, *needles: bytes) -> bytes:
     output = bytearray()
     deadline = time.monotonic() + timeout
-    while needle not in output and time.monotonic() < deadline:
+    while time.monotonic() < deadline:
         output.extend(_read(fd, min(0.1, deadline - time.monotonic())))
-    if needle not in output:
-        raise AssertionError(f"terminal output did not contain {needle!r}")
-    return bytes(output)
+        if all(needle in output for needle in needles):
+            return bytes(output)
+    missing = [needle for needle in needles if needle not in output]
+    raise AssertionError(f"terminal output did not contain {missing!r}")
 
 
 def _wait_for_exit(pid: int, timeout: float) -> int:
@@ -104,7 +105,7 @@ def main() -> int:
     reaped = False
     try:
         _resize(master, 24, 80)
-        output.extend(_wait_for(master, ENTER_ALT_SCREEN, 10))
+        output.extend(_wait_for(master, 10, ENTER_ALT_SCREEN))
 
         # Feed committed UTF-8 one grapheme at a time. The raw terminal stream
         # should contain every glyph, even though differential rendering may
@@ -116,17 +117,14 @@ def main() -> int:
 
         _resize(master, 18, 42)
         os.kill(pid, signal.SIGWINCH)
-        resized = _read(master, 0.5)
-        output.extend(resized)
-        if b"\x1b[18;" not in resized or b";42H" not in resized:
-            raise AssertionError("TUI did not repaint to the resized PTY dimensions")
+        output.extend(_wait_for(master, 5, b"\x1b[18;", b";42H"))
 
         # Ctrl+C clears the draft. The local exit command must still work while
         # the intentionally unavailable gateway has not attached a chat.
         os.write(master, b"\x03")
         output.extend(_read(master, 0.2))
         os.write(master, b"exit\r")
-        output.extend(_wait_for(master, LEAVE_ALT_SCREEN, 5))
+        output.extend(_wait_for(master, 5, LEAVE_ALT_SCREEN))
         exit_code = _wait_for_exit(pid, 5)
         output.extend(_read(master, 0.5))
         reaped = True
