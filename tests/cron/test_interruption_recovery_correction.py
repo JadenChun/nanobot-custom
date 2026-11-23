@@ -17,8 +17,8 @@ from nanobot.cron.gateway import GatewayCron
 from nanobot.cron.job_hooks import CronHookOutcome
 from nanobot.cron.service import CronService
 from nanobot.session.runtime_authority import DurableSessionAuthority
-from nanobot.session.source import new_source_event
 from nanobot.session.session_mode import SessionModeError, SessionModeRecordError
+from nanobot.session.source import new_source_event
 from tests.cron.stage3_fixtures import FakeChannels, definition
 from tests.cron.test_interruption_recovery import _interrupted_gateway
 
