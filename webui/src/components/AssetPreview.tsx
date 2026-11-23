@@ -5,6 +5,7 @@ import { useTranslation } from "react-i18next";
 import { VideoFrame, drawVideoFrame } from "@/components/VideoFrame";
 import { queueMobilePreview, useMobilePreviewVisibility } from "@/lib/mobile-media";
 import { isMobileRuntimeActive } from "@/lib/mobile-runtime";
+import { isLinuxDesktopWebKit } from "@/lib/runtime";
 import type { UIImage } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
@@ -40,6 +41,7 @@ function AssetPreviewContent({ asset, compact = false, className }: AssetPreview
   const inViewport = useMobilePreviewVisibility(container, mobile && Boolean(url));
   const visible = !mobile || inViewport;
   const video = asset.kind === "video";
+  const deferVideo = video && isLinuxDesktopWebKit();
   const failed = !url || status === "error";
   const showMedia = url && admitted && !failed;
   const mediaClassName = cn("h-full w-full object-cover", className);
@@ -66,7 +68,7 @@ function AssetPreviewContent({ asset, compact = false, className }: AssetPreview
             />
           ) : null}
         </>
-      ) : showMedia && video ? (
+      ) : showMedia && video && !deferVideo ? (
         <video
           src={url}
           muted
@@ -77,7 +79,7 @@ function AssetPreviewContent({ asset, compact = false, className }: AssetPreview
           onError={failPreview}
           className={mediaClassName}
         />
-      ) : showMedia ? (
+      ) : showMedia && !video ? (
         <img
           src={url}
           alt={compact ? "" : (asset.name ?? "")}

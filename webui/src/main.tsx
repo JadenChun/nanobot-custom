@@ -5,7 +5,7 @@ import { ErrorBoundary } from "./components/ErrorBoundary";
 import "./globals.css";
 import "./styles/mobile-shell.css";
 import { initializeI18n } from "./i18n";
-import { initializeLoopbackRuntimeHost } from "./lib/runtime";
+import { initializeLoopbackRuntimeHost, isLinuxWebKitRuntime } from "./lib/runtime";
 import {
   createMobileRuntime,
   installMobileRuntime,
@@ -44,10 +44,7 @@ if (injectedMobileTransport) {
 // WebKitGTK (Tauri's Linux webview) renders filter/backdrop animations on the
 // main thread. Mark the runtime so CSS can keep the layout while dropping the
 // paint-heavy motion that makes streaming and scrolling stutter.
-const isWebKitRuntime = /AppleWebKit/i.test(navigator.userAgent)
-  && /Linux/i.test(navigator.userAgent)
-  && !/Chrome|Chromium|Edg\/|OPR\//i.test(navigator.userAgent);
-document.documentElement.classList.toggle("webkit-runtime", isWebKitRuntime);
+document.documentElement.classList.toggle("webkit-runtime", isLinuxWebKitRuntime());
 
 initializeLoopbackRuntimeHost();
 if (isMobileRuntimeActive()) document.documentElement.classList.add("mobile-runtime");
