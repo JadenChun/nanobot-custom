@@ -255,7 +255,11 @@ from nanobot.webui.metadata import (
     WEBUI_TARGET_TURN_METADATA_KEY,
     WEBUI_TURN_METADATA_KEY,
 )
-from nanobot.webui.session_identity import is_webui_session_key, webui_chat_id
+from nanobot.webui.session_identity import (
+    is_webui_session_key,
+    webui_chat_id,
+    webui_session_key,
+)
 
 if TYPE_CHECKING:
     from nanobot.agent.tools.filesystem import ReadFileTool
@@ -2134,7 +2138,7 @@ class AgentLoop:
         if (
             route_channel == "websocket"
             and root_source is not None
-            and root_source.session_key == f"websocket:{route_chat_id}"
+            and root_source.session_key == webui_session_key(route_chat_id)
         ):
             outbound_metadata[WEBUI_DISPLAY_SOURCE_KEY] = root_source
         await self.bus.publish_outbound(OutboundMessage(
@@ -3739,11 +3743,7 @@ class AgentLoop:
             approval_granted=bool(run_context.policy.approval_granted),
             context_manager=run_context.policy.context_manager,
             effect_authority=run_context.policy.effect_authority,
-            permissions=(
-                self.tools_config.permissions
-                if self.tools_config is not None
-                else None
-            ),
+            permissions=self.tools_config.permissions,
         )
         tool_policy: ToolPolicy = risky_policy
         if run_context.internal_tool_policy is not None:
@@ -7122,6 +7122,8 @@ class AgentLoop:
         ctx.pending_summary = None
         ctx.provider_state = None
         await ctx.delivery.runtime_admitted(runtime)
+        ctx.request_context = self._request_context_for_turn(ctx)
+        ctx.runtime_context_blocks = await self._resolve_runtime_context_for_turn(ctx)
         ctx.input_persisted_early = self._persist_user_message_early(
             ctx.msg, session, run_id=ctx.run_context.run_id, trace_owner=ctx)
         if ctx.kind is TurnKind.USER and ctx.input_persisted_early:
@@ -7130,10 +7132,15 @@ class AgentLoop:
                 input_attempt_proof=admission.proof if admission is not None else None,
                 source_event_id=ctx.run_context.source_input_event_id,
             )
+        if ctx.input_persisted_early:
+            request_context = ctx.request_context
+            assert request_context is not None
+            ctx.request_context = dataclasses.replace(
+                request_context,
+                source_state=writer.committed_state,
+            )
         if pending_followup_id(ctx.msg) is not None:
             await self._publish_stop_target_for_session(ctx.session_key)
-        ctx.request_context = self._request_context_for_turn(ctx)
-        ctx.runtime_context_blocks = await self._resolve_runtime_context_for_turn(ctx)
         # Keep the full recovery history until the runner has admitted its
         # invocation-specific artifact verifier and checkpoint dependencies.
         if ctx.fresh_history:

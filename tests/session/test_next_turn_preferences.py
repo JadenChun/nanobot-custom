@@ -227,6 +227,7 @@ async def test_active_turn_isolates_next_turn_folder_and_model_across_steer_stop
     monkeypatch,
 ):
     import asyncio
+
     from nanobot.agent.loop import AgentLoop
     from nanobot.agent.turn import DeliveryTarget, TurnRequest, TurnSource
     from nanobot.config.schema import Config, ModelPresetConfig

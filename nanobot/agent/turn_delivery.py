@@ -29,6 +29,7 @@ from nanobot.session.session_messages import session_message_envelope
 from nanobot.session.source_store import SourceState
 from nanobot.utils.runtime import CONTEXT_BUDGET_ERROR_MESSAGE
 from nanobot.webui.metadata import WEBUI_DISPLAY_ON_COMMIT_KEY, WEBUI_DISPLAY_SOURCE_KEY
+from nanobot.webui.session_identity import webui_session_key
 
 if TYPE_CHECKING:
     from nanobot.utils.llm_runtime import LLMRuntime
@@ -124,7 +125,7 @@ class TurnDeliveryFactory:
                 raise TypeError("turn route policy must return TurnRoute")
         if (
             admitted_source is not None and route.channel == "websocket"
-            and admitted_source.session_key == session_key == f"websocket:{route.chat_id}"
+            and admitted_source.session_key == session_key == webui_session_key(route.chat_id)
         ):
             route = dataclasses.replace(route, metadata={
                 **route.metadata, WEBUI_DISPLAY_SOURCE_KEY: admitted_source,
@@ -153,7 +154,7 @@ class TurnDeliveryFactory:
         if (
             admitted_source is not None
             and msg.channel == "websocket"
-            and admitted_source.session_key == session_key == f"websocket:{msg.chat_id}"
+            and admitted_source.session_key == session_key == webui_session_key(msg.chat_id)
         ):
             metadata[WEBUI_DISPLAY_SOURCE_KEY] = admitted_source
         return TurnDelivery(

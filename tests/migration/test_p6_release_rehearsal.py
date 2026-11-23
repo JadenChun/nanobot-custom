@@ -40,7 +40,7 @@ _PACKAGE_MEMBERS = (
 )
 
 
-def test_candidate_ci_trigger_preserves_native_matrix_and_strict_policy() -> None:
+def test_candidate_ci_runs_linux_python_314_and_preserves_strict_policy() -> None:
     root = Path(__file__).resolve().parents[2]
     workflow = yaml.load((root / ".github/workflows/ci.yml").read_text(), Loader=yaml.BaseLoader)
     events = workflow["on"]
@@ -48,12 +48,24 @@ def test_candidate_ci_trigger_preserves_native_matrix_and_strict_policy() -> Non
     assert events["push"]["branches"] == [
         "main", "staging", "codex/upstream-migration", "codex/harness-migration-candidate",
     ]
-    matrix = workflow["jobs"]["test"]["strategy"]["matrix"]["include"]
-    assert [(row["os"], row["python-version"]) for row in matrix] == [
-        ("ubuntu-latest", "3.11"), ("ubuntu-latest", "3.14"), ("windows-latest", "3.14"),
+    jobs = workflow["jobs"]
+    assert all(job["runs-on"] == "ubuntu-latest" for job in jobs.values())
+    python_jobs = [
+        job for job in jobs.values()
+        if any(
+            "python -m pytest" in step.get("run", "") and "--cov=nanobot" in step["run"]
+            for step in job["steps"]
+        )
     ]
-    assert workflow["jobs"]["windows_process"]["runs-on"] == "windows-latest"
-    steps = workflow["jobs"]["test"]["steps"]
+    assert len(python_jobs) == 1
+    python_job = python_jobs[0]
+    assert "matrix" not in python_job.get("strategy", {})
+    steps = python_job["steps"]
+    assert [
+        step["with"]["python-version"]
+        for step in steps
+        if step.get("uses", "").startswith("actions/setup-python@")
+    ] == ["3.14"]
     assert any(
         "basedpyright" in step.get("run", "")
         and "--outputjson" in step.get("run", "")
@@ -65,8 +77,6 @@ def test_candidate_ci_trigger_preserves_native_matrix_and_strict_policy() -> Non
     )
     assert any(step.get("run") == "uv sync --all-extras --dev" for step in steps)
     assert any(step.get("run") == "uv run --no-sync python -m scripts.install_channel_dependencies --all-channels" for step in steps)
-    assert all(job["runs-on"] in {"ubuntu-latest", "windows-latest", "${{ matrix.os }}"}
-               for job in workflow["jobs"].values())
 
 
 def _write_zip(

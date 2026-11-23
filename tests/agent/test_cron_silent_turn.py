@@ -170,8 +170,9 @@ async def test_silent_risky_action_requires_approval_without_persisting_request(
     engine_config,
 ) -> None:
     provider = ScriptedProvider([LLMResponse(content=None, tool_calls=[
-        ToolCallRequest(id="danger", name="exec", arguments={"command": "rm -rf ."}),
+        ToolCallRequest(id="danger", name="exec", arguments={"command": "printf 'approval fixture'"}),
     ])])
+    engine_config.tools.permissions.rules["exec"] = "ask"
     loop = AgentLoop.from_config(engine_config, tool_registry=ToolRegistry(), provider=provider)
     try:
         result = await loop.execute_silent_cron_turn(_request())

@@ -438,12 +438,11 @@ class PairingService:
             challenge.approved = True
             challenge.state = "approved"
             challenge.result = None
-            if challenge.proof_expires_at is not None:
-                now = int(self.clock())
-                challenge.proof_expires_at = min(
-                    challenge.offer.expires_at,
-                    now + DEVICE_PROOF_TTL_SECONDS,
-                )
+            now = int(self.clock())
+            challenge.proof_expires_at = min(
+                challenge.offer.expires_at,
+                now + DEVICE_PROOF_TTL_SECONDS,
+            )
             self._save_locked()
             return PairingApproved(
                 pairing_id=challenge.offer.pairing_id,
@@ -571,11 +570,10 @@ class PairingService:
                 challenge.challenge = challenge.challenge.model_copy(
                     update={"expires_at": renewed_until},
                 )
-            if challenge.proof_expires_at is not None:
-                challenge.proof_expires_at = min(
-                    renewed_until,
-                    now + DEVICE_PROOF_TTL_SECONDS,
-                )
+            challenge.proof_expires_at = min(
+                renewed_until,
+                now + DEVICE_PROOF_TTL_SECONDS,
+            )
             self._save_locked()
             if challenge.state == "expired":
                 challenge.state = (

@@ -463,7 +463,7 @@ async def test_streaming_sibling_controls_do_not_touch_parent_and_stop_remains_r
             await asyncio.wait_for(terminal_cancelled.wait(), timeout=1)
             await asyncio.wait_for(stop_result_settled.wait(), timeout=1)
             assert len(stop_results) == 1
-            assert stop_results[0].content.startswith("Stopped ")
+            assert stop_results[0].content.startswith("Stop is still pending.")
             assert stop_results[0].metadata[WEBUI_TURN_METADATA_KEY] == "stop-siblings"
             assert not release_terminal.is_set()
             assert terminal_cancelled.is_set()

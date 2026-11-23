@@ -8,7 +8,7 @@ import json
 import re
 import time
 import uuid
-from collections.abc import Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
@@ -718,7 +718,9 @@ class WebUICommandRouter:
         if _typed_mobile_identity(connection) is not None:
             if envelope.get("type") == "auth_refresh":
                 new_token = envelope.get("access_token")
-                refresh_fn = getattr(self._transport, "refresh_mobile_connection", None)
+                refresh_fn: Callable[
+                    [ServerConnection, str], Awaitable[bool]
+                ] | None = getattr(self._transport, "refresh_mobile_connection", None)
                 refreshed = (
                     isinstance(new_token, str)
                     and bool(new_token)

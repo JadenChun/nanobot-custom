@@ -18,6 +18,7 @@ from nanobot.cron.job_hooks import CronHookOutcome
 from nanobot.cron.service import CronService
 from nanobot.session.runtime_authority import DurableSessionAuthority
 from nanobot.session.session_mode import SessionModeError, SessionModeRecordError
+from nanobot.session.source import new_source_event
 from tests.cron.stage3_fixtures import FakeChannels, definition
 from tests.cron.test_interruption_recovery import _interrupted_gateway
 
@@ -153,7 +154,7 @@ async def _install_valid_foreign_journal(tmp_path, sessions):
 
 @pytest.mark.parametrize("damage", [
     "registry", "workspace_witness", "unrelated_journal", "invalid_operation_id",
-    "foreign_registry_journal", "inventory", "unrelated_source", "missing_record",
+    "foreign_registry_journal", "inventory", "missing_record",
     "missing_records_directory", "storage_read",
     "storage_oserror", "unexpected",
 ])
@@ -184,8 +185,6 @@ async def test_shared_mode_or_storage_failure_remains_a_visible_acquisition_fail
         await _install_valid_foreign_journal(tmp_path, sessions)
     elif damage == "inventory":
         (sessions.sessions_dir / "invalid-source-entry").write_bytes(b"invalid\n")
-    elif damage == "unrelated_source":
-        sessions._jsonl_store.get_session_path("cli:unrelated").write_bytes(b"invalid-json\n")
     elif damage in {"missing_record", "missing_records_directory"}:
         _add_healthy_cron(gateway, sessions)
         if damage == "missing_record":
@@ -227,6 +226,38 @@ async def test_shared_mode_or_storage_failure_remains_a_visible_acquisition_fail
         assert gateway.channels.calls == []
         scheduler_lease = gateway.runtime.scheduler.store.acquire_lease()
         scheduler_lease.release()
+    finally:
+        await _close(gateway, lease)
+
+
+async def test_unrelated_session_content_does_not_block_cron_recovery(tmp_path):
+    gateway, lease, sessions, _key, _old, *_rest = await _interrupted_gateway(
+        tmp_path, leave_stale_lease=False, destinations=("A",)
+    )
+    unrelated_key = "cli:unrelated"
+    sessions.admit_persistent_write(unrelated_key)
+    source = sessions._jsonl_store.source
+    snapshot = source.load_source_snapshot(unrelated_key)
+    source.append_source_events(
+        unrelated_key,
+        snapshot.state,
+        [new_source_event({"role": "user", "content": "unrelated content"}, run_id="unrelated-run")],
+    )
+    damaged_path = sessions._jsonl_store.get_session_path(unrelated_key)
+    valid_header = damaged_path.read_bytes().splitlines(keepends=True)[0]
+    damaged_path.write_bytes(valid_header + b"invalid-json\n")
+    damaged_before = damaged_path.read_bytes()
+    effects = _FakeEffects(gateway)
+
+    try:
+        assert await gateway.runtime.acquire_for_gateway() is True
+        effects.assert_empty()
+        assert gateway.channels.calls == []
+
+        with pytest.raises(SessionModeError):
+            sessions.read_session_file(unrelated_key)
+        assert damaged_path.read_bytes() == damaged_before
+        await gateway.runtime.aclose()
     finally:
         await _close(gateway, lease)
 

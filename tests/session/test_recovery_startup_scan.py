@@ -68,12 +68,12 @@ async def test_unresolved_canonical_session_still_loads_owner_snapshot(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from nanobot.session.persistence_metadata import (
-        SOURCE_PENDING_FOLLOWUPS_METADATA_KEY,
-    )
     from nanobot.session.pending_followups import (
         mint_pending_followup_id,
         record_pending_followup,
+    )
+    from nanobot.session.persistence_metadata import (
+        SOURCE_PENDING_FOLLOWUPS_METADATA_KEY,
     )
 
     sessions = _canonical_manager(tmp_path, (UNRESOLVED_KEY,))

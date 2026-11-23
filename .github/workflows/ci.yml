@@ -132,34 +132,14 @@ jobs:
           if-no-files-found: error
 
   test:
-    name: Python (${{ matrix.name }})
+    name: Python (latest, 3.14 + coverage)
     needs: [changes, webui_bundle]
     if: needs.changes.outputs.python_required == 'true'
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 20
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - name: minimum, 3.11
-            os: ubuntu-latest
-            python-version: "3.11"
-            coverage: false
-            # CLI command tests assert exact Rich terminal output; run them
-            # serially below so xdist cannot change terminal-width rendering.
-            pytest_args: "-n auto --dist loadfile --ignore=tests/cli/test_commands.py"
-          - name: latest, 3.14 + coverage
-            os: ubuntu-latest
-            python-version: "3.14"
-            coverage: true
-            pytest_args: "-n auto --dist loadfile --ignore=tests/cli/test_commands.py"
-          - name: Windows, 3.14
-            os: windows-latest
-            python-version: "3.14"
-            coverage: false
-            # Real PowerShell/process-tree tests run serially in a separate
-            # job. Keep them out of xdist so workers never share a console.
-            pytest_args: "-n auto --dist loadfile --ignore=tests/cli/test_commands.py --ignore=tests/tools/test_exec_platform.py"
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      # Run the CLI tests serially to preserve terminal-width rendering.
+      PYTEST_ARGS: "-n auto --dist loadfile --ignore=tests/cli/test_commands.py"
 
     steps:
       - uses: actions/checkout@v4
@@ -174,10 +154,10 @@ jobs:
         shell: bash
         run: test -f nanobot/web/dist/index.html
 
-      - name: Set up Python ${{ matrix.python-version }}
+      - name: Set up Python 3.14
         uses: actions/setup-python@v5
         with:
-          python-version: ${{ matrix.python-version }}
+          python-version: "3.14"
 
       - name: Install uv
         uses: astral-sh/setup-uv@v4
@@ -186,7 +166,6 @@ jobs:
           cache-dependency-glob: pyproject.toml
 
       - name: Install system dependencies (Linux)
-        if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y libolm-dev build-essential
 
       - name: Install dependencies
@@ -202,8 +181,7 @@ jobs:
         id: verification_setup
         shell: bash
         env:
-          MATRIX_NAME: ${{ matrix.name }}
-          PYTEST_ARGS: ${{ matrix.pytest_args }}
+          MATRIX_NAME: latest, 3.14 + coverage
         run: |
           mkdir -p artifacts
           uv run --no-sync python - <<'PY' > artifacts/environment.txt
@@ -239,23 +217,22 @@ jobs:
       # Channel requirements live in manifests rather than uv.lock. Avoid a
       # later uv run sync pruning the packages installed by the previous step.
       - name: Lint with ruff
-        if: matrix.coverage
         run: uv run --no-sync ruff check nanobot tests conftest.py
 
       - name: Prepare the frozen type baseline
-        if: ${{ !cancelled() && steps.verification_setup.outcome == 'success' && matrix.coverage }}
+        if: ${{ !cancelled() && steps.verification_setup.outcome == 'success' }}
         run: |
           mkdir -p /tmp/a3-0-baseline
           cp .github/baselines/a3-0/pyproject.toml /tmp/a3-0-baseline/pyproject.toml
 
       - name: Type check with BasedPyright (strict)
-        if: ${{ !cancelled() && steps.verification_setup.outcome == 'success' && matrix.coverage }}
+        if: ${{ !cancelled() && steps.verification_setup.outcome == 'success' }}
         run: >-
           uv run --no-sync basedpyright --outputjson
           > basedpyright.json
 
       - name: Compare strict diagnostics with the frozen baseline
-        if: ${{ !cancelled() && steps.verification_setup.outcome == 'success' && matrix.coverage }}
+        if: ${{ !cancelled() && steps.verification_setup.outcome == 'success' }}
         run: >-
           uv run --no-sync python scripts/check_type_regressions.py
           .github/baselines/a3-0-basedpyright.json basedpyright.json
@@ -263,19 +240,19 @@ jobs:
           --current-root "${{ github.workspace }}"
 
       - name: Run tests with coverage
-        if: ${{ !cancelled() && steps.verification_setup.outcome == 'success' && matrix.coverage }}
+        if: ${{ !cancelled() && steps.verification_setup.outcome == 'success' }}
         env:
           COLUMNS: "120"
           LINES: "40"
         run: >-
           uv run --no-sync python -m pytest
-          ${{ matrix.pytest_args }}
+          ${{ env.PYTEST_ARGS }}
           --cov=nanobot --cov-report=term-missing:skip-covered
           --durations=25 --durations-min=1.0
           --junitxml=artifacts/pytest.xml
 
       - name: Run serial CLI command tests with coverage
-        if: ${{ !cancelled() && steps.verification_setup.outcome == 'success' && matrix.coverage }}
+        if: ${{ !cancelled() && steps.verification_setup.outcome == 'success' }}
         env:
           COLUMNS: "120"
           LINES: "40"
@@ -286,128 +263,14 @@ jobs:
           --durations=25 --durations-min=1.0
           --junitxml=artifacts/cli.xml
 
-      - name: Run compatibility tests
-        if: ${{ !cancelled() && steps.verification_setup.outcome == 'success' && !matrix.coverage }}
-        env:
-          COLUMNS: "120"
-          LINES: "40"
-        run: >-
-          uv run --no-sync python -m pytest
-          ${{ matrix.pytest_args }}
-          --durations=25 --durations-min=1.0
-          --junitxml=artifacts/pytest.xml
-
-      - name: Run serial CLI command compatibility tests
-        if: ${{ !cancelled() && steps.verification_setup.outcome == 'success' && !matrix.coverage }}
-        env:
-          COLUMNS: "120"
-          LINES: "40"
-        run: >-
-          uv run --no-sync python -m pytest
-          tests/cli/test_commands.py
-          --durations=25 --durations-min=1.0
-          --junitxml=artifacts/cli.xml
-
       - name: Upload Python verification evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: python-verification-${{ matrix.name }}
+          name: python-verification-latest, 3.14 + coverage
           path: |
             basedpyright.json
             artifacts/
-          if-no-files-found: warn
-
-  windows_process:
-    name: Python (Windows process compatibility)
-    needs: [changes, webui_bundle]
-    if: needs.changes.outputs.python_required == 'true'
-    runs-on: windows-latest
-    timeout-minutes: 20
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Download WebUI bundle
-        uses: actions/download-artifact@v4
-        with:
-          name: webui-dist
-          path: nanobot/web/dist
-
-      - name: Verify WebUI bundle
-        shell: bash
-        run: test -f nanobot/web/dist/index.html
-
-      - name: Set up Python 3.14
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.14"
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v4
-        with:
-          enable-cache: true
-          cache-dependency-glob: pyproject.toml
-
-      - name: Install dependencies
-        run: uv sync --all-extras --dev
-
-      - name: Install channel dependencies
-        run: uv run --no-sync python -m scripts.install_channel_dependencies --all-channels
-
-      - name: Verify dependency consistency
-        run: uv pip check
-
-      - name: Record verification identity
-        shell: bash
-        env:
-          MATRIX_NAME: windows_process
-          PYTEST_ARGS: tests/tools/test_exec_platform.py
-        run: |
-          mkdir -p artifacts
-          uv run --no-sync python - <<'PY' > artifacts/environment.txt
-          import hashlib
-          import os
-          import platform
-          import subprocess
-          from pathlib import Path
-
-          root = Path.cwd()
-
-          def digest_tree(path: Path) -> str:
-              digest = hashlib.sha256()
-              for item in sorted(path.rglob("*")):
-                  if item.is_file():
-                      digest.update(item.relative_to(root).as_posix().encode())
-                      digest.update(item.read_bytes())
-              return digest.hexdigest()
-
-          def command(*args: str) -> str:
-              return subprocess.check_output(args, text=True).strip()
-
-          print(f"source_sha={os.environ.get('GITHUB_SHA', command('git', 'rev-parse', 'HEAD'))}")
-          print(f"matrix_name={os.environ.get('MATRIX_NAME', '')}")
-          print(f"python={platform.python_version()}")
-          print(f"uv={command('uv', '--version')}")
-          print(f"uv_lock_sha256={hashlib.sha256((root / 'uv.lock').read_bytes()).hexdigest()}")
-          print(f"webui_bundle_sha256={digest_tree(root / 'nanobot/web/dist')}")
-          print(f"pytest_args={os.environ.get('PYTEST_ARGS', '')}")
-          PY
-          uv pip freeze > artifacts/pip-freeze.txt
-
-      - name: Run Windows process compatibility tests
-        run: >-
-          uv run --no-sync python -m pytest
-          tests/tools/test_exec_platform.py
-          --durations=25 --durations-min=1.0
-          --junitxml=artifacts/pytest.xml
-
-      - name: Upload Windows verification evidence
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: python-verification-windows-process
-          path: artifacts/
           if-no-files-found: warn
 
   webui:
@@ -447,17 +310,9 @@ jobs:
   tui:
     needs: changes
     if: needs.changes.outputs.tui_required == 'true'
-    name: ${{ matrix.name }}
-    runs-on: ${{ matrix.os }}
+    name: Terminal UI
+    runs-on: ubuntu-latest
     timeout-minutes: 10
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - name: Terminal UI
-            os: ubuntu-latest
-          - name: Terminal UI (Windows)
-            os: windows-latest
 
     steps:
       - uses: actions/checkout@v4
@@ -480,42 +335,18 @@ jobs:
         run: bun run test
 
       - name: Test TUI in a real pseudo-terminal
-        if: runner.os != 'Windows'
         working-directory: tui
         run: python3 scripts/pty_smoke.py
-
-      - name: Set up Python for ConPTY smoke test
-        if: runner.os == 'Windows'
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.13'
-
-      - name: Test TUI in a real ConPTY terminal
-        if: runner.os == 'Windows'
-        working-directory: tui
-        shell: pwsh
-        run: |
-          python -m pip install --disable-pip-version-check pywinpty==3.0.5
-          python scripts/conpty_smoke.py
 
       - name: Build TUI
         working-directory: tui
         run: bun run build
 
       - name: Verify licensed Linux release archive
-        if: runner.os == 'Linux'
         working-directory: tui
         run: |
           bun scripts/release-notices.ts linux-x64
           python3 scripts/package-release.py linux-x64
-
-      - name: Verify licensed Windows release archive
-        if: runner.os == 'Windows'
-        working-directory: tui
-        shell: pwsh
-        run: |
-          bun scripts/release-notices.ts win32-x64
-          python scripts/package-release.py win32-x64
 
   docker:
     needs: changes

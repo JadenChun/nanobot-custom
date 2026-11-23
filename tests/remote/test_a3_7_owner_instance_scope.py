@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
 from websockets.http11 import Request as WsRequest
 
 from nanobot.config.loader import save_config
@@ -67,7 +68,10 @@ def test_u3_explicit_instances_resolve_distinct_owner_paths(tmp_path: Path) -> N
     assert not socket_a.is_symlink() and not socket_b.is_symlink()
 
 
-def test_u3_instance_a_cannot_reach_instance_b_owner(tmp_path: Path) -> None:
+def test_u3_instance_a_cannot_reach_instance_b_owner(
+    tmp_path_factory: pytest.TempPathFactory,
+) -> None:
+    tmp_path = tmp_path_factory.mktemp("u3")
     root_a = tmp_path / "instance-a"
     root_b = tmp_path / "instance-b"
     settings_a = _instance(root_a)

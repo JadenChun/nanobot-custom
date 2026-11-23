@@ -213,7 +213,7 @@ class PrependScrollAnchorBoundary extends Component<PrependScrollAnchorBoundaryP
     }
 
     const viewport = scroller.getBoundingClientRect();
-    let delta = 0;
+    let delta: number;
     let nextViewportTop = 0;
     if (element) {
       nextViewportTop = element.getBoundingClientRect().top - viewport.top;

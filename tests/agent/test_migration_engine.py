@@ -136,8 +136,9 @@ async def test_real_main_runner_delegates_to_real_planner_runner(engine_config):
 async def test_real_mixed_risky_batch_executes_no_tools(engine_config):
     provider = ScriptedProvider([LLMResponse(content=None, tool_calls=[
         ToolCallRequest(id='send', name='message', arguments={'content': 'must not send', 'channel': 'telegram', 'chat_id': '42'}),
-        ToolCallRequest(id='danger', name='exec', arguments={'command': 'rm -rf .'}),
+        ToolCallRequest(id='danger', name='exec', arguments={'command': "printf 'approval fixture'"}),
     ])])
+    engine_config.tools.permissions.rules['exec'] = 'ask'
     loop = AgentLoop.from_config(engine_config, tool_registry=ToolRegistry(), provider=provider)
     try:
         result = await loop.execute_turn(TurnRequest(content='fixture batch', session_key='cli:test'))
