@@ -11,6 +11,7 @@ import { copyTextToClipboard } from "@/lib/clipboard";
 import { mediaLink } from "@/lib/media-links";
 import { useMobileMediaUrl } from "@/lib/mobile-media";
 import { isMobileRuntimeActive } from "@/lib/mobile-runtime";
+import { isLinuxDesktopWebKit } from "@/lib/runtime";
 import { cn } from "@/lib/utils";
 import type { UIImage } from "@/lib/types";
 
@@ -450,18 +451,21 @@ function LightboxSlide({ image, active }: { image: UIImage | null; active: boole
   const src = image?.url;
   const video = image?.kind === "video";
   const mobile = isMobileRuntimeActive();
-  if (video && mobile) {
+  if (video && (mobile || isLinuxDesktopWebKit())) {
+    const label = image?.name ?? t("message.videoAttachment", { defaultValue: "Video attachment" });
     return (
       <div className="relative flex h-full w-full shrink-0 items-center justify-center">
-        {active && src ? (
+        {!active || !src ? (
+          <Play className="h-10 w-10 text-white/60" aria-hidden />
+        ) : mobile ? (
           <MobileVideoPlayer
             src={src}
-            label={image?.name ?? t("message.videoAttachment", { defaultValue: "Video attachment" })}
+            label={label}
             containerClassName="h-full w-full"
             className="h-full w-full rounded-compact shadow-2xl"
           />
         ) : (
-          <Play className="h-10 w-10 text-white/60" aria-hidden />
+          <DeferredVideoPlayer src={src} label={label} />
         )}
       </div>
     );
@@ -502,6 +506,75 @@ function LightboxSlide({ image, active }: { image: UIImage | null; active: boole
         </p>
       ) : src && status === "loading" ? <MediaLoadingIndicator /> : null)}
     </div>
+  );
+}
+
+function DeferredVideoPlayer({ src, label }: { src: string; label: string }) {
+  const { t } = useTranslation();
+  const ref = useRef<HTMLVideoElement>(null);
+  const [status, setStatus] = useState<"idle" | "loading" | "ready" | "error">("idle");
+  const showPlayer = status === "loading" || status === "ready";
+
+  useEffect(() => {
+    const video = ref.current;
+    return () => {
+      if (!video?.hasAttribute("src")) return;
+      video.removeAttribute("src");
+      video.load();
+    };
+  }, [src]);
+
+  function play() {
+    const video = ref.current;
+    if (!video) return;
+    // Attach the source and start playback within the user's click.
+    video.src = src;
+    setStatus("loading");
+    video.focus();
+    void video.play().catch(() => {
+      if (video.hasAttribute("src")) {
+        setStatus((current) => current === "loading" ? "ready" : current);
+      }
+    });
+  }
+
+  return (
+    <>
+      <video
+        ref={ref}
+        controls={showPlayer}
+        playsInline
+        preload="none"
+        tabIndex={showPlayer ? 0 : -1}
+        aria-label={label}
+        aria-hidden={!showPlayer}
+        onLoadedData={() => setStatus("ready")}
+        onPlaying={() => setStatus("ready")}
+        onWaiting={() => setStatus("loading")}
+        onPause={() => setStatus((current) => current === "loading" ? "ready" : current)}
+        onError={() => setStatus("error")}
+        className={cn(
+          "max-h-full max-w-full rounded-compact bg-black shadow-2xl",
+          !showPlayer && "absolute pointer-events-none opacity-0",
+        )}
+      />
+      {status === "idle" ? (
+        <button
+          type="button"
+          className="z-10 inline-flex items-center gap-2 rounded-control bg-white px-4 py-2 text-sm font-medium text-black focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-white"
+          onClick={play}
+        >
+          <Play className="h-4 w-4" aria-hidden />
+          {t("lightbox.playVideo", { defaultValue: "Play video" })}
+        </button>
+      ) : null}
+      {status === "loading" ? <MediaLoadingIndicator /> : null}
+      {status === "error" ? (
+        <p role="status" className="text-center text-sm text-white/80">
+          {t("message.attachmentUnavailable", { defaultValue: "Attachment unavailable" })}
+        </p>
+      ) : null}
+    </>
   );
 }
 

@@ -78,6 +78,20 @@ function getHostApi(): NanobotHostApi | null {
   return window.nanobotHost ?? loopbackHostApi;
 }
 
+export function isLinuxWebKitRuntime(): boolean {
+  const userAgent = window.navigator.userAgent;
+  return /AppleWebKit/i.test(userAgent)
+    && /Linux/i.test(userAgent)
+    && !/Chrome|Chromium|Edg\/|OPR\//i.test(userAgent);
+}
+
+export function isLinuxDesktopWebKit(): boolean {
+  return typeof window !== "undefined"
+    && typeof window.__TAURI_INTERNALS__ !== "undefined"
+    && !getMobileRuntime()
+    && isLinuxWebKitRuntime();
+}
+
 /**
  * Install the external native-host bridge advertised in the URL fragment.
  *

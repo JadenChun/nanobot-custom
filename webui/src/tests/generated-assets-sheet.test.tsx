@@ -4,6 +4,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { GeneratedAssetsPanel, GeneratedAssetsSheet } from "@/components/thread/GeneratedAssetsSheet";
 import { setAppLanguage } from "@/i18n";
+import {
+  createMobileRuntime, installMobileRuntime, resetMobileRuntime, type MobileTransport,
+} from "@/lib/mobile-runtime";
 import type { SessionGeneratedAssetsPayload } from "@/lib/types";
 
 function response(payload: SessionGeneratedAssetsPayload): Response {
@@ -56,6 +59,18 @@ const payload: SessionGeneratedAssetsPayload = {
   ],
 };
 
+const libraryClips = ["one", "two", "three"].map((clip, index) => ({
+  ...asset(clip, `clip-${clip}.mp4`),
+  kind: "video" as const,
+  mime: "video/mp4",
+  createdAt: 1_793_438_339_000 - index,
+}));
+
+const videoLibrary: SessionGeneratedAssetsPayload = {
+  ...payload,
+  groups: [{ ...payload.groups[0], sessionKey: payload.sessionKey, artifacts: libraryClips }],
+};
+
 describe("GeneratedAssetsSheet", () => {
   beforeEach(async () => {
     await setAppLanguage("en");
@@ -63,6 +78,8 @@ describe("GeneratedAssetsSheet", () => {
   });
 
   afterEach(() => {
+    resetMobileRuntime();
+    vi.restoreAllMocks();
     vi.unstubAllGlobals();
   });
 
@@ -288,6 +305,94 @@ describe("GeneratedAssetsSheet", () => {
     await user.click(screen.getByRole("button", { name: "Open clip.mp4" }));
 
     expect(await screen.findAllByLabelText("clip.mp4")).toHaveLength(3);
+  });
+
+  it("defers desktop WebKit library playback and releases a clip when leaving it", async () => {
+    vi.stubGlobal("__TAURI_INTERNALS__", {});
+    vi.spyOn(navigator, "userAgent", "get").mockReturnValue(
+      "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/605.1.15 Safari/605.1.15",
+    );
+    vi.mocked(fetch).mockResolvedValue(response(videoLibrary));
+    vi.spyOn(HTMLMediaElement.prototype, "play").mockResolvedValue(undefined);
+    const user = userEvent.setup();
+    render(<GeneratedAssetsPanel sessionKey={payload.sessionKey} token="tok" modal={false} />);
+
+    await user.click(screen.getByRole("button", { name: "All sessions" }));
+    const tiles = await Promise.all(libraryClips.map(({ name }) =>
+      screen.findByRole("button", { name: `Open ${name}` })));
+    expect(document.querySelectorAll("video[src]")).toHaveLength(0);
+
+    await user.click(tiles[0]);
+    expect(screen.getByRole("group", { name: "All images" }).querySelectorAll("button")).toHaveLength(3);
+    expect(document.querySelectorAll("video[src]")).toHaveLength(0);
+    await user.click(screen.getByRole("button", { name: "Play video" }));
+    const first = document.querySelector("video[src]");
+    expect(first).toHaveAttribute("src", libraryClips[0].url);
+    expect(document.querySelectorAll("video[src]")).toHaveLength(1);
+
+    for (const clip of libraryClips.slice(1)) {
+      await user.click(screen.getByRole("button", { name: "Next image" }));
+      await screen.findByRole("dialog", { name: clip.name });
+      expect(first).not.toHaveAttribute("src");
+      expect(document.querySelectorAll("video[src]")).toHaveLength(0);
+    }
+
+    await user.click(screen.getByRole("button", { name: "Play video" }));
+    const last = document.querySelector("video[src]");
+    expect(last).toHaveAttribute("src", libraryClips[2].url);
+    expect(document.querySelectorAll("video[src]")).toHaveLength(1);
+    await user.click(screen.getByRole("button", { name: "Close image preview" }));
+    expect(last).not.toHaveAttribute("src");
+    expect(document.querySelectorAll("video[src]")).toHaveLength(0);
+  });
+
+  it("shows mobile library and filmstrip frames and a poster before playback", async () => {
+    vi.stubGlobal("IntersectionObserver", undefined);
+    const runtime = createMobileRuntime({} as MobileTransport);
+    vi.spyOn(runtime, "request").mockResolvedValue({
+      requestId: 1,
+      status: 200,
+      headers: {},
+      bodyBase64: btoa(JSON.stringify(videoLibrary)),
+    });
+    installMobileRuntime(runtime);
+    const poster = "data:image/jpeg;base64,cG9zdGVy";
+    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(
+      { drawImage: vi.fn() } as unknown as CanvasRenderingContext2D,
+    );
+    vi.spyOn(HTMLCanvasElement.prototype, "toDataURL").mockReturnValue(poster);
+    const user = userEvent.setup();
+    render(<GeneratedAssetsPanel sessionKey={payload.sessionKey} token="tok" modal={false} />);
+
+    function showFrame(video: Element) {
+      Object.defineProperties(video, { videoWidth: { value: 320 }, videoHeight: { value: 180 } });
+      fireEvent.loadedData(video);
+    }
+
+    async function showFrames(container: HTMLElement) {
+      for (const clip of libraryClips) {
+        const video = await waitFor(() => {
+          const element = container.querySelector(`video[src="${clip.url}"]`);
+          if (!element) throw new Error(`Waiting for ${clip.name}`);
+          return element;
+        });
+        showFrame(video);
+      }
+      expect(container.querySelectorAll("canvas[width='320'][height='180']")).toHaveLength(3);
+    }
+
+    await user.click(screen.getByRole("button", { name: "All sessions" }));
+    await showFrames(await screen.findByTestId("generated-assets-library"));
+    await user.click(screen.getByRole("button", { name: "Open clip-one.mp4" }));
+    await showFrames(screen.getByRole("group", { name: "All images" }));
+
+    const dialog = screen.getByRole("dialog", { name: "clip-one.mp4" });
+    const player = dialog.querySelector("video[controls]");
+    const posterFrame = dialog.querySelector("video[aria-hidden][preload='auto']");
+    expect(posterFrame).not.toBeNull();
+    showFrame(posterFrame!);
+    expect(player).toHaveAttribute("poster", poster);
+    expect(player).toHaveAttribute("preload", "none");
   });
 
   it("copies the media link and agent-usable path", async () => {
