@@ -6,8 +6,11 @@ from nanobot.agent.turn import ApprovalDecision
 from nanobot.agent.turn_admission import ApprovalAdmission
 
 
-async def store(admission, summary='action'):
-    return await admission.store(session_key='cron:job', channel='telegram', chat_id='42', summary=summary)
+async def store(admission, summary='action', *, ttl_seconds=None):
+    return await admission.store(
+        session_key='cron:job', channel='telegram', chat_id='42', summary=summary,
+        ttl_seconds=ttl_seconds,
+    )
 
 
 @pytest.mark.parametrize('reply,action,key', [
@@ -178,7 +181,7 @@ async def test_expired_approval_is_removed_before_decision(monkeypatch):
     admission = ApprovalAdmission()
     now = [1_000_000.0]
     monkeypatch.setattr('nanobot.agent.turn_admission.time.time', lambda: now[0])
-    pending = await store(admission)
+    pending = await store(admission, ttl_seconds=900)
 
     now[0] += 899
     assert (await admission.snapshot('telegram:42', 'yes')).pending is pending
@@ -187,7 +190,7 @@ async def test_expired_approval_is_removed_before_decision(monkeypatch):
     now[0] -= 901
     assert (await admission.snapshot('telegram:42', 'yes')).pending is None
 
-    typed = await store(admission, 'typed')
+    typed = await store(admission, 'typed', ttl_seconds=900)
     now[0] += 901
     decision = ApprovalDecision(approval_id=typed.approval_id, decision='approve')
     assert (await admission.snapshot_decision('cron:job', decision)).pending is None

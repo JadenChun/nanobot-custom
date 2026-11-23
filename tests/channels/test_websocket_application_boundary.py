@@ -76,7 +76,7 @@ def test_websocket_runtime_does_not_import_application_command_trees() -> None:
 
 
 def test_business_entrypoints_are_thin_transport_delegations() -> None:
-    for method_name in ("_dispatch_envelope", "_hydrate_after_subscribe", "send"):
+    for method_name in ("_dispatch_envelope", "webui_hydrate", "send"):
         statements = _statements_without_docstring(_channel_method(method_name))
         assert len(statements) == 1, method_name
         assert isinstance(statements[0], ast.Expr), method_name

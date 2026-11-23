@@ -99,11 +99,12 @@ def test_private_hook_precedes_second_backend_and_namespace_observation(
 class _ObservedSource(SourceSessionStore):
     def __init__(self, backend: JsonlSessionStore, trace: list[str]) -> None:
         self.deleted = False
+        self.trace_settlement = False
         self.trace = trace
         super().__init__(backend)
 
     def __getattribute__(self, name: str) -> object:
-        if name == "_backend" and self.deleted:
+        if name == "_backend" and self.deleted and self.trace_settlement:
             self.trace.append("backend")
         return super().__getattribute__(name)
 
@@ -128,6 +129,7 @@ async def test_real_delete_uses_class_command_after_unlink_before_late_backend_r
         if current == path:
             trace.append("unlink")
             source.deleted = True
+            source.trace_settlement = True
 
     def retire() -> None:
         assert expected_owner is not None and expected_owner._lock.is_locked
@@ -149,6 +151,7 @@ async def test_real_delete_uses_class_command_after_unlink_before_late_backend_r
                 pytest.fail("settlement released the execution lock")
         trace.append("fsync")
         real_sync(directory)
+        source.trace_settlement = False
 
     def forbidden_instance_command(*_args: object) -> None:
         pytest.fail("instance override redirected backend settlement")

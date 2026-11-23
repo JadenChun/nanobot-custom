@@ -28,6 +28,7 @@ from nanobot.bus.events import OutboundMessage
 from nanobot.config.paths import get_workspace_path
 from nanobot.security.workspace_access import current_tool_workspace
 from nanobot.webui.metadata import WEBUI_DISPLAY_SOURCE_KEY
+from nanobot.webui.session_identity import webui_session_key
 
 if TYPE_CHECKING:
     from nanobot.context_repo.policy import ResourceAccessPolicy
@@ -326,7 +327,7 @@ class MessageTool(Tool):
             and channel == "websocket"
             and request_ctx is not None
             and request_ctx.source_state is not None
-            and request_ctx.source_state.session_key == f"websocket:{chat_id}"
+            and request_ctx.source_state.session_key == webui_session_key(chat_id)
         ):
             metadata[WEBUI_DISPLAY_SOURCE_KEY] = request_ctx.source_state
 
