@@ -3739,11 +3739,7 @@ class AgentLoop:
             approval_granted=bool(run_context.policy.approval_granted),
             context_manager=run_context.policy.context_manager,
             effect_authority=run_context.policy.effect_authority,
-            permissions=(
-                self.tools_config.permissions
-                if self.tools_config is not None
-                else None
-            ),
+            permissions=self.tools_config.permissions,
         )
         tool_policy: ToolPolicy = risky_policy
         if run_context.internal_tool_policy is not None:

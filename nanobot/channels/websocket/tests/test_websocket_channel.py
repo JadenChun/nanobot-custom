@@ -2072,7 +2072,7 @@ async def test_remote_access_reduction_applies_to_in_flight_message(
         hydrate_started.set()
         await release_hydrate.wait()
 
-    channel._hydrate_after_subscribe = blocked_hydrate
+    monkeypatch.setattr(channel, "webui_hydrate", blocked_hydrate)
     message_conn = AsyncMock()
     message_conn.remote_address = ("203.0.113.8", 50123)
     settings_conn = AsyncMock()
@@ -2092,22 +2092,34 @@ async def test_remote_access_reduction_applies_to_in_flight_message(
             },
         )
     )
-    await hydrate_started.wait()
+    try:
+        await asyncio.wait_for(hydrate_started.wait(), timeout=5)
 
-    await channel._dispatch_envelope(
-        settings_conn,
-        "remote-settings",
-        {
-            "type": "set_workspace_scope",
-            "chat_id": chat_id,
-            "workspace_scope": {
-                "project_path": str(default_workspace),
-                "access_mode": "restricted",
-            },
-        },
-    )
-    release_hydrate.set()
-    await message_task
+        await asyncio.wait_for(
+            channel._dispatch_envelope(
+                settings_conn,
+                "remote-settings",
+                {
+                    "type": "set_workspace_scope",
+                    "chat_id": chat_id,
+                    "workspace_scope": {
+                        "project_path": str(default_workspace),
+                        "access_mode": "restricted",
+                    },
+                },
+            ),
+            timeout=5,
+        )
+    finally:
+        release_hydrate.set()
+        try:
+            await asyncio.wait_for(message_task, timeout=5)
+        except TimeoutError:
+            message_task.cancel()
+            await asyncio.wait_for(
+                asyncio.gather(message_task, return_exceptions=True),
+                timeout=5,
+            )
 
     assert sessions.read_session_file(f"websocket:{chat_id}") is not None
     assert channel.gateway.workspaces.scope_for_session_key(

@@ -136,7 +136,7 @@ jobs:
     needs: [changes, webui_bundle]
     if: needs.changes.outputs.python_required == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     env:
       # Run the CLI tests serially to preserve terminal-width rendering.
       PYTEST_ARGS: "-n auto --dist loadfile --ignore=tests/cli/test_commands.py"

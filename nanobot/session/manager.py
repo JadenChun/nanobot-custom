@@ -1068,7 +1068,7 @@ class JsonlSessionStore:
     def cached_source_snapshot(
         self,
         key: str,
-        expected_version: PrivateFileVersion | None,
+        expected_version: "PrivateFileVersion | None",
     ) -> "SourceSnapshot | None":
         """Return a hot in-memory SourceSnapshot when the on-disk file version still matches."""
         if expected_version is None:
@@ -1082,14 +1082,14 @@ class JsonlSessionStore:
         return SourceSnapshot(
             state=cached.state,
             header=deepcopy(cached.header),
-            events=list(cached.events),
+            events=deepcopy(cached.events),
             checkpoint=deepcopy(cached.checkpoint),
         )
 
     def remember_source_snapshot(
         self,
         key: str,
-        version: PrivateFileVersion,
+        version: "PrivateFileVersion",
         snapshot: "SourceSnapshot",
     ) -> None:
         """Retain a bounded hot snapshot cache for active canonical sessions."""
@@ -1101,7 +1101,7 @@ class JsonlSessionStore:
             SourceSnapshot(
                 state=snapshot.state,
                 header=deepcopy(snapshot.header),
-                events=list(snapshot.events),
+                events=deepcopy(snapshot.events),
                 checkpoint=deepcopy(snapshot.checkpoint),
             ),
         )

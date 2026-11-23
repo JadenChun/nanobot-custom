@@ -69,12 +69,11 @@ def handle_remote_access(
     if path == f"{_PREFIX}/tailscale":
         from nanobot.remote.tailscale import tailscale_status
 
-        ws_cfg = getattr(cfg.channels, "websocket", None)
-        ws_port = (
-            ws_cfg.get("port")
-            if isinstance(ws_cfg, dict)
-            else getattr(ws_cfg, "port", None)
-        )
+        ws_cfg: object = getattr(cfg.channels, "websocket", None)
+        if isinstance(ws_cfg, dict):
+            ws_port: object | None = cast(dict[object, object], ws_cfg).get("port")
+        else:
+            ws_port = getattr(ws_cfg, "port", None)
         expected_port = ws_port if isinstance(ws_port, int) and ws_port > 0 else None
         return http_json_response(tailscale_status(expected_port=expected_port))
     if path == f"{_PREFIX}/pairing/pending":

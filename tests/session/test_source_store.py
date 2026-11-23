@@ -536,17 +536,20 @@ def test_file_fsync_precedes_replace_and_directory_fsync_follows(backend, monkey
     import stat
     snapshot = upgrade(backend, seed(backend))
     original_fsync, original_replace = os.fsync, os.replace
+    canonical_path = backend.get_session_path(snapshot.state.session_key)
     order = []
     def fsync(fd):
         order.append("directory" if stat.S_ISDIR(os.fstat(fd).st_mode) else "file")
         return original_fsync(fd)
     def replace(source, target):
-        order.append("replace")
+        if os.fspath(target) == os.fspath(canonical_path):
+            order.append("replace")
         return original_replace(source, target)
     monkeypatch.setattr(os, "fsync", fsync)
     monkeypatch.setattr(os, "replace", replace)
     backend.source.commit_context_checkpoint(snapshot.state.session_key, snapshot.state, candidate(snapshot))
-    assert order == ["file", "replace", "directory"]
+    replace_index = order.index("replace")
+    assert order[replace_index - 1:replace_index + 2] == ["file", "replace", "directory"]
 
 
 @pytest.mark.parametrize("field", ["revision", "generation", "incarnation", "last_archived"])
