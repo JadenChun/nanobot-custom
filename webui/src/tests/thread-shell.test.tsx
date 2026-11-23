@@ -4735,18 +4735,21 @@ describe("ThreadShell", () => {
     );
 
     try {
-      render(
-        wrap(
-          client,
-          <ThreadShell
-            session={session("retry-visible-chat")}
-            title="Retry visible chat"
-            onToggleSidebar={() => {}}
-            onNewChat={() => {}}
-          />,
-        ),
-      );
-      await waitFor(() => expect(historyCalls).toBe(1));
+      // Flush the failed response before sending the foreground event.
+      await act(async () => {
+        render(
+          wrap(
+            client,
+            <ThreadShell
+              session={session("retry-visible-chat")}
+              title="Retry visible chat"
+              onToggleSidebar={() => {}}
+              onNewChat={() => {}}
+            />,
+          ),
+        );
+      });
+      expect(historyCalls).toBe(1);
 
       act(() => {
         setDocumentVisibility("hidden");

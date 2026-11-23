@@ -222,8 +222,34 @@ jobs:
       - name: Prepare the frozen type baseline
         if: ${{ !cancelled() && steps.verification_setup.outcome == 'success' }}
         run: |
-          mkdir -p /tmp/a3-0-baseline
-          cp .github/baselines/a3-0/pyproject.toml /tmp/a3-0-baseline/pyproject.toml
+          python3 - <<'PY'
+          import json
+          import os
+          import tomllib
+          from pathlib import Path
+
+          # Relocate the frozen package paths after the source rename.
+          # Keep the original report, diagnostic signatures, and checker rules.
+          destination = Path(os.environ["RUNNER_TEMP"]) / "a3-0-baseline"
+          destination.mkdir()
+          config = Path(".github/baselines/a3-0/pyproject.toml").read_text()
+          source_scope = 'include = ["nanobot"]'
+          if (
+              tomllib.loads(config)["tool"]["basedpyright"]["include"] != ["nanobot"]
+              or config.count(source_scope) != 1
+          ):
+              raise SystemExit("Unexpected frozen checker source scope")
+          (destination / "pyproject.toml").write_text(
+              config.replace(source_scope, 'include = ["kohaku"]', 1)
+          )
+
+          report = json.loads(Path(".github/baselines/a3-0-basedpyright.json").read_text())
+          original_source = Path("/tmp/a3-0-baseline/nanobot")
+          for diagnostic in report["generalDiagnostics"]:
+              relative = Path(diagnostic["file"]).relative_to(original_source)
+              diagnostic["file"] = str(destination / "kohaku" / relative)
+          (destination / "basedpyright.json").write_text(json.dumps(report))
+          PY
 
       - name: Type check with BasedPyright (strict)
         if: ${{ !cancelled() && steps.verification_setup.outcome == 'success' }}
@@ -235,8 +261,8 @@ jobs:
         if: ${{ !cancelled() && steps.verification_setup.outcome == 'success' }}
         run: >-
           uv run --no-sync python scripts/check_type_regressions.py
-          .github/baselines/a3-0-basedpyright.json basedpyright.json
-          --baseline-root /tmp/a3-0-baseline
+          "$RUNNER_TEMP/a3-0-baseline/basedpyright.json" basedpyright.json
+          --baseline-root "$RUNNER_TEMP/a3-0-baseline"
           --current-root "${{ github.workspace }}"
 
       - name: Run tests with coverage
