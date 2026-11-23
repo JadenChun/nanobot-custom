@@ -21,6 +21,8 @@ from nanobot.security.workspace_access import default_workspace_scope
 from nanobot.session.execution_owner import acquire_execution
 from nanobot.session.manager import Session, SessionManager, SessionWriteConflict
 from nanobot.session.pending_followups import PendingFollowupRecord
+from nanobot.session.runtime_authority import DurableSessionAuthority
+from nanobot.session.source_store import SourceSessionStore
 from nanobot.session.webui_turns import (
     clear_websocket_turn_if_current,
     register_queued_websocket_turn_if_idle,
@@ -31,8 +33,10 @@ from nanobot.session.workspace_access_recovery import (
 )
 from nanobot.webui import ws_http
 from nanobot.webui.inbound_commands import WebUICommandRouter
+from nanobot.webui.transcript import write_session_messages_as_transcript
 from nanobot.webui.workspaces import WebUIWorkspaceController, WorkspacePermissionActionError
 from nanobot.webui.ws_http import WEBSOCKET_MUTATION_ROUTES, GatewayHTTPHandler
+from tests.webui.test_child_thread_route import _make_channel
 
 
 @pytest.mark.parametrize(("action", "path"), [
@@ -318,6 +322,7 @@ def test_real_ordinary_owning_thread_read_projects_permissions_without_request(
     recovery = WorkspaceAccessRecoveryOwner(sessions, workspaces)
 
     handler = object.__new__(GatewayHTTPHandler)
+    handler.stop_target_for_key = None
     handler.config = SimpleNamespace(host="127.0.0.1")
     handler.workspace_controls_available = lambda _connection: True
     handler.check_api_token = lambda _request: True
@@ -1195,32 +1200,29 @@ async def test_permission_projection_is_attached_only_to_local_owning_thread_rea
         def __init__(self) -> None:
             self.permission_calls: list[tuple[str, bool]] = []
 
-        def get(self, chat_id: str) -> dict[str, object]:
-            return {"chat_id": chat_id, "status": "ready"}
-
-        def workspace_permissions(
+        def thread_permission_context(
             self,
             chat_id: str,
+            _snapshot: object,
             *,
             controls_available: bool,
-        ) -> dict[str, object]:
+            scope: object,
+        ) -> tuple[dict[str, object], dict[str, object], None]:
             self.permission_calls.append((chat_id, controls_available))
-            return permission_projection
-
-        def preview_permission_context(self, _chat_id: str) -> tuple[None, None]:
-            return None, None
+            return {"chat_id": chat_id, "status": "ready"}, permission_projection, None
 
     recovery = Recovery()
     handler = object.__new__(GatewayHTTPHandler)
+    handler.stop_target_for_key = None
     handler.config = SimpleNamespace(host="127.0.0.1")
     handler.workspace_controls_available = lambda _connection: True
     handler.check_api_token = lambda _request: True
     handler.session_manager = SimpleNamespace(
-        source_backend=lambda _key: object(),
+        read_existing_canonical_source=lambda _key: (object(), object()),
         read_session_file=lambda _key: {"messages": []},
     )
     handler.workspaces = SimpleNamespace(
-        scope_for_session_key=lambda _key: scope,
+        scope_for_session_key=lambda _key, **_kwargs: scope,
         scope_payload=lambda _scope, **_kwargs: {"project_path": "/tmp/project"},
         folder_grants_allowed_for_session=lambda _key: False,
     )
@@ -1330,22 +1332,23 @@ async def test_local_thread_request_permissions_and_scope_share_live_once_author
     )
 
     class Recovery:
-        def get(self, _chat_id: str) -> dict[str, object]:
-            return {"selected_access": selected_access, "task_access_state": "active"}
-
-        def workspace_permissions(
+        def thread_permission_context(
             self,
             _chat_id: str,
+            _snapshot: object,
             *,
             controls_available: bool,
-        ) -> dict[str, object]:
+            scope: object,
+        ) -> tuple[dict[str, object], dict[str, object], object]:
             assert controls_available
-            return permissions
-
-        def preview_permission_context(self, _chat_id: str) -> tuple[object, object]:
-            return owner, reference
+            return (
+                {"selected_access": selected_access, "task_access_state": "active"},
+                permissions,
+                reference,
+            )
 
     handler = object.__new__(GatewayHTTPHandler)
+    handler.stop_target_for_key = None
     handler.config = SimpleNamespace(host="127.0.0.1")
     handler.workspace_controls_available = lambda _connection: True
     handler.check_api_token = lambda _request: True
@@ -1387,6 +1390,160 @@ async def test_local_thread_request_permissions_and_scope_share_live_once_author
     assert body["workspace_permissions"]["task_access"]["folders"] == [
         {"path": str(project.resolve()), "file_access": "read_only", "commands": False},
     ]
+
+
+async def test_first_managed_chat_open_does_not_read_unrelated_sources(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    lease = await DurableSessionAuthority(workspace, sessions_root=tmp_path / "sessions").acquire()
+    try:
+        manager = lease.manager
+        key = "websocket:first-open"
+        assert manager.upsert_session_metadata(key, {
+            "webui": True,
+            "workspace_scope": default_workspace_scope(workspace, True).metadata(),
+        }, create_if_absent=True)
+        write_session_messages_as_transcript(key, [
+            {"role": "user", "content": "saved question"},
+            {"role": "assistant", "content": "saved reply"},
+        ])
+        # A new journal entry also invalidates the mode-resolution cache.
+        manager.admit_persistent_write("cli:unrelated")
+
+        resolver = manager._mode_resolver
+        assert resolver is not None
+        read = resolver.storage.read
+        load_snapshot = SourceSessionStore.load_source_snapshot
+        source_reads: set[str] = set()
+        snapshots: list[str] = []
+
+        def observe_source_read(name: str, **kwargs: Any) -> bytes:
+            if name.endswith(".jsonl") and "/" not in name:
+                source_reads.add(name)
+            return read(name, **kwargs)
+
+        def observe_snapshot(store: SourceSessionStore, session_key: str, **kwargs: Any):
+            snapshots.append(session_key)
+            return load_snapshot(store, session_key, **kwargs)
+
+        monkeypatch.setattr(resolver.storage, "read", observe_source_read)
+        monkeypatch.setattr(SourceSessionStore, "load_source_snapshot", observe_snapshot)
+        gateway = _make_channel(tmp_path, manager).gateway
+        token = gateway.tokens.issue_api_token(300)
+        headers = Headers([("Host", "127.0.0.1:8765"), ("Authorization", f"Bearer {token}")])
+        connection = SimpleNamespace(
+            remote_address=("127.0.0.1", 1234), request=SimpleNamespace(headers=headers),
+        )
+        path = "/api/sessions/websocket%3Afirst-open/webui-thread?limit=40&direction=latest"
+
+        response = await gateway.http.dispatch(connection, Request(path, headers))
+
+        assert response.status_code == 200
+        body = json.loads(response.body)
+        assert [row["content"] for row in body["messages"]] == ["saved question", "saved reply"]
+        assert body["workspace_permissions"]["mode"] == "restricted"
+        assert body["workspace_access_request"] is None
+        assert source_reads == {f"{manager.storage_key(key)}.jsonl"}
+        assert snapshots == [key]
+    finally:
+        assert lease.close is not None
+        await lease.close()
+
+
+@pytest.mark.parametrize("remote", [False, True])
+async def test_saved_history_and_controls_have_independent_availability(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, remote: bool,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    lease = await DurableSessionAuthority(workspace, sessions_root=tmp_path / "sessions").acquire()
+    key = "websocket:split-read"
+    try:
+        manager = lease.manager
+        assert manager.upsert_session_metadata(key, {
+            "webui": True,
+            "workspace_scope": default_workspace_scope(workspace, True).metadata(),
+        }, create_if_absent=True)
+        history = [
+            {"role": "user", "content": "saved question"},
+            {"role": "assistant", "content": "saved reply"},
+        ]
+        write_session_messages_as_transcript(key, history)
+        gateway = _make_channel(tmp_path, manager).gateway
+        token = gateway.tokens.issue_api_token(300)
+        headers = Headers([("Host", "127.0.0.1:8765"), ("Authorization", f"Bearer {token}")])
+        connection = SimpleNamespace(
+            remote_address=("127.0.0.1", 1234), request=SimpleNamespace(headers=headers),
+        )
+
+        async def read(query: str) -> tuple[int, dict[str, Any]]:
+            if remote:
+                return gateway.http.mobile_thread_payload(
+                    key, {"view": [query]}, owner=True,
+                )
+            response = await gateway.http.dispatch(
+                connection, Request(f"/api/sessions/{key}/webui-thread?view={query}", headers),
+            )
+            return response.status_code, json.loads(response.body) if response.status_code == 200 else {}
+
+        def unavailable(*_args: object, **_kwargs: object) -> None:
+            raise RuntimeError("live projection unavailable")
+
+        def no_stop(*_args: object, **_kwargs: object) -> None:
+            pytest.fail("a saved history read must not project Stop")
+
+        recovery = gateway.http.workspace_access_recovery
+        assert recovery is not None
+        with monkeypatch.context() as patch:
+            patch.setattr(recovery, "thread_permission_context", unavailable)
+            status, body = await read("history")
+            assert status == 200
+            assert [row["content"] for row in body["messages"]] == ["saved question", "saved reply"]
+            assert body["view"] == "history"
+            assert "workspace_permissions" not in body
+            assert "workspace_access_request" not in body
+            assert "stop_target" not in body
+
+            patch.setattr(gateway.http, "stop_target_for_key", no_stop)
+            assert (await read("history"))[0] == 200
+
+        def no_history(*_args: object, **_kwargs: object) -> None:
+            pytest.fail("a controls read must not replay saved history")
+
+        with monkeypatch.context() as patch:
+            patch.setattr(ws_http, "build_webui_thread_response", no_history)
+            status, body = await read("controls")
+            assert status == 200
+            assert body["view"] == "controls"
+            assert body["workspace_permissions"]["mode"] == "restricted"
+            assert body["workspace_access_request"] is None
+            assert "messages" not in body
+            patch.setattr(recovery, "thread_permission_context", unavailable)
+            assert (await read("controls"))[0] == 503
+
+        # A persisted Full label is folder context, not permission evidence.
+        # Its owner need not answer for the saved conversation to be readable.
+        assert manager.upsert_session_metadata(key, {
+            "workspace_scope": default_workspace_scope(workspace, False).metadata(),
+        })
+        with monkeypatch.context() as patch:
+            patch.setattr(manager.desktop_permissions, "full_reference", unavailable)
+            assert (await read("history"))[0] == 200
+
+        # Leave a readable display copy to prove it is not read authority.
+        assert manager.delete_session(key)
+        write_session_messages_as_transcript(key, history)
+        assert (await read("history"))[0] == 404
+
+        refused = await gateway.http.dispatch(
+            connection, Request(f"/api/sessions/{key}/webui-thread?view=history", Headers()),
+        )
+        assert refused.status_code == 401
+    finally:
+        assert lease.close is not None
+        await lease.close()
 
 
 def test_restricted_mode_is_idempotent_while_once_is_live(tmp_path: Path) -> None:

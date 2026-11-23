@@ -94,8 +94,14 @@ async def _managed_prepare_router(
     async def send(target, event, **payload: object) -> None:
         frames.append({"connection": target.name, "event": event, **payload})
 
+    async def allow_mobile_revalidation(_connection) -> bool:
+        return True
+
     router = WebUICommandRouter(
-        SimpleNamespace(webui_send_event=send),
+        SimpleNamespace(
+            webui_send_event=send,
+            revalidate_mobile_connection=allow_mobile_revalidation,
+        ),
         SimpleNamespace(
             http=handler,
             endpoint=SimpleNamespace(webui_connections=connections),

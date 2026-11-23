@@ -126,7 +126,7 @@ def test_refresh_idle_expiry_and_refresh_revoke_race(tmp_path) -> None:
     assert sorted(outcomes) == ["refreshed", "revoked"] or sorted(outcomes) == ["rejected", "revoked"]
     with pytest.raises(AuthRejectedError):
         tokens.validate_access(pair.access_token)
-    assert store.get_device("install-0001").revoked
+    assert store.get_device("install-0001") is None
 
 
 def test_owner_refresh_never_idle_expires_but_legacy_chat_only_does(tmp_path) -> None:

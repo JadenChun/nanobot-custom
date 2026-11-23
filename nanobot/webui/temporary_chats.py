@@ -2,21 +2,36 @@
 
 from __future__ import annotations
 
+import hashlib
+import time
 import uuid
+from contextlib import nullcontext
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Callable, Literal, cast
 
+from nanobot.attachments._media import (
+    MediaFence,
+    atomic_write,
+    configured_custody,
+    generation,
+    object_json,
+    read_bytes,
+)
+from nanobot.attachments.models import AttachmentRecord
+from nanobot.attachments.store import AttachmentStore
 from nanobot.bus.events import (
     INBOUND_META_RUNTIME_CONTROL,
     RUNTIME_CONTROL_SESSION_DISCARD,
     InboundMessage,
 )
 from nanobot.bus.queue import MessageBus
+from nanobot.bus.runtime_events import SessionTurnStarted, TurnCompleted
+from nanobot.config.paths import get_runtime_subdir
 from nanobot.security.desktop_permissions import PermissionSourceBinding
 from nanobot.security.workspace_access import WorkspaceScope
 from nanobot.session.manager import Session, SessionManager
-from nanobot.webui.workspaces import WebUIWorkspaceController
+from nanobot.webui.workspaces import WebUIWorkspaceController, webui_workspace_state_path
 
 _TEMPORARY_CHAT_DISABLED_TOOLS = frozenset({
     "create_goal",
@@ -26,6 +41,31 @@ _TEMPORARY_CHAT_DISABLED_TOOLS = frozenset({
     "select_workspace",
 })
 _TEMPORARY_CHAT_COMMANDS = frozenset({"/model", "/stop"})
+_MAX_ACTIVE_TOMBSTONES = 128
+_TOMBSTONE_SETTLE_GRACE_SECONDS = 5.0
+_TOMBSTONE_FALLBACK_SECONDS = 900.0
+_MAX_RETIRED_TOMBSTONES = 1024
+_RETIRED_TOMBSTONE_TTL_SECONDS = 3600.0
+
+
+@dataclass
+class _TransientChatTombstone:
+    """One discarded chat incarnation held until its turn generation settles."""
+
+    incarnation: str
+    generation: int
+    pending_turns: int
+    created_at: float
+    settled_at: float | None
+
+
+@dataclass(frozen=True)
+class _RetiredTransientChat:
+    """Bounded negative authority for a retired tombstone's late events."""
+
+    incarnation: str
+    generation: int
+    retired_at: float
 
 
 class TemporaryChatError(ValueError):
@@ -51,6 +91,12 @@ class TemporaryChatMessagePolicy:
 class WebUITemporaryChats:
     """Own Temporary Chat creation, policy, attachments, and disposal."""
 
+    MAX_ACTIVE_TOMBSTONES = _MAX_ACTIVE_TOMBSTONES
+    TOMBSTONE_SETTLE_GRACE_SECONDS = _TOMBSTONE_SETTLE_GRACE_SECONDS
+    TOMBSTONE_FALLBACK_SECONDS = _TOMBSTONE_FALLBACK_SECONDS
+    MAX_RETIRED_TOMBSTONES = _MAX_RETIRED_TOMBSTONES
+    RETIRED_TOMBSTONE_TTL_SECONDS = _RETIRED_TOMBSTONE_TTL_SECONDS
+
     def __init__(
         self,
         *,
@@ -59,26 +105,103 @@ class WebUITemporaryChats:
         workspaces: WebUIWorkspaceController,
         logger: Any,
         channel_name: str = "websocket",
+        clock: Callable[[], float] | None = None,
     ) -> None:
         self._bus = bus
         self._sessions = session_manager
         self._workspaces = workspaces
         self._logger = logger
         self._channel_name = channel_name
+        self._clock = clock if clock is not None else time.monotonic
         self._owners: dict[str, object] = {}
+        self._cleanup_retry_store = (
+            get_runtime_subdir("temporary-chat-cleanup") / "retained.json"
+        )
+        custody = configured_custody()
+        self._media_store = AttachmentStore(custody.root / "attachments", media_root=custody.root)
+        # The gateway's workspace/permission owners can create this display
+        # root before a first transcript. Declare the actual selected path so
+        # exclusive temporary uploads can still be safely disposed.
+        self._media_store.custody.declare("webui", webui_workspace_state_path().parent.resolve(strict=True))
+        self._media_store.custody.declare("temporary", self._cleanup_retry_store.parent.resolve(strict=True))
+        self._cleanup_entries: dict[str, list[dict[str, object]]] = {}
+        self._cleared_cleanup_chats: set[str] = set()
+        self._cleanup_retries = self._load_cleanup_retries()
         self._owner_chat_ids: dict[object, set[str]] = {}
         # Keep active sessions alive if the bounded manager cache evicts them
         # between WebUI turns. SessionPolicy remains the authority below.
         self._active_sessions: dict[str, Session] = {}
-        # Retain policy-derived tombstones until shutdown so late outbound
-        # events cannot create a durable transcript after a chat is discarded.
-        self._known_transient_chat_ids: set[str] = set()
+        # Retain discarded incarnations until their turn generation settles so
+        # late outbound events cannot create a durable transcript.
+        self._tombstones: dict[str, _TransientChatTombstone] = {}
+        self._retired_tombstones: dict[str, _RetiredTransientChat] = {}
+        self._turn_generations: dict[str, int] = {}
+        self._open_turns: dict[str, int] = {}
         self._media_paths: dict[str, set[str]] = {}
         self._incarnations: dict[str, str] = {}
         self._access_modes: dict[str, Literal["restricted", "full"]] = {}
+        self._unsubscribe_turn_started = bus.subscribe(
+            self._on_session_turn_started, SessionTurnStarted,
+        )
+        self._unsubscribe_turn_completed = bus.subscribe(
+            self._on_turn_completed, TurnCompleted,
+        )
 
     def _session_key(self, chat_id: str) -> str:
         return f"{self._channel_name}:{chat_id}"
+
+    def _load_cleanup_retries(self) -> dict[str, set[str]]:
+        try:
+            raw = object_json(read_bytes(self._cleanup_retry_store))
+        except FileNotFoundError:
+            return {}
+        if (set(raw) != {"version", "chats"} or type(raw["version"]) is not int
+                or raw["version"] != 1 or not isinstance(raw["chats"], dict)):
+            raise TemporaryChatError("temporary_cleanup_recovery_required")
+        retained: dict[str, set[str]] = {}
+        for raw_chat_id, raw_entries in cast(dict[object, object], raw["chats"]).items():
+            if not isinstance(raw_chat_id, str) or not raw_chat_id or not isinstance(raw_entries, list):
+                raise TemporaryChatError("temporary_cleanup_recovery_required")
+            kept: set[str] = set()
+            entries: list[dict[str, object]] = []
+            for value in cast(list[object], raw_entries):
+                if not isinstance(value, dict):
+                    raise TemporaryChatError("temporary_cleanup_recovery_required")
+                entry = cast(dict[str, object], value)
+                path, tokens, asset_generation = entry.get("path"), entry.get("tokens"), entry.get("generation")
+                if (set(entry) != {"path", "tokens", "generation"} or not isinstance(path, str)
+                        or not Path(path).is_absolute() or ".." in Path(path).parts
+                        or not Path(path).is_relative_to(self._media_store.media_root)
+                        or not isinstance(tokens, list) or not tokens
+                        or any(not isinstance(token, str) or len(token) != 32 or any(c not in "0123456789abcdef" for c in token) for token in cast(list[object], tokens))
+                        or not isinstance(asset_generation, list) or len(cast(list[object], asset_generation)) != 5
+                        or any(type(item) is not int for item in cast(list[object], asset_generation))):
+                    raise TemporaryChatError("temporary_cleanup_recovery_required")
+                kept.add(path)
+                entries.append(entry)
+            if kept:
+                retained[raw_chat_id] = kept
+                self._cleanup_entries[raw_chat_id] = entries
+        return retained
+
+    def _save_cleanup_retries(self, gate: MediaFence | None = None) -> None:
+        path = self._cleanup_retry_store
+        custody = self._media_store.custody
+        with custody.fence(create=True) if gate is None else nullcontext(gate) as active_gate:
+            active_gate.require(custody)
+            payload: dict[str, object]
+            try:
+                payload = object_json(read_bytes(path))
+            except FileNotFoundError:
+                payload = {"version": 1, "chats": {}}
+            if set(payload) != {"version", "chats"} or payload["version"] != 1 or not isinstance(payload["chats"], dict):
+                raise TemporaryChatError("temporary_cleanup_recovery_required")
+            chats = cast(dict[str, object], payload["chats"])
+            chats.update(self._cleanup_entries)
+            for chat_id in self._cleared_cleanup_chats:
+                chats.pop(chat_id, None)
+            atomic_write(path, payload)
+            self._cleared_cleanup_chats.clear()
 
     def _cached_session_is_transient(self, chat_id: str) -> bool:
         if self._sessions is None:
@@ -86,14 +209,113 @@ class WebUITemporaryChats:
         session = self._sessions.get_cached(self._session_key(chat_id))
         return session is not None and not session.policy.persist
 
+    def _retire_tombstone(self, chat_id: str, now: float) -> None:
+        tombstone = self._tombstones.pop(chat_id, None)
+        if tombstone is None:
+            return
+        self._retired_tombstones[chat_id] = _RetiredTransientChat(
+            incarnation=tombstone.incarnation,
+            generation=tombstone.generation,
+            retired_at=now,
+        )
+        self._prune_retired_tombstones(now)
+
+    def _prune_retired_tombstones(self, now: float) -> None:
+        for chat_id, retired in list(self._retired_tombstones.items()):
+            if now - retired.retired_at >= _RETIRED_TOMBSTONE_TTL_SECONDS:
+                self._retired_tombstones.pop(chat_id, None)
+        while len(self._retired_tombstones) > _MAX_RETIRED_TOMBSTONES:
+            self._retired_tombstones.pop(next(iter(self._retired_tombstones)))
+
+    def _is_retired_tombstone(self, chat_id: str) -> bool:
+        retired = self._retired_tombstones.get(chat_id)
+        if retired is None:
+            return False
+        if self._clock() - retired.retired_at >= _RETIRED_TOMBSTONE_TTL_SECONDS:
+            self._retired_tombstones.pop(chat_id, None)
+            return False
+        return True
+
+    def _retire_due_tombstones(self) -> None:
+        now = self._clock()
+        for chat_id, tombstone in list(self._tombstones.items()):
+            settled = (
+                tombstone.settled_at is not None
+                and now - tombstone.settled_at >= _TOMBSTONE_SETTLE_GRACE_SECONDS
+            )
+            expired = now - tombstone.created_at >= _TOMBSTONE_FALLBACK_SECONDS
+            if settled or expired:
+                self._retire_tombstone(chat_id, now)
+        while len(self._tombstones) > _MAX_ACTIVE_TOMBSTONES:
+            self._retire_tombstone(next(iter(self._tombstones)), now)
+
+    def _blocks_authority(self, chat_id: str) -> bool:
+        return (
+            chat_id in self._owners
+            or chat_id in self._tombstones
+            or self._is_retired_tombstone(chat_id)
+        )
+
+    def _on_session_turn_started(self, event: SessionTurnStarted) -> None:
+        chat_id = event.context.chat_id
+        if not chat_id:
+            return
+        if chat_id in self._incarnations:
+            self._turn_generations[chat_id] = self._turn_generations.get(chat_id, 0) + 1
+            self._open_turns[chat_id] = self._open_turns.get(chat_id, 0) + 1
+            return
+        tombstone = self._tombstones.get(chat_id)
+        if tombstone is not None:
+            tombstone.pending_turns += 1
+            tombstone.settled_at = None
+
+    def _on_turn_completed(self, event: TurnCompleted) -> None:
+        chat_id = event.context.chat_id
+        if not chat_id:
+            return
+        open_turns = self._open_turns.get(chat_id, 0)
+        if open_turns > 0:
+            self._open_turns[chat_id] = open_turns - 1
+        tombstone = self._tombstones.get(chat_id)
+        if tombstone is not None and tombstone.pending_turns > 0:
+            tombstone.pending_turns -= 1
+            if tombstone.pending_turns == 0:
+                tombstone.settled_at = self._clock()
+
+    def tombstone_exists(self, chat_id: str, generation: int | None = None) -> bool:
+        """Report whether a discarded incarnation is still fenced."""
+        self._retire_due_tombstones()
+        tombstone = self._tombstones.get(chat_id)
+        return tombstone is not None and (
+            generation is None or tombstone.generation == generation
+        )
+
+    def tombstone_count(self) -> int:
+        """Return the number of active discarded-chat tombstones."""
+        self._retire_due_tombstones()
+        return len(self._tombstones)
+
+    def retired_tombstone_count(self) -> int:
+        """Return the number of bounded retired-tombstone records."""
+        self._retire_due_tombstones()
+        return len(self._retired_tombstones)
+
+    def tombstone_retired(self, chat_id: str) -> bool:
+        """Report whether a tombstone retired but still denies late authority."""
+        self._retire_due_tombstones()
+        return self._is_retired_tombstone(chat_id)
+
     def create(self, owner: object, *, trusted_webui: bool) -> str:
+        # A newly created chat id has no retained cleanup from an older chat.
         """Create a server-identified chat owned by one authenticated WebUI connection."""
         if not trusted_webui:
             raise TemporaryChatError("access_denied")
         if self._sessions is None:
             raise TemporaryChatError("temporary_chat_unavailable")
+        self._retire_due_tombstones()
 
         chat_id = str(uuid.uuid4())
+        self._cleanup_retries.pop(chat_id, None)
         session = self._sessions.get_or_create_transient(
             self._session_key(chat_id),
             disabled_tools=_TEMPORARY_CHAT_DISABLED_TOOLS,
@@ -104,8 +326,9 @@ class WebUITemporaryChats:
         self._owners[chat_id] = owner
         self._owner_chat_ids.setdefault(owner, set()).add(chat_id)
         self._active_sessions[chat_id] = session
-        self._known_transient_chat_ids.add(chat_id)
         self._incarnations[chat_id] = str(uuid.uuid4())
+        self._turn_generations[chat_id] = 0
+        self._open_turns[chat_id] = 0
         self._access_modes[chat_id] = "restricted"
         return chat_id
 
@@ -116,8 +339,9 @@ class WebUITemporaryChats:
         content: str,
     ) -> TemporaryChatMessagePolicy | None:
         """Return Temporary Chat rules, or ``None`` for an ordinary chat."""
+        self._retire_due_tombstones()
         if not self._cached_session_is_transient(chat_id):
-            if chat_id in self._known_transient_chat_ids:
+            if self._blocks_authority(chat_id):
                 raise TemporaryChatError("temporary_chat_unavailable")
             return None
         if self._owners.get(chat_id) is not owner or self._sessions is None:
@@ -174,25 +398,49 @@ class WebUITemporaryChats:
 
     def validate_attach(self, chat_id: str) -> None:
         """Reject attempts to recover a non-persistent session."""
+        self._retire_due_tombstones()
         if not self._cached_session_is_transient(chat_id):
-            if chat_id in self._known_transient_chat_ids:
+            if self._blocks_authority(chat_id):
                 raise TemporaryChatError("temporary_chat_unavailable")
             return
         raise TemporaryChatError("temporary_chat_unavailable")
 
     def validate_workspace_update(self, chat_id: str) -> None:
         """Prevent non-persistent sessions from acquiring durable workspace state."""
+        self._retire_due_tombstones()
         if self._cached_session_is_transient(chat_id):
             raise TemporaryChatError("temporary_chat_workspace_rejected")
-        if chat_id in self._known_transient_chat_ids:
+        if self._blocks_authority(chat_id):
             raise TemporaryChatError("temporary_chat_unavailable")
 
-    def register_media(self, owner: object, chat_id: str, paths: list[str]) -> None:
+    def register_media(self, owner: object, chat_id: str, paths: list[str],
+                       *, records: tuple[AttachmentRecord, ...] = ()) -> None:
         if not paths:
             return
         if self._owners.get(chat_id) is not owner:
             raise TemporaryChatError("temporary_chat_unavailable")
-        self._media_paths.setdefault(chat_id, set()).update(paths)
+        store = self._media_store
+        with store.custody.fence(create=True) as gate:
+            pending = store.custody.records("pending")
+            owned_ids = {record.id for record in records}
+            entries = self._cleanup_entries.setdefault(chat_id, [])
+            existing_paths = {str(entry["path"]) for entry in entries}
+            for raw_path in paths:
+                path = Path(raw_path).expanduser().absolute()
+                if not path.is_relative_to(store.media_root) or ".." in path.parts:
+                    raise TemporaryChatError("unsupported_temporary_media")
+                data = read_bytes(path)
+                tokens = [str(row["token"]) for row in pending if row["publication_id"] in owned_ids and row["path"] == str(path)]
+                if str(path) in existing_paths:
+                    entry = next(entry for entry in entries if entry["path"] == str(path))
+                    entry["tokens"] = sorted(set(cast(list[str], entry["tokens"])) | set(tokens))
+                    continue
+                if not tokens:
+                    tokens = [store.custody.pin(gate, publication_id=f"temporary:{chat_id}:{uuid.uuid4().hex}",
+                                                 path=path, sha256=hashlib.sha256(data).hexdigest())]
+                entries.append({"path": str(path), "tokens": tokens, "generation": list(generation(path.lstat()))})
+            self._save_cleanup_retries(gate)
+            self._media_paths.setdefault(chat_id, set()).update(paths)
 
     def chat_ids_for_owner(self, owner: object) -> tuple[str, ...]:
         return tuple(self._owner_chat_ids.get(owner, ()))
@@ -201,18 +449,40 @@ class WebUITemporaryChats:
         return self._owners.get(chat_id) is owner
 
     def should_persist_transcript(self, chat_id: str) -> bool:
-        """Apply the session policy and retain it for late events after disposal."""
+        """Apply the session policy and deny late events after disposal."""
+        self._retire_due_tombstones()
         return (
             not self._cached_session_is_transient(chat_id)
-            and chat_id not in self._known_transient_chat_ids
+            and not self._blocks_authority(chat_id)
         )
 
-    def _discard_media(self, chat_id: str) -> None:
-        for raw_path in self._media_paths.pop(chat_id, set()):
-            try:
-                Path(raw_path).unlink(missing_ok=True)
-            except OSError:
-                self._logger.warning("failed to remove a temporary WebUI attachment")
+    def _discard_media(self, chat_id: str) -> set[str]:
+        paths = self._media_paths.pop(chat_id, set()) | self._cleanup_retries.get(chat_id, set())
+        removed: set[Path]
+        try:
+            removed = self._media_store.custody.cleanup_temporary(chat_id)
+        except (OSError, ValueError, TypeError):
+            removed = set()
+        failed = paths - {str(path) for path in removed}
+        if failed:
+            self._cleanup_retries[chat_id] = failed
+        else:
+            self._cleanup_retries.pop(chat_id, None)
+            self._cleanup_entries.pop(chat_id, None)
+            self._cleared_cleanup_chats.add(chat_id)
+        if failed:
+            self._cleanup_entries[chat_id] = [entry for entry in self._cleanup_entries.get(chat_id, []) if entry["path"] in failed]
+        self._save_cleanup_retries()
+        return failed
+
+    def pending_cleanup(self, chat_id: str) -> tuple[str, ...]:
+        """Return retained temporary-chat cleanup paths awaiting a retry."""
+        return tuple(sorted(self._cleanup_retries.get(chat_id, ())))
+
+    def retry_cleanup(self, chat_id: str) -> tuple[str, ...]:
+        """Retry owned temporary-chat cleanup; return any still-retained paths."""
+        failed = self._discard_media(chat_id)
+        return tuple(sorted(failed))
 
     def _forget_owner(self, owner: object, chat_id: str) -> None:
         self._owners.pop(chat_id, None)
@@ -233,7 +503,11 @@ class WebUITemporaryChats:
         ):
             raise TemporaryChatError("temporary_chat_unavailable")
 
+        self._retire_due_tombstones()
         session_key = self._session_key(chat_id)
+        incarnation = self._incarnations.get(chat_id, "")
+        generation = self._turn_generations.pop(chat_id, 0)
+        pending_turns = self._open_turns.pop(chat_id, 0)
         binding = self.binding(None, chat_id)
         if binding is not None:
             try:
@@ -247,6 +521,15 @@ class WebUITemporaryChats:
         self._discard_media(chat_id)
         if self._sessions is not None:
             self._sessions.invalidate(session_key)
+        now = self._clock()
+        self._tombstones[chat_id] = _TransientChatTombstone(
+            incarnation=incarnation,
+            generation=generation,
+            pending_turns=pending_turns,
+            created_at=now,
+            settled_at=now if pending_turns == 0 else None,
+        )
+        self._retire_due_tombstones()
         await self._bus.publish_inbound(
             InboundMessage(
                 channel=self._channel_name,
@@ -266,7 +549,20 @@ class WebUITemporaryChats:
             self._discard_media(chat_id)
             if self._sessions is not None:
                 self._sessions.invalidate(self._session_key(chat_id))
+        for chat_id in tuple(self._cleanup_retries):
+            remaining = self.retry_cleanup(chat_id)
+            if remaining:
+                self._logger.warning(
+                    "temporary cleanup retained {} path(s) for {}",
+                    len(remaining),
+                    chat_id,
+                )
+        self._unsubscribe_turn_started()
+        self._unsubscribe_turn_completed()
         self._owners.clear()
         self._owner_chat_ids.clear()
         self._active_sessions.clear()
-        self._known_transient_chat_ids.clear()
+        self._tombstones.clear()
+        self._retired_tombstones.clear()
+        self._turn_generations.clear()
+        self._open_turns.clear()

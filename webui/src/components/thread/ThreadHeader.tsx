@@ -41,7 +41,9 @@ export function ThreadHeader({
   onToggleTheme,
   hideSidebarToggleForHostChrome = false,
   hideSidebarToggle = false,
-  hideThemeButton = false,
+  // Theme switching lives in Settings → Appearance. The chat header no longer
+  // offers it; callers can still opt back in for other surfaces.
+  hideThemeButton = true,
   hideTitle = false,
   actions,
   minimal = false,
@@ -58,7 +60,7 @@ export function ThreadHeader({
     <div
       data-testid="thread-header"
       className={cn(
-        "relative z-30 flex items-center justify-between gap-3 px-3 py-1",
+        "relative z-30 flex items-center justify-between gap-1 px-2 py-1 sm:gap-3 sm:px-3",
         minimal && "h-11",
       )}
     >
@@ -70,7 +72,7 @@ export function ThreadHeader({
             aria-label={t("thread.header.toggleSidebar")}
             onClick={onToggleSidebar}
             className={cn(
-              "h-7 w-7 rounded-md text-muted-foreground hover:bg-accent/35 hover:text-foreground",
+              "h-7 w-7 shrink-0 rounded-md text-muted-foreground hover:bg-accent/35 hover:text-foreground",
               hideSidebarToggleForHostChrome && "lg:hidden",
             )}
           >
@@ -84,7 +86,8 @@ export function ThreadHeader({
         ) : null}
         {handle ? (
           <span
-            className="flex shrink-0 items-center rounded-md px-1.5 py-1 text-[12px] font-medium"
+            className="min-w-0 truncate rounded-md px-1.5 py-1 text-[12px] font-medium sm:shrink-0"
+            title={`@${handle.name}`}
           >
             <SessionHandleLabel id={handle.id}>
               @{handle.name}
@@ -94,10 +97,10 @@ export function ThreadHeader({
       </div>
 
       <div className="ml-auto flex shrink-0 items-center gap-1">
-        {generatedAssetsAction}
         {sessionInfoAction}
         {promptNavigatorAction}
         {actions}
+        {generatedAssetsAction}
         {onTemporaryChatEnabledChange ? (
           <TooltipProvider delayDuration={700} skipDelayDuration={0}>
             <Tooltip>

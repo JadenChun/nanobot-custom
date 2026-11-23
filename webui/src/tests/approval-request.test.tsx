@@ -4,6 +4,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { ApprovalRequestCard } from "@/components/thread/ApprovalRequestCard";
 
+const APPROVAL_ID = "0123456789abcdef0123456789abcdef";
+
 afterEach(cleanup);
 
 describe("ApprovalRequestCard", () => {
@@ -14,6 +16,7 @@ describe("ApprovalRequestCard", () => {
     render(
       <ApprovalRequestCard
         summary="rewrite most of the matched block in LEADERBOARD.md"
+        approvalId={APPROVAL_ID}
         onApprove={onApprove}
         onCancel={onCancel}
       />,
@@ -37,6 +40,7 @@ describe("ApprovalRequestCard", () => {
     render(
       <ApprovalRequestCard
         summary="rewrite the roadmap"
+        approvalId={APPROVAL_ID}
         onApprove={onApprove}
         onCancel={onCancel}
       />,
@@ -52,6 +56,7 @@ describe("ApprovalRequestCard", () => {
     render(
       <ApprovalRequestCard
         summary="rewrite the roadmap"
+        approvalId={APPROVAL_ID}
         busy
         onApprove={vi.fn()}
         onCancel={vi.fn()}
@@ -60,5 +65,73 @@ describe("ApprovalRequestCard", () => {
 
     expect(screen.getByRole("button", { name: "Approve and continue" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Cancel" })).toBeDisabled();
+  });
+
+  it("disables both actions and shows the update-required message when the approval id is null", () => {
+    render(
+      <ApprovalRequestCard
+        summary="rewrite the roadmap"
+        approvalId={null}
+        onApprove={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: "Approve and continue" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Cancel" })).toBeDisabled();
+    expect(
+      screen.getByText(
+        "This approval request needs an updated client. Chat text cannot grant it.",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("disables both actions and shows the update-required message when the approval id is missing", () => {
+    render(
+      <ApprovalRequestCard
+        summary="rewrite the roadmap"
+        onApprove={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: "Approve and continue" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Cancel" })).toBeDisabled();
+    expect(
+      screen.getByText(
+        "This approval request needs an updated client. Chat text cannot grant it.",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("clears the pending state when resetSignal increments after a rejected send", async () => {
+    const user = userEvent.setup();
+    const onApprove = vi.fn();
+    const onCancel = vi.fn();
+    const { rerender } = render(
+      <ApprovalRequestCard
+        summary="overwrite storyboard_v3.md"
+        approvalId={APPROVAL_ID}
+        resetSignal={0}
+        onApprove={onApprove}
+        onCancel={onCancel}
+      />,
+    );
+
+    const approveButton = screen.getByRole("button", { name: "Approve and continue" });
+    await user.click(approveButton);
+    expect(approveButton).toBeDisabled();
+
+    rerender(
+      <ApprovalRequestCard
+        summary="overwrite storyboard_v3.md"
+        approvalId={APPROVAL_ID}
+        resetSignal={1}
+        onApprove={onApprove}
+        onCancel={onCancel}
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: "Approve and continue" })).toBeEnabled();
   });
 });

@@ -621,6 +621,7 @@ def test_lock_hardlinks_fifos_and_live_root_or_lock_swaps_fail_closed(tmp_path: 
     lock.rename(old_lock)
     lock.write_text("", encoding="utf-8")
     lock.chmod(0o600)
+    assert lock.stat().st_ino != old_lock.stat().st_ino
     with pytest.raises(OccurrenceCorruptError, match="binding"):
         store.get(claim.occurrence_id)
 

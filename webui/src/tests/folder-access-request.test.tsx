@@ -388,8 +388,8 @@ describe("FolderAccessRequestCard", () => {
   });
 
   it.each([
-    ["folder_access_required", "Nanobot cannot use that folder with the current access settings."],
-    ["folder grants cannot overlap private runtime storage", "This folder includes Nanobot's private runtime files."],
+    ["folder_access_required", "Kohaku cannot use that folder with the current access settings."],
+    ["folder grants cannot overlap private runtime storage", "This folder includes Kohaku's private runtime files."],
   ])("keeps a safe explanation for direct approval error %s", async (message, expected) => {
     const user = userEvent.setup();
     const request: FolderAccessRequest = {
@@ -413,9 +413,9 @@ describe("FolderAccessRequestCard", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent(expected);
     expect(screen.getByLabelText("Requested folder")).toHaveTextContent("/projects/freelance");
     if (message === "folder grants cannot overlap private runtime storage") {
-      expect(screen.getByText(/includes Nanobot's private runtime files/)).toBeInTheDocument();
+      expect(screen.getByText(/includes Kohaku's private runtime files/)).toBeInTheDocument();
     } else {
-      expect(screen.queryByText(/includes Nanobot's private runtime files/)).not.toBeInTheDocument();
+      expect(screen.queryByText(/includes Kohaku's private runtime files/)).not.toBeInTheDocument();
     }
     expect(screen.queryByRole("button", { name: "Continue task" })).not.toBeInTheDocument();
   });
@@ -438,7 +438,7 @@ describe("FolderAccessRequestCard", () => {
     await user.click(screen.getByRole("button", { name: "Allow once and use folder" }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent(
-      "Nanobot could not verify that folder. Choose an existing folder and try again.",
+      "Kohaku could not verify that folder. Choose an existing folder and try again.",
     );
     expect(screen.getByLabelText("Folder path")).toHaveValue("/projects/freelance");
     expect(screen.getByRole("dialog", { name: "Review folder access" })).toBeInTheDocument();
@@ -620,7 +620,7 @@ describe("FolderAccessRequestCard", () => {
     expect(screen.getByRole("radio", { name: "Read only" })).toBeChecked();
     expect(screen.getByRole("radio", { name: "Read and write" })).not.toBeChecked();
     expect(screen.queryByRole("checkbox", { name: "Allow commands" })).not.toBeInTheDocument();
-    expect(screen.getByText(/normal chats in this Nanobot instance/i)).toBeInTheDocument();
+    expect(screen.getByText(/normal chats in this Kohaku instance/i)).toBeInTheDocument();
     await user.type(screen.getByLabelText("Folder path"), "/projects/freelance");
     expect(screen.getByLabelText("Selected folder path")).toHaveTextContent("/projects/freelance");
     await user.click(screen.getByRole("button", { name: "Save access and use folder" }));
@@ -718,7 +718,7 @@ describe("FolderAccessRequestCard", () => {
       "Folder access was saved, but this task is still waiting for you to use the folder.",
     )).toBeInTheDocument();
     expect(screen.getByText(
-      "Nanobot could not confirm which folder this task should use. Refresh the task before trying again.",
+      "Kohaku could not confirm which folder this task should use. Refresh the task before trying again.",
     )).toBeInTheDocument();
     expect(mutation).toHaveBeenCalledTimes(1);
   });
@@ -769,7 +769,7 @@ describe("FolderAccessRequestCard", () => {
     renderCard({ request: ready, workspacesPayload: v2Workspaces, workspacePermissions: permissions });
 
     expect(screen.getByRole("heading", { name: "Ready to continue" })).toBeInTheDocument();
-    expect(screen.queryByText(/Nanobot has not identified the exact folder yet/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Kohaku has not identified the exact folder yet/)).not.toBeInTheDocument();
     expect(screen.getByText(status)).toBeInTheDocument();
     expect(screen.getByText("Read only · Commands off")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Continue task" })).toBeEnabled();
@@ -779,7 +779,7 @@ describe("FolderAccessRequestCard", () => {
     renderCard();
 
     expect(screen.getByRole("heading", { name: "Folder access needed" })).toBeInTheDocument();
-    expect(screen.getByText(/Nanobot has not identified the exact folder yet/)).toBeInTheDocument();
+    expect(screen.getByText(/Kohaku has not identified the exact folder yet/)).toBeInTheDocument();
   });
 
   it("shows expired Once after continuation without offering another access action", () => {
@@ -807,7 +807,7 @@ describe("FolderAccessRequestCard", () => {
 
     expect(screen.getByRole("heading", { name: "Task continued" })).toBeInTheDocument();
     expect(screen.getByRole("status")).toHaveTextContent(/One-time access has ended/);
-    expect(screen.queryByText(/Nanobot has not identified the exact folder yet/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Kohaku has not identified the exact folder yet/)).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Continue task" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Choose folder" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Choose another folder" })).not.toBeInTheDocument();
@@ -850,7 +850,7 @@ describe("FolderAccessRequestCard", () => {
               : "Task can't continue",
       );
       expect(screen.getByRole("status")).toHaveTextContent(/One-time access.*ending/i);
-      expect(screen.queryByText(/Nanobot has not identified the exact folder yet/)).not.toBeInTheDocument();
+      expect(screen.queryByText(/Kohaku has not identified the exact folder yet/)).not.toBeInTheDocument();
       expect(screen.queryByRole("button", { name: "Continue task" })).not.toBeInTheDocument();
       expect(screen.queryByRole("button", { name: "Choose folder" })).not.toBeInTheDocument();
       expect(screen.queryByRole("button", { name: "Choose another folder" })).not.toBeInTheDocument();
@@ -877,7 +877,7 @@ describe("FolderAccessRequestCard", () => {
 
     expect(screen.getByRole("heading", { name: "Folder access needed" })).toBeInTheDocument();
     expect(screen.getByRole("status")).toHaveTextContent("Choose a folder to continue this task.");
-    expect(screen.getByText(/Nanobot has not identified the exact folder yet/)).toBeInTheDocument();
+    expect(screen.getByText(/Kohaku has not identified the exact folder yet/)).toBeInTheDocument();
     expect(screen.queryByText(/One-time access has ended|One-time access.*ending/i)).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Continue task" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Choose folder" })).toBeEnabled();

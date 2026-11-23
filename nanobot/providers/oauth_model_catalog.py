@@ -10,9 +10,11 @@ from typing import Literal
 
 from loguru import logger
 
+from nanobot.providers.oauth_credentials import CredentialOwner
 from nanobot.providers.registry import ProviderModelSpec
 
 CatalogSource = Literal["remote", "cache", "stale", "fallback"]
+_CatalogKey = tuple[CredentialOwner | None, str]
 
 
 @dataclass(frozen=True, slots=True)
@@ -70,39 +72,42 @@ class OAuthModelCatalog:
         self._monotonic = monotonic
         self._wall_clock = wall_clock
         self._condition = threading.Condition()
-        self._entries: dict[str, _CacheEntry] = {}
-        self._failures: dict[str, float] = {}
-        self._inflight: set[str] = set()
+        self._entries: dict[_CatalogKey, _CacheEntry] = {}
+        self._failures: dict[_CatalogKey, float] = {}
+        self._inflight: dict[_CatalogKey, object] = {}
         self._generation = 0
 
     def get(
         self,
         *,
         cache_key: str,
+        owner: CredentialOwner | None = None,
         proxy: str | None = None,
         fetch: Callable[[str | None], Sequence[ProviderModelSpec]] | None = None,
         generation_check: Callable[[], bool] | None = None,
     ) -> OAuthModelCatalogSnapshot:
         """Return a fresh catalog, sharing concurrent work and retaining a fallback."""
+        key = (owner, cache_key)
         with self._condition:
             generation = self._generation
-            cached = self._cached_result(cache_key)
+            cached = self._cached_result(key)
             if cached is not None:
                 if generation_check is not None and not generation_check():
-                    self._entries.pop(cache_key, None)
-                    self._failures.pop(cache_key, None)
+                    self._entries.pop(key, None)
+                    self._failures.pop(key, None)
                     return self._stale_or_fallback(None, self._monotonic())
                 return cached
-            while cache_key in self._inflight:
+            while key in self._inflight:
                 self._condition.wait()
                 if generation != self._generation:
                     return self._stale_or_fallback(None, self._monotonic())
-                cached = self._cached_result(cache_key)
+                cached = self._cached_result(key)
                 if cached is not None:
                     if generation_check is not None and not generation_check():
                         return self._stale_or_fallback(None, self._monotonic())
                     return cached
-            self._inflight.add(cache_key)
+            attempt = object()
+            self._inflight[key] = attempt
 
         try:
             models = tuple((fetch or self._fetch)(proxy))
@@ -115,8 +120,8 @@ class OAuthModelCatalog:
             with self._condition:
                 result = (
                     self._stale_or_fallback(None, self._monotonic())
-                    if generation != self._generation
-                    else self._failure_result(cache_key)
+                    if self._inflight.get(key) is not attempt
+                    else self._failure_result(key)
                 )
         else:
             now = self._monotonic()
@@ -126,28 +131,34 @@ class OAuthModelCatalog:
                 fetched_at=self._wall_clock(),
             )
             with self._condition:
-                if generation != self._generation or (
+                if self._inflight.get(key) is not attempt or (
                     generation_check is not None and not generation_check()
                 ):
                     result = self._stale_or_fallback(None, now)
                 else:
-                    self._store(cache_key, _CacheEntry(snapshot=result, stored_at=now))
-                    self._failures.pop(cache_key, None)
+                    self._store(key, _CacheEntry(snapshot=result, stored_at=now))
+                    self._failures.pop(key, None)
         finally:
             with self._condition:
-                self._inflight.discard(cache_key)
+                if self._inflight.get(key) is attempt:
+                    self._inflight.pop(key)
                 self._condition.notify_all()
 
         return result
-    def invalidate(self) -> None:
+
+    def invalidate(self, *, owner: CredentialOwner | None = None) -> None:
         """Drop cached work and prevent an older identity refresh from being stored."""
         with self._condition:
-            self._generation += 1
-            self._entries.clear()
-            self._failures.clear()
+            if owner is None:
+                self._generation += 1
+            for key in set(self._entries) | set(self._failures) | set(self._inflight):
+                if owner is None or key[0] == owner:
+                    self._entries.pop(key, None)
+                    self._failures.pop(key, None)
+                    self._inflight.pop(key, None)
             self._condition.notify_all()
 
-    def _cached_result(self, cache_key: str) -> OAuthModelCatalogSnapshot | None:
+    def _cached_result(self, cache_key: _CatalogKey) -> OAuthModelCatalogSnapshot | None:
         now = self._monotonic()
         entry = self._entries.get(cache_key)
         if entry is not None and now - entry.stored_at < self._fresh_ttl_s:
@@ -159,7 +170,7 @@ class OAuthModelCatalog:
             return self._stale_or_fallback(entry, now)
         return None
 
-    def _failure_result(self, cache_key: str) -> OAuthModelCatalogSnapshot:
+    def _failure_result(self, cache_key: _CatalogKey) -> OAuthModelCatalogSnapshot:
         now = self._monotonic()
         self._reserve(cache_key)
         self._failures[cache_key] = now + self._failure_ttl_s
@@ -183,11 +194,11 @@ class OAuthModelCatalog:
             message="Could not load the online model list; showing built-in fallback models.",
         )
 
-    def _store(self, cache_key: str, entry: _CacheEntry) -> None:
+    def _store(self, cache_key: _CatalogKey, entry: _CacheEntry) -> None:
         self._reserve(cache_key)
         self._entries[cache_key] = entry
 
-    def _reserve(self, cache_key: str) -> None:
+    def _reserve(self, cache_key: _CatalogKey) -> None:
         known = set(self._entries) | set(self._failures)
         if cache_key in known or len(known) < self._max_entries:
             return
@@ -207,38 +218,41 @@ def get_oauth_model_catalog(
     provider_name: str,
     *,
     proxy: str | None = None,
+    owner: CredentialOwner | None = None,
 ) -> OAuthModelCatalogSnapshot:
     """Discover models through the owning provider module."""
     if provider_name == "openai_codex":
         from nanobot.providers.openai_codex_provider import get_openai_codex_model_catalog
 
-        return get_openai_codex_model_catalog(proxy)
+        return get_openai_codex_model_catalog(proxy, owner=owner)
     if provider_name == "xai_grok":
         from nanobot.providers.xai_grok_provider import get_xai_grok_model_catalog
 
-        return get_xai_grok_model_catalog(proxy)
+        return get_xai_grok_model_catalog(proxy, owner=owner)
     if provider_name == "github_copilot":
         from nanobot.providers.github_copilot_provider import get_github_copilot_model_catalog
 
-        return get_github_copilot_model_catalog(proxy)
+        return get_github_copilot_model_catalog(proxy, owner=owner)
     raise ValueError(f"OAuth model discovery is not available for {provider_name}")
 
 
-def invalidate_oauth_model_catalog(provider_name: str) -> None:
+def invalidate_oauth_model_catalog(
+    provider_name: str, *, owner: CredentialOwner | None = None,
+) -> None:
     """Invalidate provider discovery after its OAuth identity changes."""
     if provider_name == "openai_codex":
         from nanobot.providers.openai_codex_provider import (
             invalidate_openai_codex_model_catalog,
         )
 
-        invalidate_openai_codex_model_catalog()
+        invalidate_openai_codex_model_catalog(owner)
     elif provider_name == "xai_grok":
         from nanobot.providers.xai_grok_provider import invalidate_xai_grok_model_catalog
 
-        invalidate_xai_grok_model_catalog()
+        invalidate_xai_grok_model_catalog(owner)
     elif provider_name == "github_copilot":
         from nanobot.providers.github_copilot_provider import (
             invalidate_github_copilot_model_catalog,
         )
 
-        invalidate_github_copilot_model_catalog()
+        invalidate_github_copilot_model_catalog(owner)

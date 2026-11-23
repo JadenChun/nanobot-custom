@@ -95,6 +95,15 @@ def _resolve_declared_path(base: Path, raw_path: str) -> Path:
     return path.resolve(strict=False)
 
 
+def _is_contained(root: Path, path: Path) -> bool:
+    """Return whether *path* resolves inside *root*."""
+    try:
+        path.resolve(strict=False).relative_to(root.resolve(strict=False))
+    except ValueError:
+        return False
+    return True
+
+
 @dataclass
 class ManagedTargetRepo:
     """Runtime metadata for a code/content repo managed by a context repo."""
@@ -436,18 +445,34 @@ class ManagedContextRepo:
     def blocks_direct_store_edit(self, rel_path: str) -> bool:
         return self.matches(rel_path, self.store_paths(direct_edit_only=False))
 
+    def entrypoint_contained(self, path: Path) -> bool:
+        """Return whether an entrypoint resolves inside the admitted repo root."""
+        return _is_contained(self.path, path)
+
     def skill_roots(self) -> list[Path]:
         roots: list[Path] = []
         default = self.path / "skills"
-        if default.is_dir():
+        if default.is_dir() and self.entrypoint_contained(default):
             roots.append(default)
         for pattern in _as_str_list(self.entrypoints.get("skills")):
             if pattern.rstrip("/") == "skills":
-                roots.append(self.path / "skills")
+                candidate = self.path / "skills"
+                if self.entrypoint_contained(candidate):
+                    roots.append(candidate)
                 continue
             for skill_file in self.path.glob(pattern):
-                if skill_file.name == "SKILL.md" and skill_file.parent.parent not in roots:
-                    roots.append(skill_file.parent.parent)
+                if skill_file.name != "SKILL.md":
+                    continue
+                candidate = skill_file.parent.parent
+                if not self.entrypoint_contained(candidate):
+                    logger.warning(
+                        "Ignoring context repo skill entrypoint outside {}: {}",
+                        self.path,
+                        skill_file,
+                    )
+                    continue
+                if candidate not in roots:
+                    roots.append(candidate)
         return _unique_paths(roots)
 
     def read_roots(self) -> list[Path]:
@@ -468,13 +493,25 @@ class ManagedContextRepo:
         files: list[Path] = []
         entry_context = self.entrypoints.get("context") or self.manifest.get("context")
         if entry_context:
-            files.append(self.path / str(entry_context))
-        elif (self.path / "CONTEXT.md").is_file():
+            candidate = self.path / str(entry_context)
+            if self.entrypoint_contained(candidate):
+                files.append(candidate)
+            else:
+                logger.warning(
+                    "Ignoring context repo prompt entrypoint outside {}: {}",
+                    self.path,
+                    candidate,
+                )
+        elif (self.path / "CONTEXT.md").is_file() and self.entrypoint_contained(
+            self.path / "CONTEXT.md"
+        ):
             files.append(self.path / "CONTEXT.md")
 
         if not self.managed:
             for md_file in sorted(self.path.glob("*.md")):
-                if md_file.name not in {"README.md", "CONTEXT.md"}:
+                if md_file.name not in {"README.md", "CONTEXT.md"} and self.entrypoint_contained(
+                    md_file
+                ):
                     files.append(md_file)
         return _unique_paths(path for path in files if path.is_file())
 

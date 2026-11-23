@@ -106,6 +106,14 @@ class DelegateTaskTool(_ForegroundTool):
                 "minItems": 1,
             },
             "artifact_references": _ARTIFACT_REFERENCES,
+            "background": {
+                "type": "boolean",
+                "description": (
+                    "Start the child and return immediately. The child continues after this "
+                    "turn under its admitted scope. Defaults to false to wait for the result."
+                ),
+                "default": False,
+            },
         },
         "required": ["contract", "write_scope"],
         "additionalProperties": False,
@@ -117,6 +125,7 @@ class DelegateTaskTool(_ForegroundTool):
         write_scope: list[str],
         turn_context: TurnContext | None = None,
         artifact_references: list[str] | None = None,
+        background: bool = False,
         **_: Any,
     ) -> str | ToolOutcome:
         return await self._manager.run_worker(
@@ -124,6 +133,40 @@ class DelegateTaskTool(_ForegroundTool):
             write_scope=write_scope,
             turn_context=turn_context,
             artifact_references=artifact_references,
+            background=background,
+        )
+
+    async def execute_with_context(self, context: TurnContext, /, **kwargs: Any) -> str | ToolOutcome:
+        return await self.execute(turn_context=context, **kwargs)
+
+
+class FollowupChildTool(_ForegroundTool):
+    _tool_name = "followup_child"
+    _tool_description = (
+        "Send an ordered follow-up to one canonical child owned by this chat. "
+        "Use the child_id from its delegated result."
+    )
+    _tool_parameters = {
+        "type": "object",
+        "properties": {
+            "child_id": {"type": "string", "minLength": 1},
+            "content": {"type": "string", "minLength": 1},
+        },
+        "required": ["child_id", "content"],
+        "additionalProperties": False,
+    }
+
+    async def execute(
+        self,
+        child_id: str,
+        content: str,
+        turn_context: TurnContext | None = None,
+        **_: Any,
+    ) -> str | ToolOutcome:
+        return await self._manager.followup_child(
+            child_id=child_id,
+            content=content,
+            turn_context=turn_context,
         )
 
     async def execute_with_context(self, context: TurnContext, /, **kwargs: Any) -> str | ToolOutcome:
@@ -176,4 +219,4 @@ class ReviewWorkTool(_ForegroundTool):
         return await self.execute(turn_context=context, **kwargs)
 
 
-__all__ = ["DelegateTaskTool", "PlanTaskTool", "ReviewWorkTool"]
+__all__ = ["DelegateTaskTool", "FollowupChildTool", "PlanTaskTool", "ReviewWorkTool"]

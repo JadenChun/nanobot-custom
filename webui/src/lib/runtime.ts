@@ -239,7 +239,7 @@ function createLoopbackHostApi(config: LoopbackHostConfig): NanobotHostApi {
           headers: { Authorization: `Bearer ${config.token}` },
         });
       } catch {
-        throw new Error("Native folder picker is unavailable. Reopen Nanobot and try again.");
+        throw new Error("Native folder picker is unavailable. Reopen Kohaku and try again.");
       }
 
       const body = await response.json().catch(() => null) as {

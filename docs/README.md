@@ -82,6 +82,7 @@ These pages explain implementation and extension points. You do not need them to
 | Review completed feature repairs and their validation limits | [Feature repair results](./audits/feature-implementation-2026-11-05/repair-results.md) |
 | Follow the code-quality audit scope and stages | [Code-quality audit charter](./code-quality-audit-2026-11-04.md) |
 | Review the A3 audit, candidate design, decisions and merge gates | [A3 architecture record](./architecture/a3/README.md) |
+| Review the Kohaku history, prompt navigation, and composer design and track implementation gates | [Chat-page design and audit](./architecture/gui-session-history-design.md) · [Work plan and progress](./architecture/gui-session-history-work-plan.md) |
 | Review future agent-managed sessions and the SuperAgent study | [SuperAgent research and session direction](./superagent-research-and-session-direction.md) |
 | Review the retired H1/concurrency cleanup | [Telegram H1 and global concurrency cleanup plan](./telegram-h1-concurrency-cleanup-plan.md) |
 | Set up a development environment | [Development](./development.md) and [CONTRIBUTING.md](../CONTRIBUTING.md) |

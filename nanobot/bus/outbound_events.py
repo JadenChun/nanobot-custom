@@ -11,13 +11,14 @@ from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any
 
-from nanobot.bus.events import OutboundMessage
+from nanobot.bus.events import CommittedUserInput, OutboundMessage
 from nanobot.events import AgentEvent
 from nanobot.events import ContextCompactionEvent as ContextCompactionEvent
 from nanobot.events import RecoveryStateEvent as RecoveryStateEvent
 from nanobot.events import RetryStatusEvent as RetryStatusEvent
 from nanobot.events import RetryWaitEvent as RetryWaitEvent
-from nanobot.providers.base import LLMUsage
+from nanobot.providers.base import ContextUsageSnapshot, LLMUsage
+from nanobot.session.input_attempt import InputAttemptProof
 
 if TYPE_CHECKING:
     from nanobot.security.desktop_permissions import WorkspacePermissionProjection
@@ -53,6 +54,7 @@ class StreamEndEvent(AgentEvent):
     stream_id: str | None = None
     resuming: bool = False
     merge_next: bool = False
+    source_event_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -72,6 +74,7 @@ class TurnEndEvent(AgentEvent):
     failure_error_kind: str | None = None
     failure_attempts: int | None = None
     failure_message: str | None = None
+    context_usage: ContextUsageSnapshot | None = None
 
 
 @dataclass(frozen=True)
@@ -83,6 +86,59 @@ class GoalStatusEvent(AgentEvent):
 @dataclass(frozen=True)
 class GoalStateSyncEvent(AgentEvent):
     goal_state: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class MessageAdmittedEvent(AgentEvent):
+    """The session owner committed one submitted input attempt."""
+
+    turn_id: str | None = None
+    attempt_id: str | None = None
+    session_key: str | None = None
+    session_incarnation: str | None = None
+    active_turn_id: str | None = None
+    starts_turn: bool = True
+    input_attempt_proof: InputAttemptProof | None = None
+    input: CommittedUserInput | None = None
+
+
+@dataclass(frozen=True)
+class DelegatedChildEvent(AgentEvent):
+    """Typed, durable reference from a parent activity row to one child."""
+
+    parent_session_key: str = ""
+    child_session_key: str = ""
+    child_id: str = ""
+    profile: str = "delegated"
+    state: str = ""
+    outcome: str | None = None
+    runtime_generation: int = 0
+    turn_id: str | None = None
+    task_label: str = ""
+    task_label_truncated: bool = False
+    result_summary: str | None = None
+    result_summary_truncated: bool = False
+    parent_run_id: str | None = None
+    child_run_id: str | None = None
+    parent_store_identity: str | None = None
+    parent_incarnation: str | None = None
+    parent_generation: int = 0
+    root_key: str | None = None
+    root_store_identity: str | None = None
+    root_incarnation: str | None = None
+    root_generation: int = 0
+    child_store_identity: str | None = None
+    child_incarnation: str | None = None
+    child_generation: int = 0
+    run_sequence: int = 0
+    state_sequence: int = 0
+    control_epoch: int = 0
+    holds_capacity: bool = False
+    can_stop: bool = False
+    owned_work: bool = False
+    pending_approval_id: str | None = None
+    blocked_run_id: str | None = None
+    result_disposition: str | None = None
 
 
 @dataclass(frozen=True)
@@ -100,6 +156,7 @@ class UserInputEvent(AgentEvent):
     content: str
     created_at_ms: int
     provenance: dict[str, Any]
+    input: CommittedUserInput | None = None
 
 
 @dataclass(frozen=True)
@@ -109,6 +166,13 @@ class WebUIAdmissionRejectedEvent(AgentEvent):
     detail: str
     reason: str
     turn_id: str | None = None
+
+
+@dataclass(frozen=True)
+class StopTargetEvent(AgentEvent):
+    """Transient server-derived original-chat Stop target for current views."""
+
+    stop_target: dict[str, object] | None
 
 
 @dataclass(frozen=True)

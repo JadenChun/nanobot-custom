@@ -49,7 +49,7 @@ func (c *Core) WSOpen(input WSRequest) (uint64, error) {
 	if baseContext == nil {
 		baseContext = context.Background()
 	}
-	target, route, err := resolveRoute(&c.cfg, c.origin, input.Operation, http.MethodGet, input.Path)
+	target, route, err := resolveRoute(&c.cfg, c.origin, input.Operation, http.MethodGet, input.Path, false)
 	if err != nil {
 		return 0, err
 	}
@@ -153,6 +153,8 @@ func (c *Core) WSClose(wsID uint64) error {
 }
 
 // WSPing sends one protocol ping and waits for its pong within five seconds.
+// If the ping fails, the dead session is closed so subsequent WSOpen calls do
+// not fail with ErrBusy against a zombie socket.
 func (c *Core) WSPing(wsID uint64) error {
 	c.mu.Lock()
 	session := c.ws
@@ -163,6 +165,7 @@ func (c *Core) WSPing(wsID uint64) error {
 	ctx, cancel := context.WithTimeout(session.ctx, 5*time.Second)
 	defer cancel()
 	if err := session.conn.Ping(ctx); err != nil {
+		session.close(websocket.StatusAbnormalClosure, "ping failed")
 		return fmt.Errorf("%w: WebSocket ping failed", ErrUnavailable)
 	}
 	return nil
@@ -180,12 +183,12 @@ func (s *wsSession) readLoop() {
 			return
 		}
 		if len(data) > s.core.cfg.MaxWSFrameBytes {
-			s.close(websocket.StatusMessageTooBig, "frame exceeds limit")
 			_ = s.core.emit(map[string]any{
 				"type":  "ws_error",
 				"ws_id": s.id,
 				"code":  "too_large",
 			})
+			s.close(websocket.StatusMessageTooBig, "frame exceeds limit")
 			return
 		}
 		kind := "text"
@@ -199,23 +202,45 @@ func (s *wsSession) readLoop() {
 			"data_base64": base64.StdEncoding.EncodeToString(data),
 			"bytes":       len(data),
 		}); err != nil {
-			s.close(websocket.StatusPolicyViolation, "event queue full")
+			// Report the cause first. The close is the single terminal result
+			// reserved for this admitted session, and it replaces the error
+			// when the normal queue is full.
 			_ = s.core.emit(map[string]any{
 				"type":  "ws_error",
 				"ws_id": s.id,
 				"code":  "queue_full",
 			})
+			s.close(websocket.StatusPolicyViolation, "event queue full")
 			return
 		}
 	}
 }
 
+const (
+	wsWriteTimeout      = 15 * time.Second
+	wsKeepaliveInterval = 25 * time.Second
+	wsKeepaliveTimeout  = 10 * time.Second
+)
+
 func (s *wsSession) writeLoop() {
+	keepalive := time.NewTicker(wsKeepaliveInterval)
+	defer keepalive.Stop()
 	for {
 		select {
 		case frame := <-s.out:
-			if err := s.conn.Write(s.ctx, frame.kind, frame.data); err != nil {
+			writeCtx, cancel := context.WithTimeout(s.ctx, wsWriteTimeout)
+			err := s.conn.Write(writeCtx, frame.kind, frame.data)
+			cancel()
+			if err != nil {
 				s.close(websocket.StatusAbnormalClosure, "write failed")
+				return
+			}
+		case <-keepalive.C:
+			pingCtx, cancel := context.WithTimeout(s.ctx, wsKeepaliveTimeout)
+			err := s.conn.Ping(pingCtx)
+			cancel()
+			if err != nil {
+				s.close(websocket.StatusAbnormalClosure, "keepalive ping failed")
 				return
 			}
 		case <-s.ctx.Done():
@@ -226,6 +251,14 @@ func (s *wsSession) writeLoop() {
 
 func (s *wsSession) close(code websocket.StatusCode, reason string) {
 	s.once.Do(func() {
+		// Release c.ws before closing the underlying connection or emitting
+		// ws_closed so an immediate reconnect triggered by ws_closed never
+		// races with the retiring session and fails with ErrBusy.
+		s.core.mu.Lock()
+		if s.core.ws == s {
+			s.core.ws = nil
+		}
+		s.core.mu.Unlock()
 		s.cancel()
 		_ = s.conn.Close(code, reason)
 		_ = s.core.emit(map[string]any{
@@ -234,10 +267,5 @@ func (s *wsSession) close(code websocket.StatusCode, reason string) {
 			"code":   int(code),
 			"reason": reason,
 		})
-		s.core.mu.Lock()
-		if s.core.ws == s {
-			s.core.ws = nil
-		}
-		s.core.mu.Unlock()
 	})
 }

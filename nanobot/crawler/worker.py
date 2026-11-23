@@ -777,13 +777,9 @@ class Crawl4AIWorker:
                 selector = self._selector(request.get("selector"), required=False)
                 js_code = "void 0"
             elif op == "expand":
-                selector = self._selector(request.get("selector"), required=True)
-                selector_literal = json.dumps(selector)
-                js_code = (
-                    "(() => { const element = document.querySelector("
-                    f"{selector_literal}); if (!element) return 'not-found'; "
-                    "if (!element.matches('details, summary, [aria-expanded=\"false\"]')) "
-                    "return 'not-expandable'; element.click(); return 'expanded'; })()"
+                raise WorkerRequestError(
+                    "expand is a mutating action and is unavailable under "
+                    "read-only crawler admission"
                 )
             elif op == "scroll":
                 pixels = self._bounded_int(

@@ -10,12 +10,13 @@ import time
 import uuid
 from contextlib import suppress
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 from filelock import FileLock
 from loguru import logger
 
 from nanobot.triggers.local_types import LocalTrigger, TriggerDelivery, TriggerRunRecord
+from nanobot.utils.dict_keys import get_camel_snake as _get
 from nanobot.utils.helpers import truncate_text
 from nanobot.utils.run_records import write_run_record as write_automation_run_record
 
@@ -24,6 +25,10 @@ _MAX_RUN_HISTORY = 20
 _MAX_DELIVERY_ATTEMPTS = 10
 _RUN_RECORD_TEXT_MAX_CHARS = 4000
 _PROCESSING_RECOVERY_ERROR = "delivery was recovered from interrupted processing"
+_UNKNOWN_OUTCOME_ERROR = (
+    "delivery was interrupted after its turn attempt started; "
+    "the outcome is unknown and the owner must resolve it"
+)
 
 
 class TriggerStoreError(RuntimeError):
@@ -47,6 +52,7 @@ class LocalTriggerStore:
         self.store_path = self.root / "triggers.json"
         self.inbox_dir = self.root / "inbox"
         self.processing_dir = self.root / "processing"
+        self.unknown_dir = self.root / "unknown"
         self.failed_dir = self.root / "failed"
         self.runs_dir = self.root / "runs"
         self._lock = FileLock(str(self.root / ".lock"))
@@ -220,10 +226,72 @@ class LocalTriggerStore:
                 claimed.append(delivery)
         return claimed
 
-    def recover_processing_deliveries(self) -> int:
-        """Requeue deliveries left in processing by an interrupted gateway."""
+    def begin_delivery_attempt(self, delivery: TriggerDelivery) -> str:
+        """Persist a settlement identity before the turn is submitted.
+
+        The durable identity proves the attempt started. A restart uses it to
+        classify the delivery as unknown instead of replaying it.
+        """
+        if delivery.path is None:
+            raise TriggerStoreError("delivery has no processing path")
         self._ensure_dirs()
-        recovered = 0
+        settlement_id = f"stl_{uuid.uuid4().hex}"
+        with self._lock:
+            delivery.attempts += 1
+            delivery.last_error = None
+            self._atomic_write(
+                delivery.path,
+                json.dumps(
+                    _delivery_payload(delivery, settlement_id=settlement_id),
+                    ensure_ascii=False,
+                ),
+            )
+        return settlement_id
+
+    def mark_delivery_unknown(
+        self,
+        delivery: TriggerDelivery,
+        *,
+        settlement_id: str | None,
+        error: str,
+    ) -> bool:
+        """Quarantine a claimed delivery whose turn outcome is not proven."""
+        if delivery.path is None:
+            return False
+        self._ensure_dirs()
+        with self._lock:
+            target = self.unknown_dir / delivery.path.name
+            delivery.last_error = error
+            if delivery.path.exists():
+                os.replace(delivery.path, target)
+            delivery.path = target
+            if settlement_id:
+                self._atomic_write(
+                    target,
+                    json.dumps(
+                        _delivery_payload(delivery, settlement_id=settlement_id),
+                        ensure_ascii=False,
+                    ),
+                )
+        self.write_delivery_run_record(
+            delivery,
+            status="unknown",
+            error=error,
+            settlement_id=settlement_id,
+        )
+        return True
+
+    def recover_processing_deliveries(self) -> int:
+        """Resolve deliveries left in processing by an interrupted gateway.
+
+        A processing record with a persisted settlement identity may already
+        have committed its turn, so it moves to the unknown set and is never
+        replayed. Only a claim with no settlement identity proves that no turn
+        started, and only that record returns to the inbox once.
+        """
+        self._ensure_dirs()
+        requeued = 0
+        unknown: list[tuple[TriggerDelivery, str | None]] = []
         with self._lock:
             for path in sorted(self.processing_dir.glob("*.json")):
                 try:
@@ -232,13 +300,109 @@ class LocalTriggerStore:
                         data.get("delivery", data),
                         path=path,
                     )
+                    settlement_id = _payload_settlement_id(data)
                 except Exception:
                     logger.exception("Trigger: failed to parse processing delivery {}", path)
                     self._move_bad_delivery_unlocked(path)
                     continue
-                if self._retry_delivery_unlocked(delivery, _PROCESSING_RECOVERY_ERROR):
-                    recovered += 1
-        return recovered
+                if settlement_id:
+                    target = self.unknown_dir / path.name
+                    os.replace(path, target)
+                    delivery.path = target
+                    delivery.last_error = _UNKNOWN_OUTCOME_ERROR
+                    unknown.append((delivery, settlement_id))
+                elif self._requeue_unattempted_unlocked(delivery):
+                    requeued += 1
+        for delivery, settlement_id in unknown:
+            try:
+                self.write_delivery_run_record(
+                    delivery,
+                    status="unknown",
+                    error=_UNKNOWN_OUTCOME_ERROR,
+                    settlement_id=settlement_id,
+                )
+            except Exception:
+                logger.exception(
+                    "Trigger: failed to write unknown outcome for delivery {}",
+                    delivery.id,
+                )
+        return requeued
+
+    def list_unknown_deliveries(self) -> list[dict[str, Any]]:
+        """Expose interrupted deliveries that await an explicit owner decision."""
+        self._ensure_dirs()
+        unresolved: list[dict[str, Any]] = []
+        with self._lock:
+            for path in sorted(self.unknown_dir.glob("*.json")):
+                try:
+                    data = json.loads(path.read_text(encoding="utf-8"))
+                except Exception:
+                    logger.exception("Trigger: failed to parse unknown delivery {}", path)
+                    continue
+                body = _delivery_body(data)
+                delivery_id = str(body.get("id") or "")
+                if not delivery_id:
+                    continue
+                record = self._read_run_record(delivery_id)
+                settlement_id = _payload_settlement_id(data) or (
+                    record.get("settlement_id") if isinstance(record.get("settlement_id"), str) else None
+                )
+                unresolved.append({
+                    "delivery_id": delivery_id,
+                    "trigger_id": str(_get(body, "triggerId", "trigger_id", "") or ""),
+                    "attempts": int(body.get("attempts") or 0),
+                    "settlement_id": settlement_id,
+                    "status": "unknown",
+                    "error": record.get("error") or _UNKNOWN_OUTCOME_ERROR,
+                    "path": str(path),
+                })
+        return unresolved
+
+    def resolve_unknown_delivery(
+        self,
+        delivery_id: str,
+        *,
+        action: Literal["requeue", "fail"] = "requeue",
+    ) -> bool:
+        """Apply one explicit owner decision to an unknown delivery."""
+        if action not in {"requeue", "fail"}:
+            raise ValueError(f"unsupported unknown delivery action: {action}")
+        self._ensure_dirs()
+        found: Path | None = None
+        with self._lock:
+            for path in sorted(self.unknown_dir.glob("*.json")):
+                if self._delivery_file_id(path) == delivery_id:
+                    found = path
+                    break
+            if found is None:
+                return False
+            try:
+                data = json.loads(found.read_text(encoding="utf-8"))
+                delivery = TriggerDelivery.from_dict(_delivery_body(data), path=found)
+            except Exception:
+                logger.exception("Trigger: failed to parse unknown delivery {}", found)
+                return False
+            if action == "requeue":
+                delivery.attempts = 0
+                delivery.last_error = None
+                target = self.inbox_dir / found.name
+                self._atomic_write(
+                    target,
+                    json.dumps(_delivery_payload(delivery), ensure_ascii=False),
+                )
+                found.unlink(missing_ok=True)
+                delivery.path = target
+            else:
+                target = self.failed_dir / found.name
+                delivery.last_error = "delivery was resolved as failed by the owner"
+                os.replace(found, target)
+                delivery.path = target
+        self.write_delivery_run_record(
+            delivery,
+            status="requeued" if action == "requeue" else "error",
+            error=None if action == "requeue" else delivery.last_error,
+        )
+        return True
 
     def complete_delivery(self, delivery: TriggerDelivery) -> None:
         """Delete a claimed delivery after it is handled."""
@@ -299,12 +463,15 @@ class LocalTriggerStore:
         trigger: LocalTrigger | None = None,
         error: str | None = None,
         response: str | None = None,
+        settlement_id: str | None = None,
     ) -> Path:
         """Write the durable audit record for one local trigger delivery."""
         if trigger is None:
             trigger = self.get(delivery.trigger_id)
         record = _delivery_run_record(delivery, trigger)
         record["status"] = status
+        if settlement_id:
+            record["settlement_id"] = settlement_id
         if error:
             record["error"] = _run_record_text(error)
         if response is not None:
@@ -315,6 +482,7 @@ class LocalTriggerStore:
         self.root.mkdir(parents=True, exist_ok=True)
         self.inbox_dir.mkdir(parents=True, exist_ok=True)
         self.processing_dir.mkdir(parents=True, exist_ok=True)
+        self.unknown_dir.mkdir(parents=True, exist_ok=True)
         self.failed_dir.mkdir(parents=True, exist_ok=True)
         self.runs_dir.mkdir(parents=True, exist_ok=True)
 
@@ -360,6 +528,24 @@ class LocalTriggerStore:
         with suppress(OSError):
             os.replace(path, target)
 
+    def _requeue_unattempted_unlocked(self, delivery: TriggerDelivery) -> bool:
+        """Return an unstarted claim to the inbox without counting an attempt."""
+        if delivery.path is None:
+            return False
+        delivery.last_error = _PROCESSING_RECOVERY_ERROR
+        target = self.inbox_dir / delivery.path.name
+        self._atomic_write(target, json.dumps(_delivery_payload(delivery), ensure_ascii=False))
+        delivery.path.unlink(missing_ok=True)
+        return True
+
+    def _read_run_record(self, delivery_id: str) -> dict[str, Any]:
+        path = self.runs_dir / f"{delivery_id}.json"
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return {}
+        return cast(dict[str, Any], data) if isinstance(data, dict) else {}
+
     def _retry_delivery_unlocked(self, delivery: TriggerDelivery, error: str) -> bool:
         if delivery.path is None:
             return False
@@ -378,7 +564,12 @@ class LocalTriggerStore:
         return True
 
     def _delete_delivery_files_for_trigger_unlocked(self, trigger_id: str) -> None:
-        for directory in (self.inbox_dir, self.processing_dir, self.failed_dir):
+        for directory in (
+            self.inbox_dir,
+            self.processing_dir,
+            self.unknown_dir,
+            self.failed_dir,
+        ):
             for path in directory.iterdir():
                 if not path.is_file():
                     continue
@@ -400,13 +591,17 @@ class LocalTriggerStore:
             data = json.loads(path.read_text(encoding="utf-8"))
         except Exception:
             return None
-        payload = cast(dict[str, Any], data) if isinstance(data, dict) else None
-        raw = payload.get("delivery", payload) if payload is not None else None
-        if not isinstance(raw, dict):
+        value = _get(_delivery_body(data), "triggerId", "trigger_id", None)
+        return str(value) if value else None
+
+    @staticmethod
+    def _delivery_file_id(path: Path) -> str | None:
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
             return None
-        delivery_data = cast(dict[str, Any], raw)
-        trigger_id = delivery_data.get("triggerId", delivery_data.get("trigger_id", ""))
-        return str(trigger_id) if trigger_id else None
+        value = _delivery_body(data).get("id")
+        return str(value) if value else None
 
     @staticmethod
     def _atomic_write(path: Path, content: str) -> None:
@@ -451,11 +646,34 @@ def _now_ms() -> int:
     return int(time.time() * 1000)
 
 
-def _delivery_payload(delivery: TriggerDelivery) -> dict[str, Any]:
-    return {
+def _delivery_payload(
+    delivery: TriggerDelivery,
+    *,
+    settlement_id: str | None = None,
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {
         "version": 1,
         "delivery": delivery.to_dict(),
     }
+    if settlement_id:
+        payload["settlementId"] = settlement_id
+    return payload
+
+
+def _delivery_body(data: object) -> dict[str, Any]:
+    if not isinstance(data, dict):
+        return {}
+    payload = cast(dict[str, Any], data)
+    raw = payload.get("delivery", payload)
+    return cast(dict[str, Any], raw) if isinstance(raw, dict) else {}
+
+
+def _payload_settlement_id(data: Any) -> str | None:
+    for candidate in (data, _delivery_body(data)):
+        value = _get(candidate, "settlementId", "settlement_id", None)
+        if isinstance(value, str) and value:
+            return value
+    return None
 
 
 def _delivery_run_record(

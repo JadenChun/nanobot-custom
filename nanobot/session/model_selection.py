@@ -7,6 +7,15 @@ from typing import cast
 
 # Session.metadata is public SDK data, so internal selectors use a reserved namespace.
 SESSION_MODEL_PRESET_METADATA_KEY = "_nanobot_model_preset"
+SESSION_REASONING_EFFORT_METADATA_KEY = "_nanobot_reasoning_effort"
+
+
+def reasoning_effort_from_metadata(metadata: object) -> str | None:
+    """Return the chat's override, if present."""
+    if not isinstance(metadata, Mapping):
+        return None
+    value = cast(Mapping[object, object], metadata).get(SESSION_REASONING_EFFORT_METADATA_KEY)
+    return value if isinstance(value, str) and value else None
 
 
 def model_preset_from_metadata(metadata: object) -> str | None:

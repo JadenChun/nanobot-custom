@@ -280,6 +280,26 @@ def is_local_browser_request(connection: Any, headers: Any) -> bool:
     return _all_forwarded_values_are_loopback(headers)
 
 
+def is_same_origin_request(headers: Any, *, secure: bool = False) -> bool:
+    """Return False when a browser declares the request came from another site.
+
+    The Origin header, when present, must match the Host header. A Fetch
+    Metadata value of ``cross-site`` or ``same-site`` is refused. An absent
+    Origin keeps the caller's existing loopback and token boundaries.
+    """
+    fetch_site = case_insensitive_header(headers, "Sec-Fetch-Site").strip().lower()
+    if fetch_site in {"cross-site", "same-site"}:
+        return False
+    origin = case_insensitive_header(headers, "Origin").strip()
+    if not origin:
+        return True
+    host = case_insensitive_header(headers, "Host").strip()
+    if not host:
+        return False
+    scheme = "https" if secure else "http"
+    return origin.rstrip("/").lower() == f"{scheme}://{host}".lower()
+
+
 def bearer_token(headers: Any) -> str | None:
     auth = headers.get("Authorization") or headers.get("authorization")
     if auth and auth.lower().startswith("bearer "):

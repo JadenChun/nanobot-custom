@@ -2,7 +2,7 @@
 name: mobile-app-testing
 description: Drive local iOS simulators and Android emulators with agent_device. Use when opening installed mobile apps, taking snapshots or screenshots, tapping, typing, scrolling, checking visible UI state, or reproducing app behavior on a local simulator/emulator.
 homepage: https://agent-device.dev
-metadata: {"nanobot":{"emoji":"📱","requires":{"bins":["npx","xcrun","adb"]}}}
+metadata: {"nanobot":{"emoji":"📱","requires":{"bins":["npx"],"anyBins":["xcrun","adb"]}}}
 ---
 
 # Mobile App Testing

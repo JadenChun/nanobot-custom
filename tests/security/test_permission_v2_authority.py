@@ -566,6 +566,49 @@ def test_deferred_full_preserves_an_active_task_reference(tmp_path) -> None:
     assert full is not None
 
 
+def test_child_hold_defers_only_ordinary_task_retirement(tmp_path) -> None:
+    root = tmp_path / "project"
+    root.mkdir()
+    owner = DesktopPermissionOwner()
+    source = _source()
+    reference = owner.activate_once(
+        session_key="websocket:chat-a",
+        source_binding=source,
+        task_turn_id="turn-original",
+        task_input_event_id="event-original",
+        path=root,
+        file_access="read_write",
+        commands=False,
+    )
+
+    assert owner.retain_task_reference(reference)
+    owner.retire_task_reference(reference, reason="task_ended", active_turn=False)
+    assert owner.is_current_task_reference(reference)
+    assert owner.once_roots(reference)
+    assert owner.release_task_reference(reference)
+    assert not owner.is_current_task_reference(reference)
+
+
+def test_child_hold_does_not_defer_stop_retirement(tmp_path) -> None:
+    root = tmp_path / "project"
+    root.mkdir()
+    owner = DesktopPermissionOwner()
+    reference = owner.activate_once(
+        session_key="websocket:chat-a",
+        source_binding=_source(),
+        task_turn_id="turn-original",
+        task_input_event_id="event-original",
+        path=root,
+        file_access="read_write",
+        commands=False,
+    )
+
+    assert owner.retain_task_reference(reference)
+    owner.retire_task_reference(reference, reason="task_cancelled", active_turn=False)
+    assert not owner.is_current_task_reference(reference)
+    assert owner.release_task_reference(reference)
+
+
 def test_full_retirement_closes_native_handles_for_request_derived_proofs() -> None:
     owner = DesktopPermissionOwner()
     source = _source()

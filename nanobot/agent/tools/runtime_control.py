@@ -8,7 +8,11 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Protocol, TypeAlias, runtime_checkable
 
 if TYPE_CHECKING:
-    from nanobot.agent.subagent import SubagentManager, SubagentStatus
+    from nanobot.agent.subagent import (
+        RetiredSubagentAuthority,
+        SubagentManager,
+        SubagentStatus,
+    )
     from nanobot.agent.tools.shell import ExecToolConfig
     from nanobot.agent.tools.web import WebToolsConfig
     from nanobot.config.schema import ModelPresetConfig
@@ -119,7 +123,7 @@ class _RuntimeControlTarget(Protocol):
     max_tool_result_chars: int
     web_config: WebToolsConfig
     exec_config: ExecToolConfig
-    subagents: SubagentManager
+    subagents: SubagentManager | RetiredSubagentAuthority
 
     @property
     def model(self) -> str: ...
@@ -264,7 +268,7 @@ def _snapshot_exec_config(config: ExecToolConfig) -> dict[str, object]:
 
 
 def _snapshot_subagent_statuses(
-    manager: SubagentManager,
+    manager: SubagentManager | RetiredSubagentAuthority,
 ) -> dict[str, dict[str, object]]:
     return {
         task_id: _snapshot_subagent_status(status)

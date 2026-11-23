@@ -50,7 +50,8 @@ async def test_process_continuation_queues_behind_foreground_and_keeps_its_own_p
                          tools_config=inputs.config.tools, restrict_to_workspace=True,
                          enable_legacy_auto_compact=False)
 
-    loop = await admitted_async(tmp_path, build, keys=("websocket:c1",))
+    loop = await admitted_async(tmp_path, build)
+    loop.sessions.admit_persistent_write("websocket:c1")
     project_a, project_b = loop.workspace / "a", loop.workspace / "b"
     for path, label in ((project_a, "A"), (project_b, "B")):
         path.mkdir()
@@ -63,6 +64,7 @@ async def test_process_continuation_queues_behind_foreground_and_keeps_its_own_p
         channel="websocket", chat_id="c1", session_key="websocket:c1",
         turn_id="original-a-turn", original_user_text="Work on A", workspace=project_a,
         workspace_scope=build_workspace_scope(project_a, "restricted"),
+        source_state=loop.sessions.read_existing_canonical_source("websocket:c1")[1].state,
     ))
     foreground = asyncio.create_task(loop.execute_turn(TurnRequest(
         content="Work on B", session_key="websocket:c1", route=DeliveryTarget("websocket", "c1"),

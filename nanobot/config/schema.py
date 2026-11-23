@@ -408,6 +408,21 @@ class SourceCompactionConfig(Base):
         return self
 
 
+class DelegationTreeConfig(Base):
+    """Finite delegated-child limits for one gateway runtime."""
+
+    max_depth: StrictInt = Field(default=2, ge=1, le=2)
+    max_live_children_per_parent: StrictInt = Field(default=2, ge=1, le=2)
+    max_live_descendants: StrictInt = Field(default=4, ge=2, le=4)
+    max_live_children_per_gateway: StrictInt = Field(default=4, ge=1, le=4)
+
+    @model_validator(mode="after")
+    def validate_child_limits(self) -> "DelegationTreeConfig":
+        if self.max_live_descendants < self.max_live_children_per_parent:
+            raise ValueError("root descendant limit must hold one parent's children")
+        return self
+
+
 class AgentDefaults(Base):
     """Default agent configuration."""
 
@@ -496,6 +511,7 @@ class AgentDefaults(Base):
     fallback_models: list[FallbackCandidate] = Field(default_factory=list)
     max_tool_iterations: int = 200
     max_concurrent_subagents: int = Field(default=4, ge=1)
+    delegation_tree: DelegationTreeConfig = Field(default_factory=DelegationTreeConfig)
     max_tool_result_chars: int = 16_000
     provider_retry_mode: Literal["standard", "persistent"] = "standard"
     tool_hint_max_length: int = Field(
@@ -564,7 +580,7 @@ class AgentsConfig(Base):
 class ProviderConfig(Base):
     """LLM provider configuration."""
 
-    # User-facing name for dynamic custom providers.
+    # User-facing label; the configured provider key remains its identity.
     display_name: str | None = Field(
         default=None,
         exclude_if=lambda value: value is None,
@@ -621,6 +637,10 @@ class BedrockProviderConfig(ProviderConfig):
 
     region: str | None = None  # AWS region, falls back to AWS_REGION/AWS_DEFAULT_REGION/profile
     profile: str | None = None  # Optional AWS shared config profile
+    # The installed SDK supports a configured bearer token only as process
+    # identity. The operator must opt in explicitly; nanobot never swaps a live
+    # process credential for another instance's key.
+    allow_process_bearer: bool = False
 
 
 class ProvidersConfig(Base):
@@ -845,6 +865,35 @@ def _lazy_default(module_path: str, class_name: str) -> Any:
     return getattr(module, class_name)()
 
 
+PermissionAction = Literal["allow", "ask", "deny"]
+PermissionProfile = Literal["autonomous", "balanced", "strict"]
+
+
+class ToolPermissionsConfig(Base):
+    """Declarative tool action permissions (Codex/OpenCode-inspired).
+
+    - ``autonomous`` (default): All local workspace edits and shell commands run
+      autonomously inside the active Sandbox / workspace boundary without
+      interactive approval prompts. Hard invariants (sandbox/path containment,
+      SSRF, read-only subagents, unconfined nested ``--yolo`` refusal, and
+      explicit ``deny`` rules) remain enforced silently.
+    - ``balanced``: Local workspace edits and local shell commands run
+      autonomously; external or OS-level mutations (``desktop_use``,
+      ``agent_device``, ``agent_browser`` mutations, external ``git push`` /
+      ``publish`` / ``kubectl`` / DB drops, and confined reduced-protection
+      nested launches) ask for approval.
+    - ``strict``: Legacy behavior — asks on large file overwrites/edits,
+      ``replace_all``, destructive local/external shell commands, ``cron``,
+      and external mutations.
+
+    ``rules`` supports per-tool or pattern-scoped overrides
+    (``"allow"`` | ``"ask"`` | ``"deny"``), evaluated last-match-wins.
+    """
+
+    profile: PermissionProfile = "autonomous"
+    rules: dict[str, PermissionAction | dict[str, PermissionAction]] = Field(default_factory=dict)
+
+
 class ToolsConfig(Base):
     """Tools configuration.
 
@@ -894,6 +943,7 @@ class ToolsConfig(Base):
     # 0 = no quota. Quota cleanup never deletes referenced assets.
     generated_media_max_bytes: int = Field(default=0, ge=0)
     restrict_to_workspace: bool = False  # policy intent: keep tool access inside workspace when possible
+    permissions: ToolPermissionsConfig = Field(default_factory=ToolPermissionsConfig)
     webui_allow_local_service_access: bool = Field(
         default=True,
         validation_alias=AliasChoices(

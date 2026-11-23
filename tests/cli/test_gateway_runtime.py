@@ -255,6 +255,65 @@ async def test_health_server_reports_its_actual_bound_management_port() -> None:
         await asyncio.gather(server, return_exceptions=True)
 
 
+async def test_publish_gateway_identity_waits_for_websocket_readiness() -> None:
+    from nanobot.cli.gateway_runtime import _publish_gateway_identity_when_ready
+
+    ws_running = False
+
+    class _Channels:
+        enabled_channels = ["websocket"]
+
+        def get_status(self) -> dict[str, dict[str, object]]:
+            return {
+                "websocket": {
+                    "running": ws_running,
+                    "state": "running" if ws_running else "starting",
+                },
+            }
+
+    published: list[str] = []
+    shutdown = asyncio.Event()
+    task = asyncio.create_task(
+        _publish_gateway_identity_when_ready(
+            _Channels(),
+            shutdown,
+            lambda: published.append("published"),
+            poll_interval_s=0.01,
+        )
+    )
+    await asyncio.sleep(0.03)
+    assert published == []
+
+    ws_running = True
+    await asyncio.wait_for(task, timeout=1.0)
+    assert published == ["published"]
+
+
+async def test_publish_gateway_identity_skips_publish_when_shutdown_before_ready() -> None:
+    from nanobot.cli.gateway_runtime import _publish_gateway_identity_when_ready
+
+    class _Channels:
+        enabled_channels = ["websocket"]
+
+        def get_status(self) -> dict[str, dict[str, object]]:
+            return {"websocket": {"running": False, "state": "starting"}}
+
+    published: list[str] = []
+    shutdown = asyncio.Event()
+    task = asyncio.create_task(
+        _publish_gateway_identity_when_ready(
+            _Channels(),
+            shutdown,
+            lambda: published.append("published"),
+            poll_interval_s=0.05,
+        )
+    )
+    await asyncio.sleep(0.02)
+    shutdown.set()
+    await asyncio.wait_for(task, timeout=1.0)
+    assert published == []
+
+
 async def test_mcp_readiness_hook_delegates_to_application_provider() -> None:
     provider = _TrackingMCPProvider()
     hook = _MCPReadinessHook(provider)
@@ -340,3 +399,91 @@ def test_webui_refresh_notification_keeps_captured_method_binding() -> None:
     assert seen == []
     assert notify() is None
     assert seen == ["captured"]
+
+
+# Author cases U1-U4 from req-a39a/CASES.md: one readiness contract for the
+# gateway status path and the CLI. Both entry points must return the same boolean
+# for the same response bytes and must not raise.
+def _serve_health(body: bytes, status: int = 200):
+    import threading
+    from contextlib import contextmanager
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:  # noqa: N802 - stdlib handler API
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *_args: object) -> None:
+            pass
+
+    @contextmanager
+    def serve():
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            yield server.server_address[1]
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=5)
+
+    return serve()
+
+
+def _readiness_from_both_entry_points(port: int) -> tuple[bool, bool]:
+    from nanobot.cli.webui_support import _gateway_health_ready as cli_ready
+    from nanobot.gateway.runtime import gateway_health_ready
+
+    return cli_ready("127.0.0.1", port), gateway_health_ready("127.0.0.1", port)
+
+
+def test_ready_when_ready_true() -> None:
+    with _serve_health(b'{"status":"ok","ready":true}') as port:
+        cli_result, gateway_result = _readiness_from_both_entry_points(port)
+    assert cli_result is True
+    assert gateway_result is True
+    assert cli_result == gateway_result
+
+
+def test_ready_when_ready_absent() -> None:
+    with _serve_health(b'{"status":"ok"}') as port:
+        cli_result, gateway_result = _readiness_from_both_entry_points(port)
+    assert cli_result is True
+    assert gateway_result is True
+    assert cli_result == gateway_result
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [b"[]", b'"ok"', b"7", b"null", b'{"status":"ok"', b"<html>ok</html>"],
+    ids=["p1-array", "p2-string", "p3-number", "p4-null", "p5-malformed", "p6-html"],
+)
+def test_not_ready_for_non_object_or_malformed_json(payload: bytes) -> None:
+    with _serve_health(payload) as port:
+        cli_result, gateway_result = _readiness_from_both_entry_points(port)
+    assert cli_result is False
+    assert gateway_result is False
+    assert cli_result == gateway_result
+
+
+def test_not_ready_for_non_200() -> None:
+    with _serve_health(b'{"status":"ok","ready":true}', status=503) as port:
+        cli_result, gateway_result = _readiness_from_both_entry_points(port)
+    assert cli_result is False
+    assert gateway_result is False
+    assert cli_result == gateway_result
+
+
+def test_readiness_ignores_proxy_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("HTTP_PROXY", "http://127.0.0.1:9")
+    monkeypatch.setenv("http_proxy", "http://127.0.0.1:9")
+    with _serve_health(b'{"status":"ok","ready":true}') as port:
+        cli_result, gateway_result = _readiness_from_both_entry_points(port)
+    assert cli_result is True
+    assert gateway_result is True
+    assert cli_result == gateway_result

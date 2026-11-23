@@ -56,6 +56,15 @@ function formatRemaining(seconds: number): string {
   return `${minutes}:${rest.toString().padStart(2, "0")}`;
 }
 
+function DeviceFingerprint({ value }: { value?: string }) {
+  if (!value) return null;
+  return (
+    <p className="mt-1 break-all font-mono text-[11px] text-muted-foreground">
+      Key fingerprint: {value}
+    </p>
+  );
+}
+
 export function RemoteAccessSettings({
   token,
   initialStatus = null,
@@ -310,6 +319,8 @@ export function RemoteAccessSettings({
     });
   };
 
+  const activeDevices = (status?.devices ?? []).filter((device) => device.status === "active");
+
   return (
     <section className="space-y-6" aria-labelledby="remote-access-heading">
       <header>
@@ -328,6 +339,7 @@ export function RemoteAccessSettings({
           <p className="mt-1 text-xs text-muted-foreground">
             {pending.device.platform || "Android"} · files, commands, settings, existing chats
           </p>
+          <DeviceFingerprint value={pending.device_fingerprint} />
           <div className="mt-3 flex gap-2">
             <button
               type="button"
@@ -374,9 +386,9 @@ export function RemoteAccessSettings({
 
       <div className="space-y-2">
         <h2 className="text-sm font-medium">Owner device</h2>
-        {status?.devices.length ? (
+        {activeDevices.length ? (
           <ul className="divide-y rounded-xl border">
-            {status.devices.map((device) => (
+            {activeDevices.map((device) => (
               <li key={device.installation_id} className="flex items-center justify-between gap-3 p-3">
                 <div className="min-w-0">
                   <div className="flex items-center gap-2">
@@ -388,24 +400,22 @@ export function RemoteAccessSettings({
                     ) : null}
                   </div>
                   <p className="truncate text-xs text-muted-foreground">
-                    {device.status === "active" ? "Connected until revoked" : "Revoked"}
+                    Authorized until revoked
                     {" · last seen "}
                     {formatLastSeen(device.last_seen_at)}
                   </p>
                 </div>
-                {device.status === "active" ? (
-                  <button
-                    type="button"
-                    disabled={busy}
-                    onClick={() => setRevoking({
-                      installationId: device.installation_id,
-                      label: device.label,
-                    })}
-                    className="rounded-md border px-3 py-1 text-xs"
-                  >
-                    Revoke
-                  </button>
-                ) : null}
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() => setRevoking({
+                    installationId: device.installation_id,
+                    label: device.label,
+                  })}
+                  className="rounded-md border px-3 py-1 text-xs"
+                >
+                  Revoke
+                </button>
               </li>
             ))}
           </ul>
@@ -513,6 +523,11 @@ export function RemoteAccessSettings({
 
           {step === "waiting" || step === "pending" ? (
             <div className="space-y-4">
+              {error ? (
+                <p className="rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2 text-xs text-destructive">
+                  {error}
+                </p>
+              ) : null}
               <p className="text-xs text-muted-foreground">
                 Only pair your own phone. Full owner control; the desktop must approve it.
               </p>
@@ -623,6 +638,7 @@ export function RemoteAccessSettings({
                   <p className="mt-1 text-xs text-muted-foreground">
                     {pending.device.platform || "Android"} · files, commands, settings, existing chats
                   </p>
+                  <DeviceFingerprint value={pending.device_fingerprint} />
                   <div className="mt-3 flex gap-2">
                     <button
                       type="button"

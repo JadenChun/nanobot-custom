@@ -1,4 +1,5 @@
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
 import { MessageBubble } from "@/components/MessageBubble";
@@ -272,6 +273,80 @@ describe("MessageBubble", () => {
       "The server rejected your last message because it exceeded the size limit.",
     );
     expect(screen.getByRole("alert")).toHaveClass("sr-only");
+  });
+
+  it("renders uncertain delivery neutrally with truthful disconnect details", async () => {
+    const message: UIMessage = {
+      id: "u-uncertain-delivery",
+      role: "user",
+      content: "hello",
+      createdAt: Date.now(),
+      deliveryStatus: "unknown",
+      deliveryErrorKind: "connection_closed",
+    };
+    render(<MessageBubble message={message} />);
+
+    const status = screen.getByRole("button", { name: "Awaiting confirmation" });
+    expect(status).toHaveTextContent("Awaiting confirmation");
+    expect(status).toHaveClass(
+      "text-amber-700",
+      "dark:text-amber-300",
+      "max-w-full",
+      "flex-wrap",
+    );
+    expect(screen.queryByRole("button", { name: /Not sent/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /retry|send again/i })).not.toBeInTheDocument();
+    expect(screen.queryByText("Message was not sent")).not.toBeInTheDocument();
+
+    fireEvent.focus(status);
+
+    const details = await screen.findByRole("tooltip");
+    expect(details).toHaveTextContent("Awaiting confirmation");
+    expect(details).toHaveTextContent(
+      "The connection closed before confirmation. The server may already have received this message. Reconnect and check its status; do not send it again just because of the disconnect.",
+    );
+    expect(screen.getByRole("status")).toHaveTextContent("Awaiting confirmation");
+  });
+
+  it("reveals uncertain delivery details to coarse-pointer users and supports keyboard dismissal", async () => {
+    vi.stubGlobal("matchMedia", vi.fn((query: string) => ({
+      matches: query === "(hover: none) and (pointer: coarse)",
+      media: query,
+      onchange: null,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    })));
+    const user = userEvent.setup();
+    const message: UIMessage = {
+      id: "u-uncertain-touch-details",
+      role: "user",
+      content: "hello",
+      createdAt: Date.now(),
+      deliveryStatus: "unknown",
+      deliveryErrorKind: "connection_closed",
+    };
+    const { unmount } = render(<MessageBubble message={message} />);
+    try {
+      const status = screen.getByRole("button", { name: "Awaiting confirmation" });
+      expect(status).toHaveAttribute("aria-haspopup", "dialog");
+      await user.click(status);
+      let details = await screen.findByRole("dialog");
+      expect(details).toHaveTextContent("The server may already have received this message.");
+      expect(details).toHaveTextContent("do not send it again just because of the disconnect.");
+
+      await user.keyboard("{Escape}");
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+
+      await user.keyboard("{Enter}");
+      details = await screen.findByRole("dialog");
+      expect(details).toHaveTextContent("The server may already have received this message.");
+      await user.keyboard("{Escape}");
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    } finally {
+      unmount();
+      vi.unstubAllGlobals();
+    }
   });
 
   it("styles only generated quoted context in user messages", () => {
@@ -876,7 +951,7 @@ describe("MessageBubble", () => {
     expect(screen.queryByText("Code")).not.toBeInTheDocument();
   });
 
-  it("renders streaming reasoning as one compact activity line", () => {
+  it("renders streaming reasoning with a Thinking… header and live expanded body", () => {
     const message: UIMessage = {
       id: "a-reasoning-streaming",
       role: "assistant",
@@ -888,19 +963,19 @@ describe("MessageBubble", () => {
 
     const { container } = render(<MessageBubble message={message} />);
 
-    const preview = screen.getByText("Step 1: parse intent. Step 2: compute.");
-    expect(preview).toBeInTheDocument();
+    const header = screen.getByText("Thinking…");
+    expect(header).toBeInTheDocument();
     expect(container.querySelector(".reasoning-sheen-stripe")).not.toBeInTheDocument();
-    expect(preview).toHaveClass("streaming-text-sheen");
-    expect(preview).toHaveAttribute(
-      "data-sheen-text",
+    expect(header).toHaveClass("streaming-text-sheen");
+    expect(header).toHaveAttribute("data-sheen-text", "Thinking…");
+    const disclosure = screen.getByRole("button", { name: "Reasoning" });
+    expect(disclosure).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByTestId("reasoning-live-stream")).toHaveTextContent(
       "Step 1: parse intent. Step 2: compute.",
     );
-    expect(screen.queryByText("Thinking…")).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /thinking/i })).not.toBeInTheDocument();
   });
 
-  it("keeps completed reasoning on one line above the answer", () => {
+  it("keeps completed reasoning collapsed to a compact Thought row above the answer", () => {
     const message: UIMessage = {
       id: "a-reasoning-done",
       role: "assistant",
@@ -908,19 +983,53 @@ describe("MessageBubble", () => {
       createdAt: Date.now(),
       reasoning: "hidden until expanded",
       reasoningStreaming: false,
+      latencyMs: 10_000,
     };
 
     render(<MessageBubble message={message} />);
 
-    const preview = screen.getByText("hidden until expanded");
-    expect(preview).toBeInTheDocument();
+    const label = screen.getByText("Thought for 10s");
+    expect(label).toBeInTheDocument();
     expect(screen.getByText("The answer is 42.")).toBeInTheDocument();
-    expect(preview.closest('[data-testid="activity-step"]')).toHaveClass("mb-2");
-    expect(screen.queryByText("Thinking")).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /thinking/i })).not.toBeInTheDocument();
+    expect(label.closest('[data-testid="activity-step"]')?.parentElement).toHaveClass("mb-2");
+    expect(screen.queryByText("hidden until expanded")).not.toBeInTheDocument();
   });
 
-  it("compacts reasoning markdown into plain single-line text", () => {
+  it("keeps expanded reasoning separate from the assistant answer", async () => {
+    await act(async () => {
+      await import("@/components/MarkdownTextRenderer");
+    });
+
+    const message: UIMessage = {
+      id: "a-reasoning-answer-separation",
+      role: "assistant",
+      content: "The answer stays visible.",
+      createdAt: Date.now(),
+      reasoning: "## Full reasoning plan\n\nCheck the supplied evidence.",
+      reasoningStreaming: false,
+    };
+
+    render(<MessageBubble message={message} />);
+
+    const answer = screen.getByText("The answer stays visible.");
+    const disclosure = screen.getByRole("button", { name: "Reasoning" });
+    expect(disclosure).toHaveAttribute("aria-expanded", "false");
+    expect(answer).toBeInTheDocument();
+
+    fireEvent.click(disclosure);
+
+    const reasoning = document.getElementById(disclosure.getAttribute("aria-controls")!);
+    expect(reasoning).toBeInTheDocument();
+    await within(reasoning!).findByRole("heading", {
+      level: 2,
+      name: "Full reasoning plan",
+    });
+    expect(answer).toBeInTheDocument();
+    expect(reasoning).not.toContainElement(answer);
+    expect(within(reasoning!).getByText("Check the supplied evidence.")).toBeInTheDocument();
+  });
+
+  it("does not leak raw markdown into the collapsed reasoning header", () => {
     const message: UIMessage = {
       id: "a-reasoning-md",
       role: "assistant",
@@ -932,8 +1041,9 @@ describe("MessageBubble", () => {
 
     const { container } = render(<MessageBubble message={message} />);
 
-    expect(screen.getByText("Section title Body line.")).toBeInTheDocument();
+    expect(screen.getByText("Thought")).toBeInTheDocument();
     expect(container.textContent).not.toContain("###");
+    expect(container.textContent).not.toContain("Section title");
     expect(container.querySelector("h3")).not.toBeInTheDocument();
   });
 
@@ -1052,6 +1162,70 @@ describe("MessageBubble", () => {
     expect(screen.getByRole("button", { name: /view image: growth.svg/i })).toBeInTheDocument();
     expect(container.querySelector('img[src="/api/media/sig/svg"]')).toBeInTheDocument();
     expect(screen.queryByLabelText("File attachment")).not.toBeInTheDocument();
+  });
+
+  it("renders a labeled delegated task row and opens its read-only history", async () => {
+    const user = userEvent.setup();
+    const onOpen = vi.fn();
+    const child = {
+      child_session_key: "delegated:child-a",
+      child_id: "child-a",
+      profile: "delegated",
+      state: "active",
+      task_label: "Inspect the API contract",
+      runtime_generation: 0,
+      turn_id: "turn-a",
+      result_summary: "Two compatible routes were found.",
+    };
+    const message: UIMessage = {
+      id: "delegated-child-a",
+      role: "assistant",
+      content: "",
+      createdAt: Date.now(),
+      kind: "delegated_child",
+      delegatedChild: child,
+    };
+
+    render(<MessageBubble message={message} onOpenChildHistory={onOpen} />);
+
+    const row = screen.getByRole("region", { name: "Inspect the API contract" });
+    expect(within(row).getByText(/^Working(?: · |$)/)).toBeInTheDocument();
+    expect(within(row).getByText("Two compatible routes were found.")).toBeInTheDocument();
+    const inspect = within(row).getByRole("button", {
+      name: "Inspect Inspect the API contract activity",
+    });
+
+    await user.click(inspect);
+
+    expect(onOpen).toHaveBeenCalledWith(child, inspect);
+  });
+
+  it("keeps delegated rows read-only and marks stale status unavailable", () => {
+    const message: UIMessage = {
+      id: "delegated-child-controls",
+      role: "assistant",
+      content: "",
+      createdAt: Date.now(),
+      kind: "delegated_child",
+      delegatedChild: {
+        child_session_key: "delegated:child-a",
+        child_id: "child-a",
+        profile: "delegated",
+        state: "active",
+        task_label: "Review test coverage",
+        runtime_generation: 0,
+        turn_id: "turn-a",
+      },
+    };
+
+    render(<MessageBubble message={message} delegatedStatusAvailable={false} />);
+
+    expect(screen.getByRole("region", { name: "Review test coverage" })).toBeInTheDocument();
+    expect(screen.getByText("Status unavailable (last known Working)")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Inspect Review test coverage activity" })).toBeDisabled();
+    expect(screen.queryByRole("button", { name: "Wait" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Steer" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Stop" })).not.toBeInTheDocument();
   });
 
 });

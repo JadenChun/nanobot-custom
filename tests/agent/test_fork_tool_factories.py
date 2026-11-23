@@ -1,4 +1,10 @@
 """The real loader must expose only explicitly selected foreground capabilities."""
+import json
+import os
+import sys
+from contextlib import contextmanager
+from dataclasses import replace
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -9,6 +15,11 @@ from nanobot.agent.tools.registry import ToolRegistry
 from nanobot.agent.write_guard import FileLockRegistry
 from nanobot.config.schema import ToolsConfig
 from nanobot.context_repo import ContextRepoManager, ResourceAccessPolicy
+from nanobot.security.workspace_access import (
+    bind_workspace_scope,
+    build_workspace_scope,
+    reset_workspace_scope,
+)
 
 
 @pytest.fixture
@@ -26,6 +37,71 @@ def load(context, monkeypatch):
     registry = ToolRegistry()
     names = loader.load(context, registry)
     return names, registry
+
+
+@contextmanager
+def automation_scope(workspace, access_mode):
+    if access_mode is None:
+        yield
+        return
+    token = bind_workspace_scope(build_workspace_scope(workspace, access_mode))
+    try:
+        yield
+    finally:
+        reset_workspace_scope(token)
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="Requires a Linux launcher fixture")
+@pytest.mark.parametrize("name", ["agent_browser", "agent_device"])
+@pytest.mark.parametrize(
+    "default_restricted, access_mode, destinations, allowed",
+    [
+        (True, None, ("inside",), False),
+        (False, "restricted", ("sibling",), False),
+        (True, "full", ("inside", "sibling"), True),
+    ],
+    ids=["default-restricted", "turn-restricted", "turn-full"],
+)
+async def test_foreground_automation_requires_native_access(
+    context, monkeypatch, name, default_restricted, access_mode, destinations, allowed,
+):
+    workspace = Path(context.workspace) / "workspace"
+    directories = {"inside": workspace / "inside", "sibling": workspace.with_name("sibling")}
+    for directory in directories.values():
+        directory.mkdir(parents=True)
+    context.workspace = str(workspace)
+    context.config.restrict_to_workspace = default_restricted
+    context.fork_dependencies = replace(
+        context.fork_dependencies,
+        resource_policy=ResourceAccessPolicy(
+            workspace=workspace, restrict_to_workspace=default_restricted,
+        ),
+    )
+    launcher = workspace.with_name("npx")
+    launcher.write_text(
+        '#!/bin/sh\nshift 2\nprintf "%s\\n" "$PWD" "$@" > "$NANOBOT_TEST_AUTOMATION_RECEIPT"\n',
+        encoding="utf-8",
+    )
+    launcher.chmod(0o755)
+    monkeypatch.setenv("PATH", str(launcher.parent) + os.pathsep + os.environ["PATH"])
+    receipt = workspace.with_name("receipt")
+    monkeypatch.setenv("NANOBOT_TEST_AUTOMATION_RECEIPT", str(receipt))
+    _, registry = load(context, monkeypatch)
+
+    with automation_scope(workspace, access_mode):
+        for destination in destinations:
+            cwd = str(directories[destination])
+            outcome = await registry.execute_with_context(
+                name, {"args": ["--help"], "working_dir": cwd}, object(),
+            )
+            if allowed:
+                assert outcome.stop_reason is None
+                assert json.loads(outcome.content)["exitCode"] == 0
+                assert receipt.read_text(encoding="utf-8").splitlines() == [cwd, "--help"]
+                receipt.unlink()
+            else:
+                assert outcome.stop_reason == "policy_blocked"
+                assert not receipt.exists()
 
 
 def test_tool_loader_rejects_non_core_scope(context):
@@ -56,12 +132,14 @@ def test_exact_default_main_tools_and_dependency_handoff(context, monkeypatch):
     assert set(names) == {'read_file', 'write_file', 'edit_file', 'list_dir', 'exec',
                           'exec_session', 'list_exec_sessions', 'web_search',
                           'web_fetch', 'message', 'plan_task', 'delegate_task', 'review_work',
+                          'followup_child',
                           'explore', 'agent_browser', 'agent_device', 'generate_image',
                           'repository_catalog', 'save_knowledge'}
     assert registry.get('write_file')._resource_policy is context.fork_dependencies.resource_policy
     assert registry.get('write_file')._lock_registry is context.fork_dependencies.file_locks
     assert registry.get('agent_browser').working_dir == context.workspace
     assert registry.get('plan_task')._manager is context.fork_dependencies.foreground_manager
+    assert registry.get('followup_child')._manager is context.fork_dependencies.foreground_manager
 
 
 def test_missing_dependencies_and_collisions_leave_registry_unchanged(context, monkeypatch):

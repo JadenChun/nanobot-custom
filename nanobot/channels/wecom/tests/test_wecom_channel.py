@@ -1,5 +1,7 @@
 """Tests for WeCom channel: helpers, download, upload, send, and message processing."""
 
+import asyncio
+import base64
 import os
 import tempfile
 from pathlib import Path
@@ -19,6 +21,7 @@ if not WECOM_AVAILABLE:
 
 from wecom_aibot_sdk import UploadResult, WSClient
 
+from nanobot.attachments.store import AttachmentStore
 from nanobot.bus.events import OutboundMessage
 from nanobot.bus.outbound_events import ProgressEvent
 from nanobot.bus.queue import MessageBus
@@ -27,6 +30,7 @@ from nanobot.channels.wecom.runtime import (
     WecomConfig,
     _sanitize_filename,
 )
+from nanobot.config.paths import get_attachments_dir, get_media_dir
 
 
 class _FakeFrame:
@@ -419,93 +423,66 @@ async def test_process_message_ignores_unauthorized_sender_before_download() -> 
     assert channel.bus.inbound_size == 0
 
 
-@pytest.mark.asyncio
-async def test_process_image_message() -> None:
-    """Image message: download success → media_paths non-empty."""
-    channel = WecomChannel(WecomConfig(bot_id="b", secret="s", allow_from=["user1"]), MessageBus())
-    client = _FakeWeComClient()
-
-    with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as f:
-        f.write(b"\x89PNG\r\n")
-        saved = f.name
-
-    client.download_file.return_value = (b"\x89PNG\r\n", "photo.png")
-    channel._client = client
-
-    try:
-        with patch("nanobot.channels.wecom.runtime.get_media_dir", return_value=Path(os.path.dirname(saved))):
-            frame = _FakeFrame(body={
-                "msgid": "msg_img_1",
-                "chatid": "chat1",
-                "from": {"userid": "user1"},
-                "image": {"url": "https://example.com/img.png", "aeskey": "key123"},
-            })
-            await channel._process_message(frame, "image")
-
-        msg = await channel.bus.consume_inbound()
-        assert len(msg.media) == 1
-        assert msg.media[0].endswith("photo.png")
-        assert "[image:" in msg.content
-    finally:
-        if os.path.exists(saved):
-            pass  # may have been overwritten; clean up if exists
-        # Clean up any photo.png in tempdir
-        p = os.path.join(os.path.dirname(saved), "photo.png")
-        if os.path.exists(p):
-            os.unlink(p)
+_PNG = base64.b64decode(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+yF9kAAAAASUVORK5CYII="
+)
+_IMAGE = {"url": "https://example.com/photo.png", "aeskey": "fixture-key"}
 
 
 @pytest.mark.asyncio
-async def test_process_file_message() -> None:
-    """File message: download success → media_paths non-empty (critical fix verification)."""
-    channel = WecomChannel(WecomConfig(bot_id="b", secret="s", allow_from=["user1"]), MessageBus())
+@pytest.mark.parametrize(
+    ("kind", "payload", "user_text", "name", "mime", "data"),
+    [
+        ("image", {"image": _IMAGE}, "", "photo.png", "image/png", _PNG),
+        (
+            "mixed",
+            {"mixed": {"msg_item": [
+                {"msgtype": "text", "text": {"content": "hello wecom"}},
+                {"msgtype": "image", "image": _IMAGE},
+            ]}},
+            "hello wecom", "photo.png", "image/png", _PNG,
+        ),
+        (
+            "file",
+            {"file": {"url": "https://example.com/download", "aeskey": "fixture-key"}},
+            "", "report.txt", "text/plain", b"quarterly results\n",
+        ),
+    ],
+    ids=["image-only", "text-and-image", "sdk-filename"],
+)
+async def test_sdk_message_delivers_canonical_attachment(
+    monkeypatch, kind, payload, user_text, name, mime, data,
+) -> None:
+    bus = MessageBus()
+    channel = WecomChannel(WecomConfig(bot_id="b", secret="s", allow_from=["user1"]), bus)
     client = _FakeWeComClient()
+    client.download_file.return_value = (data, name)
+    handlers = {}
+    client.on = handlers.__setitem__
+    client.disconnect = AsyncMock()
 
-    with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as f:
-        f.write(b"%PDF-1.4 fake")
-        saved = f.name
-
-    client.download_file.return_value = (b"%PDF-1.4 fake", "report.pdf")
-    channel._client = client
-
-    try:
-        with patch("nanobot.channels.wecom.runtime.get_media_dir", return_value=Path(os.path.dirname(saved))):
-            frame = _FakeFrame(body={
-                "msgid": "msg_file_1",
-                "chatid": "chat1",
-                "from": {"userid": "user1"},
-                "file": {"url": "https://example.com/report.pdf", "aeskey": "key456", "name": "report.pdf"},
-            })
-            await channel._process_message(frame, "file")
-
-        msg = await channel.bus.consume_inbound()
-        assert len(msg.media) == 1
-        assert msg.media[0].endswith("report.pdf")
-        assert "[file: report.pdf]" in msg.content
-    finally:
-        p = os.path.join(os.path.dirname(saved), "report.pdf")
-        if os.path.exists(p):
-            os.unlink(p)
-
-
-@pytest.mark.asyncio
-async def test_process_file_message_uses_sdk_filename_when_name_missing(tmp_path: Path) -> None:
-    """Without `file.name`, fall back to SDK fname instead of saving as 'unknown' (#3737)."""
-    channel = WecomChannel(WecomConfig(bot_id="b", secret="s", allow_from=["user1"]), MessageBus())
-    client = _FakeWeComClient()
-    client.download_file.return_value = (b"%PDF-1.4 fake", "real_name.pdf")
-    channel._client = client
-
-    with patch("nanobot.channels.wecom.runtime.get_media_dir", return_value=tmp_path):
+    async def deliver():
         frame = _FakeFrame(body={
-            "msgid": "msg_file_2", "chatid": "chat1", "from": {"userid": "user1"},
-            "file": {"url": "https://example.com/x", "aeskey": "key456"},
+            "msgid": "incoming", "chatid": "chat1", "from": {"userid": "user1"}, **payload,
         })
-        await channel._process_message(frame, "file")
+        await handlers[f"message.{kind}"](frame)
+        await channel.stop()
 
-    msg = await channel.bus.consume_inbound()
-    assert msg.media == [str(tmp_path / "real_name.pdf")]
-    assert "[file: real_name.pdf]" in msg.content
+    client.connect_async = deliver
+    monkeypatch.setattr("wecom_aibot_sdk.WSClient", lambda _config: client)
+
+    await asyncio.wait_for(channel.start(), timeout=5)
+    message = await asyncio.wait_for(bus.consume_inbound(), timeout=5)
+
+    assert message.content == user_text
+    assert message.sender_id == "user1"
+    assert message.chat_id == "chat1"
+    assert len(message.attachments) == 1
+    attachment = message.attachments[0]
+    assert (attachment.name, attachment.mime, attachment.bytes) == (name, mime, len(data))
+    store = AttachmentStore(get_attachments_dir(), media_root=get_media_dir())
+    saved = store.resolve(attachment)
+    assert saved is not None and saved.read_bytes() == data
 
 
 @pytest.mark.asyncio
@@ -527,50 +504,6 @@ async def test_process_voice_message() -> None:
     msg = await channel.bus.consume_inbound()
     assert "transcribed text here" in msg.content
     assert "[voice]" in msg.content
-
-
-@pytest.mark.asyncio
-async def test_process_mixed_message() -> None:
-    """Mixed message: contains picture and text message types."""
-    channel = WecomChannel(WecomConfig(bot_id="b", secret="s", allow_from=["user1"]), MessageBus())
-    client = _FakeWeComClient()
-
-    with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as f:
-        f.write(b"\x89PNG\r\n")
-        saved = f.name
-
-    client.download_file.return_value = (b"\x89PNG\r\n", "photo.png")
-    channel._client = client
-
-    try:
-        with patch("nanobot.channels.wecom.runtime.get_media_dir", return_value=Path(os.path.dirname(saved))):
-            frame = _FakeFrame(body={
-                "msgid": "msg_mixed_1",
-                "chatid": "chat1",
-                "msgtype": "mixed",
-                "from": {"userid": "user1"},
-                "mixed": {
-                    "msg_item": [
-                        {"msgtype": "text", "text": {"content": "hello wecom"}},
-                        {"msgtype": "image", "image": {"url": "https://example.com/img.png", "aeskey": "key123"}}
-                    ]
-                }
-            })
-            await channel._process_message(frame, "mixed")
-
-        msg = await channel.bus.consume_inbound()
-        assert msg.sender_id == "user1"
-        assert msg.chat_id == "chat1"
-        assert msg.content.startswith("hello wecom")
-        assert msg.metadata["msg_type"] == "mixed"
-        assert len(msg.media) == 1
-        assert msg.media[0].endswith("photo.png")
-        assert "[image:" in msg.content
-    finally:
-        # Clean up any photo.png in tempdir
-        p = os.path.join(os.path.dirname(saved), "photo.png")
-        if os.path.exists(p):
-            os.unlink(p)
 
 
 @pytest.mark.asyncio

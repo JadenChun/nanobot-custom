@@ -1,5 +1,8 @@
 # D1–D7: choices and acceptance provenance
 
+The [November 15 release decisions](#a3-release-decisions-for-the-four-remaining-findings)
+set the sandbox direction and the Linux and Android emulator scope for the next pass.
+
 For the current planning discussion, use the
 [accepted planning direction](plan-review.md#d2d7-direction-from-the-references).
 **D1 is now user-selected: Linux and macOS executors, with Android remote.** Linux/Android
@@ -209,3 +212,95 @@ waiver with its source. Correct RR1 and RR3 before destructive maintenance or pr
 claims. A3-2/A3-6/A3-8 own limits and data proof; A3-9 owns platform/artifact evidence.
 Safe refusal at a known capacity remains an alternative to more complex rollover.
 No speed or efficiency improvement is claimed without measurement.
+
+## A3 release decisions for the four remaining findings
+
+Recorded on 2026-11-15. The user chose DSH as the reference for the sandbox
+experience. The other defaults below specify the work for the next audit pass.
+The four findings stay unverified until their acceptance evidence is complete.
+
+### Sandbox experience
+
+Use one permission selector for a regular local chat. Start in **Sandbox**.
+Offer **Full access** as an explicit, confirmed choice for the current chat.
+Restart ends that consent. When the user returns to **Sandbox**, fence new work
+immediately. Confirm the change after the previous command trees stop.
+
+Keep **Working in** for folder selection. Use the existing **Once** grant when
+a paused task needs a specific folder. Show the requested folder and access.
+Resume only after the user chooses **Continue task**. In Sandbox, a read-only
+grant takes priority over a writable parent. If Bubblewrap is unavailable,
+report that Sandbox cannot run the command. Keep OS confinement, folder grants,
+and approval for a particular effect separate in the runtime. Full access still
+requires that approval for risky actions.
+[Existing Nanobot controls](../../webui.md#folders-projects-and-access).
+
+DSH uses one selector and retains separate runtime enforcement and approval.
+It reports a denied action and asks before retrying with wider scope.
+These are the interaction patterns for Nanobot.
+[DSH permission presets](https://github.com/deepseek-ai/deepseek-harness/blob/5badb15009ae1756c3afe0ae0cef1faafc290ccc/packages/interaction/permission-presets/README.md#use-this-package),
+[DSH sandbox denials and failures](https://github.com/deepseek-ai/deepseek-harness/blob/5badb15009ae1756c3afe0ae0cef1faafc290ccc/packages/shell/bash-sandbox/README.md#denials-are-result-facts).
+
+### H01-F5 — Git sync and shell approval
+
+`autoPush` authorizes the configured knowledge sync through its existing owner.
+Keep the owner checks for repository, paths, tracked upstream, and secrets.
+Apply the ordinary shell approval policy to every shell call, including Git
+calls in an `autoPush` repository. Remove the shell exemption entirely.
+
+Verify that ordinary Git reads and configured knowledge sync still work.
+Verify that destructive Git actions in that repository still need exact approval.
+Check that an ordinary Git segment cannot exempt a separate risky effect.
+[A3-4 packet](../../audits/implementation-packets/A3-4-client-control-contracts.md),
+[Codex command approval rules](https://developers.openai.com/codex/rules).
+
+### K01-F06 — Nested agent launch
+
+Keep native subagents within their parent's effective authority. A supported
+external launch must keep its own sandbox and approval protections by default.
+A launch with reduced protections needs exact approval and verified outer
+confinement for that launch. Apply both checks in Full access. Refuse reduced
+protections when the launch path cannot prove confinement and process ownership.
+Apply this rule to the existing shell and tool-controlled tmux launch paths.
+Use the existing approval flow. Treat a command classification as an admission
+check. Require the executor to attest confinement.
+
+Verify an ordinary supported launch and refusal before launch when either
+required check is absent. Cover the existing path that launches through tmux.
+[A3-5 packet](../../audits/implementation-packets/A3-5-delegation-cutover.md),
+[Codex subagent permissions](https://developers.openai.com/codex/subagents).
+
+### E02-F16 — Provider OAuth owner
+
+Use the gateway instance's resolved data root for provider OAuth credentials.
+Keep Codex, Copilot, and xAI account state in that instance. Bind provider calls,
+login, cancel, refresh, logout, status, and account-dependent caches to the same
+owner. Apply this to gateway, CLI, and SDK entry points that select an instance.
+Each instance signs in separately. Shared profiles can be considered after v1.
+Preserve existing credential data. Require an explicit owner action to import it.
+
+Verify isolation with two instances on one host and disposable credentials.
+A late login or refresh for one instance must leave the other's credentials and
+cache intact. Sign out of one instance and verify that the other still works.
+[A3-6 packet](../../audits/implementation-packets/A3-6-capability-readiness.md),
+[Codex credential storage](https://developers.openai.com/codex/auth).
+
+### R01-F05 — Android device-key qualification
+
+Qualify the signed candidate on a Linux host and Android emulator. Run the
+installed app through TLS and Tailscale Serve to a disposable production gateway.
+Use the current device-key flow for renewal and recovery. Use the existing
+gateway owner operation to revoke devices. Local disconnect clears and fences
+the app's local access. Only a gateway receipt can confirm server revocation.
+Leave legacy bearer refresh and logout routes, headless enrollment keys, and
+historical APK upgrades outside this pass. Record coverage as emulator coverage.
+
+Verify pairing and a successful read. Replay a mutation and verify one effect.
+Verify recovery after expiry, restart, and lost token delivery. Revoke the
+device and verify that new requests and existing connections lose access.
+Verify that a proof for a different origin or an old device generation cannot
+renew access. Record the source revision, signed APK digest, gateway and
+transport identity, and redacted receipts. The fixture-level proof tests
+support this work. The installed app must demonstrate the same boundary.
+[First-release device proof](v1-product-contract.md#selected-initial-android-device-proof-contract),
+[A3-9 packet](../../audits/implementation-packets/A3-9-release-qualification.md).

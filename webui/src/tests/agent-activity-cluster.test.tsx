@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 import { AgentActivityCluster } from "@/components/thread/AgentActivityCluster";
@@ -500,6 +500,59 @@ describe("AgentActivityCluster", () => {
     );
 
     expect(screen.getByText("Worked for 12s")).toBeInTheDocument();
+  });
+
+  it("ticks the live Working duration while the turn streams", () => {
+    vi.useFakeTimers();
+    try {
+      const startedAt = 1_800_000_000_000;
+      vi.setSystemTime(startedAt + 12_000);
+      render(
+        <AgentActivityCluster
+          messages={[{
+            id: "live",
+            role: "tool",
+            kind: "trace",
+            content: "search()",
+            traces: ["search()"],
+            createdAt: startedAt,
+          }]}
+          isTurnStreaming
+          hasBodyBelow={false}
+          startedAtMs={startedAt}
+        />,
+      );
+
+      const live = screen.getByRole("button", { name: "Working · 12s" });
+      expect(live).toHaveAttribute("aria-expanded", "true");
+
+      act(() => { vi.advanceTimersByTime(3_000); });
+      expect(screen.getByRole("button", { name: "Working · 15s" })).toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("uses the larger preview height while live and when completed activity is expanded", () => {
+    const { rerender } = render(
+      <AgentActivityCluster
+        messages={activityMessages()}
+        isTurnStreaming
+        hasBodyBelow={false}
+      />,
+    );
+
+    expect(screen.getByTestId("agent-activity-scroll")).toHaveClass("max-h-[min(42vh,360px)]");
+
+    rerender(
+      <AgentActivityCluster
+        messages={activityMessages()}
+        isTurnStreaming={false}
+        hasBodyBelow
+        turnLatencyMs={12_400}
+      />,
+    );
+    expect(screen.getByTestId("agent-activity-scroll")).toHaveClass("max-h-[min(60vh,520px)]");
   });
 
   it("labels mixed tool activity as work instead of thought", () => {
@@ -1326,7 +1379,7 @@ describe("AgentActivityCluster", () => {
     expect(screen.queryByText("Web research")).not.toBeInTheDocument();
   });
 
-  it("renders reasoning as a single flat activity row", () => {
+  it("renders streaming reasoning as a Thinking… row with its live body below", () => {
     render(
       <AgentActivityCluster
         messages={[{
@@ -1343,9 +1396,52 @@ describe("AgentActivityCluster", () => {
       />,
     );
 
-    expect(screen.getByText("Planning a focused search for official sources")).toBeInTheDocument();
-    expect(screen.queryByText("Thinking…")).not.toBeInTheDocument();
-    expect(screen.queryByText("Thinking")).not.toBeInTheDocument();
+    const disclosure = screen.getByRole("button", { name: "Reasoning" });
+    expect(disclosure).toHaveTextContent("Thinking…");
+    expect(disclosure).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByTestId("reasoning-live-stream")).toHaveTextContent(
+      /Planning.*a focused search.*for official sources/,
+    );
+  });
+
+  it("discloses a reasoning row inside the existing outer activity fold", async () => {
+    await act(async () => {
+      await preloadMarkdownText();
+    });
+
+    render(
+      <AgentActivityCluster
+        messages={[{
+          id: "r-disclosure-in-fold",
+          role: "assistant",
+          content: "",
+          reasoning: "## Cluster planning\n\nFind the exact supplied source.",
+          reasoningStreaming: false,
+          createdAt: Date.now(),
+        }]}
+        isTurnStreaming={false}
+        hasBodyBelow={false}
+      />,
+    );
+
+    const outerDisclosure = screen.getByRole("button", { name: /Worked/ });
+    expect(outerDisclosure).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByRole("button", { name: "Reasoning" })).not.toBeInTheDocument();
+
+    fireEvent.click(outerDisclosure);
+
+    expect(outerDisclosure).toHaveAttribute("aria-expanded", "true");
+    const disclosure = screen.getByRole("button", { name: "Reasoning" });
+    fireEvent.click(disclosure);
+
+    const body = document.getElementById(disclosure.getAttribute("aria-controls")!);
+    expect(body).toBeInTheDocument();
+    expect(screen.getByTestId("agent-activity-scroll")).toContainElement(body);
+    await within(body!).findByRole("heading", {
+      level: 2,
+      name: "Cluster planning",
+    });
+    expect(within(body!).getByText("Find the exact supplied source.")).toBeInTheDocument();
   });
 
   it("labels rejected CLI app calls as failed instead of ran", () => {
@@ -1414,6 +1510,49 @@ describe("AgentActivityCluster", () => {
     expect(screen.queryByText(/browser_navigate/)).not.toBeInTheDocument();
     expect(screen.getByTestId("activity-mcp-logo-browserbase")).toBeInTheDocument();
     expect(screen.queryByText(/mcp_browserbase_browser_navigate/)).not.toBeInTheDocument();
+  });
+
+  it("shows live ComfyUI progress text and percentage on the running MCP row", () => {
+    render(
+      <AgentActivityCluster
+        messages={[{
+          id: "t-comfy",
+          role: "tool",
+          kind: "trace",
+          content: 'mcp_comfy_generate_video({"workflow":"wan"})',
+          traces: ['mcp_comfy_generate_video({"workflow":"wan"})'],
+          toolEvents: [
+            {
+              phase: "start",
+              call_id: "call-comfy",
+              name: "mcp_comfy_generate_video",
+              arguments: { workflow: "wan" },
+            },
+            {
+              phase: "progress",
+              call_id: "call-comfy",
+              name: "mcp_comfy_generate_video",
+              arguments: { workflow: "wan" },
+              progress: 62,
+              total: 100,
+              message: "ComfyUI is generating prompt...",
+            },
+          ],
+          createdAt: 1,
+        }]}
+        isTurnStreaming
+        hasBodyBelow={false}
+        mcpPresets={[{ ...BROWSERBASE_MCP, name: "comfy", display_name: "ComfyUI" }]}
+      />,
+    );
+
+    const row = screen.getByTestId("activity-line");
+    expect(row).toHaveTextContent("Generating video wan · ComfyUI");
+    expect(row).toHaveTextContent("ComfyUI is generating prompt...");
+    expect(row).toHaveTextContent("62%");
+    const bar = screen.getByRole("progressbar");
+    expect(bar).toHaveAttribute("aria-valuenow", "62");
+    expect(bar).toHaveTextContent("62%");
   });
 
   it("renders public web fetch traces with the site favicon", () => {
@@ -2223,5 +2362,72 @@ describe("AgentActivityCluster", () => {
     expect(container.innerHTML).not.toContain("private-payload");
     expect(container.textContent).not.toMatch(/run_cli_app\(|browser_fill\(|third_party_sync\(/);
     expect(container.textContent).toMatch(/<redacted>|••••/);
+  });
+
+  it("discloses full shell commands, MCP parameters/errors, and grouped tool items underneath each action line", () => {
+    const execLine = 'exec({"command":"cd /tmp/work && python3 run.py\\nAPI_KEY=sk-proj-secret1234567890 echo done"})';
+    const mcpLine = 'mcp_comfy_generate_image({"workflow":"qwen_image_2_1","width":720,"height":1280})';
+    const readA = 'read_file({"path":"/home/alice/project/a.ts"})';
+    const readB = 'read_file({"path":"/home/alice/project/b.ts"})';
+
+    render(
+      <AgentActivityCluster
+        messages={[
+          {
+            id: "trace-expandable",
+            role: "tool",
+            kind: "trace",
+            content: [execLine, mcpLine, readA, readB].join("\n"),
+            traces: [execLine, mcpLine, readA, readB],
+            toolEvents: [
+              {
+                phase: "end",
+                call_id: "c1",
+                name: "exec",
+                arguments: { command: "cd /tmp/work && python3 run.py\nAPI_KEY=sk-proj-secret1234567890 echo done" },
+                result: "ok",
+              },
+              {
+                phase: "error",
+                call_id: "c2",
+                name: "mcp_comfy_generate_image",
+                arguments: { workflow: "qwen_image_2_1", width: 720, height: 1280 },
+                error: "Width must be a multiple of 32",
+              },
+            ],
+            createdAt: 1,
+          },
+        ]}
+        isTurnStreaming
+        hasBodyBelow={false}
+      />,
+    );
+
+    // Details are collapsed by default so the timeline stays clean.
+    expect(screen.queryByTestId("activity-detail-panel")).not.toBeInTheDocument();
+
+    // Expand shell command row -> full redacted command + result
+    const shellToggle = screen.getByRole("button", { name: /Ran command cd \/tmp\/work/i });
+    expect(shellToggle).toHaveAttribute("aria-expanded", "false");
+    fireEvent.click(shellToggle);
+    expect(shellToggle).toHaveAttribute("aria-expanded", "true");
+    const shellBody = document.getElementById(shellToggle.getAttribute("aria-controls")!)!;
+    expect(shellBody).toHaveTextContent("python3 run.py");
+    expect(shellBody).toHaveTextContent("echo done");
+    expect(shellBody).not.toHaveTextContent("sk-proj-secret1234567890");
+
+    // Expand MCP row -> parameters + failure message
+    const mcpToggle = screen.getByRole("button", { name: /qwen_image_2_1.*Comfy/i });
+    fireEvent.click(mcpToggle);
+    const mcpBody = document.getElementById(mcpToggle.getAttribute("aria-controls")!)!;
+    expect(mcpBody).toHaveTextContent("Width must be a multiple of 32");
+    expect(mcpBody).toHaveTextContent("720");
+
+    // Expand grouped read_file row -> both individual paths
+    const readToggle = screen.getByRole("button", { name: /Reading file · 2 files/i });
+    fireEvent.click(readToggle);
+    const readBody = document.getElementById(readToggle.getAttribute("aria-controls")!)!;
+    expect(readBody).toHaveTextContent("~/project/a.ts");
+    expect(readBody).toHaveTextContent("~/project/b.ts");
   });
 });

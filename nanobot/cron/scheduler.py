@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from copy import deepcopy
 from typing import Awaitable, Callable, Literal
 
@@ -15,6 +16,7 @@ from nanobot.cron.occurrence_store import (
 from nanobot.cron.schedule import ScheduleClock, is_fire, next_fire
 from nanobot.cron.scheduler_store import (
     ObservedOccurrence,
+    ReconciliationBridge,
     ScheduleCursor,
     SchedulerConflictError,
     SchedulerLease,
@@ -45,6 +47,9 @@ class Scheduler:
         self._refresh_committed_revisions = refresh_committed_revisions
         self._lease: SchedulerLease | None = None
         self._accepting = False
+        # The durable poll step was atomic before it moved to a worker thread.
+        # Keep concurrent direct wake calls from racing one cursor read.
+        self._poll_lock = asyncio.Lock()
 
     def _committed(self) -> tuple[tuple[CronDefinition, ScheduleCommit], ...]:
         replay = self.definitions.replay()
@@ -64,8 +69,15 @@ class Scheduler:
         return tuple(result)
 
     @staticmethod
-    def _prove_records(state: SchedulerState, records: list[OccurrenceRecord]) -> None:
-        verify_occurrence_evidence(state, records)
+    def _prove_records(
+        state: SchedulerState,
+        records: list[OccurrenceRecord],
+        *,
+        bridge_lookup: Callable[[SchedulerState, str], list[ReconciliationBridge]] | None = None,
+    ) -> None:
+        verify_occurrence_evidence(
+            state, records, bridge_lookup=bridge_lookup
+        )
 
     @staticmethod
     def _advance(state: SchedulerState, definition: CronDefinition, commit: ScheduleCommit, lower: int,
@@ -93,8 +105,11 @@ class Scheduler:
                 raise SchedulerConflictError("invalid acquisition clock")
             committed = self._committed()
             state = self.store.read_for_acquisition(self._lease)
+            state = self.store.rollover_epoch_if_needed(self._lease, state)
             records = self.occurrences.occurrence_store.inspect_records()
-            self._prove_records(state, records)
+            self._prove_records(
+                self.store.retained_evidence(state), records, bridge_lookup=self.store.bridge_records
+            )
             successor = deepcopy(state)
             for definition, commit in committed:
                 current = next((item for item in state["cursors"] if item["key"] == _key(definition)), None)
@@ -132,11 +147,47 @@ class Scheduler:
     async def wake_once(self) -> object | None:
         if not self._accepting or self._lease is None:
             raise SchedulerConflictError("scheduler ingress fenced")
+        # The durable poll (lease proof, definition replay, fsync state read,
+        # whole-ledger inspection and retained-history reproof) runs on one
+        # worker thread.  It used to run synchronously before the first await,
+        # so one slow ledger stalled every unrelated coroutine on the shared
+        # loop.  The worker still owns the same order: prove, read, inspect,
+        # reproof, advance, publish, claim.  Dispatch stays on the loop.
+        async with self._poll_lock:
+            claim, definition = await self._poll_off_loop()
+        if claim is None or definition is None:
+            return None
+        return await self._dispatch(claim, lambda: self._reprove(definition))
+
+    async def _poll_off_loop(self) -> tuple[OccurrenceClaim | None, CronDefinition | None]:
+        """Await one durable poll step without blocking the shared loop."""
+        poll = asyncio.create_task(asyncio.to_thread(self._claim_due))
+        try:
+            return await asyncio.shield(poll)
+        except asyncio.CancelledError:
+            # A worker thread cannot be interrupted.  Wait for the durable step
+            # to finish before the caller releases the lease under it, then
+            # re-raise the cancellation.
+            while not poll.done():
+                try:
+                    await asyncio.shield(poll)
+                except asyncio.CancelledError:
+                    continue
+                except BaseException:
+                    break
+            raise
+
+    def _claim_due(self) -> tuple[OccurrenceClaim | None, CronDefinition | None]:
+        """Perform one complete durable poll step on the calling worker thread."""
+        if self._lease is None:
+            raise SchedulerConflictError("scheduler ingress fenced")
         self._lease.reprove()
         committed = self._committed()
         state = self.store.read()
         records = self.occurrences.occurrence_store.inspect_records()
-        self._prove_records(state, records)
+        self._prove_records(
+            self.store.retained_evidence(state), records, bridge_lookup=self.store.bridge_records
+        )
         # New definitions committed while this lease is held begin at their
         # exact commit boundary. Existing cursors retain all pending due work.
         # Acquisition separately classifies downtime as missed; no old claim
@@ -165,27 +216,40 @@ class Scheduler:
             if fire is not None and fire <= self.clock.wall_time_ms():
                 candidates.append((fire, definition.job_id, definition, commit, cursor))
         if not candidates:
-            return None
+            return None, None
         fire, _job_id, definition, commit, cursor = min(candidates, key=lambda item: item[:2])
         self._reprove(definition)
         existing = next((record for record in records if not isinstance(record.identity, TriggeredOccurrenceIdentity)
             and record.identity.job_id == definition.job_id and record.identity.job_revision == definition.definition_revision
             and record.identity.scheduled_fire_time_ms == fire), None)
+        if existing is None:
+            # A new claim has a fixed-width digest. Bound its cursor record
+            # before creating the claim, then publish the real receipt below.
+            observation: ObservedOccurrence = {
+                "occurrence_id": "0" * 64,
+                "fire": fire,
+                "owner": self.occurrences.owner,
+                "generation": 1,
+                "state": "claimed",
+            }
+        else:
+            observation = _exclusion(existing)
+        successor = deepcopy(state)
+        self._advance(successor, definition, commit, cursor["boundary"], fire,
+                      "claimed" if existing is None else "observed", [observation])
+        successor["generation"] += 1
+        self.store.require_publishable(successor)
+
         claim = None
         if existing is None:
             claim = self.occurrences.claim_timer(definition.job_id, fire,
                 expected_job_instance_id=definition.job_instance_id,
                 expected_definition_revision=definition.definition_revision)
             existing = self.occurrences.occurrence_store.get(claim.occurrence_id)
-        successor = deepcopy(state)
-        self._advance(successor, definition, commit, cursor["boundary"], fire,
-                      "claimed" if claim else "observed", [_exclusion(existing)])
-        successor["generation"] += 1
+            successor["classifications"][-1]["exclusions"] = [_exclusion(existing)]
         self._lease.reprove()
         self.store.compare_and_swap(state, successor)
-        if claim is not None:
-            return await self._dispatch(claim, lambda: self._reprove(definition))
-        return None
+        return claim, definition
 
     def stop_claiming(self) -> None:
         self._accepting = False

@@ -18,10 +18,8 @@
 
 ## Discovery and Reading
 
-- Use `find_files` or `list_dir` for uncertain paths, `grep` for content, and `read_file` for a known path.
-- `grep` returns matches with five context lines by default; use `files_with_matches` for paths or `count` for totals.
-- Use `fixed_strings=true` for literal keywords containing regex characters.
-- Use `head_limit` and `offset` to page across large result sets.
+- Use `list_dir` for uncertain paths and `read_file` for a known path. Use a registered discovery or search tool when the request needs content search or file discovery.
+- Use the registered search tool's documented options for context, path-only, count, literal, and paging modes.
 - Search tools enforce binary and file-size limits and report skipped files in the result.
 
 ## File and Coding Workflows
@@ -47,7 +45,7 @@
   Retrieve notes on return/after compaction. Exclude private transcripts, runtime state and
   credentials; report local saving and pending Git sync separately.
 
-- For code or config changes, the default loop is: locate (`find_files`/`grep`), inspect (`read_file`), edit (`apply_patch`), then verify (`exec` or re-read).
+- For code or config changes, the default loop is: locate with an available discovery tool, inspect (`read_file`), edit with an available editing tool, then verify (`exec` or re-read).
 - Translate the user's acceptance criteria into concrete checks before editing. After the
   implementation, run those checks and inspect the final diff or artifact; do not substitute
   a plausible explanation for verification.
@@ -59,11 +57,9 @@
   visual prominence.
 - Never invent missing records or measurements. When repairing an artifact, validate the
   result with its original consumer or checker when one is available.
-- Use `apply_patch` as the default code editing tool, especially for multi-file changes, structural edits, generated code, moves, adds, or deletes.
-- Use `apply_patch dry_run=true` when the patch is uncertain and you want validation plus a change summary before writing.
-- Use `edit_file` only for small exact replacements in one file, with `old_text` copied from `read_file`.
-- Use `write_file` for new files or intentional full-file rewrites, not routine partial edits.
-- If `apply_patch` or `edit_file` fails, re-read with `force=true`, narrow the context, and try a smaller patch rather than switching to shell `sed` or `echo`.
+- Use the registered editing tool that matches the change size. Prefer `edit_file` for small exact replacements in one file, `write_file` for new files or intentional full-file rewrites, and a registered structured patch tool for multi-file, structural, move, add, or delete changes.
+- Use the editing tool's dry-run or validation mode when the change is uncertain.
+- If an editing tool fails, re-read with `force=true`, narrow the context, and try a smaller change rather than switching to shell `sed` or `echo`.
 
 ## Process Execution
 

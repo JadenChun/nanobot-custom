@@ -38,8 +38,9 @@ def empty_usage_payload() -> dict[str, Any]:
     }
 
 
-def llm_usage_store_path() -> Path:
-    return get_data_dir() / "llm_usage.sqlite3"
+def llm_usage_store_path(data_dir: Path | None = None) -> Path:
+    base = Path(data_dir) if data_dir is not None else get_data_dir()
+    return base / "llm_usage.sqlite3"
 
 
 def get_llm_usage_store(path: Path | None = None) -> LLMUsageStore:
@@ -52,10 +53,10 @@ def get_llm_usage_store(path: Path | None = None) -> LLMUsageStore:
         return store
 
 
-def record_llm_call(call: LLMCallRecord) -> None:
-    """Default fail-open callback attached to gateway provider snapshots."""
+def record_llm_call(call: LLMCallRecord, *, data_dir: Path | None = None) -> None:
+    """Fail-open callback attached to gateway provider snapshots."""
     try:
-        get_llm_usage_store().record(call)
+        get_llm_usage_store(llm_usage_store_path(data_dir)).record(call)
     except Exception:
         logger.exception("failed to record LLM usage")
 
@@ -64,9 +65,10 @@ def llm_usage_payload(
     *,
     days: int = 371,
     timezone_name: str | None = None,
+    data_dir: Path | None = None,
 ) -> dict[str, Any]:
     try:
-        return get_llm_usage_store().usage_payload(
+        return get_llm_usage_store(llm_usage_store_path(data_dir)).usage_payload(
             days=days,
             timezone_name=timezone_name,
         )

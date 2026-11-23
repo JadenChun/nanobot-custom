@@ -1,9 +1,10 @@
-import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { ThreadComposer } from "@/components/thread/ThreadComposer";
 import { SESSION_DRAG_TYPE } from "@/lib/session-drag";
+import type { QueuedAttemptBinding, QueuedAttemptOutcome } from "@/lib/nanobot-client";
 import {
   installMobileRuntime,
   resetMobileRuntime,
@@ -47,6 +48,53 @@ const COMMANDS: SlashCommand[] = [
     acceptsArgs: true,
   },
 ];
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
+}
+
+function queuedOwnerTestAdapter() {
+  const observations = new Map<string, {
+    binding: QueuedAttemptBinding;
+    outcome?: QueuedAttemptOutcome;
+    promise: Promise<QueuedAttemptOutcome>;
+    resolve: (outcome: QueuedAttemptOutcome) => void;
+    consumed: boolean;
+  }>();
+  const key = (binding: QueuedAttemptBinding) => JSON.stringify(binding);
+  return {
+    join: (binding: QueuedAttemptBinding) => {
+      const observationKey = key(binding);
+      const existing = observations.get(observationKey);
+      if (existing && !existing.consumed) return existing.promise;
+      let resolve!: (outcome: QueuedAttemptOutcome) => void;
+      const promise = new Promise<QueuedAttemptOutcome>((resolvePromise) => {
+        resolve = resolvePromise;
+      });
+      observations.set(observationKey, { binding, promise, resolve, consumed: false });
+      return promise;
+    },
+    consume: vi.fn((binding: QueuedAttemptBinding) => {
+      const observation = observations.get(key(binding));
+      if (!observation || observation.consumed || !observation.outcome) return false;
+      observation.consumed = true;
+      return true;
+    }),
+    resolve: (turnId: string, outcome: QueuedAttemptOutcome = { kind: "admitted" }) => {
+      for (const observation of observations.values()) {
+        if (observation.binding.turnId !== turnId || observation.outcome) continue;
+        observation.outcome = outcome;
+        observation.resolve(outcome);
+      }
+    },
+  };
+}
 
 const CLI_APPS: CliAppInfo[] = [
   {
@@ -402,7 +450,101 @@ function renderPresetComposer(
   };
 }
 
+const MANY_MODEL_PRESETS = [
+  { name: "kimi", model: "moonshot/kimi-k2.5", provider: "moonshot" },
+  { name: "dflash", model: "deepseek/deepseek-v4-flash", provider: "deepseek" },
+  { name: "dspro", model: "deepseek/deepseek-v4-pro", provider: "deepseek" },
+  { name: "qwen-flash", model: "qwen/qwen3.8-flash-next", provider: "qwen" },
+  { name: "qwen-27b", model: "qwen/qwen3.8-27b", provider: "qwen" },
+  { name: "qwen-27b-unc", model: "qwen/qwen3.8-27b-uncensored", provider: "qwen" },
+];
+
+function renderReasoningComposer(
+  effort: string | null,
+  options: string[] = ["low", "medium", "high", "xhigh"],
+  onChange: (next: string | null) => void = vi.fn(),
+) {
+  render(
+    <ThreadComposer
+      onSend={vi.fn()}
+      modelLabel="DeepSeek V4.1 Flash"
+      modelPreset="dflash"
+      modelDetail="deepseek/deepseek-v4.1-flash"
+      modelProvider="commandcode"
+      modelProviderLabel="CommandCode"
+      modelPresets={MODEL_PRESETS}
+      onModelPresetChange={vi.fn()}
+      modelReasoning={{
+        value: effort,
+        defaultValue: "medium",
+        options,
+        pending: false,
+        failed: false,
+        onChange,
+      }}
+      placeholder="Type your message..."
+    />,
+  );
+  return {
+    badge: screen.getByRole("button", { name: "DeepSeek V4.1 Flash" }),
+    onChange,
+  };
+}
+
 describe("ThreadComposer", () => {
+  it("retains the draft when the send owner does not take it", () => {
+    const onSend = vi.fn(() => null);
+    render(<ThreadComposer onSend={onSend} />);
+
+    const input = screen.getByLabelText("Message input");
+    fireEvent.change(input, { target: { value: "not dispatched" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+
+    expect(onSend).toHaveBeenCalledTimes(1);
+    expect(input).toHaveValue("not dispatched");
+  });
+
+  it("does not let an old asynchronous send clear the draft after A → B → A", async () => {
+    const result = deferred<boolean>();
+    const onSend = vi.fn(() => result.promise);
+    const view = (key: string) => <ThreadComposer onSend={onSend} pendingQueueKey={key} />;
+    const { rerender } = render(view("a"));
+    const input = screen.getByLabelText("Message input");
+    fireEvent.change(input, { target: { value: "first message in A" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+
+    rerender(view("b"));
+    expect(input).toBeEnabled();
+    rerender(view("a"));
+    fireEvent.change(input, { target: { value: "newer draft in A" } });
+    await act(async () => result.resolve(true));
+
+    expect(input).toHaveValue("newer draft in A");
+    expect(onSend).toHaveBeenCalledTimes(1);
+  });
+
+  it("retains a ready queue until an exact completion and waits for a next-turn setting only", () => {
+    const onSend = vi.fn();
+    const view = (isStreaming: boolean, queueCompletionTurnId?: string, newTurnBlocked = false) => (
+      <ThreadComposer onSend={onSend} isStreaming={isStreaming}
+        queueCompletionTurnId={queueCompletionTurnId} newTurnBlocked={newTurnBlocked} />
+    );
+    const { rerender } = render(view(true));
+    const input = screen.getByLabelText("Message input");
+    fireEvent.change(input, { target: { value: "retained follow-up" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+
+    rerender(view(false)); // Idle/readback alone does not settle the queue.
+    expect(onSend).not.toHaveBeenCalled();
+    rerender(view(false, "live-natural-turn", true));
+    expect(onSend).not.toHaveBeenCalled();
+    expect(screen.getByText("retained follow-up")).toBeInTheDocument();
+    expect(input).toBeEnabled();
+    rerender(view(false, "live-natural-turn"));
+    rerender(view(false, "live-natural-turn"));
+    expect(onSend).toHaveBeenCalledTimes(1);
+  });
+
   it("locks an async send and keeps the draft when it is rejected", async () => {
     let resolveSend!: (accepted: boolean) => void;
     const onSend = vi.fn(() => new Promise<boolean>((resolve) => {
@@ -617,6 +759,31 @@ describe("ThreadComposer", () => {
     expect(tooltip.parentElement).not.toHaveTextContent("Available");
   });
 
+  it("shows the last known request without repeating the model settings", () => {
+    render(
+      <ThreadComposer
+        onSend={vi.fn()}
+        contextUsage={{ contextTokens: 14_700, contextWindowTokens: 200_000 }}
+        modelLabel="selected-model"
+        hasConfiguredModel
+        placeholder="Ask anything..."
+      />,
+    );
+
+    fireEvent.click(screen.getByTestId("composer-context-usage"));
+
+    const usage = within(screen.getByRole("dialog", { name: "Context usage" }));
+    expect(usage.getByText("Last known request")).toBeInTheDocument();
+    expect(usage.getByText("14.7K / 200K")).toBeInTheDocument();
+    expect(usage.queryByText("Configured model")).not.toBeInTheDocument();
+    expect(usage.queryByText("Configured window")).not.toBeInTheDocument();
+    expect(usage.queryByText("selected-model")).not.toBeInTheDocument();
+    expect(usage.getByRole("progressbar", { name: "Context 7%" })).toHaveAttribute(
+      "aria-valuenow",
+      "7",
+    );
+  });
+
   it("opens an input-token chart with one bar for each logical round", () => {
     render(
       <ThreadComposer
@@ -777,31 +944,26 @@ describe("ThreadComposer", () => {
     expect(picker).toHaveClass("w-[min(18rem,calc(100vw-2rem))]");
     expect(badge).toHaveClass("w-fit");
     expect(badge.querySelector(".composer-model-pill")).not.toHaveClass("w-full");
-    expect(within(picker).getAllByRole("option")).toHaveLength(3);
+    expect(within(picker).getByTestId("model-picker-active")).toHaveTextContent("kimi");
+    expect(within(picker).getAllByRole("option")).toHaveLength(2);
     expect(within(picker).getByRole("option", { name: "dflash" })).toHaveTextContent(
       /dflash\s*deepseek-v4-flash/,
     );
-    expect(within(picker).getByRole("option", { name: "kimi" })).toHaveAttribute(
-      "aria-selected",
-      "true",
-    );
-    expect(document.activeElement).toBe(within(picker).getByRole("option", { name: "kimi" }));
+    expect(within(picker).queryByRole("option", { name: "kimi" })).not.toBeInTheDocument();
     fireEvent.click(within(picker).getByRole("option", { name: "dspro" }));
     expect(onPresetChange).toHaveBeenCalledWith("dspro");
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
     expect(badge).toHaveClass("w-fit");
   });
 
-  it("opens model settings from the picker footer", async () => {
+  it("keeps model management in Settings instead of the picker footer", async () => {
     const onManageModels = vi.fn();
     const { badge } = renderPresetComposer("thread", onManageModels);
 
     fireEvent.click(badge);
     const picker = screen.getByRole("dialog", { name: "Switch model for this chat" });
-    fireEvent.click(within(picker).getByRole("button", { name: "Manage models" }));
-
-    expect(onManageModels).toHaveBeenCalledTimes(1);
-    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(within(picker).queryByRole("button", { name: "Manage models" })).not.toBeInTheDocument();
+    expect(onManageModels).not.toHaveBeenCalled();
   });
 
   it("keeps long-press drag switching alongside the click picker", () => {
@@ -819,6 +981,122 @@ describe("ThreadComposer", () => {
     expect(onPresetChange).toHaveBeenCalledWith("dflash");
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     vi.useRealTimers();
+  });
+
+  it("shows the active model header and one-click effort pills for every option", () => {
+    const { onChange } = renderReasoningComposer("high");
+
+    fireEvent.click(screen.getByRole("button", { name: "DeepSeek V4.1 Flash" }));
+    const picker = screen.getByRole("dialog", { name: "Switch model for this chat" });
+    expect(within(picker).getByTestId("model-picker-active")).toHaveTextContent(
+      "DeepSeek V4.1 Flash",
+    );
+
+    // Every effort option is one click away, including middle values.
+    const efforts = within(picker).getByTestId("reasoning-effort-pills");
+    const buttons = within(efforts).getAllByRole("button");
+    expect(buttons.map((button) => button.textContent)).toEqual([
+      "Default",
+      "Low",
+      "Medium",
+      "High",
+      "Extra high",
+    ]);
+    expect(within(efforts).getByRole("button", { name: "High" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+
+    fireEvent.click(within(efforts).getByRole("button", { name: "Medium" }));
+    expect(onChange).toHaveBeenCalledWith("medium");
+  });
+
+  it("lets users change reasoning effort via the slider click, drag, or keyboard", () => {
+    const { onChange } = renderReasoningComposer("low");
+
+    fireEvent.click(screen.getByRole("button", { name: "DeepSeek V4.1 Flash" }));
+    const picker = screen.getByRole("dialog", { name: "Switch model for this chat" });
+    const slider = within(picker).getByRole("slider", { name: "Reasoning effort" });
+    expect(slider).toHaveValue("1");
+
+    // Keyboard / non-pointer change commits immediately.
+    fireEvent.change(slider, { target: { value: "3" } });
+    expect(onChange).toHaveBeenCalledWith("high");
+
+    // Pointer drag previews without committing until pointerUp.
+    onChange.mockClear();
+    fireEvent.pointerDown(slider, { button: 0, pointerId: 1 });
+    fireEvent.change(slider, { target: { value: "4" } });
+    expect(onChange).not.toHaveBeenCalled();
+    expect(slider).toHaveAttribute("aria-valuetext", "Extra high");
+    fireEvent.pointerUp(slider, { pointerId: 1 });
+    expect(onChange).toHaveBeenCalledWith("xhigh");
+
+    // Dragging across the slider track updates the preview via pointerMove and commits on pointerUp.
+    onChange.mockClear();
+    vi.spyOn(slider, "getBoundingClientRect").mockReturnValue({
+      left: 0,
+      right: 200,
+      width: 200,
+      top: 0,
+      bottom: 24,
+      height: 24,
+      x: 0,
+      y: 0,
+      toJSON: () => ({}),
+    });
+    fireEvent.pointerDown(slider, { button: 0, pointerId: 2, pointerType: "mouse", clientX: 50 });
+    expect(slider).toHaveAttribute("aria-valuetext", "Low");
+    fireEvent.pointerMove(slider, { pointerId: 2, pointerType: "mouse", clientX: 150 });
+    expect(onChange).not.toHaveBeenCalled();
+    expect(slider).toHaveAttribute("aria-valuetext", "High");
+    fireEvent.pointerUp(slider, { pointerId: 2, pointerType: "mouse", clientX: 150 });
+    expect(onChange).toHaveBeenCalledWith("high");
+  });
+
+  it("shows the effort tag on the closed composer pill only when it is not default", () => {
+    renderReasoningComposer(null);
+    expect(screen.queryByTestId("composer-model-effort-tag")).not.toBeInTheDocument();
+    cleanup();
+    renderReasoningComposer("high");
+    expect(screen.getByTestId("composer-model-effort-tag")).toHaveTextContent("High");
+  });
+
+  it("collapses extra presets behind a searchable more-models view", () => {
+    const onPresetChange = vi.fn();
+    render(
+      <ThreadComposer
+        onSend={vi.fn()}
+        modelLabel="kimi"
+        modelPreset="kimi"
+        modelPresets={MANY_MODEL_PRESETS}
+        onModelPresetChange={onPresetChange}
+        placeholder="Type your message..."
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "kimi" }));
+    const picker = screen.getByRole("dialog", { name: "Switch model for this chat" });
+    const quick = within(picker).getByTestId("model-picker-quick-switch");
+    expect(within(quick).getAllByRole("option")).toHaveLength(3);
+    expect(within(picker).queryByRole("option", { name: "qwen-27b-unc" })).toBeNull();
+
+    fireEvent.click(within(picker).getByTestId("model-picker-more"));
+    const all = screen.getByTestId("model-picker-all");
+    expect(within(all).getAllByRole("option")).toHaveLength(MANY_MODEL_PRESETS.length);
+    fireEvent.change(within(all).getByRole("searchbox", { name: "Search models" }), {
+      target: { value: "unc" },
+    });
+    expect(within(all).getAllByRole("option")).toHaveLength(1);
+    fireEvent.click(within(all).getByRole("option", { name: "qwen-27b-unc" }));
+    expect(onPresetChange).toHaveBeenCalledWith("qwen-27b-unc");
+  });
+
+  it("renders no more-models row when every preset is a quick switch", () => {
+    const { badge } = renderPresetComposer();
+    fireEvent.click(badge);
+    const picker = screen.getByRole("dialog", { name: "Switch model for this chat" });
+    expect(within(picker).queryByTestId("model-picker-more")).toBeNull();
+    expect(within(picker).getAllByRole("option")).toHaveLength(MODEL_PRESETS.length - 1);
   });
 
   it("uses the same click picker in hero mode", () => {
@@ -851,6 +1129,31 @@ describe("ThreadComposer", () => {
       expect.objectContaining({ durationMs: expect.any(Number) }),
     ));
     await waitFor(() => expect(screen.getByLabelText("Message input")).toHaveValue("hello voice"));
+    expect(onSend).not.toHaveBeenCalled();
+  });
+
+  it("does not append audio captured before a draft switch even after returning to that chat", async () => {
+    mockVoiceRecorder();
+    const pending = deferred<string>();
+    const onSend = vi.fn();
+    const onTranscribeAudio = vi.fn(() => pending.promise);
+    const view = (draftKey: string) => (
+      <ThreadComposer onSend={onSend} onTranscribeAudio={onTranscribeAudio} draftKey={draftKey} />
+    );
+    const { rerender } = render(view("a"));
+    fireEvent.click(screen.getByRole("button", { name: "Voice input" }));
+    await waitForVoiceCapture();
+    fireEvent.click(await screen.findByRole("button", { name: "Stop recording" }));
+    await waitFor(() => expect(onTranscribeAudio).toHaveBeenCalledTimes(1));
+
+    rerender(view("b"));
+    rerender(view("a"));
+    const input = screen.getByRole("textbox", { name: "Message input" });
+    fireEvent.change(input, { target: { value: "newer draft" } });
+    await act(async () => pending.resolve("old audio"));
+
+    expect(input).toHaveValue("newer draft");
+    expect(screen.getByRole("button", { name: "Voice input" })).toBeEnabled();
     expect(onSend).not.toHaveBeenCalled();
   });
 
@@ -1255,14 +1558,9 @@ describe("ThreadComposer", () => {
     fireEvent.pointerDown(screen.getByRole("button", { name: /Workspace access mode/ }));
     await user.click(await screen.findByRole("menuitem", { name: /Full access/ }));
 
-    expect(await screen.findByRole("dialog", { name: "Enable Full access?" })).toBeInTheDocument();
-    expect(screen.getByText(/under your OS account permissions/i)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Enable Full access" })).toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: "Enable Full access?" })).not.toBeInTheDocument();
     expect(onWorkspaceScopeChange).not.toHaveBeenCalled();
-    expect(onWorkspaceAccessModeChange).not.toHaveBeenCalled();
-
-    await user.click(screen.getByRole("button", { name: "Cancel" }));
-    expect(onWorkspaceAccessModeChange).not.toHaveBeenCalled();
+    await waitFor(() => expect(onWorkspaceAccessModeChange).toHaveBeenCalledWith("full"));
   });
 
   it("exposes acknowledged v2 full and compact workspace labels", () => {
@@ -1346,8 +1644,7 @@ describe("ThreadComposer", () => {
     await user.type(screen.getByPlaceholderText("Type your message..."), "Start in Full");
     await user.click(screen.getByRole("button", { name: "Workspace access mode: Sandbox" }));
     await user.click(screen.getByRole("menuitem", { name: /Full access/ }));
-    expect(screen.getByRole("dialog")).toHaveTextContent("Enable Full access?");
-    await user.click(screen.getByRole("button", { name: "Enable Full access" }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
 
     await waitFor(() => expect(onDraftFullAccess).toHaveBeenCalledWith("Start in Full"));
     expect(screen.queryByText(
@@ -1436,7 +1733,7 @@ describe("ThreadComposer", () => {
     );
 
     await user.click(screen.getByRole("button", { name: "Workspace access mode: Full access is ending" }));
-    expect(screen.getByText("Nanobot cannot yet confirm whether earlier commands have finished. Access changes are pending.")).toBeInTheDocument();
+    expect(screen.getByText("Kohaku cannot yet confirm whether earlier commands have finished. Access changes are pending.")).toBeInTheDocument();
     expect(screen.queryByText("A command is still running with the previous access. Wait for it to finish or stop it, then retry.")).not.toBeInTheDocument();
   });
 
@@ -1620,7 +1917,21 @@ describe("ThreadComposer", () => {
       access_mode: "restricted" as const,
       restrict_to_workspace: true,
     };
-    const { container } = render(
+    const effectiveAccess = {
+      policy: "managed" as const,
+      source: "grant" as const,
+      grant_root: "/Users/test",
+      exists: true,
+      read: true,
+      write: true,
+      commands: {
+        requested: true,
+        available: true,
+        backend: "native" as const,
+        reason: null,
+      },
+    };
+    const { container, rerender } = render(
       <ThreadComposer
         onSend={vi.fn()}
         placeholder="Ask anything..."
@@ -1632,6 +1943,41 @@ describe("ThreadComposer", () => {
         }}
         workspaceDefaultScope={defaultScope}
         workspaceControls={{ can_change_project: true, can_use_full_access: true }}
+        workspaces={{
+          schema_version: 2,
+          default_access_mode: "restricted",
+          default_scope: defaultScope,
+          managed_access: false,
+          controls: { can_change_project: true, can_use_full_access: true },
+          management: {
+            grants_revision: 1,
+            grants: [],
+            repositories: [
+              {
+                name: "project-alpha",
+                path: "/Users/test/project-alpha",
+                purpose: "",
+                kind: "project",
+                knowledge_repos: [],
+                auto_sync: false,
+                sync_paths: [],
+                exists: true,
+                effective_access: effectiveAccess,
+              },
+              {
+                name: "Photos",
+                path: "/Users/test/Pictures/Photos",
+                purpose: "",
+                kind: "project",
+                knowledge_repos: [],
+                auto_sync: false,
+                sync_paths: [],
+                exists: true,
+                effective_access: effectiveAccess,
+              },
+            ],
+          },
+        }}
         onWorkspaceScopeChange={onWorkspaceScopeChange}
       />,
     );
@@ -1643,18 +1989,9 @@ describe("ThreadComposer", () => {
 
     expect(screen.queryByRole("button", { name: /Clear project folder/ })).not.toBeInTheDocument();
     expect(screen.getByRole("dialog")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Paste path")).not.toBeInTheDocument();
 
-    const input = screen.getByLabelText("Paste path");
-    fireEvent.change(input, { target: { value: "relative/project" } });
-    fireEvent.click(screen.getByRole("button", { name: "Use folder" }));
-
-    expect(screen.getByRole("alert")).toHaveTextContent(
-      "Enter an absolute folder path on this machine.",
-    );
-    expect(onWorkspaceScopeChange).not.toHaveBeenCalled();
-
-    fireEvent.change(input, { target: { value: "/Users/test/project-alpha" } });
-    fireEvent.click(screen.getByRole("button", { name: "Use folder" }));
+    await user.click(screen.getByRole("button", { name: /project-alpha/ }));
 
     expect(onWorkspaceScopeChange).toHaveBeenCalledWith(expect.objectContaining({
       project_path: "/Users/test/project-alpha",
@@ -1663,13 +2000,69 @@ describe("ThreadComposer", () => {
       restrict_to_workspace: false,
     }));
 
-    await user.click(screen.getByRole("button", { name: "Choose project folder" }));
-    const reopenedInput = await screen.findByLabelText("Paste path");
-    fireEvent.change(reopenedInput, { target: { value: "~/Pictures/Photos" } });
-    fireEvent.click(screen.getByRole("button", { name: "Use folder" }));
+    // When a folder is selected, it appears in the top selected card and is omitted from the list below.
+    rerender(
+      <ThreadComposer
+        onSend={vi.fn()}
+        placeholder="Ask anything..."
+        variant="hero"
+        workspaceScope={{
+          project_path: "/Users/test/project-alpha",
+          project_name: "project-alpha",
+          access_mode: "full",
+          restrict_to_workspace: false,
+        }}
+        workspaceDefaultScope={defaultScope}
+        workspaceControls={{ can_change_project: true, can_use_full_access: true }}
+        workspaces={{
+          schema_version: 2,
+          default_access_mode: "restricted",
+          default_scope: defaultScope,
+          managed_access: false,
+          controls: { can_change_project: true, can_use_full_access: true },
+          management: {
+            grants_revision: 1,
+            grants: [],
+            repositories: [
+              {
+                name: "project-alpha",
+                path: "/Users/test/project-alpha",
+                purpose: "",
+                kind: "project",
+                knowledge_repos: [],
+                auto_sync: false,
+                sync_paths: [],
+                exists: true,
+                effective_access: effectiveAccess,
+              },
+              {
+                name: "Photos",
+                path: "/Users/test/Pictures/Photos",
+                purpose: "",
+                kind: "project",
+                knowledge_repos: [],
+                auto_sync: false,
+                sync_paths: [],
+                exists: true,
+                effective_access: effectiveAccess,
+              },
+            ],
+          },
+        }}
+        onWorkspaceScopeChange={onWorkspaceScopeChange}
+      />,
+    );
+
+    // Direct cancel button beside the workspace name clears without opening the modal.
+    expect(screen.getByRole("button", { name: "Clear project folder" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Working in: project-alpha" }));
+    const dialog = screen.getByRole("dialog");
+    expect(within(dialog).getByRole("button", { name: /project-alpha/ })).toHaveAttribute("aria-current", "true");
+    expect(within(dialog).getByRole("button", { name: "Clear project folder" })).toBeInTheDocument();
+    await user.click(within(dialog).getByRole("button", { name: /Photos/ }));
 
     expect(onWorkspaceScopeChange).toHaveBeenLastCalledWith(expect.objectContaining({
-      project_path: "~/Pictures/Photos",
+      project_path: "/Users/test/Pictures/Photos",
       project_name: "Photos",
       access_mode: "full",
       restrict_to_workspace: false,
@@ -1751,11 +2144,11 @@ describe("ThreadComposer", () => {
     const picker = await screen.findByRole("dialog");
     expect(picker).toHaveClass("overflow-y-auto");
     expect(screen.queryByRole("button", { name: /Clear project folder/ })).not.toBeInTheDocument();
-    expect(screen.getByLabelText("Paste path")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Browse…" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Manage folders and repositories" })).toBeInTheDocument();
-    const repositoryList = screen.getByRole("button", { name: /project-11/ }).parentElement;
-    expect(repositoryList).toHaveClass("max-h-40", "overflow-y-auto", "overscroll-contain");
+    expect(screen.queryByLabelText("Paste path")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Browse…" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Manage folders and repositories" })).not.toBeInTheDocument();
+    const repositoryList = screen.getByRole("button", { name: /project-11/ }).parentElement?.parentElement;
+    expect(repositoryList).toHaveClass("max-h-48", "overflow-y-auto", "overscroll-contain");
   });
 
   it("keeps the current folder visible in an established chat", () => {
@@ -1834,232 +2227,6 @@ describe("ThreadComposer", () => {
     await user.click(screen.getByRole("button", { name: "Working in: current" }));
     expect(await screen.findByText("Read and write · Commands available")).toBeInTheDocument();
     expect(screen.queryByText(/Bubblewrap|Unavailable/)).not.toBeInTheDocument();
-  });
-
-  it("keeps manual path entry available when the native folder picker fails", async () => {
-    const user = userEvent.setup();
-    const onWorkspaceScopeChange = vi.fn();
-    const pickFolder = vi.fn().mockRejectedValue(new Error("Folder picker unavailable"));
-    const defaultScope = {
-      project_path: "/Users/test/.nanobot/workspace",
-      project_name: "workspace",
-      access_mode: "restricted" as const,
-      restrict_to_workspace: true,
-    };
-    Object.defineProperty(window, "nanobotHost", {
-      configurable: true,
-      value: {
-        getRuntimeInfo: vi.fn(),
-        restartEngine: vi.fn(),
-        pickFolder,
-        openLogs: vi.fn(),
-        exportDiagnostics: vi.fn(),
-      },
-    });
-
-    render(
-      <ThreadComposer
-        onSend={vi.fn()}
-        placeholder="Ask anything..."
-        variant="hero"
-        workspaceScope={defaultScope}
-        workspaceDefaultScope={defaultScope}
-        workspaceControls={{ can_change_project: true, can_use_full_access: false }}
-        onWorkspaceScopeChange={onWorkspaceScopeChange}
-      />,
-    );
-
-    await user.click(screen.getByRole("button", { name: "Choose project folder" }));
-    await user.click(await screen.findByRole("button", { name: "Browse…" }));
-
-    expect(await screen.findByRole("alert")).toHaveTextContent("Folder picker unavailable");
-    const input = screen.getByLabelText("Paste path");
-    await user.clear(input);
-    await user.type(input, "/Users/test/fallback-project");
-    await user.click(screen.getByRole("button", { name: "Use folder" }));
-
-    expect(onWorkspaceScopeChange).toHaveBeenCalledWith(expect.objectContaining({
-      project_path: "/Users/test/fallback-project",
-      project_name: "fallback-project",
-    }));
-  });
-
-  it.each([
-    ["Windows", "D:\\Users\\test\\.nanobot\\workspace", "D:\\path\\to\\project"],
-    ["macOS", "/Users/test/.nanobot/workspace", "/Users/name/project"],
-    ["Linux", "/home/test/.nanobot/workspace", "/home/name/project"],
-  ])("uses a %s path example for the project picker", async (_, projectPath, placeholder) => {
-    const user = userEvent.setup();
-    const defaultScope = {
-      project_path: projectPath,
-      project_name: "workspace",
-      access_mode: "restricted" as const,
-      restrict_to_workspace: true,
-    };
-
-    render(
-      <ThreadComposer
-        onSend={vi.fn()}
-        placeholder="Ask anything..."
-        variant="hero"
-        workspaceScope={defaultScope}
-        workspaceDefaultScope={defaultScope}
-        workspaceControls={{ can_change_project: true, can_use_full_access: true }}
-        onWorkspaceScopeChange={vi.fn()}
-      />,
-    );
-
-    await user.click(screen.getByRole("button", { name: "Choose project folder" }));
-
-    expect(await screen.findByLabelText("Paste path")).toHaveAttribute("placeholder", placeholder);
-  });
-
-  it("keeps project selection in the action row and hides it with workspace controls", () => {
-    const defaultScope = {
-      project_path: "/Users/test/.nanobot/workspace",
-      project_name: "workspace",
-      access_mode: "full" as const,
-      restrict_to_workspace: false,
-    };
-    const composer = (workspaceControlsHidden: boolean) => (
-      <ThreadComposer
-        onSend={vi.fn()}
-        placeholder="Ask anything..."
-        variant="hero"
-        workspaceControlsHidden={workspaceControlsHidden}
-        workspaceScope={{ ...defaultScope, project_path: "/projects/current", project_name: "current" }}
-        workspaceDefaultScope={defaultScope}
-        workspaceControls={{ can_change_project: true, can_use_full_access: true }}
-        onWorkspaceScopeChange={vi.fn()}
-      />
-    );
-    const { container, rerender } = render(composer(false));
-
-    expect(container.querySelector("[data-composer-workspace-drawer]")).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Working in: current" })).toBeEnabled();
-
-    rerender(composer(true));
-
-    expect(screen.queryByRole("button", { name: "Working in: current" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", {
-      name: "Workspace access mode: Full access",
-    })).not.toBeInTheDocument();
-
-    rerender(composer(false));
-
-    expect(screen.getByRole("button", { name: "Working in: current" })).toBeEnabled();
-  });
-
-  it("uses the native folder picker for project selection on native host", async () => {
-    const onWorkspaceScopeChange = vi.fn();
-    const pickFolder = vi.fn().mockResolvedValue("/Users/test/native-project");
-    const defaultScope = {
-      project_path: "/Users/test/.nanobot/workspace",
-      project_name: "workspace",
-      access_mode: "full" as const,
-      restrict_to_workspace: false,
-    };
-    Object.defineProperty(window, "nanobotHost", {
-      configurable: true,
-      value: {
-        getRuntimeInfo: vi.fn(),
-        restartEngine: vi.fn(),
-        pickFolder,
-        openLogs: vi.fn(),
-        exportDiagnostics: vi.fn(),
-      },
-    });
-
-    render(
-      <ThreadComposer
-        onSend={vi.fn()}
-        placeholder="Ask anything..."
-        variant="hero"
-        workspaceScope={defaultScope}
-        workspaceDefaultScope={defaultScope}
-        workspaceControls={{ can_change_project: true, can_use_full_access: true }}
-        onWorkspaceScopeChange={onWorkspaceScopeChange}
-      />,
-    );
-
-    const user = userEvent.setup();
-    await user.click(screen.getByRole("button", { name: "Choose project folder" }));
-    await user.click(await screen.findByRole("button", { name: "Browse…" }));
-
-    await waitFor(() => expect(pickFolder).toHaveBeenCalled());
-    expect(onWorkspaceScopeChange).toHaveBeenCalledWith(expect.objectContaining({
-      project_path: "/Users/test/native-project",
-      project_name: "native-project",
-      access_mode: "full",
-      restrict_to_workspace: false,
-    }));
-  });
-
-  it("uses the gateway folder picker for a locally hosted WebUI", async () => {
-    const onWorkspaceScopeChange = vi.fn();
-    const pickFolder = vi.fn().mockResolvedValue("/Users/test/gateway-project");
-    const defaultScope = {
-      project_path: "/Users/test/.nanobot/workspace",
-      project_name: "workspace",
-      access_mode: "full" as const,
-      restrict_to_workspace: false,
-    };
-
-    render(
-      <ThreadComposer
-        onSend={vi.fn()}
-        placeholder="Ask anything..."
-        variant="hero"
-        workspaceScope={defaultScope}
-        workspaceDefaultScope={defaultScope}
-        workspaceControls={{
-          can_change_project: true,
-          can_use_full_access: true,
-          can_pick_folder: true,
-        }}
-        onPickWorkspaceFolder={pickFolder}
-        onWorkspaceScopeChange={onWorkspaceScopeChange}
-      />,
-    );
-
-    fireEvent.click(screen.getByRole("button", { name: "Choose project folder" }));
-    expect(screen.getByLabelText("Paste path")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Browse…" }));
-
-    await waitFor(() => expect(pickFolder).toHaveBeenCalled());
-    expect(onWorkspaceScopeChange).toHaveBeenCalledWith(expect.objectContaining({
-      project_path: "/Users/test/gateway-project",
-      project_name: "gateway-project",
-      access_mode: "full",
-      restrict_to_workspace: false,
-    }));
-  });
-
-  it("uses the web path menu when no native host picker is available", async () => {
-    const user = userEvent.setup();
-    const defaultScope = {
-      project_path: "/Users/test/.nanobot/workspace",
-      project_name: "workspace",
-      access_mode: "full" as const,
-      restrict_to_workspace: false,
-    };
-
-    render(
-      <ThreadComposer
-        onSend={vi.fn()}
-        placeholder="Ask anything..."
-        variant="hero"
-        workspaceScope={defaultScope}
-        workspaceDefaultScope={defaultScope}
-        workspaceControls={{ can_change_project: true, can_use_full_access: true }}
-        onWorkspaceScopeChange={vi.fn()}
-      />,
-    );
-
-    await user.click(screen.getByRole("button", { name: "Choose project folder" }));
-
-    expect(screen.queryByRole("button", { name: /Clear project folder/ })).not.toBeInTheDocument();
-    expect(screen.getByLabelText("Paste path")).toBeInTheDocument();
   });
 
   it("closes the sustained goal through its existing drawer", () => {
@@ -2468,7 +2635,7 @@ describe("ThreadComposer", () => {
       target: { value: "参考 @收费", selectionStart: 6 },
     });
 
-    expect(screen.getByRole("group", { name: "Nanobot conversations" })).toBeInTheDocument();
+    expect(screen.getByRole("group", { name: "Kohaku conversations" })).toBeInTheDocument();
     expect(screen.getByRole("option", { name: /@收费设计/i })).toBeInTheDocument();
     fireEvent.keyDown(input, { key: "Tab" });
 
@@ -2632,9 +2799,9 @@ describe("ThreadComposer", () => {
 
     expect(screen.getByTestId("composer-session-mention-Plan")).toHaveTextContent("@Plan");
     fireEvent.keyDown(input, { key: "Enter" });
-    fireEvent.click(screen.getByRole("button", { name: "Guide" }));
+    fireEvent.click(screen.getByRole("button", { name: "Steer" }));
 
-    expect(onSend).toHaveBeenCalledWith("@Plan", undefined, {
+    expect(onSend).toHaveBeenCalledWith("@Plan", undefined, expect.objectContaining({
       sessionMentions: [{
         id: session("z-target", "Plan").handle?.id,
         name: "Plan",
@@ -2642,7 +2809,7 @@ describe("ThreadComposer", () => {
         title: "Plan",
       }],
       continueActiveTurn: true,
-    });
+    }));
   });
 
   it("opens skills only from a $ reference and prioritizes the skill name", () => {
@@ -3079,12 +3246,47 @@ describe("ThreadComposer", () => {
     );
 
     const input = screen.getByLabelText("Message input");
+    fireEvent.change(input, { target: { value: "follow-up after Stop" } });
+    fireEvent.keyDown(input, { key: "Enter" });
     fireEvent.change(input, { target: { value: "/stop" } });
     fireEvent.keyDown(input, { key: "Escape" });
     fireEvent.keyDown(input, { key: "Enter" });
 
     expect(onStop).toHaveBeenCalledTimes(1);
     expect(onSend).not.toHaveBeenCalled();
+    expect(screen.getByText("follow-up after Stop")).toBeInTheDocument();
+  });
+
+  it("keeps ready rows after Stop and an independent Send, and labels an idle queue action Send", () => {
+    const onSend = vi.fn();
+    const onStop = vi.fn();
+    const composer = (isStreaming: boolean) => (
+      <ThreadComposer onSend={onSend} onStop={onStop} isStreaming={isStreaming} />
+    );
+    const { rerender } = render(composer(true));
+    const input = screen.getByLabelText("Message input");
+    fireEvent.change(input, { target: { value: "first queued" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    fireEvent.change(input, { target: { value: "second queued" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    fireEvent.click(screen.getByRole("button", { name: "Stop response" }));
+    rerender(composer(false));
+    expect(onSend).not.toHaveBeenCalled();
+
+    fireEvent.change(input, { target: { value: "separate message" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+
+    expect(onSend).toHaveBeenCalledTimes(1);
+    expect(onSend).toHaveBeenLastCalledWith("separate message", undefined, undefined);
+    const queue = screen.getByRole("group", { name: "Queued guidance" });
+    expect(within(queue).getByText("first queued")).toBeInTheDocument();
+    expect(within(queue).getByText("second queued")).toBeInTheDocument();
+    const [first] = within(queue).getAllByRole("button", { name: "Send", exact: true });
+    fireEvent.click(first);
+    expect(onSend).toHaveBeenLastCalledWith("first queued", undefined, {
+      queuedAttempt: expect.any(Object),
+    });
+    expect(within(queue).getByText("second queued")).toBeInTheDocument();
   });
 
   it("keeps goal task commands on the normal agent turn path", () => {
@@ -3162,6 +3364,30 @@ describe("ThreadComposer", () => {
     expect(screen.queryByRole("button", { name: "Send message" })).not.toBeInTheDocument();
   });
 
+  it("keeps the send action available while background child work can be stopped", () => {
+    const onSend = vi.fn();
+    const onStop = vi.fn();
+    render(
+      <ThreadComposer
+        onSend={onSend}
+        onStop={onStop}
+        isStreaming={false}
+        stopAvailable
+        placeholder="Type your message..."
+      />,
+    );
+
+    const input = screen.getByLabelText("Message input");
+    fireEvent.change(input, { target: { value: "check the result" } });
+    expect(screen.getByRole("button", { name: "Send message" })).toBeEnabled();
+    fireEvent.click(screen.getByRole("button", { name: "Stop response" }));
+
+    expect(onStop).toHaveBeenCalledTimes(1);
+    expect(input).toHaveValue("check the result");
+    expect(screen.getByRole("button", { name: "Send message" })).toBeEnabled();
+    expect(onSend).not.toHaveBeenCalled();
+  });
+
   it("queues plain guidance while a task is running", () => {
     const onSend = vi.fn();
     render(
@@ -3181,17 +3407,81 @@ describe("ThreadComposer", () => {
     expect(input).toHaveValue("");
     expect(screen.getByText("keep the UI minimal")).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "Guide" }));
+    fireEvent.click(screen.getByRole("button", { name: "Steer" }));
 
     expect(onSend).toHaveBeenCalledWith(
       "keep the UI minimal",
       undefined,
-      { continueActiveTurn: true },
+      expect.objectContaining({ continueActiveTurn: true, queuedAttempt: expect.any(Object) }),
     );
-    expect(screen.queryByText("keep the UI minimal")).not.toBeInTheDocument();
+    expect(screen.getByText("keep the UI minimal")).toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent("Awaiting confirmation");
   });
 
-  it("guides queued guidance when Enter is pressed again", () => {
+  it("queues guidance from the primary send button while a task is running", () => {
+    const onSend = vi.fn();
+    render(
+      <ThreadComposer
+        onSend={onSend}
+        onStop={vi.fn()}
+        isStreaming
+        placeholder="Type your message..."
+      />,
+    );
+
+    const input = screen.getByLabelText("Message input");
+    // An empty composer shows Stop, matching the reference harness.
+    expect(screen.getByRole("button", { name: "Stop response" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Add to queue" })).not.toBeInTheDocument();
+
+    fireEvent.change(input, { target: { value: "also check the mobile layout" } });
+
+    // Drafting switches the single primary button from Stop to Add to queue.
+    expect(screen.queryByRole("button", { name: "Stop response" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Add to queue" }));
+
+    expect(onSend).not.toHaveBeenCalled();
+    expect(screen.getByText("also check the mobile layout")).toBeInTheDocument();
+    expect(input).toHaveValue("");
+    // Once cleared, the single primary button returns to Stop.
+    expect(screen.getByRole("button", { name: "Stop response" })).toBeEnabled();
+  });
+
+  it("activates the compact mobile composer layout on narrow web viewports", () => {
+    const originalMatchMedia = window.matchMedia;
+    vi.stubGlobal(
+      "matchMedia",
+      vi.fn((query: string) => ({
+        matches: query.includes("max-width: 639px"),
+        media: query,
+        onchange: null,
+        addListener: vi.fn(),
+        removeListener: vi.fn(),
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+        dispatchEvent: vi.fn(),
+      })),
+    );
+    try {
+      const { container } = render(
+        <ThreadComposer
+          onSend={vi.fn()}
+          contextUsage={{ contextTokens: 1_000, contextWindowTokens: 10_000 }}
+          hasConfiguredModel
+          placeholder="Type your message..."
+        />,
+      );
+      const workspaceRow = container.querySelector(".thread-composer-mobile-workspace-row");
+      expect(workspaceRow).not.toBeNull();
+      expect(
+        within(workspaceRow as HTMLElement).getByTestId("composer-context-usage"),
+      ).toBeInTheDocument();
+    } finally {
+      vi.stubGlobal("matchMedia", originalMatchMedia);
+    }
+  });
+
+  it("does not steer a queued row when plain Enter is pressed again", () => {
     const onSend = vi.fn();
     render(
       <ThreadComposer
@@ -3217,16 +3507,12 @@ describe("ThreadComposer", () => {
 
     fireEvent.keyDown(input, { key: "Enter" });
 
-    expect(onSend).toHaveBeenCalledWith(
-      "send this guidance now",
-      undefined,
-      { continueActiveTurn: true },
-    );
-    expect(onSend).toHaveBeenCalledTimes(1);
-    expect(screen.queryByText("send this guidance now")).not.toBeInTheDocument();
+    expect(onSend).not.toHaveBeenCalled();
+    expect(screen.getByText("send this guidance now")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Steer" })).toBeEnabled();
   });
 
-  it("disarms the second Enter shortcut when keyboard voice recording starts", async () => {
+  it("keeps the queue untouched by Enter after keyboard voice recording starts", async () => {
     mockVoiceRecorder();
     const onSend = vi.fn();
     const onTranscribeAudio = vi.fn(async () => "voice guidance");
@@ -3257,7 +3543,7 @@ describe("ThreadComposer", () => {
     await waitFor(() => expect(onTranscribeAudio).toHaveBeenCalled());
   });
 
-  it("disarms the second Enter shortcut after stopping the active response", () => {
+  it("keeps the queue untouched by Enter after stopping the active response", () => {
     const onSend = vi.fn();
     const onStop = vi.fn();
     const { rerender } = render(
@@ -3301,7 +3587,7 @@ describe("ThreadComposer", () => {
     expect(screen.getByText("keep this queued")).toBeInTheDocument();
   });
 
-  it("disarms the second Enter shortcut when the composer loses focus", () => {
+  it("keeps the queue untouched by Enter after refocusing the composer", () => {
     const onSend = vi.fn();
     render(
       <ThreadComposer
@@ -3323,7 +3609,7 @@ describe("ThreadComposer", () => {
     expect(screen.getByText("leave this queued")).toBeInTheDocument();
   });
 
-  it("guides the newly queued prompt when older guidance is still waiting", () => {
+  it("steers the current draft with a deliberate modified Enter, keeping queued rows", () => {
     const onSend = vi.fn();
     render(
       <ThreadComposer
@@ -3337,25 +3623,30 @@ describe("ThreadComposer", () => {
     const input = screen.getByLabelText("Message input");
     fireEvent.change(input, { target: { value: "older guidance" } });
     fireEvent.keyDown(input, { key: "Enter" });
-    fireEvent.change(input, { target: { value: "guide this one now" } });
-    fireEvent.keyDown(input, { key: "Enter" });
-    fireEvent.keyDown(input, { key: "Enter" });
+    fireEvent.change(input, { target: { value: "steer with this now" } });
+    fireEvent.keyDown(input, { key: "Enter", ctrlKey: true, repeat: true });
+    expect(onSend).not.toHaveBeenCalled();
+    fireEvent.keyDown(input, { key: "Enter", ctrlKey: true });
 
     expect(onSend).toHaveBeenCalledWith(
-      "guide this one now",
+      "steer with this now",
       undefined,
       { continueActiveTurn: true },
     );
     expect(onSend).toHaveBeenCalledTimes(1);
     expect(screen.getByText("older guidance")).toBeInTheDocument();
-    expect(screen.queryByText("guide this one now")).not.toBeInTheDocument();
+    expect(input).toHaveValue("");
   });
 
-  it("keeps queued guidance attached to the composer and sends it one item at a time", async () => {
+  it.each(["thread", "hero"] as const)("keeps queued guidance above and outside the %s input card while sending one item at a time", async (variant) => {
     const onSend = vi.fn();
+    const owner = queuedOwnerTestAdapter();
     const { rerender } = render(
       <ThreadComposer
+        variant={variant}
         onSend={onSend}
+        onJoinQueuedAttempt={owner.join}
+        onConsumeQueuedAttempt={owner.consume}
         onStop={vi.fn()}
         isStreaming
         placeholder="Type your message..."
@@ -3370,32 +3661,67 @@ describe("ThreadComposer", () => {
 
     const queue = screen.getByRole("group", { name: "Queued guidance" });
     expect(queue).toHaveClass("composer-status-strip");
-    expect(queue).toHaveClass("mx-3");
-    expect(queue.parentElement?.className).toContain("group/composer");
+    const surface = input.closest(".thread-composer-surface");
+    expect(surface).not.toBeNull();
+    expect(surface).not.toContainElement(queue);
+    expect(queue.parentElement?.isSameNode(surface!.parentElement)).toBe(true);
+    expect(queue.nextElementSibling?.isSameNode(surface)).toBe(true);
+    expect(queue).toHaveClass("mx-auto", "-mb-px", "w-[calc(100%-1.5rem)]", "rounded-t-floating", "bg-muted");
+    expect(queue.className).not.toMatch(/(?:shadow|backdrop-blur)/);
+    expect(within(queue).queryByText("Queued guidance")).not.toBeInTheDocument();
+    expect(within(queue).queryByRole("textbox")).not.toBeInTheDocument();
+    expect(within(queue).queryByText("2")).not.toBeInTheDocument();
+    expect(queue.querySelector(".queued-prompt-list")).toHaveClass(
+      "max-h-[216px]",
+      "overflow-y-auto",
+    );
+    const queuedRows = queue.querySelectorAll("[data-queued-prompt-row='true']");
+    expect(queuedRows).toHaveLength(2);
+    for (const row of Array.from(queuedRows)) {
+      expect(row).toHaveClass("shrink-0");
+      const preview = row.querySelector("p");
+      expect(preview).toHaveClass("w-full", "truncate");
+      expect(preview).toHaveAttribute("title", preview!.textContent);
+    }
     expect(within(queue).getByText("first follow-up")).toBeInTheDocument();
     expect(within(queue).getByText("second follow-up")).toBeInTheDocument();
     expect(within(queue).getAllByRole("button", { name: "Edit guidance" })).toHaveLength(2);
-    expect(within(queue).getAllByRole("button", { name: "Guide" })).toHaveLength(2);
+    expect(within(queue).getAllByRole("button", { name: "Steer" })).toHaveLength(2);
 
     rerender(
       <ThreadComposer
+        variant={variant}
         onSend={onSend}
+        onJoinQueuedAttempt={owner.join}
+        onConsumeQueuedAttempt={owner.consume}
         onStop={vi.fn()}
         isStreaming={false}
+        queueCompletionTurnId="completed-turn-1"
         placeholder="Type your message..."
       />,
     );
 
     await waitFor(() => {
-      expect(onSend).toHaveBeenCalledWith("first follow-up");
+      expect(onSend).toHaveBeenCalledWith(
+        "first follow-up",
+        undefined,
+        expect.objectContaining({ queuedAttempt: expect.any(Object) }),
+      );
     });
     expect(onSend).toHaveBeenCalledTimes(1);
-    expect(screen.queryByText("first follow-up")).not.toBeInTheDocument();
+    const firstBinding = (onSend.mock.calls[0] as unknown as [unknown, unknown, {
+      queuedAttempt: QueuedAttemptBinding;
+    }])[2].queuedAttempt;
+    await act(async () => owner.resolve(firstBinding.turnId));
+    await waitFor(() => expect(screen.queryByText("first follow-up")).not.toBeInTheDocument());
     expect(screen.getByText("second follow-up")).toBeInTheDocument();
 
     rerender(
       <ThreadComposer
+        variant={variant}
         onSend={onSend}
+        onJoinQueuedAttempt={owner.join}
+        onConsumeQueuedAttempt={owner.consume}
         onStop={vi.fn()}
         isStreaming
         placeholder="Type your message..."
@@ -3403,18 +3729,64 @@ describe("ThreadComposer", () => {
     );
     rerender(
       <ThreadComposer
+        variant={variant}
         onSend={onSend}
+        onJoinQueuedAttempt={owner.join}
+        onConsumeQueuedAttempt={owner.consume}
         onStop={vi.fn()}
         isStreaming={false}
+        queueCompletionTurnId="completed-turn-2"
         placeholder="Type your message..."
       />,
     );
 
     await waitFor(() => {
-      expect(onSend).toHaveBeenLastCalledWith("second follow-up");
+      expect(onSend).toHaveBeenCalledTimes(2);
     });
+    const secondBinding = (onSend.mock.calls[1] as unknown as [unknown, unknown, {
+      queuedAttempt: QueuedAttemptBinding;
+    }])[2].queuedAttempt;
+    await act(async () => owner.resolve(secondBinding.turnId));
+    await waitFor(() => expect(screen.queryByRole("group", { name: "Queued guidance" })).not.toBeInTheDocument());
     expect(onSend).toHaveBeenCalledTimes(2);
-    expect(screen.queryByRole("group", { name: "Queued guidance" })).not.toBeInTheDocument();
+  });
+
+  it("submits a queued prompt at most once before pending state rerenders", () => {
+    const admission = new Promise<boolean>(() => undefined);
+    const onSend = vi.fn(() => ({
+      turnId: "turn-pending-guide",
+      userMessageId: "user-pending-guide",
+      sideChannel: false,
+      admission,
+    }));
+    render(
+      <ThreadComposer
+        onSend={onSend}
+        onStop={vi.fn()}
+        isStreaming
+        placeholder="Type your message..."
+      />,
+    );
+
+    const input = screen.getByLabelText("Message input");
+    fireEvent.change(input, { target: { value: "submit this once" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    const guide = screen.getByRole("button", { name: "Steer" });
+
+    act(() => {
+      fireEvent.click(guide);
+      fireEvent.click(guide);
+    });
+
+    expect(onSend).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole("status")).toHaveTextContent("Awaiting confirmation");
+    expect(screen.getByRole("button", { name: "Steer" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Edit guidance" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Delete guidance" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Drag to reorder" })).toHaveAttribute(
+      "aria-disabled",
+      "true",
+    );
   });
 
   it("sends a queued prompt without capturing a workspace snapshot", async () => {
@@ -3450,13 +3822,18 @@ describe("ThreadComposer", () => {
         onSend={onSend}
         onStop={vi.fn()}
         isStreaming={false}
+        queueCompletionTurnId="completed-turn-3"
         workspaceScope={laterScope}
         placeholder="Type your message..."
       />,
     );
 
     await waitFor(() => expect(onSend).toHaveBeenCalledTimes(1));
-    expect(onSend).toHaveBeenCalledWith("use the current project");
+    expect(onSend).toHaveBeenCalledWith(
+      "use the current project",
+      undefined,
+      expect.objectContaining({ queuedAttempt: expect.any(Object) }),
+    );
   });
 
   it("lets users edit queued guidance before it is sent", async () => {
@@ -3489,20 +3866,50 @@ describe("ThreadComposer", () => {
         onSend={onSend}
         onStop={vi.fn()}
         isStreaming={false}
+        queueCompletionTurnId="completed-turn-4"
         placeholder="Type your message..."
       />,
     );
 
     await waitFor(() => {
-      expect(onSend).toHaveBeenCalledWith("polished follow-up");
+      expect(onSend).toHaveBeenCalledWith(
+        "polished follow-up",
+        undefined,
+        expect.objectContaining({ queuedAttempt: expect.any(Object) }),
+      );
     });
+  });
+
+  it("edits a queued row without replacing or enqueuing a separate draft", () => {
+    const onSend = vi.fn();
+    render(<ThreadComposer onSend={onSend} isStreaming />);
+    const input = screen.getByLabelText("Message input");
+    fireEvent.change(input, { target: { value: "first follow-up" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    fireEvent.change(input, { target: { value: "other follow-up" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    fireEvent.change(input, { target: { value: "separate unsent draft" } });
+
+    fireEvent.click(screen.getAllByRole("button", { name: "Edit guidance" })[0]);
+    expect(input).toHaveValue("separate unsent draft");
+    const edit = screen.getByRole("textbox", { name: "Edit guidance" });
+    fireEvent.change(edit, { target: { value: "revised follow-up" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save edit" }));
+
+    expect(input).toHaveValue("separate unsent draft");
+    expect(screen.getByText("revised follow-up")).toBeInTheDocument();
+    expect(screen.getByText("other follow-up")).toBeInTheDocument();
+    expect(onSend).not.toHaveBeenCalled();
   });
 
   it("requeues edited guidance at the end of the pending list", async () => {
     const onSend = vi.fn();
+    const owner = queuedOwnerTestAdapter();
     const { rerender } = render(
       <ThreadComposer
         onSend={onSend}
+        onJoinQueuedAttempt={owner.join}
+        onConsumeQueuedAttempt={owner.consume}
         onStop={vi.fn()}
         isStreaming
         placeholder="Type your message..."
@@ -3525,20 +3932,34 @@ describe("ThreadComposer", () => {
     rerender(
       <ThreadComposer
         onSend={onSend}
+        onJoinQueuedAttempt={owner.join}
+        onConsumeQueuedAttempt={owner.consume}
         onStop={vi.fn()}
         isStreaming={false}
+        queueCompletionTurnId="completed-turn-5"
         placeholder="Type your message..."
       />,
     );
 
     await waitFor(() => {
-      expect(onSend).toHaveBeenCalledWith("second follow-up");
+      expect(onSend).toHaveBeenCalledWith(
+        "second follow-up",
+        undefined,
+        expect.objectContaining({ queuedAttempt: expect.any(Object) }),
+      );
     });
     expect(onSend).toHaveBeenCalledTimes(1);
+    const firstBinding = (onSend.mock.calls[0] as unknown as [unknown, unknown, {
+      queuedAttempt: QueuedAttemptBinding;
+    }])[2].queuedAttempt;
+    await act(async () => owner.resolve(firstBinding.turnId));
+    await waitFor(() => expect(screen.queryByText("second follow-up")).not.toBeInTheDocument());
 
     rerender(
       <ThreadComposer
         onSend={onSend}
+        onJoinQueuedAttempt={owner.join}
+        onConsumeQueuedAttempt={owner.consume}
         onStop={vi.fn()}
         isStreaming
         placeholder="Type your message..."
@@ -3547,15 +3968,21 @@ describe("ThreadComposer", () => {
     rerender(
       <ThreadComposer
         onSend={onSend}
+        onJoinQueuedAttempt={owner.join}
+        onConsumeQueuedAttempt={owner.consume}
         onStop={vi.fn()}
         isStreaming={false}
+        queueCompletionTurnId="completed-turn-6"
         placeholder="Type your message..."
       />,
     );
 
-    await waitFor(() => {
-      expect(onSend).toHaveBeenLastCalledWith("first follow-up edited");
-    });
+    await waitFor(() => expect(onSend).toHaveBeenCalledTimes(2));
+    const secondBinding = (onSend.mock.calls[1] as unknown as [unknown, unknown, {
+      queuedAttempt: QueuedAttemptBinding;
+    }])[2].queuedAttempt;
+    await act(async () => owner.resolve(secondBinding.turnId));
+    await waitFor(() => expect(screen.queryByText("first follow-up edited")).not.toBeInTheDocument());
     expect(onSend).toHaveBeenCalledTimes(2);
   });
 
@@ -3597,6 +4024,7 @@ describe("ThreadComposer", () => {
         onSend={onSend}
         onStop={vi.fn()}
         isStreaming={false}
+        queueCompletionTurnId="completed-turn-7"
         placeholder="Type your message..."
       />,
     );
@@ -3610,8 +4038,106 @@ describe("ThreadComposer", () => {
             name: "draft.png",
           }),
         })],
+        expect.objectContaining({ queuedAttempt: expect.any(Object) }),
       );
     });
+  });
+
+  it("sends an attachment-only queued item before a later text item", async () => {
+    mockBlobUrls();
+    const onSend = vi.fn();
+    const owner = queuedOwnerTestAdapter();
+    const { container, rerender } = render(
+      <ThreadComposer
+        onSend={onSend}
+        onJoinQueuedAttempt={owner.join}
+        onConsumeQueuedAttempt={owner.consume}
+        onStop={vi.fn()}
+        isStreaming
+        placeholder="Type your message..."
+      />,
+    );
+
+    const input = screen.getByLabelText("Message input");
+    const fileInput = container.querySelector<HTMLInputElement>('input[type="file"]');
+    expect(fileInput).toBeTruthy();
+    const file = new File(["image"], "draft.png", { type: "image/png" });
+    fireEvent.change(fileInput!, { target: { files: [file] } });
+    await screen.findByText("draft.png");
+
+    fireEvent.keyDown(input, { key: "Enter" });
+    fireEvent.change(input, { target: { value: "later text" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+
+    expect(onSend).not.toHaveBeenCalled();
+    expect(screen.getByRole("group", { name: "Queued guidance" })).toBeInTheDocument();
+    expect(screen.getByText("later text")).toBeInTheDocument();
+
+    rerender(
+      <ThreadComposer
+        onSend={onSend}
+        onJoinQueuedAttempt={owner.join}
+        onConsumeQueuedAttempt={owner.consume}
+        onStop={vi.fn()}
+        isStreaming={false}
+        queueCompletionTurnId="completed-turn-8"
+        placeholder="Type your message..."
+      />,
+    );
+
+    await waitFor(() => expect(onSend).toHaveBeenCalledTimes(1));
+    expect(onSend).toHaveBeenNthCalledWith(
+      1,
+      "",
+      [expect.objectContaining({
+        media: expect.objectContaining({
+          data_url: "data:image/png;base64,aW1hZ2U=",
+          name: "draft.png",
+        }),
+      })],
+      expect.objectContaining({ queuedAttempt: expect.any(Object) }),
+    );
+    expect(screen.getByText("later text")).toBeInTheDocument();
+    const firstBinding = (onSend.mock.calls[0] as unknown as [unknown, unknown, {
+      queuedAttempt: QueuedAttemptBinding;
+    }])[2].queuedAttempt;
+    await act(async () => owner.resolve(firstBinding.turnId));
+    await waitFor(() => expect(screen.queryByText("draft.png")).not.toBeInTheDocument());
+
+    rerender(
+      <ThreadComposer
+        onSend={onSend}
+        onJoinQueuedAttempt={owner.join}
+        onConsumeQueuedAttempt={owner.consume}
+        onStop={vi.fn()}
+        isStreaming
+        placeholder="Type your message..."
+      />,
+    );
+    rerender(
+      <ThreadComposer
+        onSend={onSend}
+        onJoinQueuedAttempt={owner.join}
+        onConsumeQueuedAttempt={owner.consume}
+        onStop={vi.fn()}
+        isStreaming={false}
+        queueCompletionTurnId="completed-turn-9"
+        placeholder="Type your message..."
+      />,
+    );
+
+    await waitFor(() => expect(onSend).toHaveBeenCalledTimes(2));
+    expect(onSend).toHaveBeenNthCalledWith(
+      2,
+      "later text",
+      undefined,
+      expect.objectContaining({ queuedAttempt: expect.any(Object) }),
+    );
+    const secondBinding = (onSend.mock.calls[1] as unknown as [unknown, unknown, {
+      queuedAttempt: QueuedAttemptBinding;
+    }])[2].queuedAttempt;
+    await act(async () => owner.resolve(secondBinding.turnId));
+    await waitFor(() => expect(screen.queryByText("later text")).not.toBeInTheDocument());
   });
 
   it("reorders queued guidance while dragging over another row", async () => {
@@ -3652,12 +4178,17 @@ describe("ThreadComposer", () => {
         onSend={onSend}
         onStop={vi.fn()}
         isStreaming={false}
+        queueCompletionTurnId="completed-turn-10"
         placeholder="Type your message..."
       />,
     );
 
     await waitFor(() => {
-      expect(onSend).toHaveBeenCalledWith("second follow-up");
+      expect(onSend).toHaveBeenCalledWith(
+        "second follow-up",
+        undefined,
+        expect.objectContaining({ queuedAttempt: expect.any(Object) }),
+      );
     });
   });
 
@@ -3699,12 +4230,17 @@ describe("ThreadComposer", () => {
         onSend={onSend}
         onStop={vi.fn()}
         isStreaming={false}
+        queueCompletionTurnId="completed-turn-11"
         placeholder="Type your message..."
       />,
     );
 
     await waitFor(() => {
-      expect(onSend).toHaveBeenCalledWith("second follow-up");
+      expect(onSend).toHaveBeenCalledWith(
+        "second follow-up",
+        undefined,
+        expect.objectContaining({ queuedAttempt: expect.any(Object) }),
+      );
     });
   });
 
@@ -3753,6 +4289,12 @@ describe("ThreadComposer", () => {
     expect(await screen.findByText("remember this edited follow-up")).toBeInTheDocument();
     fireEvent.keyDown(screen.getByLabelText("Message input"), { key: "Enter" });
     expect(onSend).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Steer" }));
+    expect(onSend).toHaveBeenCalledWith(
+      "remember this edited follow-up",
+      undefined,
+      expect.objectContaining({ continueActiveTurn: true, queuedAttempt: expect.any(Object) }),
+    );
 
     unmount();
     const remount = render(
@@ -3767,13 +4309,8 @@ describe("ThreadComposer", () => {
 
     expect(await screen.findByText("remember this edited follow-up")).toBeInTheDocument();
     fireEvent.keyDown(screen.getByLabelText("Message input"), { key: "Enter" });
-    expect(onSend).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole("button", { name: "Guide" }));
-    expect(onSend).toHaveBeenCalledWith(
-      "remember this edited follow-up",
-      undefined,
-      { continueActiveTurn: true },
-    );
+    expect(onSend).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole("button", { name: "Steer" })).toBeDisabled();
 
     remount.unmount();
     render(
@@ -3785,9 +4322,8 @@ describe("ThreadComposer", () => {
         placeholder="Type your message..."
       />,
     );
-    await waitFor(() => {
-      expect(screen.queryByText("remember this edited follow-up")).not.toBeInTheDocument();
-    });
+    expect(await screen.findByText("remember this edited follow-up")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Steer" })).toBeDisabled();
   });
 
   it("keeps temporary chat guidance in memory only", async () => {
@@ -3839,6 +4375,63 @@ describe("ThreadComposer", () => {
 
 describe("ThreadComposer — mobile controls", () => {
   afterEach(() => resetMobileRuntime());
+
+  it("keeps a late native camera selection out of another chat", async () => {
+    const user = userEvent.setup();
+    const pending = deferred<{ name: string; mediaType: string; dataBase64: string }>();
+    const pickCamera = vi.fn(() => pending.promise);
+    installMobileRuntime({
+      transport: { pickCamera } as MobileRuntime["transport"],
+      request: async () => ({ requestId: 1, status: 200, headers: {}, bodyBase64: "" }),
+      handshake: async () => ({}),
+      read: async () => ({}),
+      onEvent: async () => () => undefined,
+      createWebSocket: () => ({}) as WebSocket,
+      recover: async () => undefined,
+      renew: async () => undefined,
+    });
+    const onSend = vi.fn();
+    const view = (draftKey: string) => <ThreadComposer onSend={onSend} draftKey={draftKey} />;
+    const { rerender } = render(view("a"));
+    await user.click(screen.getByRole("button", { name: "Attach files" }));
+    await user.click(await screen.findByRole("menuitem", { name: "Take a photo" }));
+    expect(pickCamera).toHaveBeenCalledTimes(1);
+
+    rerender(view("b"));
+    await act(async () => pending.resolve({
+      name: "photo-from-a.png", mediaType: "image/png", dataBase64: "aW1hZ2U=",
+    }));
+    expect(screen.queryByTestId("composer-chip")).not.toBeInTheDocument();
+  });
+
+  it("keeps the context control on mobile before the first measurement", () => {
+    const runtime: MobileRuntime = {
+      transport: {} as MobileRuntime["transport"],
+      request: async () => ({ requestId: 1, status: 200, headers: {}, bodyBase64: "" }),
+      handshake: async () => ({}),
+      read: async () => ({}),
+      onEvent: async () => () => undefined,
+      createWebSocket: () => ({}) as WebSocket,
+    };
+    installMobileRuntime(runtime);
+    const { container } = render(
+      <ThreadComposer
+        onSend={vi.fn()}
+        hasConfiguredModel
+        placeholder="Type your message..."
+      />,
+    );
+
+    const workspaceRow = container.querySelector(".thread-composer-mobile-workspace-row");
+    expect(workspaceRow).not.toBeNull();
+    const trigger = within(workspaceRow as HTMLElement).getByTestId("composer-context-usage");
+    expect(trigger).toBeInTheDocument();
+    expect(screen.queryByTestId("composer-context-meter")).not.toBeInTheDocument();
+
+    fireEvent.click(trigger);
+    expect(screen.getByText("Usage unavailable")).toBeInTheDocument();
+    expect(screen.queryByRole("progressbar")).not.toBeInTheDocument();
+  });
 
   it("keeps the model chip in the footer and the workspace name above the composer", () => {
     const runtime: MobileRuntime = {
@@ -4024,6 +4617,35 @@ describe("composer access control semantics", () => {
 });
 
 describe("settings during a running turn", () => {
+  it.each(["restricted", "full"] as const)(
+    "blocks UNKNOWN %s access mutations without disabling supported known-active mode controls",
+    async (mode) => {
+      const user = userEvent.setup();
+      const scope: WorkspaceScopePayload = { project_path: "/tmp/project", project_name: "project",
+        access_mode: mode, restrict_to_workspace: mode === "restricted" };
+      const onModeChange = vi.fn().mockResolvedValue(undefined);
+      const view = (unknown: boolean) => <ThreadComposer onSend={vi.fn()} isStreaming
+        workspaceScope={scope} workspaceDefaultScope={scope} workspaceScopeDisabled
+        workspaceAccessModeUnknownBlocked={unknown}
+        workspaces={permissionV2Workspaces(scope)} workspacePermissions={permissionProjection({ mode })}
+        persistentWorkspaceChat onWorkspaceAccessModeChange={onModeChange} />;
+      const { rerender } = render(view(true));
+      const accessName = mode === "full" ? "Workspace access mode: Full access" : "Workspace access mode: Sandbox";
+      expect(screen.getByRole("button", { name: accessName })).toBeDisabled();
+      await user.click(screen.getByRole("button", { name: accessName }));
+      expect(onModeChange).not.toHaveBeenCalled();
+      rerender(view(false));
+      expect(screen.getByRole("button", { name: accessName })).toBeEnabled();
+      await user.click(screen.getByRole("button", { name: accessName }));
+      if (mode === "full") {
+        await user.click(screen.getByRole("menuitem", { name: /Sandbox/ }));
+      } else {
+        await user.click(screen.getByRole("menuitem", { name: /Full access/ }));
+      }
+      await waitFor(() => expect(onModeChange).toHaveBeenCalledWith(mode === "full" ? "restricted" : "full"));
+    },
+  );
+
   it("keeps access and project controls usable while streaming", async () => {
     const user = userEvent.setup();
     const scope = {
@@ -4034,6 +4656,7 @@ describe("settings during a running turn", () => {
     };
     const onWorkspaceAccessModeChange = vi.fn().mockResolvedValue(undefined);
     const onWorkspaceScopeChange = vi.fn();
+    const baseWorkspaces = permissionV2Workspaces(scope);
     render(
       <ThreadComposer
         onSend={vi.fn()}
@@ -4043,7 +4666,39 @@ describe("settings during a running turn", () => {
         workspaceScope={scope}
         workspaceDefaultScope={scope}
         workspaceControls={{ can_change_project: true, can_use_full_access: true, permission_v2: true }}
-        workspaces={permissionV2Workspaces(scope)}
+        workspaces={{
+          ...baseWorkspaces,
+          management: {
+            grants_revision: 1,
+            grants: [],
+            repositories: [
+              {
+                name: "other",
+                path: "/tmp/other",
+                purpose: "",
+                kind: "project",
+                knowledge_repos: [],
+                auto_sync: false,
+                sync_paths: [],
+                exists: true,
+                effective_access: {
+                  policy: "managed",
+                  source: "grant",
+                  grant_root: "/tmp",
+                  exists: true,
+                  read: true,
+                  write: true,
+                  commands: {
+                    requested: true,
+                    available: true,
+                    backend: "native",
+                    reason: null,
+                  },
+                },
+              },
+            ],
+          },
+        }}
         workspacePermissions={permissionProjection()}
         persistentWorkspaceChat
         onWorkspaceAccessModeChange={onWorkspaceAccessModeChange}
@@ -4053,14 +4708,10 @@ describe("settings during a running turn", () => {
 
     await user.click(screen.getByRole("button", { name: "Workspace access mode: Sandbox" }));
     await user.click(screen.getByRole("menuitem", { name: /Full access/ }));
-    await user.click(screen.getByRole("button", { name: "Enable Full access" }));
     await waitFor(() => expect(onWorkspaceAccessModeChange).toHaveBeenCalledWith("full"));
 
     await user.click(screen.getByRole("button", { name: "Choose project folder" }));
-    fireEvent.change(screen.getByLabelText("Paste path"), {
-      target: { value: "/tmp/other" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: "Use folder" }));
+    await user.click(screen.getByRole("button", { name: /other/ }));
     expect(onWorkspaceScopeChange).toHaveBeenCalledWith(
       expect.objectContaining({ project_path: "/tmp/other" }),
     );
@@ -4068,7 +4719,7 @@ describe("settings during a running turn", () => {
 });
 
 describe("mobile Full device confirmation", () => {
-  it("offers an explicit confirm action when Full is already active", async () => {
+  it("confirms Full from the selected menu item", async () => {
     const user = userEvent.setup();
     const runtime: MobileRuntime = {
       transport: {} as MobileRuntime["transport"],
@@ -4103,7 +4754,8 @@ describe("mobile Full device confirmation", () => {
     );
 
     await user.click(screen.getByRole("button", { name: "Workspace access mode: Full access" }));
-    await user.click(screen.getByRole("button", { name: "Confirm Full on this device" }));
+    expect(screen.queryByRole("button", { name: "Confirm Full on this device" })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("menuitem", { name: "Full access" }));
     await waitFor(() => expect(onWorkspaceAccessModeChange).toHaveBeenCalledWith("full"));
   });
 });
@@ -4143,28 +4795,38 @@ describe("queued prompt retention after busy admission rejection", () => {
         onSend={onSend}
         onStop={vi.fn()}
         isStreaming={false}
+        queueCompletionTurnId="completed-turn-1"
         workspaceScope={scope}
         placeholder="Type your message..."
       />,
     );
     await waitFor(() => {
-      expect(onSend).toHaveBeenCalledWith("queued follow-up");
+      expect(onSend).toHaveBeenCalledWith(
+        "queued follow-up",
+        undefined,
+        expect.objectContaining({ queuedAttempt: expect.any(Object) }),
+      );
     });
-    expect(screen.queryByText("queued follow-up")).not.toBeInTheDocument();
+    const attempt = (onSend.mock.calls[0] as unknown as [unknown, unknown, {
+      queuedAttempt: QueuedAttemptBinding;
+    }])[2].queuedAttempt;
+    expect(screen.getByText("queued follow-up")).toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent("Awaiting confirmation");
 
     rerender(
       <ThreadComposer
         onSend={onSend}
         onStop={vi.fn()}
         isStreaming={false}
-        admissionRejectedTurn={{ turnId: "turn-busy" }}
+        queueCompletionTurnId="completed-turn-2"
+        admissionRejectedTurn={{ turnId: attempt.turnId, reason: "busy target" }}
         onAdmissionRejectedPromptRestored={onRestored}
         workspaceScope={scope}
         placeholder="Type your message..."
       />,
     );
 
-    await waitFor(() => expect(onRestored).toHaveBeenCalledWith("turn-busy"));
+    await waitFor(() => expect(onRestored).toHaveBeenCalledWith(attempt.turnId));
     expect(screen.getByText("queued follow-up")).toBeInTheDocument();
 
     rerender(
@@ -4183,6 +4845,7 @@ describe("queued prompt retention after busy admission rejection", () => {
         onSend={onSend}
         onStop={vi.fn()}
         isStreaming={false}
+        queueCompletionTurnId="completed-turn-3"
         admissionRejectedTurn={null}
         onAdmissionRejectedPromptRestored={onRestored}
         workspaceScope={scope}
@@ -4195,14 +4858,718 @@ describe("queued prompt retention after busy admission rejection", () => {
     expect(onSend).toHaveBeenCalledTimes(1);
     expect(screen.getByText("queued follow-up")).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "Guide" }));
+    fireEvent.click(screen.getByRole("button", { name: "Send", exact: true }));
 
     await waitFor(() => expect(onSend).toHaveBeenCalledTimes(2));
     expect(onSend).toHaveBeenLastCalledWith(
       "queued follow-up",
       undefined,
-      undefined,
+      expect.objectContaining({ queuedAttempt: expect.any(Object) }),
     );
-    expect(screen.queryByText("queued follow-up")).not.toBeInTheDocument();
+    const retry = (onSend.mock.calls[1] as unknown as [unknown, unknown, {
+      queuedAttempt: QueuedAttemptBinding;
+    }])[2].queuedAttempt;
+    expect(retry.turnId).not.toBe(attempt.turnId);
+    expect(screen.getByText("queued follow-up")).toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent("Awaiting confirmation");
+  });
+});
+
+describe("A3-4 P3 queued admission cases (U1-U3)", () => {
+  function deferredAdmission(turnId: string, userMessageId: string) {
+    let resolve!: (admitted: boolean) => void;
+    const admission = new Promise<boolean>((resolvePromise) => {
+      resolve = resolvePromise;
+    });
+    return {
+      submitted: { turnId, userMessageId, sideChannel: false, admission },
+      resolve,
+    };
+  }
+
+  it("consumes a blocked idle edge without draining later when availability changes", async () => {
+    const onSend = vi.fn();
+    const view = (streaming: boolean, blocked: boolean) => <ThreadComposer onSend={onSend}
+      isStreaming={streaming} automaticQueueSendBlocked={blocked}
+      queueCompletionTurnId={streaming ? null : "completed-while-unavailable"} />;
+    const { rerender } = render(view(true, false));
+    fireEvent.change(screen.getByLabelText("Message input"), { target: { value: "queued item" } });
+    fireEvent.keyDown(screen.getByLabelText("Message input"), { key: "Enter" });
+    rerender(view(false, true));
+    expect(onSend).not.toHaveBeenCalled();
+    rerender(view(false, false));
+    expect(onSend).not.toHaveBeenCalled();
+    expect(screen.getByText("queued item")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Send", exact: true }));
+    expect(onSend).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(["independent send", "slash Stop"])("retains an awaiting-owner row during %s cleanup", async (action) => {
+    const first = deferredAdmission("held-turn", "held-user");
+    const onSend = vi.fn().mockReturnValueOnce(first.submitted);
+    const onStop = vi.fn();
+    const view = (streaming: boolean) => <ThreadComposer onSend={onSend} onStop={onStop}
+      isStreaming={streaming} slashCommands={COMMANDS} pendingQueueKey="held-cleanup"
+      queueCompletionTurnId={streaming ? null : "completed-before-cleanup"} />;
+    const { rerender } = render(view(true));
+    const input = screen.getByLabelText("Message input");
+    fireEvent.change(input, { target: { value: "awaiting original" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    rerender(view(false));
+    await waitFor(() => expect(onSend).toHaveBeenCalledTimes(1));
+    if (action === "slash Stop") rerender(view(true));
+    fireEvent.change(input, { target: { value: action === "slash Stop" ? "/stop" : "independent" } });
+    fireEvent.click(screen.getByRole("button", { name: /Send message|Add to queue/ }));
+    expect(screen.getByText("awaiting original")).toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent("Awaiting confirmation");
+    await act(async () => first.resolve(true));
+    expect(screen.getByText("awaiting original")).toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent("Awaiting confirmation");
+  });
+
+  it("U1 keeps an attachment-only head in FIFO order until each owner receipt", async () => {
+    mockBlobUrls();
+    const owner = queuedOwnerTestAdapter();
+    const onSend = vi.fn();
+    const { container, rerender } = render(
+      <ThreadComposer
+        onSend={onSend}
+        onJoinQueuedAttempt={owner.join}
+        onConsumeQueuedAttempt={owner.consume}
+        onStop={vi.fn()}
+        isStreaming
+        placeholder="Type your message..."
+      />,
+    );
+
+    const input = screen.getByLabelText("Message input");
+    const fileInput = container.querySelector<HTMLInputElement>('input[type="file"]');
+    expect(fileInput).toBeTruthy();
+    fireEvent.change(fileInput!, {
+      target: { files: [new File(["image"], "draft.png", { type: "image/png" })] },
+    });
+    await screen.findByText("draft.png");
+    fireEvent.keyDown(input, { key: "Enter" });
+    fireEvent.change(input, { target: { value: "later text" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(onSend).not.toHaveBeenCalled();
+
+    rerender(
+      <ThreadComposer
+        onSend={onSend}
+        onJoinQueuedAttempt={owner.join}
+        onConsumeQueuedAttempt={owner.consume}
+        onStop={vi.fn()}
+        isStreaming={false}
+        queueCompletionTurnId="completed-turn-4"
+        placeholder="Type your message..."
+      />,
+    );
+
+    await waitFor(() => expect(onSend).toHaveBeenCalledTimes(1));
+    expect(onSend).toHaveBeenNthCalledWith(
+      1,
+      "",
+      [expect.objectContaining({
+        media: expect.objectContaining({ name: "draft.png" }),
+      })],
+      expect.objectContaining({ queuedAttempt: expect.any(Object) }),
+    );
+    expect(screen.getByText("later text")).toBeInTheDocument();
+    const firstBinding = (onSend.mock.calls[0] as unknown as [unknown, unknown, {
+      queuedAttempt: QueuedAttemptBinding;
+    }])[2].queuedAttempt;
+    await act(async () => owner.resolve(firstBinding.turnId));
+    await waitFor(() => expect(screen.queryByText("draft.png")).not.toBeInTheDocument());
+    expect(screen.getByText("later text")).toBeInTheDocument();
+    expect(onSend).toHaveBeenCalledTimes(1);
+
+    rerender(
+      <ThreadComposer
+        onSend={onSend}
+        onJoinQueuedAttempt={owner.join}
+        onConsumeQueuedAttempt={owner.consume}
+        onStop={vi.fn()}
+        isStreaming
+        placeholder="Type your message..."
+      />,
+    );
+    rerender(
+      <ThreadComposer
+        onSend={onSend}
+        onJoinQueuedAttempt={owner.join}
+        onConsumeQueuedAttempt={owner.consume}
+        onStop={vi.fn()}
+        isStreaming={false}
+        queueCompletionTurnId="completed-turn-5"
+        placeholder="Type your message..."
+      />,
+    );
+    await waitFor(() => expect(onSend).toHaveBeenCalledTimes(2));
+    expect(onSend).toHaveBeenNthCalledWith(
+      2,
+      "later text",
+      undefined,
+      expect.objectContaining({ queuedAttempt: expect.any(Object) }),
+    );
+    const secondBinding = (onSend.mock.calls[1] as unknown as [unknown, unknown, {
+      queuedAttempt: QueuedAttemptBinding;
+    }])[2].queuedAttempt;
+    await act(async () => owner.resolve(secondBinding.turnId));
+    await waitFor(() => expect(screen.queryByText("later text")).not.toBeInTheDocument());
+    expect(screen.queryByRole("group", { name: "Queued guidance" })).not.toBeInTheDocument();
+  });
+
+  it("U2 keeps the item held after a generic boolean promise and never auto-skips", async () => {
+    const first = deferredAdmission("turn-1", "user-1");
+    const onSend = vi.fn().mockReturnValue(first.submitted);
+    const { rerender } = render(
+      <ThreadComposer
+        onSend={onSend}
+        onStop={vi.fn()}
+        isStreaming
+        placeholder="Type your message..."
+      />,
+    );
+
+    const input = screen.getByLabelText("Message input");
+    fireEvent.change(input, { target: { value: "first item" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    fireEvent.change(input, { target: { value: "second item" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+
+    rerender(
+      <ThreadComposer
+        onSend={onSend}
+        onStop={vi.fn()}
+        isStreaming={false}
+        queueCompletionTurnId="completed-turn-6"
+        placeholder="Type your message..."
+      />,
+    );
+    await waitFor(() => expect(onSend).toHaveBeenCalledTimes(1));
+    expect(screen.getByText("first item")).toBeInTheDocument();
+    expect(screen.getByText("second item")).toBeInTheDocument();
+
+    // Another drain without an owner receipt must not resend the head or
+    // advance to the second item.
+    rerender(
+      <ThreadComposer
+        onSend={onSend}
+        onStop={vi.fn()}
+        isStreaming
+        placeholder="Type your message..."
+      />,
+    );
+    rerender(
+      <ThreadComposer
+        onSend={onSend}
+        onStop={vi.fn()}
+        isStreaming={false}
+        queueCompletionTurnId="completed-turn-7"
+        placeholder="Type your message..."
+      />,
+    );
+    await act(async () => { await Promise.resolve(); });
+    expect(onSend).toHaveBeenCalledTimes(1);
+    expect(screen.getByText("first item")).toBeInTheDocument();
+
+    await act(async () => first.resolve(true));
+    expect(screen.getByText("first item")).toBeInTheDocument();
+    expect(screen.getByText("second item")).toBeInTheDocument();
+    expect(onSend).toHaveBeenCalledTimes(1);
+
+    rerender(
+      <ThreadComposer
+        onSend={onSend}
+        onStop={vi.fn()}
+        isStreaming
+        placeholder="Type your message..."
+      />,
+    );
+    rerender(
+      <ThreadComposer
+        onSend={onSend}
+        onStop={vi.fn()}
+        isStreaming={false}
+        queueCompletionTurnId="completed-turn-8"
+        placeholder="Type your message..."
+      />,
+    );
+    await act(async () => { await Promise.resolve(); });
+    expect(onSend).toHaveBeenCalledTimes(1);
+    expect(screen.getByText("first item")).toBeInTheDocument();
+    expect(screen.getByText("second item")).toBeInTheDocument();
+  });
+
+  it("U3 keeps the exact item when the local send throws and does not resubmit it", async () => {
+    const onSend = vi.fn(() => {
+      throw new Error("transport down");
+    });
+    const { rerender } = render(
+      <ThreadComposer
+        onSend={onSend}
+        onStop={vi.fn()}
+        isStreaming
+        placeholder="Type your message..."
+      />,
+    );
+
+    const input = screen.getByLabelText("Message input");
+    fireEvent.change(input, { target: { value: "exact payload" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+
+    rerender(
+      <ThreadComposer
+        onSend={onSend}
+        onStop={vi.fn()}
+        isStreaming={false}
+        queueCompletionTurnId="completed-turn-9"
+        placeholder="Type your message..."
+      />,
+    );
+    await act(async () => { await Promise.resolve(); });
+    expect(onSend).toHaveBeenCalledTimes(1);
+    expect(screen.getByText("exact payload")).toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent("Awaiting confirmation");
+    expect(screen.getByRole("button", { name: "Send", exact: true })).toBeDisabled();
+
+    rerender(
+      <ThreadComposer
+        onSend={onSend}
+        onStop={vi.fn()}
+        isStreaming
+        placeholder="Type your message..."
+      />,
+    );
+    rerender(
+      <ThreadComposer
+        onSend={onSend}
+        onStop={vi.fn()}
+        isStreaming={false}
+        queueCompletionTurnId="completed-turn-10"
+        placeholder="Type your message..."
+      />,
+    );
+    await act(async () => { await Promise.resolve(); });
+    expect(onSend).toHaveBeenCalledTimes(1);
+    expect(screen.getByText("exact payload")).toBeInTheDocument();
+  });
+
+  it("joins an exact owner outcome after A is offscreen and consumes it once on return", async () => {
+    const owner = queuedOwnerTestAdapter();
+    const onSend = vi.fn();
+    window.localStorage.setItem(
+      "nanobot.webui.composerQueuedGuidance.v1:chat-b",
+      JSON.stringify([{
+        id: "other-chat-prompt",
+        text: "other chat remains",
+        submission: { version: 1, state: "ready" },
+      }]),
+    );
+    const { rerender } = render(
+      <ThreadComposer
+        onSend={onSend}
+        onJoinQueuedAttempt={owner.join}
+        onConsumeQueuedAttempt={owner.consume}
+        onStop={vi.fn()}
+        isStreaming
+        pendingQueueKey="chat-a"
+        placeholder="Type your message..."
+      />,
+    );
+    const input = screen.getByLabelText("Message input");
+    fireEvent.change(input, { target: { value: "old chat attempt" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    rerender(
+      <ThreadComposer
+        onSend={onSend}
+        onJoinQueuedAttempt={owner.join}
+        onConsumeQueuedAttempt={owner.consume}
+        onStop={vi.fn()}
+        isStreaming={false}
+        queueCompletionTurnId="completed-turn-11"
+        pendingQueueKey="chat-a"
+        placeholder="Type your message..."
+      />,
+    );
+    await waitFor(() => expect(onSend).toHaveBeenCalledTimes(1));
+
+    rerender(
+      <ThreadComposer
+        onSend={onSend}
+        onJoinQueuedAttempt={owner.join}
+        onConsumeQueuedAttempt={owner.consume}
+        onStop={vi.fn()}
+        isStreaming
+        pendingQueueKey="chat-b"
+        placeholder="Type your message..."
+      />,
+    );
+    expect(await screen.findByText("other chat remains")).toBeInTheDocument();
+    const originalCall = onSend.mock.calls[0] as unknown as [string, unknown, {
+      queuedAttempt: QueuedAttemptBinding;
+    }];
+    const originalBinding = originalCall[2].queuedAttempt;
+    expect(originalBinding).toMatchObject({
+      queueKey: "chat-a",
+      promptId: expect.any(String),
+      turnId: expect.any(String),
+    });
+    await act(async () => {
+      owner.resolve(originalBinding.turnId);
+      await Promise.resolve();
+    });
+
+    expect(screen.getByText("other chat remains")).toBeInTheDocument();
+    expect(screen.queryByText("old chat attempt")).not.toBeInTheDocument();
+    expect(owner.consume).not.toHaveBeenCalled();
+    expect(onSend).toHaveBeenCalledTimes(1);
+
+    rerender(
+      <ThreadComposer
+        onSend={onSend}
+        onJoinQueuedAttempt={owner.join}
+        onConsumeQueuedAttempt={owner.consume}
+        onStop={vi.fn()}
+        isStreaming
+        pendingQueueKey="chat-a"
+        placeholder="Type your message..."
+      />,
+    );
+    await waitFor(() => expect(owner.consume).toHaveBeenCalledTimes(1));
+    expect(screen.queryByText("other chat remains")).not.toBeInTheDocument();
+    expect(screen.queryByText("old chat attempt")).not.toBeInTheDocument();
+    expect(owner.consume).toHaveBeenCalledTimes(1);
+    expect(owner.consume).toHaveBeenCalledWith(originalBinding);
+    expect(onSend).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps correlations for six unresolved manual guides until the exact refusal arrives", async () => {
+    const attempts = Array.from({ length: 7 }, (_, index) => (
+      deferredAdmission(`turn-six-${index}`, `user-six-${index}`)
+    ));
+    let nextAttempt = 0;
+    const onSend = vi.fn(() => {
+      const attempt = attempts[nextAttempt];
+      if (!attempt) throw new Error("unexpected queued send");
+      nextAttempt += 1;
+      return attempt.submitted;
+    });
+    const { rerender } = render(
+      <ThreadComposer
+        onSend={onSend}
+        onStop={vi.fn()}
+        isStreaming
+        pendingQueueKey="chat-six-unresolved"
+        placeholder="Type your message..."
+      />,
+    );
+    const input = screen.getByLabelText("Message input");
+    for (let index = 0; index < 6; index += 1) {
+      fireEvent.change(input, { target: { value: `queued snapshot ${index}` } });
+      fireEvent.keyDown(input, { key: "Enter" });
+    }
+
+    for (let index = 0; index < 6; index += 1) {
+      const row = screen.getAllByText(`queued snapshot ${index}`)[0]
+        .closest("[data-queued-prompt-row='true']");
+      expect(row).toBeTruthy();
+      fireEvent.click(within(row!).getByRole("button", { name: "Steer" }));
+    }
+    expect(onSend).toHaveBeenCalledTimes(6);
+    const firstBinding = (onSend.mock.calls[0] as unknown as [unknown, unknown, {
+      queuedAttempt: QueuedAttemptBinding;
+    }])[2].queuedAttempt;
+    const refusal = { turnId: firstBinding.turnId, reason: "busy target" };
+
+    rerender(
+      <ThreadComposer
+        onSend={onSend}
+        onStop={vi.fn()}
+        isStreaming={false}
+        queueCompletionTurnId="completed-turn-12"
+        admissionRejectedTurn={refusal}
+        pendingQueueKey="chat-six-unresolved"
+        placeholder="Type your message..."
+      />,
+    );
+    const rejectedRow = screen.getByText("queued snapshot 0")
+      .closest("[data-queued-prompt-row='true']");
+    expect(rejectedRow).toBeTruthy();
+    expect(within(rejectedRow!).getByRole("button", { name: "Send", exact: true })).toBeEnabled();
+    expect(within(rejectedRow!).getByRole("button", { name: "Edit guidance" })).toBeEnabled();
+    expect(within(rejectedRow!).getByRole("button", { name: "Delete guidance" })).toBeEnabled();
+    expect(within(screen.getByText("queued snapshot 1").closest("[data-queued-prompt-row='true']")!)
+      .getByRole("button", { name: "Send", exact: true })).toBeDisabled();
+
+    rerender(
+      <ThreadComposer
+        onSend={onSend}
+        onStop={vi.fn()}
+        isStreaming
+        admissionRejectedTurn={refusal}
+        pendingQueueKey="chat-six-unresolved"
+        placeholder="Type your message..."
+      />,
+    );
+    rerender(
+      <ThreadComposer
+        onSend={onSend}
+        onStop={vi.fn()}
+        isStreaming={false}
+        queueCompletionTurnId="completed-turn-13"
+        admissionRejectedTurn={refusal}
+        pendingQueueKey="chat-six-unresolved"
+        placeholder="Type your message..."
+      />,
+    );
+    await act(async () => { await Promise.resolve(); });
+    expect(onSend).toHaveBeenCalledTimes(6);
+
+    fireEvent.click(within(rejectedRow!).getByRole("button", { name: "Send", exact: true }));
+    expect(onSend).toHaveBeenCalledTimes(7);
+    expect(onSend).toHaveBeenLastCalledWith(
+      "queued snapshot 0",
+      undefined,
+      expect.objectContaining({ queuedAttempt: expect.any(Object) }),
+    );
+    expect(screen.getByText("queued snapshot 0")).toBeInTheDocument();
+    expect(within(rejectedRow!).getByRole("status")).toHaveTextContent("Awaiting confirmation");
+  });
+
+  it("does not resend or reorder an awaiting row through keyboard and drag gestures", () => {
+    const admission = new Promise<boolean>(() => undefined);
+    const onSend = vi.fn(() => ({
+      turnId: "turn-keyboard-drag",
+      userMessageId: "user-keyboard-drag",
+      sideChannel: false,
+      admission,
+    }));
+    render(
+      <ThreadComposer
+        onSend={onSend}
+        onStop={vi.fn()}
+        isStreaming
+        placeholder="Type your message..."
+      />,
+    );
+    const input = screen.getByLabelText("Message input");
+    fireEvent.change(input, { target: { value: "locked follow-up" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    fireEvent.change(input, { target: { value: "other follow-up" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+
+    const pendingRow = screen.getByText("locked follow-up")
+      .closest("[data-queued-prompt-row='true']");
+    const otherRow = screen.getByText("other follow-up")
+      .closest("[data-queued-prompt-row='true']");
+    expect(pendingRow).toBeTruthy();
+    expect(otherRow).toBeTruthy();
+    fireEvent.click(within(pendingRow!).getByRole("button", { name: "Steer" }));
+
+    fireEvent.keyDown(input, { key: "Enter" });
+    const dataTransfer = {
+      effectAllowed: "",
+      dropEffect: "",
+      setData: vi.fn(),
+      getData: vi.fn(),
+    };
+    const pendingHandle = within(pendingRow!).getByRole("button", { name: "Drag to reorder" });
+    expect(pendingHandle).toHaveAttribute("draggable", "false");
+    fireEvent.dragStart(pendingHandle, { dataTransfer });
+    fireEvent.dragEnter(otherRow!, { dataTransfer });
+    fireEvent.drop(otherRow!, { dataTransfer });
+    fireEvent.dragEnd(pendingHandle, { dataTransfer });
+
+    const rows = screen.getAllByRole("group", { name: "Queued guidance" })[0]
+      .querySelectorAll("[data-queued-prompt-row='true']");
+    expect(rows[0]).toHaveTextContent("locked follow-up");
+    expect(rows[1]).toHaveTextContent("other follow-up");
+    expect(onSend).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole("status")).toHaveTextContent("Awaiting confirmation");
+  });
+
+  it.each(["false", "null"] as const)(
+    "keeps the exact queued item unresolved when local send returns %s",
+    async (outcome) => {
+      const onSend = vi.fn(() => outcome === "false" ? false : null);
+      const { rerender } = render(
+        <ThreadComposer
+          onSend={onSend}
+          onStop={vi.fn()}
+          isStreaming
+          placeholder="Type your message..."
+        />,
+      );
+      const input = screen.getByLabelText("Message input");
+      fireEvent.change(input, { target: { value: "uncertain local result" } });
+      fireEvent.keyDown(input, { key: "Enter" });
+      rerender(
+        <ThreadComposer
+          onSend={onSend}
+          onStop={vi.fn()}
+          isStreaming={false}
+          queueCompletionTurnId="completed-turn-14"
+          placeholder="Type your message..."
+        />,
+      );
+
+      await waitFor(() => expect(onSend).toHaveBeenCalledTimes(1));
+      expect(screen.getByText("uncertain local result")).toBeInTheDocument();
+      expect(screen.getByRole("status")).toHaveTextContent("Awaiting confirmation");
+      expect(screen.getByRole("button", { name: "Send", exact: true })).toBeDisabled();
+
+      rerender(
+        <ThreadComposer
+          onSend={onSend}
+          onStop={vi.fn()}
+          isStreaming
+          placeholder="Type your message..."
+        />,
+      );
+      rerender(
+        <ThreadComposer
+          onSend={onSend}
+          onStop={vi.fn()}
+          isStreaming={false}
+          queueCompletionTurnId="completed-turn-15"
+          placeholder="Type your message..."
+        />,
+      );
+      await act(async () => { await Promise.resolve(); });
+      expect(onSend).toHaveBeenCalledTimes(1);
+      expect(screen.getByText("uncertain local result")).toBeInTheDocument();
+    },
+  );
+
+  it.each(["false", "rejected"] as const)(
+    "keeps the queued row awaiting confirmation when the generic send result is %s",
+    async (outcome) => {
+      const onSend = vi.fn(() => outcome === "false"
+        ? Promise.resolve(false)
+        : Promise.reject(new Error("owner connection lost")));
+      const { rerender } = render(
+        <ThreadComposer
+          onSend={onSend}
+          onStop={vi.fn()}
+          isStreaming
+          placeholder="Type your message..."
+        />,
+      );
+      const input = screen.getByLabelText("Message input");
+      fireEvent.change(input, { target: { value: "unconfirmed owner result" } });
+      fireEvent.keyDown(input, { key: "Enter" });
+      rerender(
+        <ThreadComposer
+          onSend={onSend}
+          onStop={vi.fn()}
+          isStreaming={false}
+          queueCompletionTurnId="completed-turn-16"
+          placeholder="Type your message..."
+        />,
+      );
+      await waitFor(() => expect(onSend).toHaveBeenCalledTimes(1));
+      await act(async () => { await Promise.resolve(); });
+      expect(screen.getByText("unconfirmed owner result")).toBeInTheDocument();
+      expect(screen.getByRole("status")).toHaveTextContent("Awaiting confirmation");
+      expect(screen.getByRole("button", { name: "Send", exact: true })).toBeDisabled();
+
+      rerender(
+        <ThreadComposer
+          onSend={onSend}
+          onStop={vi.fn()}
+          isStreaming
+          placeholder="Type your message..."
+        />,
+      );
+      rerender(
+        <ThreadComposer
+          onSend={onSend}
+          onStop={vi.fn()}
+          isStreaming={false}
+          queueCompletionTurnId="completed-turn-17"
+          placeholder="Type your message..."
+        />,
+      );
+      await act(async () => { await Promise.resolve(); });
+      expect(onSend).toHaveBeenCalledTimes(1);
+      expect(screen.getByText("unconfirmed owner result")).toBeInTheDocument();
+    },
+  );
+
+  it("unlocks controls only after the correlated not-admitted receipt and still waits for an explicit retry", async () => {
+    const admission = new Promise<boolean>(() => undefined);
+    const submitted = {
+      turnId: "turn-explicit-retry",
+      userMessageId: "user-explicit-retry",
+      sideChannel: false,
+      admission,
+    };
+    const onSend = vi.fn(() => submitted);
+    const { rerender } = render(
+      <ThreadComposer
+        onSend={onSend}
+        onStop={vi.fn()}
+        isStreaming
+        placeholder="Type your message..."
+      />,
+    );
+    const input = screen.getByLabelText("Message input");
+    fireEvent.change(input, { target: { value: "retry only when authorized" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    rerender(
+      <ThreadComposer
+        onSend={onSend}
+        onStop={vi.fn()}
+        isStreaming={false}
+        queueCompletionTurnId="completed-turn-18"
+        placeholder="Type your message..."
+      />,
+    );
+    await waitFor(() => expect(onSend).toHaveBeenCalledTimes(1));
+    expect(screen.getByRole("button", { name: "Send", exact: true })).toBeDisabled();
+    const attempt = (onSend.mock.calls[0] as unknown as [unknown, unknown, {
+      queuedAttempt: QueuedAttemptBinding;
+    }])[2].queuedAttempt;
+    const refusal = { turnId: attempt.turnId, reason: "busy target" };
+
+    rerender(
+      <ThreadComposer
+        onSend={onSend}
+        onStop={vi.fn()}
+        isStreaming={false}
+        queueCompletionTurnId="completed-turn-19"
+        admissionRejectedTurn={refusal}
+        placeholder="Type your message..."
+      />,
+    );
+    await waitFor(() => expect(screen.queryByRole("status")).not.toBeInTheDocument());
+    expect(screen.getByText("retry only when authorized")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Send", exact: true })).toBeEnabled();
+
+    rerender(
+      <ThreadComposer
+        onSend={onSend}
+        onStop={vi.fn()}
+        isStreaming
+        admissionRejectedTurn={refusal}
+        placeholder="Type your message..."
+      />,
+    );
+    rerender(
+      <ThreadComposer
+        onSend={onSend}
+        onStop={vi.fn()}
+        isStreaming={false}
+        queueCompletionTurnId="completed-turn-20"
+        admissionRejectedTurn={refusal}
+        placeholder="Type your message..."
+      />,
+    );
+    await act(async () => { await Promise.resolve(); });
+    expect(onSend).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getByRole("button", { name: "Send", exact: true }));
+    expect(onSend).toHaveBeenCalledTimes(2);
   });
 });

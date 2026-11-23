@@ -40,6 +40,26 @@ async def run_gateway_local_triggers(
             store.delivery_active = False
 
 
+def recover_after_restart(store: LocalTriggerStore) -> int:
+    """Resolve interrupted claims without replaying a started attempt.
+
+    Returns the number of proven-absent claims rescheduled exactly once.
+    """
+    requeued = store.recover_processing_deliveries()
+    unknown = store.list_unknown_deliveries()
+    if requeued:
+        logger.warning(
+            "Trigger: rescheduled {} delivery file(s) whose attempt never started",
+            requeued,
+        )
+    if unknown:
+        logger.warning(
+            "Trigger: {} interrupted delivery(ies) have unknown outcomes and await owner resolution",
+            len(unknown),
+        )
+    return requeued
+
+
 async def run_local_trigger_queue(
     *,
     store: LocalTriggerStore,
@@ -52,98 +72,167 @@ async def run_local_trigger_queue(
     if submit_turn is None:
         raise ValueError("run_local_trigger_queue requires submit_turn")
     logger.info("Local trigger queue started")
-    recovered = store.recover_processing_deliveries()
-    if recovered:
-        logger.warning(
-            "Trigger: recovered {} interrupted delivery file(s) from processing",
-            recovered,
-        )
+    recover_after_restart(store)
     while True:
-        deliveries = store.claim_deliveries(limit=batch_size)
-        if not deliveries:
+        delivered = await drain_local_trigger_queue_once(
+            store=store,
+            submit_turn=submit_turn,
+            is_channel_enabled=is_channel_enabled,
+            batch_size=batch_size,
+        )
+        if not delivered:
             await asyncio.sleep(poll_interval_s)
-            continue
 
-        for delivery in deliveries:
-            try:
-                await _deliver_delivery(
-                    store,
-                    delivery,
-                    submit_turn=submit_turn,
-                    is_channel_enabled=is_channel_enabled,
-                )
-                store.complete_delivery(delivery)
-            except asyncio.CancelledError as exc:
-                store.retry_delivery(delivery, str(exc) or exc.__class__.__name__)
-                _write_delivery_run_record(
-                    store,
-                    delivery,
-                    status="interrupted",
-                    error=str(exc) or exc.__class__.__name__,
-                )
-                raise
-            except _TerminalDeliveryError as exc:
-                store.record_delivery(
-                    delivery.trigger_id,
-                    status="error",
-                    error=str(exc),
-                    run_at_ms=delivery.created_at_ms,
-                )
-                _write_delivery_run_record(
-                    store,
-                    delivery,
-                    status="error",
-                    error=str(exc),
-                )
-                store.complete_delivery(delivery)
-                logger.warning(
-                    "Trigger: dropped delivery {} for {}: {}",
-                    delivery.id,
-                    delivery.trigger_id,
-                    exc,
-                )
-            except AutomationTurnError as exc:
-                error = str(exc) or exc.__class__.__name__
-                store.record_delivery(
-                    delivery.trigger_id,
-                    status="error",
-                    error=error,
-                    run_at_ms=delivery.created_at_ms,
-                )
-                _write_delivery_run_record(
-                    store,
-                    delivery,
-                    status="error",
-                    error=error,
-                )
-                store.complete_delivery(delivery)
-                logger.warning(
-                    "Trigger: delivery {} for {} reached the agent but failed: {}",
-                    delivery.id,
-                    delivery.trigger_id,
-                    error,
-                )
-            except Exception as exc:
-                error = str(exc) or exc.__class__.__name__
-                retried = store.retry_delivery(delivery, error)
-                _write_delivery_run_record(
-                    store,
-                    delivery,
-                    status="retrying" if retried else "error",
-                    error=error,
-                )
-                store.record_delivery(
-                    delivery.trigger_id,
-                    status="error",
-                    error=error,
-                    run_at_ms=delivery.created_at_ms,
-                )
-                logger.exception(
-                    "Trigger: failed delivery {} for {}{}",
-                    delivery.id,
-                    delivery.trigger_id,
-                    "; queued retry" if retried else "; moved to failed queue",
-                )
+
+async def drain_local_trigger_queue_once(
+    *,
+    store: LocalTriggerStore,
+    submit_turn: Callable[[InboundMessage], Awaitable[OutboundMessage | None]],
+    is_channel_enabled: Callable[[str], bool],
+    batch_size: int = 20,
+) -> int:
+    """Claim and process one batch; return the number of claimed deliveries."""
+    deliveries = store.claim_deliveries(limit=batch_size)
+    for delivery in deliveries:
+        await _process_claimed_delivery(
+            store,
+            delivery,
+            submit_turn=submit_turn,
+            is_channel_enabled=is_channel_enabled,
+        )
+    return len(deliveries)
+
+
+async def _process_claimed_delivery(
+    store: LocalTriggerStore,
+    delivery: TriggerDelivery,
+    *,
+    submit_turn: Callable[[InboundMessage], Awaitable[OutboundMessage | None]],
+    is_channel_enabled: Callable[[str], bool],
+) -> None:
+    settlement_id: str | None = None
+    try:
+        trigger = _validated_trigger(store, delivery, is_channel_enabled)
+        settlement_id = store.begin_delivery_attempt(delivery)
+        _write_delivery_run_record(
+            store,
+            delivery,
+            trigger=trigger,
+            status="processing",
+            settlement_id=settlement_id,
+        )
+        await _deliver_delivery(
+            store,
+            delivery,
+            trigger=trigger,
+            submit_turn=submit_turn,
+            settlement_id=settlement_id,
+        )
+        store.complete_delivery(delivery)
+    except asyncio.CancelledError as exc:
+        store.mark_delivery_unknown(
+            delivery,
+            settlement_id=settlement_id,
+            error=str(exc) or exc.__class__.__name__,
+        )
+        raise
+    except _TerminalDeliveryError as exc:
+        store.record_delivery(
+            delivery.trigger_id,
+            status="error",
+            error=str(exc),
+            run_at_ms=delivery.created_at_ms,
+        )
+        _write_delivery_run_record(
+            store,
+            delivery,
+            status="error",
+            error=str(exc),
+        )
+        store.complete_delivery(delivery)
+        logger.warning(
+            "Trigger: dropped delivery {} for {}: {}",
+            delivery.id,
+            delivery.trigger_id,
+            exc,
+        )
+    except AutomationTurnError as exc:
+        error = str(exc) or exc.__class__.__name__
+        store.record_delivery(
+            delivery.trigger_id,
+            status="error",
+            error=error,
+            run_at_ms=delivery.created_at_ms,
+        )
+        _write_delivery_run_record(
+            store,
+            delivery,
+            status="error",
+            error=error,
+        )
+        store.complete_delivery(delivery)
+        logger.warning(
+            "Trigger: delivery {} for {} reached the agent but failed: {}",
+            delivery.id,
+            delivery.trigger_id,
+            error,
+        )
+    except Exception as exc:
+        error = str(exc) or exc.__class__.__name__
+        if settlement_id is not None:
+            # The turn may have settled before the failure. A retry could repeat
+            # its effects, so the owner must resolve the unknown outcome.
+            store.mark_delivery_unknown(
+                delivery,
+                settlement_id=settlement_id,
+                error=error,
+            )
+            store.record_delivery(
+                delivery.trigger_id,
+                status="error",
+                error="delivery outcome is unknown; owner resolution required",
+                run_at_ms=delivery.created_at_ms,
+            )
+            logger.exception(
+                "Trigger: delivery {} for {} has an unknown outcome; not retried",
+                delivery.id,
+                delivery.trigger_id,
+            )
+            return
+        retried = store.retry_delivery(delivery, error)
+        _write_delivery_run_record(
+            store,
+            delivery,
+            status="retrying" if retried else "error",
+            error=error,
+        )
+        store.record_delivery(
+            delivery.trigger_id,
+            status="error",
+            error=error,
+            run_at_ms=delivery.created_at_ms,
+        )
+        logger.exception(
+            "Trigger: failed delivery {} for {}{}",
+            delivery.id,
+            delivery.trigger_id,
+            "; queued retry" if retried else "; moved to failed queue",
+        )
+
+
+def _validated_trigger(
+    store: LocalTriggerStore,
+    delivery: TriggerDelivery,
+    is_channel_enabled: Callable[[str], bool],
+) -> LocalTrigger:
+    trigger = store.get(delivery.trigger_id)
+    if trigger is None:
+        raise _TerminalDeliveryError("trigger not found")
+    if not trigger.enabled:
+        raise _TerminalDeliveryError("trigger is disabled")
+    if not is_channel_enabled(trigger.channel):
+        raise _TerminalDeliveryError(f"target channel is not enabled: {trigger.channel}")
+    return trigger
 
 
 class _TerminalDeliveryError(RuntimeError):
@@ -154,18 +243,10 @@ async def _deliver_delivery(
     store: LocalTriggerStore,
     delivery: TriggerDelivery,
     *,
+    trigger: LocalTrigger,
     submit_turn: Callable[[InboundMessage], Awaitable[OutboundMessage | None]],
-    is_channel_enabled: Callable[[str], bool],
+    settlement_id: str,
 ) -> None:
-    trigger = store.get(delivery.trigger_id)
-    if trigger is None:
-        raise _TerminalDeliveryError("trigger not found")
-    if not trigger.enabled:
-        raise _TerminalDeliveryError("trigger is disabled")
-    if not is_channel_enabled(trigger.channel):
-        raise _TerminalDeliveryError(f"target channel is not enabled: {trigger.channel}")
-
-    store.write_delivery_run_record(delivery, trigger=trigger, status="processing")
     msg = InboundMessage(
         channel=trigger.channel,
         sender_id=trigger.sender_id,
@@ -186,6 +267,7 @@ async def _deliver_delivery(
         trigger=trigger,
         status="ok",
         response=response.content if response else "",
+        settlement_id=settlement_id,
     )
 
 
@@ -197,6 +279,7 @@ def _write_delivery_run_record(
     trigger: LocalTrigger | None = None,
     error: str | None = None,
     response: str | None = None,
+    settlement_id: str | None = None,
 ) -> None:
     try:
         store.write_delivery_run_record(
@@ -205,6 +288,7 @@ def _write_delivery_run_record(
             status=status,
             error=error,
             response=response,
+            settlement_id=settlement_id,
         )
     except Exception:
         logger.exception(

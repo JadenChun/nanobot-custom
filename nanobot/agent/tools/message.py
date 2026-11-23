@@ -2,6 +2,7 @@
 
 # pyright: reportIncompatibleMethodOverride=false
 
+from asyncio import Lock
 from collections.abc import Awaitable, Callable, Generator
 from contextlib import contextmanager
 from contextvars import ContextVar, Token
@@ -26,6 +27,7 @@ from nanobot.agent.turn import TurnContext
 from nanobot.bus.events import OutboundMessage
 from nanobot.config.paths import get_workspace_path
 from nanobot.security.workspace_access import current_tool_workspace
+from nanobot.webui.metadata import WEBUI_DISPLAY_SOURCE_KEY
 
 if TYPE_CHECKING:
     from nanobot.context_repo.policy import ResourceAccessPolicy
@@ -36,7 +38,7 @@ _CURRENT_MESSAGE_SENDS: ContextVar[set[tuple[str, str]] | None] = ContextVar(
 )
 
 
-_CURRENT_MESSAGE_RECORDS: ContextVar[list[OutboundMessage] | None] = ContextVar(
+_CURRENT_MESSAGE_RECORDS: ContextVar[tuple[list[OutboundMessage], Lock] | None] = ContextVar(
     "message_records", default=None,
 )
 
@@ -46,7 +48,7 @@ def capture_message_deliveries(records: list[OutboundMessage] | None = None) -> 
     """Record successful MessageTool targets within one agent run."""
     sends: set[tuple[str, str]] = set()
     token = _CURRENT_MESSAGE_SENDS.set(sends)
-    record_token = _CURRENT_MESSAGE_RECORDS.set(records)
+    record_token = _CURRENT_MESSAGE_RECORDS.set((records, Lock()) if records is not None else None)
     try:
         yield sends
     finally:
@@ -131,7 +133,8 @@ class MessageTool(Tool):
     ) -> ToolResult | str:
         """Use the trusted turn route and record acknowledged sends per invocation."""
         captured = _CURRENT_MESSAGE_RECORDS.get()
-        if captured is not None and captured is not context.delivery.sent_messages:
+        records = context.delivery.sent_messages
+        if captured is not None and captured[0] is not records:
             raise ValueError("turn capture and contextual message ledger must share one list")
         target = context.delivery.primary or context.delivery.target
         request_token = None
@@ -141,17 +144,23 @@ class MessageTool(Tool):
                 target.channel, target.chat_id,
             )
             routing = current or RequestContext(channel=target.channel, chat_id=target.chat_id or "")
+            source_state = routing.source_state
+            if source_state is None and context.execution_owner is not None:
+                source_state = context.execution_owner.read_snapshot().state
+            elif source_state is None and context.source_writer is not None:
+                source_state = context.source_writer.committed_state
             request_token = bind_request_context(replace(
                 routing, channel=target.channel, chat_id=target.chat_id or "",
                 session_key=context.session_key,
                 message_id=target.message_id or (routing.message_id if same_target else None),
                 metadata=dict(routing.metadata) if same_target else {},
+                source_state=source_state,
             ))
-        token = _CURRENT_MESSAGE_RECORDS.set(context.delivery.sent_messages)
-        before = len(context.delivery.sent_messages)
+        token = _CURRENT_MESSAGE_RECORDS.set(captured or (records, context.delivery.message_send_lock))
+        before = len(records)
         try:
             result = await self.execute(**kwargs)
-            for message in context.delivery.sent_messages[before:]:
+            for message in records[before:]:
                 if target and (message.channel, message.chat_id) == (target.channel, target.chat_id):
                     # Legacy flag means callback submission succeeded, not remote delivery.
                     context.delivery.delivered = True
@@ -296,7 +305,8 @@ class MessageTool(Tool):
         if not channel or not chat_id:
             return ToolResult.error("Error: No target channel/chat specified")
 
-        if not self._send_callback:
+        send_callback = self._send_callback
+        if not send_callback:
             return ToolResult.error("Error: Message sending not configured")
 
         if media:
@@ -306,10 +316,19 @@ class MessageTool(Tool):
                 return ToolResult.error(f"Error: media path is not allowed: {str(e)}")
 
         metadata = dict(default_metadata) if same_target else {}
+        metadata.pop(WEBUI_DISPLAY_SOURCE_KEY, None)
         if message_id:
             metadata["message_id"] = message_id
         if media:
             metadata["_record_channel_delivery"] = True
+        if (
+            same_target
+            and channel == "websocket"
+            and request_ctx is not None
+            and request_ctx.source_state is not None
+            and request_ctx.source_state.session_key == f"websocket:{chat_id}"
+        ):
+            metadata[WEBUI_DISPLAY_SOURCE_KEY] = request_ctx.source_state
 
         msg = OutboundMessage(
             channel=channel,
@@ -325,11 +344,25 @@ class MessageTool(Tool):
             return f"Message acknowledged for {channel}:{chat_id} (not delivered)"
 
         try:
-            record = deepcopy(msg)
-            await self._send_callback(msg)
-            records = _CURRENT_MESSAGE_RECORDS.get()
-            if records is not None:
-                records.append(record)
+            captured = _CURRENT_MESSAGE_RECORDS.get()
+            if captured is None:
+                await send_callback(msg)
+            else:
+                records, lock = captured
+                async with lock:
+                    if same_target and any(
+                        sent.channel == msg.channel
+                        and sent.chat_id == msg.chat_id
+                        and sent.content == msg.content
+                        and sent.media == msg.media
+                        and sent.buttons == msg.buttons
+                        and sent.metadata.get("message_id") == msg.metadata.get("message_id")
+                        for sent in records
+                    ):
+                        return f"Message already sent to {channel}:{chat_id} in this turn"
+                    record = deepcopy(msg)
+                    await send_callback(msg)
+                    records.append(record)
             sends = _CURRENT_MESSAGE_SENDS.get()
             if sends is not None:
                 sends.add((channel, chat_id))

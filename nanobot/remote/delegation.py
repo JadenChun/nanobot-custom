@@ -399,7 +399,7 @@ class OwnerDelegationService:
             decision="applied",
             actor_installation_id=actor_installation_id,
         )
-        return {"installation_id": device.installation_id, "revoked": device.revoked}
+        return {"installation_id": device.installation_id, "revoked": True}
 
     def _purge_expired(self) -> None:
         now = self.clock()

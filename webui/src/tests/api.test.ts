@@ -26,12 +26,14 @@ import {
   fetchNanobotFeatures,
   fetchProviderModels,
   fetchSessionAutomations,
+  fetchSessionGeneratedAssets,
   fetchSettingsUsage,
   fetchSidebarState,
   fetchSkillDetail,
   fetchSkills,
   fetchTrendingMarketplaceSkills,
   fetchWebuiThread,
+  fetchWebuiThreadControls,
   fetchWorkspaces,
   forgetRepository,
   importMcpConfig,
@@ -506,7 +508,7 @@ describe("webui API helpers", () => {
     await fetchWebuiThread("tok", "websocket:chat-1");
 
     expect(fetch).toHaveBeenCalledWith(
-      "/api/sessions/websocket%3Achat-1/webui-thread",
+      "/api/sessions/websocket%3Achat-1/webui-thread?view=history",
       expect.objectContaining({
         headers: { Authorization: "Bearer tok" },
         credentials: "same-origin",
@@ -526,9 +528,13 @@ describe("webui API helpers", () => {
       }),
     );
 
-    const thread = await fetchWebuiThread("tok", "websocket:chat-title");
+    const thread = await fetchWebuiThreadControls("tok", "websocket:chat-title");
 
     expect(thread?.workspace_access_request).toEqual(folderAccessThreadFixture.workspace_access_request);
+    expect(fetch).toHaveBeenCalledWith(
+      "/api/sessions/websocket%3Achat-title/webui-thread?view=controls",
+      expect.objectContaining({ cache: "no-store" }),
+    );
   });
 
   it("passes pagination params when fetching a WebUI thread page", async () => {
@@ -538,12 +544,59 @@ describe("webui API helpers", () => {
     });
 
     expect(fetch).toHaveBeenCalledWith(
-      "/api/sessions/websocket%3Achat-1/webui-thread?limit=120&before=abc%2B%2F%3D",
+      "/api/sessions/websocket%3Achat-1/webui-thread?limit=120&before=abc%2B%2F%3D&view=history",
       expect.objectContaining({
         headers: { Authorization: "Bearer tok" },
         credentials: "same-origin",
       }),
     );
+  });
+
+  it("forwards around, after, and prompt_id params and surfaces 409/404 prompt errors", async () => {
+    await fetchWebuiThread("tok", "websocket:chat-1", {
+      limit: 40,
+      direction: "around",
+      around: "loc-1",
+    });
+    expect(fetch).toHaveBeenLastCalledWith(
+      "/api/sessions/websocket%3Achat-1/webui-thread?limit=40&direction=around&around=loc-1&view=history",
+      expect.anything(),
+    );
+
+    await fetchWebuiThread("tok", "websocket:chat-1", {
+      limit: 120,
+      direction: "after",
+      after: "after-1",
+    });
+    expect(fetch).toHaveBeenLastCalledWith(
+      "/api/sessions/websocket%3Achat-1/webui-thread?limit=120&direction=after&after=after-1&view=history",
+      expect.anything(),
+    );
+
+    vi.mocked(fetch).mockResolvedValueOnce({
+      ok: false,
+      status: 409,
+      json: async () => ({ error: "stale_history_cursor" }),
+    } as unknown as Response);
+    await expect(
+      fetchWebuiThread("tok", "websocket:chat-1", { direction: "around", around: "stale-loc" }),
+    ).rejects.toMatchObject({ status: 409, message: "stale_history_cursor" });
+
+    vi.mocked(fetch).mockResolvedValueOnce({
+      ok: false,
+      status: 404,
+      json: async () => ({ error: "prompt_not_found" }),
+    } as unknown as Response);
+    await expect(
+      fetchWebuiThread("tok", "websocket:chat-1", { direction: "around", promptId: "missing" }),
+    ).rejects.toMatchObject({ status: 404, message: "prompt_not_found" });
+
+    vi.mocked(fetch).mockResolvedValueOnce({
+      ok: false,
+      status: 404,
+      json: async () => ({ error: "not_found" }),
+    } as unknown as Response);
+    await expect(fetchWebuiThread("tok", "websocket:chat-1")).resolves.toBeNull();
   });
 
   it("aborts a WebUI thread request when its caller signal is aborted", async () => {
@@ -608,6 +661,17 @@ describe("webui API helpers", () => {
 
     expect(fetch).toHaveBeenCalledWith(
       "/api/sessions/websocket%3Achat-1/automations",
+      expect.objectContaining({
+        headers: { Authorization: "Bearer tok" },
+      }),
+    );
+  });
+
+  it("requests newest-first ordering for session generated assets", async () => {
+    await fetchSessionGeneratedAssets("tok", "websocket:chat-1", "", { limit: 50 });
+
+    expect(fetch).toHaveBeenCalledWith(
+      "/api/sessions/websocket%3Achat-1/generated-assets?limit=50&order=newest",
       expect.objectContaining({
         headers: { Authorization: "Bearer tok" },
       }),

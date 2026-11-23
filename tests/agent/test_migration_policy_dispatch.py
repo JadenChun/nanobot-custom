@@ -12,6 +12,8 @@ from nanobot.agent.turn import ToolOutcome, TurnContext
 from nanobot.providers.base import LLMResponse, ToolCallRequest
 from tests.agent.runner_helpers import make_run_spec
 
+pytest_plugins = ("tests.agent.test_migration_source_engine",)
+
 
 class RecordingTool(Tool):
     def __init__(self, name, calls, outcome):
@@ -85,25 +87,67 @@ async def test_tool_errors_preserve_fail_fast_semantics(outcome):
         assert result.policy_metadata == {"reason": "fixture"}
 
 
-async def test_delegation_captures_crawler_capacity_without_mutating_provider(tmp_path):
-    from nanobot.agent.delegation import ForegroundAgentManager
-    from nanobot.agent.runner import AgentRunResult
+async def test_delegation_captures_crawler_capacity_without_mutating_provider(engine_config, monkeypatch):
+    from nanobot.agent.loop import AgentLoop
+    from nanobot.agent.tools.social_crawl import SocialCrawlTool
+    from nanobot.agent.turn import TurnRequest
     from nanobot.providers.base import GenerationSettings
+    from nanobot.providers.factory import ProviderSnapshot
+    from tests.agent.test_migration_engine import ScriptedProvider
+    from tests.agent.test_migration_source_engine import upgrade
 
-    provider = MagicMock()
-    provider.generation = GenerationSettings(max_tokens=4000, temperature=0.7)
-    crawler = MagicMock()
+    monkeypatch.setenv("CRAWL4AI_WORKER_ENABLED", "true")
+    engine_config.agents.crawler.enabled = True
+    engine_config.agents.crawler.provider = "openrouter"
+    engine_config.agents.crawler.model = "crawler"
+    engine_config.agents.crawler.max_tokens.input = 20000
+    engine_config.agents.crawler.max_tokens.output = 2000
+
+    crawler = ScriptedProvider([LLMResponse(content="done")])
     crawler.generation = GenerationSettings(max_tokens=3000, temperature=0.2)
-    manager = ForegroundAgentManager(provider=provider, workspace=tmp_path, model="main", crawler_provider=crawler)
-    manager.crawler_runner.run = AsyncMock(return_value=AgentRunResult("done", []))
-    await manager._run_role(role="crawler", prompt="test", assignment="test", tools=ToolRegistry(),
-                            max_iterations=2, runner=manager.crawler_runner, model="crawler",
-                            max_input_tokens=20000, max_output_tokens=2000,
-                            runtime_override=manager._crawler_runtime)
-    spec = manager.crawler_runner.run.call_args.args[0]
-    assert spec.runtime.provider is crawler
-    assert spec.runtime.context_window_tokens == 20000
-    assert spec.runtime.generation.max_tokens == 2000
-    assert spec.runtime.generation.temperature == 0.2
-    assert crawler.generation.max_tokens == 3000
-    assert provider.generation.max_tokens == 4000
+    main_provider = ScriptedProvider([
+        LLMResponse(content=None, tool_calls=[ToolCallRequest(
+            id="crawl", name="crawl_research", arguments={"task": "Inspect a page."},
+        )]),
+        LLMResponse(content="parent final"),
+    ])
+    main_provider.generation = GenerationSettings(max_tokens=4000, temperature=0.7)
+
+    import nanobot.extensions.crawler as crawler_module
+
+    def snapshot(config, *, preset):
+        return ProviderSnapshot(
+            provider=crawler,
+            model=preset.model,
+            context_window_tokens=preset.context_window_tokens,
+            signature=("crawler",),
+            generation=crawler.generation,
+        )
+
+    monkeypatch.setattr(crawler_module, "build_provider_snapshot", snapshot)
+
+    loop = AgentLoop.from_config(engine_config, tool_registry=ToolRegistry(), provider=main_provider)
+    captured = {}
+    original = loop.execute_child_turn
+
+    async def record_child_turn(request, **kwargs):
+        captured["request"] = request
+        return await original(request, **kwargs)
+
+    loop.execute_child_turn = record_child_turn
+    monkeypatch.setattr(SocialCrawlTool, "prepare", AsyncMock())
+    monkeypatch.setattr(SocialCrawlTool, "cleanup", AsyncMock())
+    upgrade(loop, "cli:source")
+    try:
+        await loop.execute_turn(TurnRequest(content="Crawl a page.", session_key="cli:source"))
+        request = captured["request"]
+        assert request.runtime.provider is crawler
+        assert request.runtime.context_window_tokens == 20000
+        assert request.runtime.generation.max_tokens == 2000
+        assert request.runtime.generation.temperature == 0.2
+        # The capacity overrides derive an immutable runtime. They never mutate
+        # the crawler or main provider generation snapshots.
+        assert crawler.generation.max_tokens == 3000
+        assert main_provider.generation.max_tokens == 4000
+    finally:
+        await loop.aclose()

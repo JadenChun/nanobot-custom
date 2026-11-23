@@ -9,7 +9,8 @@ from copy import deepcopy
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, cast
 
-from nanobot.bus.events import InboundMessage, OutboundMessage
+from nanobot.agent.hook import AgentHook, AgentRunHookContext
+from nanobot.bus.events import CommittedUserInput, InboundMessage, OutboundMessage
 from nanobot.bus.notification_delivery import notification_is_deliverable
 from nanobot.bus.outbound_events import (
     RetryStatusEvent,
@@ -18,12 +19,16 @@ from nanobot.bus.outbound_events import (
     StreamEndEvent,
 )
 from nanobot.bus.queue import MessageBus
-from nanobot.bus.runtime_events import RuntimeEventPublisher
+from nanobot.bus.runtime_events import InjectionCommitted, RuntimeEventPublisher
 from nanobot.channels.notification_routes import notification_metadata
-from nanobot.events import NO_EVENTS, AgentEvent, EventSink
-from nanobot.providers.base import LLMUsage
+from nanobot.events import NO_EVENTS, AgentEvent, ContextCompactionEvent, EventSink
+from nanobot.providers.base import ContextUsageSnapshot, LLMUsage
+from nanobot.session.input_attempt import InputAttemptProof
 from nanobot.session.keys import UNIFIED_SESSION_KEY, last_channel_from_metadata
+from nanobot.session.session_messages import session_message_envelope
+from nanobot.session.source_store import SourceState
 from nanobot.utils.runtime import CONTEXT_BUDGET_ERROR_MESSAGE
+from nanobot.webui.metadata import WEBUI_DISPLAY_ON_COMMIT_KEY, WEBUI_DISPLAY_SOURCE_KEY
 
 if TYPE_CHECKING:
     from nanobot.utils.llm_runtime import LLMRuntime
@@ -41,6 +46,17 @@ class TurnRoute:
 
 TurnRoutePolicy = Callable[[InboundMessage, str, TurnRoute], TurnRoute]
 TurnOutputHook = Callable[[OutboundMessage], Awaitable[None]]
+
+
+class _ContextUsageHook(AgentHook):
+    """Terminal relay before any fallible/suspending product or plugin finalizer."""
+
+    def __init__(self, publisher: RuntimeEventPublisher, session_key: str) -> None:
+        super().__init__()
+        self._publisher, self._session_key = publisher, session_key
+
+    async def on_finally(self, context: AgentRunHookContext) -> None:
+        self._publisher.record_turn_context_usage(self._session_key, context.context_usage)
 
 
 def _bind_events(
@@ -99,12 +115,20 @@ class TurnDeliveryFactory:
         enable_stream: bool = False,
         suppress_channel_output: bool = False,
         trusted_output_hook: TurnOutputHook | None = None,
+        admitted_source: SourceState | None = None,
     ) -> TurnDelivery:
         route = self._default_route(msg, session_key)
         if self.route_policy is not None:
             route = self.route_policy(msg, session_key, route)
             if not isinstance(cast(object, route), TurnRoute):
                 raise TypeError("turn route policy must return TurnRoute")
+        if (
+            admitted_source is not None and route.channel == "websocket"
+            and admitted_source.session_key == session_key == f"websocket:{route.chat_id}"
+        ):
+            route = dataclasses.replace(route, metadata={
+                **route.metadata, WEBUI_DISPLAY_SOURCE_KEY: admitted_source,
+            })
         return TurnDelivery(
             bus=self.bus,
             runtime_event_publisher=self.runtime_event_publisher,
@@ -116,8 +140,22 @@ class TurnDeliveryFactory:
             trusted_output_hook=trusted_output_hook,
         )
 
-    def unrouted(self, msg: InboundMessage, session_key: str) -> TurnDelivery:
+    def unrouted(
+        self,
+        msg: InboundMessage,
+        session_key: str,
+        *,
+        suppress_channel_output: bool = False,
+        admitted_source: SourceState | None = None,
+    ) -> TurnDelivery:
         """Create a lifecycle fallback without invoking edge routing policy."""
+        metadata = dict(msg.metadata or {})
+        if (
+            admitted_source is not None
+            and msg.channel == "websocket"
+            and admitted_source.session_key == session_key == f"websocket:{msg.chat_id}"
+        ):
+            metadata[WEBUI_DISPLAY_SOURCE_KEY] = admitted_source
         return TurnDelivery(
             bus=self.bus,
             runtime_event_publisher=self.runtime_event_publisher,
@@ -126,8 +164,9 @@ class TurnDeliveryFactory:
             route=TurnRoute(
                 channel=msg.channel,
                 chat_id=msg.chat_id,
-                metadata=dict(msg.metadata or {}),
+                metadata=metadata,
             ),
+            suppress_channel_output=suppress_channel_output,
         )
 
     def silent(self, msg: InboundMessage, session_key: str) -> TurnDelivery:
@@ -225,6 +264,7 @@ class TurnDelivery:
     _stream_base_id: str | None = field(init=False, default=None)
     _stream_segment: int = field(init=False, default=0)
     _stream_open: bool = field(init=False, default=False)
+    _pending_injection_receipts: list[InjectionCommitted] = field(init=False, default_factory=list)
     events: EventSink = field(init=False)
     _routed_events: EventSink = field(init=False)
     _stop_reason: str | None = field(init=False, default=None)
@@ -274,6 +314,55 @@ class TurnDelivery:
                 self.session_key,
             )
 
+    async def input_committed(
+        self,
+        *,
+        input_attempt_proof: InputAttemptProof | None = None,
+        source_event_id: str | None = None,
+    ) -> None:
+        if self.route.publish_lifecycle:
+            await self.runtime_event_publisher.user_input_committed(
+                self.delivery_message,
+                self.session_key,
+                input_attempt_proof=input_attempt_proof,
+                original_input=(
+                    CommittedUserInput.from_message(self.input_message, source_event_id)
+                    if source_event_id is not None
+                    and self.delivery_message.metadata.get(WEBUI_DISPLAY_ON_COMMIT_KEY) is True
+                    else None
+                ),
+            )
+            return
+        envelope = session_message_envelope(self.input_message.metadata)
+        source = self.route.metadata.get(WEBUI_DISPLAY_SOURCE_KEY)
+        if (
+            self.input_message.channel == "system"
+            and envelope is not None
+            and source_event_id is not None
+            and self.route.channel == "websocket"
+            and isinstance(source, SourceState)
+        ):
+            committed_msg = dataclasses.replace(
+                self.input_message,
+                metadata={**self.input_message.metadata, WEBUI_DISPLAY_SOURCE_KEY: source},
+            )
+            await self.runtime_event_publisher.user_input_committed(
+                committed_msg,
+                self.session_key,
+                original_input=CommittedUserInput.from_message(
+                    self.input_message,
+                    source_event_id,
+                    created_at_ms=envelope["created_at_ms"],
+                ),
+            )
+
+    async def publish_injection_after_stream(self, event: InjectionCommitted) -> None:
+        """Archive the preceding reply before publishing a committed input receipt."""
+        if self._stream_open:
+            self._pending_injection_receipts.append(event)
+        else:
+            await self.bus.publish(event)
+
     async def running(self, *, started_at: float) -> None:
         if self.route.publish_lifecycle:
             await self.runtime_event_publisher.run_status_changed(
@@ -299,6 +388,12 @@ class TurnDelivery:
 
     def record_usage(self, round_usages: list[LLMUsage]) -> None:
         self.runtime_event_publisher.record_turn_usage(self.session_key, round_usages)
+
+    def context_usage_hook(self) -> AgentHook | None:
+        # Silent/no-lifecycle runs do not complete a publisher-owned turn.
+        if self.silent or not self.route.publish_lifecycle:
+            return None
+        return _ContextUsageHook(self.runtime_event_publisher, self.session_key)
 
     def record_stop_reason(
         self,
@@ -341,6 +436,8 @@ class TurnDelivery:
         *,
         publish_completion: bool,
     ) -> None:
+        if self._pending_injection_receipts:
+            await self.abort_stream()
         stop_reason = self._stop_reason
         if stop_reason is None and response is not None:
             stop_reason = cast(str | None, response.metadata.get("_stop_reason"))
@@ -365,11 +462,20 @@ class TurnDelivery:
             )
         if publish_completion:
             outcome, failure_kind = _turn_outcome(stop_reason)
+            completion_metadata = dict(self.lifecycle_message.metadata or {})
+            if (
+                completed_channel == "websocket"
+                and WEBUI_DISPLAY_SOURCE_KEY not in completion_metadata
+                and WEBUI_DISPLAY_SOURCE_KEY in self.route.metadata
+            ):
+                completion_metadata[WEBUI_DISPLAY_SOURCE_KEY] = (
+                    self.route.metadata[WEBUI_DISPLAY_SOURCE_KEY]
+                )
             await self.runtime_event_publisher.turn_completed(
                 channel=completed_channel,
                 chat_id=completed_chat_id,
                 session_key=self.session_key,
-                metadata=self.lifecycle_message.metadata,
+                metadata=completion_metadata,
                 outcome=outcome,
                 failure_kind=failure_kind,
                 failure_error_kind=(self._failure_error_kind or (
@@ -380,10 +486,23 @@ class TurnDelivery:
                 ),
             )
 
+    async def publish_cancelled_terminal(self) -> None:
+        """Close an admitted lifecycle without inventing a user response."""
+        if not self.route.publish_lifecycle:
+            return
+        await self.runtime_event_publisher.turn_completed(
+            channel=self.lifecycle_message.channel,
+            chat_id=self.lifecycle_message.chat_id,
+            session_key=self.session_key,
+            metadata=self.lifecycle_message.metadata,
+        )
+
     async def fail(self, *, publish_completion: bool, error: Exception | None = None) -> None:
         from nanobot.agent.context_governance import ContextWindowExceededError
         from nanobot.providers.request_budget import FinalizedRequestBudgetExceeded
 
+        if self._pending_injection_receipts:
+            await self.abort_stream()
         context_error = isinstance(error, (ContextWindowExceededError, FinalizedRequestBudgetExceeded))
         response = OutboundMessage(
             channel=self.lifecycle_message.channel,
@@ -419,6 +538,11 @@ class TurnDelivery:
         return f"{self._stream_base_id}:{self._stream_segment}"
 
     async def _publish_event(self, event: AgentEvent) -> None:
+        if (isinstance(event, ContextCompactionEvent) and event.phase == "succeeded"
+                and self.route.publish_lifecycle and not self.silent):
+            self.runtime_event_publisher.record_turn_context_usage(
+                self.session_key, ContextUsageSnapshot(None, None),
+            )
         if isinstance(event, RetryStatusEvent):
             self._retry_status = event if event.state == "exhausted" else None
         if isinstance(event, StreamDeltaEvent | StreamEndEvent):
@@ -433,6 +557,9 @@ class TurnDelivery:
             self._stream_open = event.merge_next
             if not event.merge_next:
                 self._stream_segment += 1
+                receipts, self._pending_injection_receipts = self._pending_injection_receipts, []
+                for receipt in receipts:
+                    await self.bus.publish(receipt)
 
     async def abort_stream(self) -> None:
         """Close an interrupted stream so stateful channels can release its buffer."""

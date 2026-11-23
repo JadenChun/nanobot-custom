@@ -6,6 +6,8 @@ import { sessionTitle, useSessionHistory, useSessions } from "@/hooks/useSession
 import * as api from "@/lib/api";
 import { ClientProvider } from "@/providers/ClientProvider";
 import { folderAccessThreadFixture } from "@/tests/fixtures/folder-access-request";
+import { resetSessionPageCache } from "@/lib/session-page-cache";
+
 
 vi.mock("@/lib/api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/api")>();
@@ -14,6 +16,9 @@ vi.mock("@/lib/api", async (importOriginal) => {
     listSessions: vi.fn(),
     deleteSession: vi.fn(),
     fetchWebuiThread: vi.fn(),
+    fetchWebuiThreadControls: vi.fn(),
+    fetchDelegatedChildren: vi.fn(),
+    fetchSessionTurns: vi.fn(),
   };
 });
 
@@ -65,6 +70,11 @@ describe("useSessions", () => {
     vi.mocked(api.listSessions).mockReset();
     vi.mocked(api.deleteSession).mockReset();
     vi.mocked(api.fetchWebuiThread).mockReset();
+    vi.mocked(api.fetchWebuiThreadControls).mockReset();
+    vi.mocked(api.fetchDelegatedChildren).mockReset();
+    vi.mocked(api.fetchSessionTurns).mockReset();
+    // The renderer page cache is module-level, so each case must start empty.
+    resetSessionPageCache();
   });
 
   it("does not use low-information greetings as fallback session titles", () => {
@@ -452,6 +462,171 @@ describe("useSessions", () => {
     expect(third.images).toBeUndefined();
   });
 
+  it("merges every delegated-child page and updates an existing activity row", async () => {
+    vi.mocked(api.fetchWebuiThread).mockResolvedValue({
+      schemaVersion: 3,
+      messages: [
+        {
+          id: "delegated-child-child-a",
+          role: "assistant",
+          kind: "delegated_child",
+          content: "",
+          createdAt: 1,
+          delegatedChild: {
+            parent_session_key: "websocket:chat-child",
+            child_session_key: "delegated:child-a",
+            child_id: "child-a",
+            profile: "delegated",
+            task_label: "Inspect task",
+            task_label_truncated: false,
+            state: "active",
+            outcome: null,
+            runtime_generation: 0,
+            parent_run_id: "root-run",
+            child_run_id: "child-run",
+            parent_store_identity: "root-store",
+            parent_incarnation: "root-incarnation",
+            parent_generation: 0,
+            root_key: "websocket:chat-child",
+            root_store_identity: "root-store",
+            root_incarnation: "root-incarnation",
+            root_generation: 0,
+            child_store_identity: "child-store-a",
+            child_incarnation: "child-incarnation-a",
+            child_generation: 0,
+            run_sequence: 1,
+            state_sequence: 1,
+            control_epoch: 2,
+            holds_capacity: true,
+            can_stop: true,
+            owned_work: true,
+            pending_approval_id: null,
+            blocked_run_id: null,
+            result_disposition: null,
+            result_summary: null,
+            result_summary_truncated: false,
+          },
+        },
+      ],
+    });
+    vi.mocked(api.fetchDelegatedChildren)
+      .mockResolvedValueOnce({
+        schemaVersion: 3,
+        parentSessionKey: "websocket:chat-child",
+        children: [
+          {
+            parent_session_key: "websocket:chat-child",
+            child_session_key: "delegated:child-a",
+            child_id: "child-a",
+            profile: "delegated",
+            task_label: "Inspect task",
+            task_label_truncated: false,
+            state: "waiting_approval",
+            outcome: null,
+            runtime_generation: 0,
+            parent_run_id: "root-run",
+            child_run_id: "child-run",
+            parent_store_identity: "root-store",
+            parent_incarnation: "root-incarnation",
+            parent_generation: 0,
+            root_key: "websocket:chat-child",
+            root_store_identity: "root-store",
+            root_incarnation: "root-incarnation",
+            root_generation: 0,
+            child_store_identity: "child-store-a",
+            child_incarnation: "child-incarnation-a",
+            child_generation: 0,
+            run_sequence: 1,
+            state_sequence: 2,
+            control_epoch: 2,
+            holds_capacity: true,
+            can_stop: true,
+            owned_work: true,
+            pending_approval_id: "approval-1",
+            blocked_run_id: "child-run",
+            result_disposition: null,
+            result_summary: null,
+            result_summary_truncated: false,
+          },
+        ],
+        page: {
+          before_cursor: "older-page",
+          has_more_before: true,
+          loaded_message_count: 1,
+        },
+      })
+      .mockResolvedValueOnce({
+        schemaVersion: 3,
+        parentSessionKey: "websocket:chat-child",
+        children: [
+          {
+            parent_session_key: "websocket:chat-child",
+            child_session_key: "delegated:child-b",
+            child_id: "child-b",
+            profile: "delegated",
+            task_label: "Read the release notes",
+            task_label_truncated: false,
+            state: "completed",
+            outcome: "completed",
+            runtime_generation: 0,
+            turn_id: null,
+            parent_run_id: "root-run",
+            child_run_id: "child-run-b",
+            parent_store_identity: "root-store",
+            parent_incarnation: "root-incarnation",
+            parent_generation: 0,
+            root_key: "websocket:chat-child",
+            root_store_identity: "root-store",
+            root_incarnation: "root-incarnation",
+            root_generation: 0,
+            child_store_identity: "child-store-b",
+            child_incarnation: "child-incarnation-b",
+            child_generation: 0,
+            run_sequence: 1,
+            state_sequence: 1,
+            control_epoch: 0,
+            holds_capacity: false,
+            can_stop: false,
+            owned_work: false,
+            pending_approval_id: null,
+            blocked_run_id: null,
+            result_disposition: "delivered",
+            result_summary: "Notes were reviewed",
+            result_summary_truncated: false,
+          },
+        ],
+        page: {
+          before_cursor: null,
+          has_more_before: false,
+          loaded_message_count: 1,
+        },
+      });
+
+    const { result } = renderHook(() => useSessionHistory("websocket:chat-child"), {
+      wrapper: wrap(fakeClient()),
+    });
+
+    await waitFor(() => expect(result.current.delegatedChildrenLoading).toBe(false));
+    expect(result.current.delegatedChildren).toHaveLength(2);
+    expect(result.current.delegatedChildren.find((child) => child.child_id === "child-a"))
+      .toMatchObject({
+        state: "waiting_approval",
+        state_sequence: 2,
+        turn_id: null,
+        pending_approval_id: "approval-1",
+        can_stop: true,
+      });
+    expect(result.current.delegatedChildren.find((child) => child.child_id === "child-b"))
+      .toMatchObject({ result_summary: "Notes were reviewed" });
+    expect(result.current.delegatedChildrenError).toBe(false);
+    expect(api.fetchDelegatedChildren).toHaveBeenNthCalledWith(
+      2,
+      "tok",
+      "websocket:chat-child",
+      expect.objectContaining({ limit: 120, before: "older-page" }),
+    );
+  });
+
   it("passes through assistant video media from transcript replay", async () => {
     vi.mocked(api.fetchWebuiThread).mockResolvedValue({
       schemaVersion: 3,
@@ -650,6 +825,44 @@ describe("useSessions", () => {
 
     expect(result.current.messages).toEqual([]);
     expect(result.current.hasPendingToolCalls).toBe(false);
+    expect(result.current.activitySnapshotAvailable).toBe(false);
+  });
+
+  it.each([
+    ["idle root", { sessionKey: "websocket:activity", active_turn_id: null, has_pending_tool_calls: false }, true],
+    ["active root", { active_turn_id: "live", has_pending_tool_calls: true }, true],
+    ["null Stop only", { stop_target: null }, false],
+    ["missing pending", { active_turn_id: null }, false],
+    ["invalid pending", { active_turn_id: null, has_pending_tool_calls: "false" }, false],
+    ["invalid active", { active_turn_id: 12, has_pending_tool_calls: false }, false],
+    ["other session", { sessionKey: "websocket:other", active_turn_id: null, has_pending_tool_calls: false }, false],
+    ["child summary", { history_kind: "summary", active_turn_id: null, has_pending_tool_calls: false }, false],
+  ])("exposes root activity availability only for a valid %s response", async (_label, fields, expected) => {
+    vi.mocked(api.fetchWebuiThread).mockResolvedValue({
+      schemaVersion: 3, messages: [], ...fields,
+    } as Awaited<ReturnType<typeof api.fetchWebuiThread>>);
+    const { result } = renderHook(() => useSessionHistory("websocket:activity"), {
+      wrapper: wrap(fakeClient()),
+    });
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(result.current.activitySnapshotAvailable).toBe(expected);
+  });
+
+  it("preserves an explicit null Stop target from authenticated history", async () => {
+    vi.mocked(api.fetchWebuiThread).mockResolvedValue({
+      schemaVersion: 3,
+      stop_target: null,
+      messages: [],
+    });
+
+    const { result } = renderHook(() => useSessionHistory("websocket:modern-null-stop"), {
+      wrapper: wrap(fakeClient()),
+    });
+
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    expect(result.current.stopTarget).toBeNull();
+    expect(result.current.stopTargetSnapshotAvailable).toBe(true);
   });
 
   it("does not reload history when only the auth token rotates", async () => {
@@ -757,7 +970,7 @@ describe("useSessions", () => {
       "tok",
       "websocket:paged",
       expect.objectContaining({
-        limit: 80,
+        limit: 40,
         direction: "latest",
         signal: expect.any(AbortSignal),
       }),
@@ -1205,7 +1418,7 @@ describe("useSessions", () => {
 
     await waitFor(() => expect(result.current.workspaceAccessRequest?.access_request_id)
       .toBe(folderAccessThreadFixture.workspace_access_request?.access_request_id));
-    vi.mocked(api.fetchWebuiThread).mockRejectedValueOnce(new Error("offline"));
+    vi.mocked(api.fetchWebuiThreadControls).mockRejectedValueOnce(new Error("offline"));
 
     await act(async () => {
       result.current.markWorkspaceAccessRequestStale();
@@ -1216,6 +1429,218 @@ describe("useSessions", () => {
       .toBe(folderAccessThreadFixture.workspace_access_request?.access_request_id);
     expect(result.current.workspaceAccessRequestLoading).toBe(false);
     expect(result.current.workspaceAccessRequestError).toBe(true);
+  });
+
+  it("does not request delegated children when the page has no child rows", async () => {
+    vi.mocked(api.fetchWebuiThread).mockResolvedValueOnce(folderAccessThreadFixture);
+    const { result } = renderHook(() => useSessionHistory("websocket:chat-title"), {
+      wrapper: wrap(fakeClient()),
+    });
+
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    // A conversation with no delegated activity has nothing to hydrate, so the
+    // most expensive read in the gateway must not be issued at all.
+    expect(api.fetchDelegatedChildren).not.toHaveBeenCalled();
+    expect(result.current.delegatedChildren).toEqual([]);
+    expect(result.current.delegatedChildrenLoading).toBe(false);
+  });
+
+  it("paints a previously loaded session from the renderer cache before the revisit fetch settles", async () => {
+    const wrapper = wrap(fakeClient());
+    vi.mocked(api.fetchWebuiThread).mockResolvedValueOnce(folderAccessThreadFixture);
+    const first = renderHook(() => useSessionHistory("websocket:chat-revisit"), {
+      wrapper,
+    });
+    await waitFor(() => expect(first.result.current.loading).toBe(false));
+    const loadedIds = first.result.current.messages.map((message) => message.id);
+    expect(loadedIds.length).toBeGreaterThan(0);
+    first.unmount();
+
+    // Hold the revisit request open: the cached window must render anyway, which
+    // is the whole point of keeping the loaded page in the renderer.
+    let resolveThread!: (value: unknown) => void;
+    vi.mocked(api.fetchWebuiThread).mockReturnValueOnce(
+      new Promise((resolve) => { resolveThread = resolve; }) as never,
+    );
+    const second = renderHook(() => useSessionHistory("websocket:chat-revisit"), {
+      wrapper,
+    });
+
+    await waitFor(() => expect(second.result.current.messages.map((message) => message.id))
+      .toEqual(loadedIds));
+    resolveThread(null);
+  });
+
+  it("does not paint a cached page for a new authenticated client with the same session key", async () => {
+    const key = "websocket:chat-title";
+    vi.mocked(api.fetchWebuiThread).mockResolvedValueOnce(folderAccessThreadFixture);
+    const first = renderHook(() => useSessionHistory(key), { wrapper: wrap(fakeClient(), "first") });
+    await waitFor(() => expect(first.result.current.messages.length).toBeGreaterThan(0));
+    first.unmount();
+
+    vi.mocked(api.fetchWebuiThread).mockReturnValueOnce(new Promise(() => {}));
+    const second = renderHook(() => useSessionHistory(key), { wrapper: wrap(fakeClient(), "second") });
+    expect(api.fetchWebuiThread).toHaveBeenLastCalledWith("second", key, expect.any(Object));
+    expect(second.result.current.messages).toEqual([]);
+  });
+
+  it("does not paint a cached page after its session has been deleted", async () => {
+    const key = "websocket:chat-title";
+    const wrapper = wrap(fakeClient());
+    vi.mocked(api.fetchWebuiThread).mockResolvedValueOnce(folderAccessThreadFixture);
+    const first = renderHook(() => useSessionHistory(key), { wrapper });
+    await waitFor(() => expect(first.result.current.messages.length).toBeGreaterThan(0));
+    first.unmount();
+
+    vi.mocked(api.listSessions).mockResolvedValueOnce([]);
+    vi.mocked(api.deleteSession).mockResolvedValueOnce({ deleted: true });
+    const catalog = renderHook(useSessions, { wrapper });
+    await act(async () => { await catalog.result.current.deleteChat(key); });
+
+    vi.mocked(api.fetchWebuiThread).mockReturnValueOnce(new Promise(() => {}));
+    const second = renderHook(() => useSessionHistory(key), { wrapper });
+    expect(second.result.current.messages).toEqual([]);
+  });
+
+  it("keeps the settled window when a warm refresh loses transport", async () => {
+    const key = "websocket:chat-title";
+    vi.mocked(api.fetchWebuiThread)
+      .mockResolvedValueOnce(folderAccessThreadFixture)
+      .mockRejectedValueOnce(new TypeError("offline"));
+    const { result } = renderHook(() => useSessionHistory(key), { wrapper: wrap(fakeClient()) });
+    await waitFor(() => expect(result.current.messages.length).toBeGreaterThan(0));
+    const settled = result.current.messages;
+
+    act(() => result.current.refresh());
+    await waitFor(() => expect(result.current.error).toBe("offline"));
+    expect(result.current.messages).toBe(settled);
+    expect(result.current.loading).toBe(false);
+    expect(result.current.historyAccessDenied).toBe(false);
+  });
+
+  it.each(["switch", "refusal"])("discards a late turn index after a history %s", async (change) => {
+    const key = "websocket:chat-title";
+    const otherKey = "websocket:other-chat";
+    vi.mocked(api.fetchWebuiThread).mockResolvedValueOnce(folderAccessThreadFixture);
+    const { result, rerender } = renderHook(
+      ({ selected }) => useSessionHistory(selected),
+      { initialProps: { selected: key }, wrapper: wrap(fakeClient()) },
+    );
+    await waitFor(() => expect(result.current.messages.length).toBeGreaterThan(0));
+
+    let finishIndex!: () => void;
+    vi.mocked(api.fetchSessionTurns).mockReturnValueOnce(new Promise((resolve) => {
+      finishIndex = () => resolve({
+        schemaVersion: 3,
+        sessionKey: key,
+        turns: [{ ordinal: 0, label: "Prompt from the old grant", created_at: null, cursor: "p0" }],
+        total_turn_count: 1,
+      });
+    }));
+    let indexRead!: ReturnType<typeof result.current.loadTurnIndex>;
+    act(() => { indexRead = result.current.loadTurnIndex(); });
+
+    if (change === "refusal") {
+      vi.mocked(api.fetchWebuiThread).mockRejectedValueOnce(new api.ApiError(403, "refused"));
+      act(() => result.current.refresh());
+      await waitFor(() => expect(result.current.historyAccessDenied).toBe(true));
+    } else {
+      vi.mocked(api.fetchWebuiThread).mockResolvedValueOnce({
+        ...folderAccessThreadFixture, sessionKey: otherKey,
+      });
+      rerender({ selected: otherKey });
+      await waitFor(() => expect(result.current.loading).toBe(false));
+    }
+    await act(async () => { finishIndex(); await indexRead; });
+    expect(result.current.turnIndex).toEqual([]);
+  });
+
+  it("commits the root page and permissions before delegated activity settles", async () => {
+    const key = "websocket:chat-title";
+    const permissions = {
+      version: 1 as const,
+      runtime_id: "a".repeat(32),
+      revision: 4,
+      mode: "restricted" as const,
+      state: "active" as const,
+      can_enable_full: true,
+      full_access_unavailable_reason: null,
+      task_access: null,
+      retirement: null,
+    };
+    // Delegated children are only fetched when the page renders a child row,
+    // so this case needs one to exercise "root commits before children settle".
+    vi.mocked(api.fetchWebuiThread).mockResolvedValueOnce({
+      ...folderAccessThreadFixture,
+      workspace_permissions: permissions,
+      stop_target: null,
+      messages: [
+        ...folderAccessThreadFixture.messages,
+        {
+          id: "delegated-child-settle",
+          role: "assistant",
+          content: "",
+          createdAt: 1,
+          kind: "delegated_child",
+          delegatedChild: {
+            parent_session_key: key,
+            child_session_key: "delegated:settle-a",
+            child_id: "settle-a",
+            profile: "delegated",
+            task_label: "Inspect task",
+            task_label_truncated: false,
+            state: "active",
+            outcome: null,
+            runtime_generation: 0,
+            parent_run_id: "root-run",
+            child_run_id: "child-run",
+            parent_store_identity: "root-store",
+            parent_incarnation: "root-incarnation",
+            parent_generation: 0,
+            root_key: key,
+            root_store_identity: "root-store",
+            root_incarnation: "root-incarnation",
+            root_generation: 0,
+            child_store_identity: "child-store-a",
+            child_incarnation: "child-incarnation-a",
+            child_generation: 0,
+            run_sequence: 1,
+            state_sequence: 1,
+            control_epoch: 2,
+            holds_capacity: true,
+            can_stop: true,
+            owned_work: true,
+            pending_approval_id: null,
+            blocked_run_id: null,
+            result_disposition: null,
+            result_summary: null,
+            result_summary_truncated: false,
+          },
+        },
+      ],
+    });
+    let finishChildren!: (value: Awaited<ReturnType<typeof api.fetchDelegatedChildren>>) => void;
+    vi.mocked(api.fetchDelegatedChildren).mockReturnValueOnce(new Promise((resolve) => {
+      finishChildren = resolve;
+    }));
+
+    const { result } = renderHook(() => useSessionHistory(key), { wrapper: wrap(fakeClient()) });
+    await waitFor(() => expect(api.fetchDelegatedChildren).toHaveBeenCalledTimes(1));
+    expect(result.current.messages).toEqual(folderAccessThreadFixture.messages);
+    expect(result.current.loading).toBe(false);
+    expect(result.current.workspaceAccessRequest).toEqual(folderAccessThreadFixture.workspace_access_request);
+    expect(result.current.workspaceAccessRequestLoading).toBe(false);
+    expect(result.current.workspacePermissions).toEqual(permissions);
+    expect(result.current.workspacePermissionsLoading).toBe(false);
+    expect(result.current.delegatedChildrenLoading).toBe(true);
+    expect(result.current.stopTargetSnapshotAvailable).toBe(true);
+    const version = result.current.version;
+
+    act(() => result.current.updateWorkspacePermissions({ ...permissions, revision: 5 }));
+    await act(async () => finishChildren(null));
+    expect(result.current.delegatedChildrenLoading).toBe(false);
+    expect(result.current.workspacePermissions).toEqual({ ...permissions, revision: 5 });
+    expect(result.current.version).toBe(version);
   });
 
   it("does not revive an older request revision or clear its stale loading guard", async () => {
@@ -1269,17 +1694,15 @@ describe("useSessions", () => {
     act(() => result.current.updateWorkspacePermissions({ ...current, revision: 3 }));
     expect(result.current.workspacePermissions).toEqual(current);
 
-    vi.mocked(api.fetchWebuiThread).mockResolvedValueOnce({
-      ...folderAccessThreadFixture,
+    vi.mocked(api.fetchWebuiThreadControls).mockResolvedValueOnce({
       workspace_permissions: restarted,
     });
     act(() => result.current.updateWorkspacePermissions(restarted));
     await waitFor(() => expect(result.current.workspacePermissions).toEqual(restarted));
-    expect(api.fetchWebuiThread).toHaveBeenCalledTimes(2);
-    expect(api.fetchWebuiThread).toHaveBeenLastCalledWith(
+    expect(api.fetchWebuiThread).toHaveBeenCalledTimes(1);
+    expect(api.fetchWebuiThreadControls).toHaveBeenCalledWith(
       "tok",
       "websocket:chat-permissions",
-      { limit: 1, direction: "latest" },
     );
   });
 
@@ -1309,5 +1732,334 @@ describe("useSessions", () => {
     ).rejects.toThrow("boom");
 
     expect(result.current.sessions.map((s) => s.key)).toEqual(["websocket:chat-a"]);
+  });
+
+  it("loads bounded prompt summary ranges on demand without eagerly draining the index", async () => {
+    const key = "websocket:prompt-index";
+    vi.mocked(api.fetchWebuiThread).mockResolvedValueOnce({
+      schemaVersion: 3,
+      view: "history",
+      sessionKey: key,
+      messages: [
+        { id: "u120", promptId: "evt-120", role: "user", content: "Prompt 120", createdAt: 120 },
+        { id: "a120", role: "assistant", content: "Reply 120", createdAt: 121 },
+      ],
+      page: {
+        before_cursor: "b-119",
+        has_more_before: true,
+        has_more_after: false,
+        total_turn_count: 120,
+        total_prompt_count: 121,
+        coverage: "indexed",
+      },
+    });
+    vi.mocked(api.fetchSessionTurns)
+      .mockResolvedValueOnce({
+        schemaVersion: 3,
+        sessionKey: key,
+        turns: [{ ordinal: 119, label: "Prompt 120", created_at: 120, cursor: "c-119" }],
+        prompts: [
+          {
+            prompt_id: "evt-119",
+            turn_ordinal: 118,
+            prompt_ordinal: 119,
+            label: "Prompt 119",
+            created_at: 119,
+            locator: "loc-119",
+          },
+          {
+            prompt_id: "evt-120",
+            turn_ordinal: 119,
+            prompt_ordinal: 120,
+            label: "Prompt 120",
+            created_at: 120,
+            locator: "loc-120",
+          },
+        ],
+        total_turn_count: 120,
+        total_prompt_count: 121,
+        page: { before_cursor: "idx-before-118", has_more_before: true, loaded_prompt_count: 2 },
+      })
+      .mockResolvedValueOnce({
+        schemaVersion: 3,
+        sessionKey: key,
+        turns: [{ ordinal: 15, label: "Prompt 15", created_at: 15, cursor: "c-15" }],
+        prompts: [
+          {
+            prompt_id: "evt-u-15",
+            turn_ordinal: 15,
+            prompt_ordinal: 15,
+            label: "Prompt 15",
+            created_at: 15,
+            locator: "loc-u-15",
+          },
+          {
+            prompt_id: "evt-steer-15",
+            turn_ordinal: 15,
+            prompt_ordinal: 16,
+            label: "Steer 15",
+            created_at: 16,
+            locator: "loc-steer-15",
+          },
+        ],
+        total_turn_count: 120,
+        total_prompt_count: 121,
+        page: { before_cursor: null, has_more_before: false, loaded_prompt_count: 2 },
+      });
+
+    const { result } = renderHook(() => useSessionHistory(key), {
+      wrapper: wrap(fakeClient()),
+    });
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(result.current.totalTurnCount).toBe(120);
+    expect(result.current.totalPromptCount).toBe(121);
+
+    await act(async () => {
+      await result.current.loadTurnIndex();
+    });
+    expect(api.fetchSessionTurns).toHaveBeenCalledTimes(1);
+    expect(result.current.promptIndexHasMoreBefore).toBe(true);
+    expect(result.current.promptIndex.map((p) => p.prompt_id)).toEqual(["evt-119", "evt-120"]);
+
+    await act(async () => {
+      await result.current.loadMorePromptIndex();
+    });
+    expect(api.fetchSessionTurns).toHaveBeenCalledTimes(2);
+    expect(result.current.promptIndexHasMoreBefore).toBe(false);
+    expect(result.current.promptIndex.map((p) => p.prompt_id)).toEqual([
+      "evt-u-15",
+      "evt-steer-15",
+      "evt-119",
+      "evt-120",
+    ]);
+  });
+
+  it("reveals an exact prompt, pages backward and forward without duplicates, and isolates tail refreshes", async () => {
+    const key = "websocket:reveal-flow";
+    const origin = {
+      store_identity: "store-1",
+      session_key: key,
+      incarnation: "inc-1",
+      generation: 0,
+    };
+    vi.mocked(api.fetchWebuiThread)
+      // 1. Initial latest window
+      .mockResolvedValueOnce({
+        schemaVersion: 3,
+        view: "history",
+        sessionKey: key,
+        source: origin,
+        messages: [
+          { id: "u99", promptId: "evt-99", role: "user", content: "Prompt 99", createdAt: 99 },
+          { id: "a99", role: "assistant", content: "Reply 99", createdAt: 100 },
+        ],
+        page: {
+          before_cursor: "b-98",
+          after_cursor: null,
+          has_more_before: true,
+          has_more_after: false,
+          total_turn_count: 100,
+          total_prompt_count: 101,
+        },
+      })
+      // 2. Reveal around Steer 15
+      .mockResolvedValueOnce({
+        schemaVersion: 3,
+        view: "history",
+        sessionKey: key,
+        source: origin,
+        messages: [
+          { id: "u15", promptId: "evt-u-15", role: "user", content: "Prompt 15", createdAt: 15 },
+          { id: "a15a", role: "assistant", content: "First reply", createdAt: 16 },
+          { id: "u15b", promptId: "evt-steer-15", role: "user", content: "Steer 15", createdAt: 17 },
+          { id: "a15b", role: "assistant", content: "After steer", createdAt: 18 },
+        ],
+        page: {
+          before_cursor: "b-14",
+          after_cursor: "a-16",
+          has_more_before: true,
+          has_more_after: true,
+          target_prompt_id: "evt-steer-15",
+        },
+      })
+      // 3. loadOlder from revealed window
+      .mockResolvedValueOnce({
+        schemaVersion: 3,
+        view: "history",
+        sessionKey: key,
+        source: origin,
+        messages: [
+          { id: "u14", promptId: "evt-14", role: "user", content: "Prompt 14", createdAt: 14 },
+        ],
+        page: {
+          before_cursor: "b-13",
+          has_more_before: true,
+          has_more_after: true,
+        },
+      })
+      // 4. loadNewer from revealed window
+      .mockResolvedValueOnce({
+        schemaVersion: 3,
+        view: "history",
+        sessionKey: key,
+        source: origin,
+        messages: [
+          { id: "u16", promptId: "evt-16", role: "user", content: "Prompt 16", createdAt: 19 },
+        ],
+        page: {
+          after_cursor: "a-17",
+          has_more_before: true,
+          has_more_after: true,
+        },
+      })
+      // 5. Background refresh while away from tail (same source origin)
+      .mockResolvedValueOnce({
+        schemaVersion: 3,
+        view: "history",
+        sessionKey: key,
+        source: origin,
+        active_turn_id: "turn-101",
+        has_pending_tool_calls: true,
+        messages: [
+          { id: "u100", promptId: "evt-100", role: "user", content: "Prompt 100", createdAt: 200 },
+        ],
+        page: {
+          before_cursor: "b-99",
+          has_more_before: true,
+          has_more_after: false,
+          total_turn_count: 101,
+          total_prompt_count: 102,
+        },
+      })
+      // 6. Explicit goToLatest
+      .mockResolvedValueOnce({
+        schemaVersion: 3,
+        view: "history",
+        sessionKey: key,
+        source: origin,
+        messages: [
+          { id: "u100", promptId: "evt-100", role: "user", content: "Prompt 100", createdAt: 200 },
+          { id: "a100", role: "assistant", content: "Reply 100", createdAt: 201 },
+        ],
+        page: {
+          before_cursor: "b-99",
+          after_cursor: null,
+          has_more_before: true,
+          has_more_after: false,
+          total_turn_count: 101,
+          total_prompt_count: 102,
+        },
+      });
+
+    const { result } = renderHook(() => useSessionHistory(key), {
+      wrapper: wrap(fakeClient()),
+    });
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(result.current.isAtTail).toBe(true);
+
+    await act(async () => {
+      const ok = await result.current.revealPrompt({
+        promptId: "evt-steer-15",
+        locator: "loc-steer-15",
+      });
+      expect(ok).toBe(true);
+    });
+    expect(result.current.isAtTail).toBe(false);
+    expect(result.current.hasMoreBefore).toBe(true);
+    expect(result.current.hasMoreAfter).toBe(true);
+    expect(result.current.pendingReveal?.status).toBe("ready");
+    expect(result.current.pendingReveal?.promptId).toBe("evt-steer-15");
+
+    await act(async () => {
+      await result.current.loadOlder();
+      await result.current.loadNewer();
+    });
+    expect(result.current.messages.map((m) => m.id)).toEqual([
+      "u14", "u15", "a15a", "u15b", "a15b", "u16",
+    ]);
+
+    // Background refresh must not clobber the detached historical window.
+    act(() => result.current.refresh());
+    await waitFor(() => expect(result.current.tailActivityPending).toBe(true));
+    expect(result.current.messages.map((m) => m.id)).toEqual([
+      "u14", "u15", "a15a", "u15b", "a15b", "u16",
+    ]);
+    expect(result.current.isAtTail).toBe(false);
+    expect(result.current.totalTurnCount).toBe(101);
+
+    // Explicit goToLatest returns cleanly to the tail.
+    await act(async () => {
+      const ok = await result.current.goToLatest();
+      expect(ok).toBe(true);
+    });
+    expect(result.current.isAtTail).toBe(true);
+    expect(result.current.tailActivityPending).toBe(false);
+    expect(result.current.messages.map((m) => m.id)).toEqual(["u100", "a100"]);
+  });
+
+  it("cancels a superseded reveal and leaves the current view intact on 409 stale cursor", async () => {
+    const key = "websocket:reveal-race";
+    vi.mocked(api.fetchWebuiThread).mockResolvedValueOnce({
+      schemaVersion: 3,
+      view: "history",
+      sessionKey: key,
+      messages: [
+        { id: "u-current", promptId: "evt-current", role: "user", content: "Current prompt", createdAt: 10 },
+      ],
+      page: { has_more_before: true, has_more_after: false },
+    });
+
+    const { result } = renderHook(() => useSessionHistory(key), {
+      wrapper: wrap(fakeClient()),
+    });
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    let resolveFirst!: (val: Awaited<ReturnType<typeof api.fetchWebuiThread>>) => void;
+    vi.mocked(api.fetchWebuiThread)
+      .mockReturnValueOnce(new Promise((resolve) => { resolveFirst = resolve; }))
+      .mockResolvedValueOnce({
+        schemaVersion: 3,
+        view: "history",
+        sessionKey: key,
+        messages: [
+          { id: "u-second", promptId: "evt-second", role: "user", content: "Second target", createdAt: 2 },
+        ],
+        page: { has_more_before: false, has_more_after: true, target_prompt_id: "evt-second" },
+      });
+
+    let firstPromise!: Promise<boolean>;
+    let secondPromise!: Promise<boolean>;
+    act(() => {
+      firstPromise = result.current.revealPrompt({ promptId: "evt-first", locator: "loc-first" });
+      secondPromise = result.current.revealPrompt({ promptId: "evt-second", locator: "loc-second" });
+    });
+    await act(async () => {
+      expect(await secondPromise).toBe(true);
+    });
+    await act(async () => {
+      resolveFirst({
+        schemaVersion: 3,
+        view: "history",
+        sessionKey: key,
+        messages: [
+          { id: "u-first", promptId: "evt-first", role: "user", content: "First target", createdAt: 1 },
+        ],
+        page: { has_more_before: false, has_more_after: true, target_prompt_id: "evt-first" },
+      });
+      expect(await firstPromise).toBe(false);
+    });
+    expect(result.current.messages.map((m) => m.id)).toEqual(["u-second"]);
+    expect(result.current.pendingReveal?.promptId).toBe("evt-second");
+
+    // 409 stale_history_cursor must keep the current window in place.
+    vi.mocked(api.fetchWebuiThread).mockRejectedValueOnce(
+      new api.ApiError(409, "stale_history_cursor"),
+    );
+    await act(async () => {
+      expect(await result.current.revealPrompt({ promptId: "evt-old", locator: "stale-loc" })).toBe(false);
+    });
+    expect(result.current.messages.map((m) => m.id)).toEqual(["u-second"]);
+    expect(result.current.pendingReveal?.status).toBe("error");
+    expect(result.current.pendingReveal?.errorCode).toBe("stale_history_cursor");
   });
 });

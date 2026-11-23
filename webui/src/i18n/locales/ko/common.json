@@ -1,9 +1,9 @@
 {
   "app": {
-    "brand": "nanobot",
+    "brand": "Kohaku",
     "loading": {
       "connecting": "nanobot에 연결 중…",
-      "boot": "nanobot 불러오는 중…"
+      "boot": "Kohaku 불러오는 중…"
     },
     "error": {
       "title": "nanobot에 연결할 수 없습니다",
@@ -25,7 +25,7 @@
     "system": {
       "section": "시스템",
       "restartHint": "런타임 변경 사항을 적용하려면 nanobot을 다시 시작하세요.",
-      "restart": "nanobot 다시 시작",
+      "restart": "Kohaku 다시 시작",
       "restarting": "다시 시작 중...",
       "restartEngine": "엔진 다시 시작",
       "restartingEngine": "엔진 다시 시작 중..."
@@ -34,11 +34,11 @@
       "completed": "{{seconds}}초 만에 다시 시작되었습니다."
     },
     "documentTitle": {
-      "base": "nanobot",
-      "chat": "{{title}} · nanobot"
+      "base": "Kohaku",
+      "chat": "{{title}} · Kohaku"
     },
     "meta": {
-      "description": "nanobot 웹 UI — nanobot 작업공간과 대화하세요."
+      "description": "Kohaku 웹 UI — Kohaku 작업공간과 대화하세요."
     },
     "pairing": {
       "title": "채팅 사용자 연결",
@@ -136,7 +136,7 @@
       "language": "언어",
       "provider": "제공자",
       "model": "모델",
-      "restart": "nanobot 재시작",
+      "restart": "Kohaku 재시작",
       "configPath": "설정 경로",
       "activePreset": "활성 프리셋",
       "gateway": "게이트웨이",
@@ -176,6 +176,13 @@
       "managedFolderAccess": "관리되는 폴더 접근",
       "currentModel": "현재 구성",
       "brandLogos": "브랜드 로고",
+      "notificationSound": "알림 소리",
+      "notificationTest": "전송 테스트",
+      "testNotificationBody": "알림이 정상적으로 작동합니다.",
+      "testNotification": "테스트 알림 보내기",
+      "permissionDenied": "기기 또는 브라우저 설정에서 알림을 허용하세요.",
+      "notifierUnavailable": "알림을 사용할 수 없습니다. 시스템 알림 설정을 확인하세요.",
+      "notificationSent": "테스트 알림을 보냈습니다.",
       "browserNotifications": "작업 알림",
       "cliAppsCatalog": "카탈로그",
       "cliAppsFilter": "필터",
@@ -711,7 +718,7 @@
       "requires": "필요: {{requirements}}",
       "setUp": "설정",
       "setupGuide": "설정 가이드",
-      "setupSummary": "활성화는 nanobot 지원만 켭니다. 플랫폼 자격 증명을 추가한 뒤 nanobot을 다시 시작하세요.",
+      "setupSummary": "활성화는 Kohaku 지원만 켭니다. 플랫폼 자격 증명을 추가한 뒤 nanobot을 다시 시작하세요.",
       "configKeys": "설정 키",
       "enable": "채널 활성화",
       "disable": "채널 비활성화",
@@ -1221,8 +1228,10 @@
       "placeholderThread": "메시지를 입력하세요…",
       "placeholderHero": "무슨 생각을 하고 있나요?",
       "placeholderOpening": "새 주제를 여는 중…",
-      "placeholderStreaming": "모델이 응답 중입니다…",
+      "queueGuidance": "대기열에 추가",
+      "queuePersistenceError": "대기 메시지를 안전하게 저장하지 못했습니다. 보내기 전에 다시 시도해 주세요.",
       "inputAria": "메시지 입력",
+      "inputAriaFor": "{{title}}에게 보내는 메시지",
       "sendHint": "Enter로 전송 · Shift+Enter로 줄바꿈",
       "runRuntimeTitle": "실행 중 · {{elapsed}}",
       "goalStateStrip": "목표 · {{label}}",
@@ -1238,12 +1247,19 @@
       "configureModel": "모델 설정",
       "chooseAI": "AI 선택",
       "switchModel": "이 대화에서 사용할 모델 전환",
+      "back": "뒤로",
+      "backToQuickModels": "빠른 모델로 돌아가기",
+      "searchModels": "모델 검색",
+      "noMatchingModels": "일치하는 모델 없음",
+      "moreModels": "모델 더 보기 ({{count}})",
       "manageModels": "모델 관리",
       "context": {
         "tooltip": "컨텍스트 {{percent}}%",
         "detailsLabel": "컨텍스트 사용량 열기",
         "panelTitle": "컨텍스트 사용량",
         "contextTitle": "컨텍스트",
+        "usageUnavailable": "사용량을 사용할 수 없음",
+        "lastKnownRequest": "마지막으로 확인된 요청",
         "recentRounds": "최근 라운드",
         "inputTrend": "입력 토큰",
         "input": "입력 토큰",
@@ -1253,6 +1269,7 @@
       },
       "queued": {
         "label": "대기 중인 안내",
+        "awaitingConfirmation": "확인 대기 중",
         "guide": "안내",
         "delete": "안내 삭제",
         "edit": "안내 수정",
@@ -1290,6 +1307,7 @@
         "insecureContext": "보안을 위해 Chrome 및 기타 브라우저는 원격 HTTP 페이지의 마이크 접근을 차단합니다. 음성 입력을 사용하려면 HTTPS로 이 WebUI를 여세요.",
         "unsupported": "이 브라우저는 음성 입력을 지원하지 않습니다.",
         "permission": "주소 표시줄에서 마이크를 허용한 후 다시 시도하세요.",
+        "nativePermission": "Kohaku의 마이크 접근을 허용한 뒤 다시 시도하세요. 접근이 차단된 경우 시스템 설정을 확인하세요.",
         "notConfigured": "먼저 음성 변환 제공업체를 설정하세요.",
         "tooLong": "녹음 시간이 너무 깁니다.",
         "tooShort": "음성을 녹음하려면 조금 더 길게 눌러 주세요.",
@@ -1317,7 +1335,7 @@
             "description": "이 채팅에서 실행 중인 에이전트 턴을 취소합니다."
           },
           "restart": {
-            "title": "nanobot 재시작",
+            "title": "Kohaku 재시작",
             "description": "bot 프로세스를 제자리에서 재시작합니다."
           },
           "status": {
@@ -1397,14 +1415,14 @@
         "label": "앱",
         "cliGroup": "CLI 앱",
         "mcpGroup": "MCP 서비스",
-        "sessionGroup": "Nanobot 대화",
+        "sessionGroup": "Kohaku 대화",
         "cliBadge": "CLI",
         "mcpBadge": "MCP",
         "cliDescription": "@{{name}}을 로컬 CLI 앱으로 사용",
         "mcpDescription": "@{{name}}을 MCP 서버로 사용",
         "cliTitle": "CLI 앱: {{name}}",
         "mcpTitle": "MCP 서버: {{name}}",
-        "sessionBadge": "Nanobot 대화",
+        "sessionBadge": "Kohaku 대화",
         "sessionDescription": "@{{name}}을 이전 채팅으로 참조"
       },
       "workspace": {
@@ -1422,12 +1440,13 @@
     "forkedFromHistory": "기록에서 분기됨",
     "generatedAssets": {
       "open": "생성된 에셋 열기",
+      "close": "생성된 에셋 닫기",
       "title": "생성된 에셋",
       "refresh": "생성된 에셋 새로고침",
       "view": "에셋 보기",
       "byCall": "도구 호출별",
       "all": "세션 에셋",
-      "total": "이미지: {{count}}",
+      "total": "에셋: {{count}}",
       "candidates": "후보: {{count}}",
       "loading": "생성된 에셋을 불러오는 중…",
       "loadFailed": "생성된 에셋을 불러오지 못했습니다.",
@@ -1450,14 +1469,16 @@
       "search": "프롬프트 검색",
       "noResults": "일치하는 프롬프트가 없습니다.",
       "jumpTo": "프롬프트로 이동: {{label}}",
-      "railAria": "사용자 프롬프트 탐색"
+      "railAria": "사용자 프롬프트 탐색",
+      "sessionRailAria": "Session turn navigation"
     }
   },
   "message": {
     "streaming": "생성 중",
     "delivery": {
       "sending": "전송 중…",
-      "failed": "전송되지 않음"
+      "failed": "전송되지 않음",
+      "awaitingConfirmation": "확인 대기 중"
     },
     "assistantTyping": "도우미가 입력 중",
     "toolSingle": "도구 사용 중",
@@ -1503,7 +1524,9 @@
     "activityThinkingFor": "{{duration}} 동안 생각 중",
     "activityThought": "생각함",
     "activityThoughtFor": "{{duration}} 동안 생각함",
-    "activityWorkingFor": "{{duration}} 동안 작업 중",
+    "activityGroup": "활동",
+    "activityWorking": "작업 중",
+    "activityWorkingFor": "작업 중 · {{duration}}",
     "activityWorked": "작업함",
     "activityWorkedFor": "{{duration}} 동안 작업함",
     "retryConnection": "연결 실패",
@@ -1563,39 +1586,6 @@
     "copy": "복사",
     "copied": "복사됨"
   },
-  "workbench": {
-    "aria": "대화 워크벤치",
-    "panes": "창",
-    "tabAria": "그룹: {{title}}",
-    "panesInTab": "{{title}}의 창",
-    "collapseTabGroup": "{{title}}의 창 접기",
-    "expandTabGroup": "{{title}}의 창 펼치기",
-    "dropPane": "{{pane}}을(를) {{tab}}으로 이동",
-    "createGroup": "그룹 만들기",
-    "moveTo": "이동",
-    "renameGroupTitle": "그룹 이름 바꾸기",
-    "renameGroupDescription": "이 그룹에 이름을 지정하세요.",
-    "renameGroupPlaceholder": "그룹 이름",
-    "dissolveTab": "그룹 해제",
-    "layout": "창 레이아웃",
-    "addPane": "창 추가",
-    "paneLimit": "최대 {{count}}개 창",
-    "deleteConversations": "모두 삭제",
-    "movePane": "{{title}} 창 이동",
-    "movePaneHint": "드래그하여 이동 · 방향키로도 이동 가능",
-    "resizePaneBoundary": "창 경계 {{index}} 크기 조절",
-    "promotePane": "{{title}}을(를) 기본 창으로 설정",
-    "paneActions": "{{title}} 창 작업",
-    "detachPane": "제거",
-    "composerAria": "{{title}}에 메시지 보내기",
-    "layouts": {
-      "columns": "열",
-      "rows": "행",
-      "grid": "그리드",
-      "bsp": "BSP",
-      "main-stack": "기본 창과 스택"
-    }
-  },
   "common": {
     "dismiss": "닫기",
     "close": "닫기",
@@ -1603,6 +1593,10 @@
     "cancel": "취소"
   },
   "errors": {
+    "approvalRejected": {
+      "title": "승인이 만료되었습니다",
+      "body": "게이트웨이 재시작 등의 이유로 이 승인 요청이 더 이상 유효하지 않습니다. 계속하려면 새 메시지를 보내세요."
+    },
     "messageTooBig": {
       "title": "메시지가 너무 큽니다",
       "body": "마지막 메시지가 서버의 크기 제한을 초과하여 거부되었습니다. 이미지를 줄이거나 더 작은 파일로 바꿔서 다시 보내 주세요."
@@ -1614,6 +1608,10 @@
     "turnRejected": {
       "title": "메시지가 전송되지 않았습니다",
       "body": "게이트웨이가 이 메시지를 거부했습니다. 텍스트나 첨부 파일을 확인한 후 다시 시도하세요."
+    },
+    "sessionRecoveryRequired": {
+      "title": "채팅 복구가 필요합니다",
+      "body": "턴이 중단되어 Nanobot이 이 채팅을 일시 중지했습니다. 계속하려면 새 채팅을 시작하세요."
     },
     "modelRequestFailed": {
       "billingTitle": "모델 제공업체 할당량을 사용할 수 없음",
@@ -1629,8 +1627,8 @@
       "body": "제공업체 설정 또는 서비스 상태를 확인한 후 다시 시도하세요."
     },
     "connectionClosed": {
-      "title": "메시지가 전송되지 않았습니다",
-      "body": "게이트웨이가 이 메시지를 수락하기 전에 연결이 종료되었습니다. 이 기기가 계속 연결되어 있는지 확인한 후 다시 전송하세요."
+      "title": "확인 대기 중",
+      "body": "확인을 받기 전에 연결이 끊겼습니다. 서버가 이미 이 메시지를 받았을 수 있습니다. 다시 연결해 상태를 확인하세요. 연결이 끊겼다는 이유만으로 메시지를 다시 보내지 마세요."
     }
   },
   "workspace": {
@@ -1719,7 +1717,12 @@
     },
     "picker": {
       "chooseProject": "프로젝트 폴더 선택",
-      "clearProject": "프로젝트 폴더 선택 해제"
+      "clearProject": "프로젝트 폴더 선택 해제",
+      "nextTurn": "다음 턴: {{folder}}",
+      "nextTurnLabel": "다음 턴",
+      "nextTurnHint": "실행 중인 턴은 현재 폴더를 유지합니다. 이 선택은 다음 턴에 적용됩니다.",
+      "nextTurnPending": "다음 폴더를 저장하는 중…",
+      "nextTurnFailed": "폴더 변경이 저장되지 않았습니다. 이전 선택이 그대로 적용되며 초안은 유지됩니다."
     },
     "folders": {
       "saved": "Folder saved. The map and Sandbox rules are up to date.",

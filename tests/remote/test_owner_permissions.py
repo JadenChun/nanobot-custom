@@ -28,14 +28,21 @@ def _pair_owner(owner: RemoteAccessOwner) -> str:
         full_control_consent=True,
         shared_history_consent=True,
     )
-    owner.pairing.collect(
+    from tests.remote.proof_helpers import approve_and_prove, collect_with_key
+
+    collect_with_key(
+        owner.pairing,
         pairing_id=offer.pairing_id,
         nonce=offer.nonce,
         collector_secret=offer.collector_secret,
         installation_id="install-owner",
         label="phone",
     )
-    owner.pairing.approve(pairing_id=offer.pairing_id, comparison_code=offer.comparison_code)
+    approve_and_prove(
+        owner.pairing,
+        pairing_id=offer.pairing_id,
+        comparison_code=offer.comparison_code,
+    )
     result = owner.pairing.poll(
         pairing_id=offer.pairing_id,
         nonce=offer.nonce,

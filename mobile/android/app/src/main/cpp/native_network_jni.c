@@ -4,6 +4,9 @@
 
 #include "nanobot_network.h"
 
+/* The broker limits raw WebSocket frames to 40 MiB. Allow Base64 and JSON overhead. */
+#define MAX_POLL_EVENT_BYTES (64 * 1024 * 1024)
+
 static jbyteArray copy_bytes(JNIEnv *env, const char *data, int32_t length) {
     if (length <= 0) {
         return NULL;
@@ -143,7 +146,10 @@ Java_ai_nanobot_mobile_network_NativeNetwork_pollEvent(JNIEnv *env, jobject thiz
     int32_t length = nanobot_network_poll_event((int64_t)handle, buffer, capacity);
     if (length == -7) {
         free(buffer);
-        capacity = 12 * 1024 * 1024;
+        capacity = nanobot_network_pending_event_size((int64_t)handle);
+        if (capacity <= 0 || capacity > MAX_POLL_EVENT_BYTES) {
+            return NULL;
+        }
         buffer = malloc(capacity);
         if (buffer == NULL) {
             return NULL;
@@ -168,8 +174,14 @@ Java_ai_nanobot_mobile_network_NativeNetwork_stop(JNIEnv *env, jobject thiz, jlo
 JNIEXPORT jstring JNICALL
 Java_ai_nanobot_mobile_network_NativeNetwork_lastError(JNIEnv *env, jobject thiz) {
     (void)thiz;
-    const char *message = nanobot_network_last_error();
-    return (*env)->NewStringUTF(env, message == NULL ? "" : message);
+    /* Copy under the library lock; never keep a library-owned pointer. */
+    char buffer[2048];
+    int32_t length = nanobot_network_last_error_copy(buffer, (int32_t)sizeof(buffer));
+    if (length < 0) {
+        length = 0;
+    }
+    buffer[length] = '\0';
+    return (*env)->NewStringUTF(env, buffer);
 }
 
 JNIEXPORT jint JNICALL
@@ -252,4 +264,11 @@ Java_ai_nanobot_mobile_network_NativeNetwork_mediaPurge(JNIEnv *env, jobject thi
     (void)env;
     (void)thiz;
     return (jint)nanobot_network_media_purge((int64_t)handle);
+}
+
+JNIEXPORT jint JNICALL
+Java_ai_nanobot_mobile_network_NativeNetwork_networkChanged(JNIEnv *env, jobject thiz, jlong handle) {
+    (void)env;
+    (void)thiz;
+    return (jint)nanobot_network_network_changed((int64_t)handle);
 }

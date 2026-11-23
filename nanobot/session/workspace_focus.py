@@ -27,9 +27,11 @@ from nanobot.security.workspace_access import (
     WORKSPACE_SCOPE_METADATA_KEY,
     WorkspaceScope,
     WorkspaceScopeError,
+    bind_workspace_scope,
     build_workspace_scope,
     current_workspace_focus,
     current_workspace_scope,
+    reset_workspace_scope,
 )
 from nanobot.workspace_access_recovery import (
     WorkspaceSandboxPayload,
@@ -155,14 +157,25 @@ class WorkspaceFocusOwner:
             from nanobot.agent.tools.native_process import native_supervisor_available
 
             commands_available = exists and native_supervisor_available()
+            # Full access does not override configured context-repository
+            # protection: `ResourceAccessPolicy.validate_path` still denies a
+            # protected path even with a live Full reference.  Ask the same
+            # predicate so the projection cannot advertise a read or write the
+            # file tools will refuse.
+            read_allowed = exists and self._reference_path_allowed(
+                target, "read", permission_owner, full_reference,
+            )
+            write_allowed = exists and self._reference_path_allowed(
+                target, "write", permission_owner, full_reference,
+            )
             return {
                 "boundary": "unrestricted",
                 "policy": "managed" if managed_mode else "legacy",
                 "source": "full",
                 "grant_root": None,
                 "exists": exists,
-                "read": exists,
-                "write": exists,
+                "read": read_allowed,
+                "write": write_allowed,
                 "commands": {
                     "requested": True,
                     "available": commands_available,
@@ -177,21 +190,42 @@ class WorkspaceFocusOwner:
             else None
         )
         if task_root is not None:
-            root_path, file_access, _commands = task_root
+            root_path, file_access, task_commands = task_root
             baseline_root = self._baseline_access_root(target, declared_grant)
             if baseline_root is None or len(Path(root_path).parts) >= len(baseline_root.parts):
                 from nanobot.agent.tools.native_process import native_supervisor_available
                 from nanobot.agent.tools.sandbox import managed_bwrap_available
 
+                # A live Once reference is not a capability override.  Configured
+                # context-repository protection and exec policy still decide, so
+                # ask the same predicate the file and shell tools use.
+                read_allowed = exists and self._reference_path_allowed(
+                    target, "read", permission_owner, task_reference,
+                )
+                write_allowed = (
+                    exists
+                    and file_access == "read_write"
+                    and self._reference_path_allowed(
+                        target, "write", permission_owner, task_reference,
+                    )
+                )
+                managed_repository = self._is_managed_repository_target(target)
                 command_ready = (
                     exists
+                    and task_commands
+                    and not managed_repository
                     and managed_bwrap_available()
                     and native_supervisor_available()
+                    and self._reference_path_allowed(
+                        target, "exec", permission_owner, task_reference,
+                    )
                 )
                 command_reason = (
                     None if command_ready else
                     "supervisor_unavailable" if not native_supervisor_available() else
-                    "sandbox_unavailable"
+                    "sandbox_unavailable" if not managed_bwrap_available() else
+                    "managed_repository_policy" if managed_repository else
+                    "not_granted"
                 )
                 return {
                     "boundary": "folder",
@@ -199,8 +233,8 @@ class WorkspaceFocusOwner:
                     "source": "task",
                     "grant_root": root_path,
                     "exists": exists,
-                    "read": exists,
-                    "write": exists and file_access == "read_write",
+                    "read": read_allowed,
+                    "write": write_allowed,
                     "commands": {
                         "requested": True,
                         "available": command_ready,
@@ -353,10 +387,24 @@ class WorkspaceFocusOwner:
     def validate_scope(self, scope: WorkspaceScope) -> None:
         if not self.managed:
             return
+        focus = current_workspace_focus()
+        token = (
+            bind_workspace_scope(
+                focus.scope,
+                permission_owner=focus.permission_owner,
+                task_reference=None,
+                full_reference=focus.full_reference,
+            )
+            if focus is not None and focus.task_reference is not None
+            else None
+        )
         try:
-            self.policy.validate_path(scope.project_path, "read")
+            self.policy.validate_path(scope.project_path, "read", managed=True)
         except PermissionError as exc:
             raise WorkspaceScopeError("folder_access_required", status=403) from exc
+        finally:
+            if token is not None:
+                reset_workspace_scope(token)
 
     async def request_access_from_tool(
         self,
@@ -858,6 +906,35 @@ class WorkspaceFocusOwner:
                 managed=True,
                 allow_folder_grants=True,
                 target_kind="directory",
+            )
+        except PermissionError:
+            return False
+        return True
+
+    def _is_managed_repository_target(self, target: Path) -> bool:
+        """Match the managed shell rule that refuses configured-repository cwd."""
+        return any(
+            _is_under(target, root)
+            for root in self.policy.managed_repository_roots()
+        )
+
+    def _reference_path_allowed(
+        self,
+        target: Path,
+        action: str,
+        permission_owner: DesktopPermissionOwner | None,
+        reference: WorkspacePermissionReference | None,
+    ) -> bool:
+        """Return whether a live Full or Once reference may perform *action*."""
+        try:
+            self.policy.validate_path(
+                target,
+                action,
+                managed=True,
+                allow_folder_grants=True,
+                target_kind="directory",
+                permission_owner=permission_owner,
+                permission_reference=reference,
             )
         except PermissionError:
             return False

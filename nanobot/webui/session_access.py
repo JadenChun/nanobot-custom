@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping, Sequence
 from functools import cache
 from typing import Any, TypedDict, cast
 
@@ -15,7 +15,10 @@ from nanobot.runtime_context import (
 from nanobot.session.history_visibility import is_hidden_history_message
 from nanobot.session.manager import SessionManager
 from nanobot.session.session_handles import SessionHandleResolver
-from nanobot.webui.session_list_index import list_webui_sessions
+from nanobot.webui.session_list_index import (
+    CANONICAL_ROW_SOURCE,
+    list_webui_sessions,
+)
 from nanobot.webui.transcript import (
     build_webui_thread_response,
     normalize_session_mentions_metadata,
@@ -40,6 +43,7 @@ class SessionMessage(TypedDict):
 
 class SessionMatch(TypedDict):
     session_key: str
+    source_kind: str
     title: str
     updated_at: str | None
     messages: list[SessionMessage]
@@ -130,9 +134,27 @@ class WebuiSessionAccess:
                 if isinstance(message, dict)
             ]
 
+        saved_source = self._sessions.read_saved_source_metadata(session_key)
+        source_state = saved_source.state if saved_source is not None else None
+        canonical_events_loader: Callable[[Sequence[str]], Mapping[str, Mapping[str, Any]]] | None = None
+        if source_state is not None:
+            bound_state = source_state
+
+            def _load_canonical_events(
+                event_ids: Sequence[str],
+            ) -> dict[str, dict[str, Any]]:
+                return self._sessions.read_canonical_events_by_ids(
+                    session_key,
+                    list(event_ids),
+                    expected_source=bound_state,
+                )
+
+            canonical_events_loader = _load_canonical_events
         thread = build_webui_thread_response(
             session_key,
             session_messages_loader=load_session_messages,
+            expected_source=source_state,
+            canonical_events_loader=canonical_events_loader,
         )
         if thread is not None:
             return _visible_messages(thread.get("messages"))
@@ -149,8 +171,15 @@ class WebuiSessionAccess:
         rows: list[dict[str, Any]] = []
         for row in list_webui_sessions(self._sessions):
             key = row.get("key")
-            if isinstance(key, str) and key != exclude_session_key:
-                rows.append(row)
+            if not isinstance(key, str) or key == exclude_session_key:
+                continue
+            # Every hit must be readable through ``read``. Transcript-only
+            # display rows have no session metadata, so rejecting rows whose
+            # metadata is absent keeps them out of the hit list instead of
+            # returning a hit that resolves to no content.
+            if self._metadata(key, exclude_session_key=exclude_session_key) is None:
+                continue
+            rows.append(row)
         ranked: list[tuple[int, SessionMatch]] = []
         remaining: list[dict[str, Any]] = []
         for row in rows:
@@ -168,6 +197,7 @@ class WebuiSessionAccess:
             updated = row.get("updated_at")
             ranked.append((rank, {
                 "session_key": cast(str, row["key"]),
+                "source_kind": CANONICAL_ROW_SOURCE,
                 "title": title,
                 "updated_at": updated if isinstance(updated, str) else None,
                 "messages": [],
@@ -189,6 +219,7 @@ class WebuiSessionAccess:
             updated = row.get("updated_at")
             ranked.append((3, {
                 "session_key": key,
+                "source_kind": CANONICAL_ROW_SOURCE,
                 "title": _row_title(row),
                 "updated_at": updated if isinstance(updated, str) else None,
                 "messages": matches[-2:],
@@ -214,6 +245,7 @@ class WebuiSessionAccess:
         updated = payload.get("updated_at")
         return {
             "session_key": session_key,
+            "source_kind": CANONICAL_ROW_SOURCE,
             "title": _text(_session_metadata(payload).get("title")),
             "updated_at": updated if isinstance(updated, str) else None,
             "messages": messages[-limit:],

@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
+import json
 import os
 import subprocess
 import sys
@@ -14,10 +16,18 @@ from typing import TYPE_CHECKING, Any, Literal, cast
 from loguru import logger
 
 from nanobot import __version__
-from nanobot.bus.events import INBOUND_META_USER_SHELL, OutboundMessage
+from nanobot.agent.child_sessions import OriginalChatStopAdmission
+from nanobot.agent.stop_target import StopExpectation, parse_stop_expectation
+from nanobot.bus.events import (
+    INBOUND_META_STOP_CLIENT,
+    INBOUND_META_STOP_EXPECTATION,
+    INBOUND_META_USER_SHELL,
+    InboundMessage,
+    OutboundMessage,
+)
+from nanobot.bus.outbound_events import WebUIAdmissionRejectedEvent
 from nanobot.command.router import CommandContext, CommandRouter, normalize_command_text
 from nanobot.providers.base import LLMUsage
-from nanobot.session.manager import SESSION_MODEL_PRESET_METADATA_KEY
 from nanobot.session.pending_followups import PendingFollowupStopError
 from nanobot.utils.helpers import build_status_content
 from nanobot.utils.restart import set_restart_notice_to_env
@@ -25,7 +35,7 @@ from nanobot.utils.workspace_prompts import initialize_workspace_prompt
 
 if TYPE_CHECKING:
     from nanobot.agent.loop import AgentLoop
-    from nanobot.session.manager import Session
+    from nanobot.session.manager import JsonlSessionStore, Session
     from nanobot.utils.gitstore import CommitInfo
 
 # WebUI protocol contract for how a slash command participates in turn state:
@@ -213,21 +223,241 @@ def builtin_command_starts_agent_turn(text: str) -> bool:
     return spec.lifecycle == "agent_turn_with_args" and bool(args.strip())
 
 
+def _source_media_stop_disposition(loop: AgentLoop, key: str) -> str | None:
+    """Read only the latest canonical Stop result for this chat."""
+    try:
+        backend: JsonlSessionStore | None = loop.sessions.source_backend(key)
+        if backend is None:
+            return None
+        snapshot = backend.source.load_source_snapshot(key)
+        metadata = cast(dict[str, object], snapshot.header["metadata"])
+        execution_lease = metadata.get("execution_lease")
+        recovery_fenced = (
+            "execution_recovery_required" in metadata
+            or (
+                isinstance(execution_lease, dict)
+                and cast(dict[str, object], execution_lease).get("recovery_required") is True
+            )
+        )
+        if recovery_fenced:
+            return "unconfirmed"
+        events = cast(list[dict[str, object]], snapshot.events)
+        latest_run_value = events[-1].get("_run_id") if events else None
+        latest_run = latest_run_value if isinstance(latest_run_value, str) else None
+        if not isinstance(latest_run, str):
+            return None
+        for event in reversed(events):
+            if event.get("_run_id") != latest_run:
+                break
+            if (
+                event.get("role") != "tool"
+                or event.get("name") != "mcp_comfy_generate_video"
+                or event.get("_outcome_status") != "stopped"
+            ):
+                continue
+            content = event.get("content")
+            if not isinstance(content, str):
+                continue
+            payload = json.loads(content)
+            if not isinstance(payload, dict):
+                continue
+            payload_mapping = cast(dict[str, object], payload)
+            media_call_value = payload_mapping.get("media_call")
+            if not isinstance(media_call_value, dict):
+                continue
+            media_call = cast(dict[str, object], media_call_value)
+            call_id = media_call.get("call_id")
+            outcome = media_call.get("outcome")
+            disposition: str | None = (
+                "stopped" if outcome == "stopped"
+                else "completed" if outcome == "completed"
+                else None
+            )
+            result_is_error = media_call.get("result_is_error")
+            if (
+                isinstance(call_id, str)
+                and call_id
+                and media_call.get("stop_status") == "settled"
+                and disposition is not None
+                and type(result_is_error) is bool
+            ):
+                return (
+                    f"{disposition}_error"
+                    if result_is_error
+                    else disposition
+                )
+    except Exception as exc:
+        logger.debug("Stop source result could not be read for {}: {}", key, type(exc).__name__)
+    return None
+
+
 async def cmd_stop(ctx: CommandContext) -> OutboundMessage:
     """Cancel all active tasks and subagents for the session."""
     loop = ctx.loop
     msg = ctx.msg
+    metadata = dict(msg.metadata or {})
+    from nanobot.session.webui_turns import websocket_turn_id
+    from nanobot.webui.metadata import WEBUI_TARGET_TURN_METADATA_KEY
+
+    target_turn_id = metadata.get(WEBUI_TARGET_TURN_METADATA_KEY)
+    protocol_client = metadata.get(INBOUND_META_STOP_CLIENT) is True
+    expectation_present = INBOUND_META_STOP_EXPECTATION in metadata
+    if protocol_client:
+        raw_expectation = metadata.get(INBOUND_META_STOP_EXPECTATION)
+        if expectation_present and type(raw_expectation) is not StopExpectation:
+            return _webui_admission_rejection(
+                msg,
+                metadata,
+                "invalid_stop_expectation",
+            )
+        if not expectation_present:
+            current_turn_id = websocket_turn_id(str(msg.chat_id))
+            # Older clients may still use the guarded turn-targeted root path.
+            # They cannot use omission to stop children or pending-only work.
+            if (
+                not isinstance(target_turn_id, str)
+                or not target_turn_id
+                or current_turn_id != target_turn_id
+            ):
+                return _webui_admission_rejection(msg, metadata, "stale_stop_target")
+        else:
+            current_target_fn = getattr(type(loop), "stop_target_for_key", None)
+            current_target = (
+                current_target_fn(loop, ctx.key)
+                if callable(current_target_fn)
+                else None
+            )
+            try:
+                current_expectation = (
+                    parse_stop_expectation(current_target)
+                    if current_target is not None else None
+                )
+            except (TypeError, ValueError):
+                current_expectation = None
+            if (
+                current_expectation != raw_expectation
+                or (
+                    isinstance(target_turn_id, str)
+                    and target_turn_id
+                    and websocket_turn_id(str(msg.chat_id)) != target_turn_id
+                )
+            ):
+                return _webui_admission_rejection(msg, metadata, "stale_stop_target")
+    if isinstance(target_turn_id, str) and target_turn_id:
+        current_turn_id = websocket_turn_id(str(msg.chat_id))
+        if current_turn_id != target_turn_id:
+            # A repeated or late Stop must not stop a later turn.
+            return OutboundMessage(
+                channel=msg.channel,
+                chat_id=msg.chat_id,
+                content="No active task to stop.",
+                metadata=metadata,
+            )
+
+    capture_stop = getattr(type(loop), "_capture_original_chat_stop", None)
     try:
-        total = await loop._cancel_active_tasks(ctx.key)  # pyright: ignore[reportPrivateUsage]
+        stop_admission = cast(
+            OriginalChatStopAdmission | None,
+            capture_stop(
+                loop,
+                ctx.key,
+                target_turn_id if isinstance(target_turn_id, str) else None,
+                **({"require_root_only": True} if protocol_client and not expectation_present else {}),
+            )
+            if callable(capture_stop)
+            else None
+        )
+    except Exception:
+        logger.exception("Stop request could not capture its source lifetime for {}", ctx.key)
+        if protocol_client:
+            return _webui_admission_rejection(msg, metadata, "stale_stop_target")
+        return OutboundMessage(
+            channel=msg.channel,
+            chat_id=msg.chat_id,
+            content="Could not complete the stop request. Please retry.",
+            metadata=metadata,
+        )
+    if protocol_client and stop_admission is None:
+        return _webui_admission_rejection(msg, metadata, "stale_stop_target")
+    pending_at_admission = getattr(loop, "_pending_queues", {}).get(ctx.key)
+
+    if protocol_client:
+        # The exact expectation and source/queue viability were checked above,
+        # synchronously with Stop admission. Only this admitted input may retire
+        # the captured source's authority and access request.
+        try:
+            loop.retire_workspace_task_after_stop_admission(
+                ctx.key, active_turn=pending_at_admission is not None,
+            )
+            loop.sessions.invalidate_workspace_access_request(ctx.key)
+        except Exception:
+            logger.exception("Admitted Stop could not retire workspace authority for {}", ctx.key)
+            return OutboundMessage(
+                channel=msg.channel, chat_id=msg.chat_id,
+                content="Could not complete the stop request. Please retry.", metadata=metadata,
+            )
+
+    publisher = getattr(loop, "runtime_event_publisher", None)
+
+    async def project(status: str) -> None:
+        if publisher is None:
+            return
+        with suppress(Exception):
+            await publisher.run_status_changed(msg, ctx.key, status)
+
+    await project("stopping")
+    try:
+        if stop_admission is None:
+            total = await loop._cancel_active_tasks(ctx.key)  # pyright: ignore[reportPrivateUsage]
+        else:
+            total = await loop._cancel_active_tasks(  # pyright: ignore[reportPrivateUsage]
+                ctx.key,
+                _stop_admission=stop_admission,
+            )
     except PendingFollowupStopError:
         logger.exception("Stop request failed for session {}", ctx.key)
         return OutboundMessage(
             channel=msg.channel, chat_id=msg.chat_id,
             content="Could not complete the stop request. Please retry.",
-            metadata=dict(msg.metadata or {}),
+            metadata=metadata,
         )
+    if stop_admission is not None:
+        validate_stop = getattr(type(loop), "_validate_original_chat_stop", None)
+        current_queue = getattr(loop, "_pending_queues", {}).get(ctx.key)
+        queue_replaced = current_queue is not None and current_queue is not pending_at_admission
+        stop_is_current = (
+            callable(validate_stop)
+            and validate_stop(loop, ctx.key, stop_admission)
+            and not queue_replaced
+        )
+        if not stop_is_current:
+            return OutboundMessage(
+                channel=msg.channel,
+                chat_id=msg.chat_id,
+                content="No active task to stop.",
+                metadata=metadata,
+            )
+    stop_pending = False
+    if stop_admission is None:
+        await project("interrupted")
+    else:
+        live_owner_check = getattr(type(loop), "_original_chat_stop_has_live_owner", None)
+        stop_pending = bool(
+            callable(live_owner_check)
+            and live_owner_check(loop, ctx.key, stop_admission)
+        )
+        if not stop_pending:
+            await project("interrupted")
     # Also drain pending queue to prevent mid-turn injection deadlock
-    pending = loop._pending_queues.pop(ctx.key, None)  # pyright: ignore[reportPrivateUsage]
+    pending = (
+        loop._pending_queues.pop(ctx.key, None)  # pyright: ignore[reportPrivateUsage]
+        if stop_admission is None
+        else (
+            loop._pending_queues.pop(ctx.key, None)  # pyright: ignore[reportPrivateUsage]
+            if loop._pending_queues.get(ctx.key) is pending_at_admission  # pyright: ignore[reportPrivateUsage]
+            else None
+        )
+    )
     if pending is not None:
         while not pending.empty():
             try:
@@ -235,10 +465,54 @@ async def cmd_stop(ctx: CommandContext) -> OutboundMessage:
                 total += 1
             except Exception:
                 break
-    content = f"Stopped {total} task(s)." if total else "No active task to stop."
+    media_stop_disposition = (
+        _source_media_stop_disposition(loop, ctx.key)
+        if stop_admission is not None
+        and stop_admission.active_root_identity
+        and not stop_pending
+        else None
+    )
+    if stop_admission is not None and stop_pending:
+        content = "Stop is still pending. The active task is settling."
+    elif media_stop_disposition == "stopped":
+        content = "ComfyUI stopped the video after cleanup and GPU restoration."
+    elif media_stop_disposition == "completed":
+        content = "The ComfyUI video completed before Stop took effect. Its output files remain available."
+    elif media_stop_disposition in {"stopped_error", "completed_error"}:
+        content = "The ComfyUI call settled, but its original reply reported an error."
+    elif media_stop_disposition == "unconfirmed":
+        content = "Stop could not confirm cleanup. This chat needs recovery."
+    else:
+        content = f"Stopped {total} task(s)." if total else "No active task to stop."
+    publish_target = getattr(type(loop), "_publish_stop_target_for_key", None)
+    if callable(publish_target):
+        with suppress(Exception):
+            publication = publish_target(loop, ctx.key)
+            if inspect.isawaitable(publication):
+                await publication
     return OutboundMessage(
         channel=msg.channel, chat_id=msg.chat_id, content=content,
-        metadata=dict(msg.metadata or {})
+        metadata=metadata
+    )
+
+
+def _webui_admission_rejection(
+    msg: InboundMessage,
+    metadata: dict[str, Any],
+    reason: str,
+) -> OutboundMessage:
+    """Return a typed refusal for a WebUI command."""
+    turn_id = metadata.get("webui_turn_id")
+    return OutboundMessage(
+        channel=msg.channel,
+        chat_id=msg.chat_id,
+        content="",
+        metadata=metadata,
+        event=WebUIAdmissionRejectedEvent(
+            detail="not_admitted",
+            reason=reason,
+            turn_id=turn_id if isinstance(turn_id, str) and turn_id else None,
+        ),
     )
 
 
@@ -447,14 +721,23 @@ async def cmd_model(ctx: CommandContext) -> OutboundMessage:
             metadata=metadata,
         )
 
+    effort_request = args.startswith("--effort=") and not any(
+        name.casefold() == args.casefold() for name in _model_preset_names(loop)
+    )
     name = args
+    effort = None
+    if effort_request:
+        option, _, name = args.partition(" ")
+        value = option.removeprefix("--effort=")
+        effort = None if value == "default" else value
     try:
-        if ctx.session is not None and not ctx.session.policy.persist:
-            runtime = loop.runtime_resolver.resolve_preset(name)
-            ctx.session.metadata[SESSION_MODEL_PRESET_METADATA_KEY] = runtime.model_preset
-        else:
-            runtime = loop.set_session_model_preset(ctx.key, name)
+        runtime = loop.set_session_model_preset(
+            ctx.key, name, reasoning_effort=effort,
+            temporary_session=ctx.session if ctx.session is not None and not ctx.session.policy.persist else None,
+        )
     except (KeyError, ValueError) as exc:
+        if effort_request and ctx.msg.channel == "websocket" and metadata.get("webui_turn_id"):
+            return _webui_admission_rejection(ctx.msg, metadata, "model_reasoning_effort_unavailable")
         names = _model_preset_names(loop)
         return OutboundMessage(
             channel=ctx.msg.channel,
@@ -473,6 +756,8 @@ async def cmd_model(ctx: CommandContext) -> OutboundMessage:
         f"- Model: `{runtime.model}`",
         f"- Context window: {runtime.context_window_tokens}",
     ]
+    if effort_request:
+        lines.append(f"- Reasoning effort: `{runtime.generation.reasoning_effort or 'default'}`")
     lines.append(f"- Max output tokens: {max_tokens}")
     return OutboundMessage(
         channel=ctx.msg.channel,
@@ -503,55 +788,95 @@ async def cmd_dream(ctx: CommandContext) -> OutboundMessage:
         content = ""
         resp = None
         diff_body = ""
+        operation_id: str | None = None
+        finalization_started = False
+        settled = False
         t0 = time.monotonic()
         try:
+            store.reconcile_dream_operation()
+            cursor_before = store.get_last_dream_cursor()
             result = store.build_dream_prompt()
             if result is None:
-                await loop.bus.publish_outbound(OutboundMessage(
-                    channel=msg.channel, chat_id=msg.chat_id,
-                    content=_format_dream_no_input_message(),
-                    metadata={"render_as": "text"},
-                ))
-                return
-            prompt, last_cursor = result
-            key = dream_session_key()
-            dream_runtime = loop.dream_runtime()
-            resp = await loop.process_direct(
-                prompt,
-                session_key=key,
-                ephemeral=True,
-                tools=store.build_dream_tools(),
-                on_progress=_silent,
-                runtime=dream_runtime,
-            )
-            elapsed = time.monotonic() - t0
-            # The real file delta grounds the audit record; normal completion
-            # decides whether this history batch has finished processing.
-            diff_body = store.dream_content_diff()
-            completed = MemoryStore.dream_run_completed(resp)
-            if completed:
-                store.set_last_dream_cursor(last_cursor)
-                if diff_body:
-                    content = f"Dream completed in {elapsed:.1f}s."
-                else:
-                    content = f"Dream completed in {elapsed:.1f}s; no memory changes."
+                content = _format_dream_no_input_message()
             else:
-                reason = MemoryStore.dream_incompletion_reason(resp)
-                content = (
-                    f"Dream did not complete after {elapsed:.1f}s ({reason}); "
-                    "memory cursor was not advanced."
+                prompt, last_cursor = result
+                operation_id = store.reserve_dream_run(cursor_before, last_cursor)
+                key = dream_session_key()
+                dream_runtime = loop.dream_runtime()
+                resp = await loop.process_direct(
+                    prompt,
+                    session_key=key,
+                    ephemeral=True,
+                    tools=store.build_dream_tools(operation_id=operation_id),
+                    on_progress=_silent,
+                    runtime=dream_runtime,
                 )
-        except Exception as e:
-            elapsed = time.monotonic() - t0
-            content = f"Dream failed after {elapsed:.1f}s: {e}"
-        finally:
-            if store.git.is_initialized():
+                elapsed = time.monotonic() - t0
+                # The real file delta grounds the audit record; normal completion
+                # decides whether this history batch has finished processing.
+                diff_body = store.dream_content_diff()
+                completed = MemoryStore.dream_run_completed(resp)
+                reason = MemoryStore.dream_incompletion_reason(resp)
                 commit_msg = build_dream_commit_message("dream: manual run", diff_body)
-                sha = store.git.auto_commit(commit_msg)
-                if sha:
-                    content += f" (commit {sha})"
-            store.compact_history()
-            prune_dream_sessions(loop.sessions)
+                finalization_started = True
+                sha = store.finish_dream_run(
+                    operation_id,
+                    completed=completed,
+                    commit_message=commit_msg,
+                )
+                settled = True
+                if completed:
+                    if diff_body:
+                        content = f"Dream completed in {elapsed:.1f}s."
+                    else:
+                        content = f"Dream completed in {elapsed:.1f}s; no memory changes."
+                    if sha:
+                        content += f" (commit {sha})"
+                    try:
+                        store.compact_history()
+                        prune_dream_sessions(loop.sessions)
+                    except Exception:
+                        content += " History maintenance could not be completed."
+                else:
+                    content = (
+                        f"Dream did not complete after {elapsed:.1f}s ({reason}); "
+                        "memory cursor was not advanced."
+                    )
+                    if sha:
+                        content += f" (partial changes recorded in commit {sha})"
+        except Exception:
+            elapsed = time.monotonic() - t0
+            if operation_id is not None and not finalization_started:
+                try:
+                    diff_body = store.dream_content_diff()
+                    commit_msg = build_dream_commit_message("dream: manual run", diff_body)
+                    sha = store.finish_dream_run(
+                        operation_id,
+                        completed=False,
+                        commit_message=commit_msg,
+                    )
+                    settled = True
+                    content = (
+                        f"Dream did not complete after {elapsed:.1f}s; "
+                        "the history cursor was kept for review."
+                    )
+                    if sha:
+                        content += f" (partial changes recorded in commit {sha})"
+                except Exception:
+                    content = (
+                        "Dream outcome could not be safely settled. Its workspace remains fenced; "
+                        "use `/dream-restore <sha>` to recover a saved Dream snapshot."
+                    )
+            elif operation_id is not None and not settled:
+                content = (
+                    "Dream outcome could not be safely settled. Its workspace remains fenced; "
+                    "use `/dream-restore <sha>` to recover a saved Dream snapshot."
+                )
+            else:
+                content = (
+                    f"Dream could not start after {elapsed:.1f}s. "
+                    "Memory was not changed; confirm that memory versioning is available."
+                )
         await loop.bus.publish_outbound(OutboundMessage(
             channel=msg.channel, chat_id=msg.chat_id, content=content,
         ))
@@ -570,7 +895,11 @@ async def cmd_dream_prompt(ctx: CommandContext) -> OutboundMessage:
     args = ctx.args.strip().lower()
 
     if args == "init":
-        if not initialize_workspace_prompt(path, store.default_dream_prompt()):
+        if not initialize_workspace_prompt(
+            path,
+            store.default_dream_prompt(),
+            workspace=store.workspace,
+        ):
             content = (
                 f"Dream memory instructions already exist at `{display_path}`.\n\n"
                 "Edit that file, or delete/empty it to return to nanobot's default."
@@ -619,7 +948,11 @@ async def cmd_evaluator_prompt(ctx: CommandContext) -> OutboundMessage:
     args = ctx.args.strip().lower()
 
     if args == "init":
-        if not initialize_workspace_prompt(path, default_evaluator_prompt()):
+        if not initialize_workspace_prompt(
+            path,
+            default_evaluator_prompt(),
+            workspace=workspace,
+        ):
             content = (
                 f"Heartbeat evaluator prompt already exists at `{display_path}`.\n\n"
                 "Edit that file, or delete/empty it to return to nanobot's default."

@@ -316,7 +316,9 @@ def test_foreground_worker_capability_and_context_budget_use_shared_dependencies
     manager = dependencies.foreground_manager
     scopes = manager._normalize_scopes(tmp_path, ["src/"])
     worker_tools = manager._worker_tools("call-1", scopes)
-    assert set(worker_tools.tool_names) == {"read_file", "list_dir", "write_file", "edit_file"}
+    assert set(worker_tools.tool_names) == {
+        "read_file", "list_dir", "write_file", "edit_file", "explore",
+    }
 
     first = TurnContext(
         request=TurnRequest(content="one", session_key="cli:one"),

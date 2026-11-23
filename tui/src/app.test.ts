@@ -30,6 +30,7 @@ import type {
 import type { TuiHost } from "./host"
 import type { ClipboardImageReader } from "./clipboard-image"
 import type { Transcript } from "./transcript"
+import type { DelegatedChildActivity } from "./delegated-children"
 
 const options: AppOptions = {
   wsUrl: "ws://localhost.invalid/ws",
@@ -138,6 +139,45 @@ const mount = (setup: TestRendererSetup, sent: string[] = []) => NanobotTui.moun
   client(sent),
   new MockTreeSitterClient({ autoResolveTimeout: 0 }),
 )
+
+function delegatedChild(overrides: Partial<DelegatedChildActivity> = {}): DelegatedChildActivity {
+  return {
+    parent_session_key: "websocket:chat",
+    child_session_key: "delegated:child-a",
+    child_id: "child-a",
+    profile: "delegated",
+    state: "active",
+    task_label: "Inspect the new route",
+    task_label_truncated: false,
+    result_summary: null,
+    result_summary_truncated: false,
+    outcome: null,
+    runtime_generation: 0,
+    turn_id: null,
+    parent_run_id: "root-run",
+    child_run_id: "child-run-a",
+    parent_store_identity: "store",
+    parent_incarnation: "parent-inc",
+    parent_generation: 1,
+    root_key: "websocket:chat",
+    root_store_identity: "store",
+    root_incarnation: "root-inc",
+    root_generation: 1,
+    child_store_identity: "store",
+    child_incarnation: "child-inc-a",
+    child_generation: 1,
+    run_sequence: 1,
+    state_sequence: 1,
+    control_epoch: 0,
+    holds_capacity: true,
+    can_stop: true,
+    owned_work: true,
+    pending_approval_id: null,
+    blocked_run_id: null,
+    result_disposition: null,
+    ...overrides,
+  }
+}
 
 describe("NanobotTui layout", () => {
   let setup: TestRendererSetup | undefined
@@ -432,20 +472,6 @@ describe("NanobotTui layout", () => {
     expect(imageChunk?.attributes).toBe(TextAttributes.BOLD)
     expect(imageChunk?.fg?.toInts().slice(0, 3)).toEqual([239, 142, 48])
 
-    await setup.mockInput.typeText("这是什么？ ")
-    setup.mockInput.pressKey("v", { ctrl: true })
-    await waitUntil(() => ui.composer.plainText === "这是什么？ [Image #1] ")
-    setup.mockInput.pressTab()
-    expect(ui.status.plainText).toContain("Images cannot be queued")
-    expect(ui.composer.plainText).toBe("这是什么？ [Image #1] ")
-    ui.composer.submit()
-    await waitUntil(() => sent.length === 2)
-    expect(sent[1]).toBe("这是什么？")
-    expect(sentOptions[1]?.media).toHaveLength(1)
-    expect(sentOptions[1]).not.toHaveProperty("displayContent")
-    await setup.flush()
-    expect(setup.captureCharFrame()).toContain("这是什么？ [Image #1]")
-
     setup.renderer.destroy()
     expect(disposed).toBeTrue()
   })
@@ -673,6 +699,8 @@ describe("NanobotTui layout", () => {
       cliApps: [{ name: "github" }],
       mcpPresets: [],
       sessionMentions: [],
+      requestIntent: "steer",
+      targetTurnId: "turn",
     })
 
     ui.composer.setText("after this turn")
@@ -701,6 +729,9 @@ describe("NanobotTui layout", () => {
     app.accept({ event: "turn_end", chat_id: "chat", turn_id: "turn" })
     await waitUntil(() => sent.length === 3)
     expect(sent[2]).toBe("after this turn")
+    // The queued item stays visible until the owner admits the attempt.
+    expect(ui.queuePreview.root.visible).toBeTrue()
+    app.accept({ event: "message_admitted", chat_id: "chat", turn_id: "turn", starts_turn: true })
     expect(ui.queuePreview.root.visible).toBeFalse()
     app.accept({ event: "goal_status", chat_id: "chat", status: "idle", turn_id: "prior" })
     expect((app as unknown as { activeTurn: boolean }).activeTurn).toBeTrue()
@@ -1654,8 +1685,18 @@ describe("NanobotTui layout", () => {
     const original = globalThis.fetch
     let resolveFetch: ((response: Response) => void) | undefined
     globalThis.fetch = ((input: string | URL | Request) => {
-      if (String(input).endsWith("/api/webui/sidebar-state")) {
+      const url = String(input)
+      if (url.endsWith("/api/webui/sidebar-state")) {
         return Promise.resolve(new Response(JSON.stringify({})))
+      }
+      if (url.includes("/delegated-children?")) {
+        return Promise.resolve(new Response(JSON.stringify({
+          schemaVersion: 3,
+          parentSessionKey: "websocket:chat",
+          children: [],
+          page: { before_cursor: null, has_more_before: false, loaded_message_count: 0 },
+          stop_target: null,
+        })))
       }
       return new Promise<Response>((resolve) => {
         resolveFetch = resolve
@@ -1701,8 +1742,18 @@ describe("NanobotTui layout", () => {
     const original = globalThis.fetch
     let resolveFetch: ((response: Response) => void) | undefined
     globalThis.fetch = ((input: string | URL | Request) => {
-      if (String(input).endsWith("/api/webui/sidebar-state")) {
+      const url = String(input)
+      if (url.endsWith("/api/webui/sidebar-state")) {
         return Promise.resolve(new Response(JSON.stringify({})))
+      }
+      if (url.includes("/delegated-children?")) {
+        return Promise.resolve(new Response(JSON.stringify({
+          schemaVersion: 3,
+          parentSessionKey: "websocket:chat",
+          children: [],
+          page: { before_cursor: null, has_more_before: false, loaded_message_count: 0 },
+          stop_target: null,
+        })))
       }
       return new Promise<Response>((resolve) => {
         resolveFetch = resolve
@@ -1794,6 +1845,84 @@ describe("NanobotTui layout", () => {
       setup.mockInput.pressEscape()
       await waitUntil(() => !ui.contextPanel.visible)
       expect(ui.contextPanel.visible).toBe(false)
+    } finally {
+      globalThis.fetch = original
+    }
+  })
+
+  test("drops a /context completion after the chat changes", async () => {
+    setup = await createRenderer({ width: 96, height: 26, screenMode: "alternate-screen" })
+    const original = globalThis.fetch
+    let resolveFirstContext: ((response: Response) => void) | undefined
+    let contextRequests = 0
+    globalThis.fetch = ((input: string | URL | Request) => {
+      const url = String(input)
+      if (url.includes("/context")) {
+        contextRequests += 1
+        if (contextRequests === 1) {
+          return new Promise<Response>((resolve) => {
+            resolveFirstContext = resolve
+          })
+        }
+        return Promise.resolve(Response.json({
+          total_messages: 2,
+          archived_messages: 0,
+          replay_messages: 2,
+          estimated_replay_tokens: 900,
+          estimated_summary_tokens: 99,
+          estimated_session_tokens: 999,
+          archived_summary: "chat B context",
+          archived_summary_at: null,
+        }))
+      }
+      return Promise.resolve(Response.json({ messages: [] }))
+    }) as typeof fetch
+    const transport = client()
+    const app = NanobotTui.mount(
+      setup.renderer,
+      { ...options, apiUrl: "http://nanobot.test", apiToken: "secret" },
+      transport,
+      new MockTreeSitterClient({ autoResolveTimeout: 0 }),
+    )
+    const ui = app as unknown as {
+      composer: TextareaRenderable
+      contextPanel: { visible: boolean }
+      status: { plainText: string }
+      runtimeControls: { contextText: { plainText: string } }
+    }
+
+    try {
+      app.accept({ event: "attached", chat_id: "chat" })
+      await waitUntil(() => (app as unknown as { ready: boolean }).ready)
+      ui.composer.setText("/context")
+      ui.composer.submit()
+      await waitUntil(() => contextRequests === 1)
+
+      transport.activeChatId = "chat-b"
+      app.accept({ event: "attached", chat_id: "chat-b" })
+      await waitUntil(() => (app as unknown as { ready: boolean }).ready)
+      resolveFirstContext!(Response.json({
+        total_messages: 9,
+        archived_messages: 0,
+        replay_messages: 9,
+        estimated_replay_tokens: 5000,
+        estimated_summary_tokens: 0,
+        estimated_session_tokens: 5000,
+        archived_summary: "chat A context",
+        archived_summary_at: null,
+      }))
+      await setup.flush()
+
+      expect(ui.contextPanel.visible).toBe(false)
+      expect(ui.status.plainText).not.toContain("Context snapshot")
+      expect(ui.runtimeControls.contextText.plainText).not.toContain("~5.0k ctx")
+
+      ui.composer.setText("/context")
+      ui.composer.submit()
+      await waitUntil(() => contextRequests === 2)
+      await waitUntil(() => ui.status.plainText.includes("Context snapshot"))
+      expect(ui.contextPanel.visible).toBe(true)
+      expect(ui.runtimeControls.contextText.plainText).toContain("~999 ctx")
     } finally {
       globalThis.fetch = original
     }
@@ -1892,6 +2021,15 @@ describe("NanobotTui layout", () => {
     const requests: string[] = []
     globalThis.fetch = ((input: string | URL | Request) => {
       const url = String(input)
+      if (url.includes("/delegated-children?")) {
+        return Promise.resolve(new Response(JSON.stringify({
+          schemaVersion: 3,
+          parentSessionKey: "websocket:chat",
+          children: [],
+          page: { before_cursor: null, has_more_before: false, loaded_message_count: 0 },
+          stop_target: null,
+        })))
+      }
       requests.push(url)
       const older = url.includes("before=older-page")
       return Promise.resolve(new Response(JSON.stringify({
@@ -3359,6 +3497,45 @@ describe("NanobotTui layout", () => {
     await waitUntil(() => detached)
 
     expect(setup.renderer.isDestroyed).toBe(true)
+  })
+
+  test("projects meaningful child activity and refuses direct child lifecycle controls", async () => {
+    setup = await createTestRenderer({
+      width: 100,
+      height: 20,
+      screenMode: "alternate-screen",
+      consoleMode: "disabled",
+    })
+    const sent: string[] = []
+    const app = NanobotTui.mount(
+      setup.renderer,
+      options,
+      client(sent),
+      new MockTreeSitterClient({ autoResolveTimeout: 0 }),
+    )
+    const ui = app as unknown as { composer: TextareaRenderable }
+
+    app.accept({ event: "attached", chat_id: "chat" })
+    app.accept({
+      event: "delegated_child",
+      chat_id: "chat",
+      ...delegatedChild(),
+    })
+    await setup.renderOnce()
+    const frame = setup.captureCharFrame()
+    expect(frame).toContain("Inspect the new route")
+    expect(frame).toContain("active")
+    expect(frame).toContain("/child open child-a")
+
+    for (const command of [
+      "/child wait child-a",
+      "/child stop child-a",
+      "/child steer child-a focus",
+    ]) {
+      await setup.mockInput.typeText(command)
+      ui.composer.submit()
+    }
+    expect(sent).toEqual([])
   })
 })
 

@@ -487,7 +487,7 @@ describe("SettingsView Apps catalog", () => {
     const callbackInput = await screen.findByRole("textbox", { name: "Full callback URL" });
     expect(screen.getByText(/localhost page will not load/i)).toBeInTheDocument();
     expect(screen.getByRole("status")).toHaveTextContent(
-      "Finish signing in, then paste the callback URL into nanobot.",
+      "Finish signing in, then paste the callback URL into Kohaku.",
     );
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
 

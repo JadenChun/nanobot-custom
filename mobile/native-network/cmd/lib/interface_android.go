@@ -22,6 +22,9 @@ func init() {
 		if ip, ok := outboundIP("udp6", "[2001:4860:4860::8888]:53"); ok {
 			addrs = append(addrs, &net.IPNet{IP: ip.AsSlice(), Mask: net.CIDRMask(128, 128)})
 		}
+		if len(addrs) == 0 {
+			return nil, nil
+		}
 		return []netmon.Interface{{
 			Interface: &net.Interface{
 				MTU:   1500,

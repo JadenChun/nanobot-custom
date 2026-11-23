@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import json
 from pathlib import Path
 
@@ -8,11 +9,18 @@ import pytest
 
 from nanobot.remote.auth import TokenService
 from nanobot.remote.client import OwnerRequestError, RemoteAccessClient
+from nanobot.remote.device_proof import DeviceProofClaims
 from nanobot.remote.http import RemoteHTTPListener
 from nanobot.remote.owner import RemoteAccessOwner
 from nanobot.remote.pairing import PairingService
 from nanobot.remote.staging import TailscaleServeAdapter
 from nanobot.remote.store import RemoteAccessStore
+from tests.remote.proof_helpers import (
+    complete_proof,
+    encode_proof_base64url,
+    new_device_key,
+    sign_claims,
+)
 
 
 def pairing_service(tmp_path: Path) -> tuple[RemoteAccessStore, PairingService]:
@@ -51,6 +59,7 @@ def test_listener_manual_pairing_code_without_nonce(tmp_path) -> None:
             assert wrong.status_code == 403
             assert wrong.json()["error"] == "pairing_code_invalid"
 
+            _key, public_der = new_device_key()
             collected = client.post(
                 "/remote/v1/pair/code",
                 json={
@@ -60,6 +69,7 @@ def test_listener_manual_pairing_code_without_nonce(tmp_path) -> None:
                     "label": "Pixel 10",
                     "platform": "Android 16",
                     "model": "Pixel 10",
+                    "device_public_key": base64.b64encode(public_der).decode("ascii"),
                 },
             )
             assert collected.status_code == 200
@@ -70,6 +80,7 @@ def test_listener_manual_pairing_code_without_nonce(tmp_path) -> None:
                 pairing_id=created.pairing_id,
                 pairing_code=created.pairing_code,
             )
+            complete_proof(pairing, created.pairing_id, _key)
             approved = client.post(
                 "/remote/v1/pair/poll",
                 json={
@@ -99,6 +110,7 @@ def test_listener_pairing_flow_and_bounds(tmp_path) -> None:
                 chat_consent=True,
                 media_consent=False,
             )
+            _key, public_der = new_device_key()
             collect = client.post(
                 "/remote/v1/pair/collect",
                 json={
@@ -107,6 +119,7 @@ def test_listener_pairing_flow_and_bounds(tmp_path) -> None:
                     "collector_secret": created.collector_secret,
                     "installation_id": "install-0001",
                     "label": "phone",
+                    "device_public_key": base64.b64encode(public_der).decode("ascii"),
                 },
             )
             assert collect.status_code == 200
@@ -122,6 +135,7 @@ def test_listener_pairing_flow_and_bounds(tmp_path) -> None:
             assert pending.status_code == 200
             assert pending.json()["installation_id"] == "install-0001"
             pairing.approve(pairing_id=created.pairing_id, comparison_code=created.comparison_code)
+            complete_proof(pairing, created.pairing_id, _key)
             approved = client.post(
                 "/remote/v1/pair/poll",
                 json={
@@ -152,7 +166,7 @@ def test_listener_pairing_flow_and_bounds(tmp_path) -> None:
 
 
 def test_owner_pairing_admin_ipc_is_local_only(tmp_path) -> None:
-    owner = RemoteAccessOwner(tmp_path / "remote-access")
+    owner = RemoteAccessOwner(tmp_path / "remote-access", serve_verifier=lambda _origin: True)
     owner.start()
     token = owner.store.admin_token()
     client = RemoteAccessClient(owner.socket_path, admin_token=token)
@@ -166,6 +180,7 @@ def test_owner_pairing_admin_ipc_is_local_only(tmp_path) -> None:
             chat_consent=True,
         )
         with httpx.Client(base_url=f"http://127.0.0.1:{port}", timeout=3.0) as http:
+            key, public_der = new_device_key()
             collected = http.post(
                 "/remote/v1/pair/collect",
                 json={
@@ -174,6 +189,7 @@ def test_owner_pairing_admin_ipc_is_local_only(tmp_path) -> None:
                     "collector_secret": offer["collector_secret"],
                     "installation_id": "install-0001",
                     "label": "phone",
+                    "device_public_key": base64.b64encode(public_der).decode("ascii"),
                 },
             )
             assert collected.status_code == 200
@@ -182,6 +198,14 @@ def test_owner_pairing_admin_ipc_is_local_only(tmp_path) -> None:
                 comparison_code=offer["comparison_code"],
             )
             assert approved["installation_id"] == "install-0001"
+            payload = owner.pairing.proof_challenge_claims(offer["pairing_id"])
+            assert payload is not None
+            claims = DeviceProofClaims.from_payload(payload)
+            client.prove_pairing(
+                pairing_id=offer["pairing_id"],
+                claims=claims.payload(),
+                signature=encode_proof_base64url(sign_claims(key, claims)),
+            )
             result = http.post(
                 "/remote/v1/pair/poll",
                 json={

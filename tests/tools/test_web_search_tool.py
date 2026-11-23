@@ -30,6 +30,17 @@ def _response(
     return r
 
 
+def _streaming(response: httpx.Response):
+    class _Stream:
+        async def __aenter__(self):
+            return response
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    return _Stream()
+
+
 def test_duckduckgo_search_is_exclusive():
     tool = _tool(provider="duckduckgo")
     assert tool.exclusive is True
@@ -925,11 +936,12 @@ async def test_olostep_package_missing_returns_install_hint(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_tinyfish_search(monkeypatch):
-    async def mock_get(self, url, **kw):
+    def mock_get(self, method, url, **kw):
+        assert method == "GET"
         assert url == "https://api.search.tinyfish.ai"
         assert kw["headers"]["X-API-Key"] == "tinyfish-key"
         assert kw["params"]["query"] == "nanobot"
-        return _response(json={
+        return _streaming(_response(json={
             "query": "nanobot",
             "results": [
                 {
@@ -942,9 +954,9 @@ async def test_tinyfish_search(monkeypatch):
             ],
             "total_results": 1,
             "page": 0,
-        })
+        }))
 
-    monkeypatch.setattr(httpx.AsyncClient, "get", mock_get)
+    monkeypatch.setattr(httpx.AsyncClient, "stream", mock_get)
     tool = _tool(provider="tinyfish", api_key="tinyfish-key")
     assert tool.exclusive is False
     result = await tool.execute(query="nanobot", count=1)
@@ -971,10 +983,10 @@ async def test_tinyfish_without_key_falls_back_to_duckduckgo(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_tinyfish_invalid_key_surfaces_error(monkeypatch):
-    async def mock_get(self, url, **kw):
-        return _response(status=401, json={"error": "unauthorized"})
+    def mock_get(self, method, url, **kw):
+        return _streaming(_response(status=401, json={"error": "unauthorized"}))
 
-    monkeypatch.setattr(httpx.AsyncClient, "get", mock_get)
+    monkeypatch.setattr(httpx.AsyncClient, "stream", mock_get)
     tool = _tool(provider="tinyfish", api_key="bad-key")
     result = await tool.execute(query="nanobot")
     assert is_tool_error_result(result)
@@ -982,13 +994,13 @@ async def test_tinyfish_invalid_key_surfaces_error(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_tinyfish_rate_limit_falls_back(monkeypatch):
-    async def mock_get(self, url, **kw):
-        return _response(status=429, json={"error": "rate limited"})
+    def mock_get(self, method, url, **kw):
+        return _streaming(_response(status=429, json={"error": "rate limited"}))
 
     async def mock_ddg(self, query, n):
         return "ddg fallback"
 
-    monkeypatch.setattr(httpx.AsyncClient, "get", mock_get)
+    monkeypatch.setattr(httpx.AsyncClient, "stream", mock_get)
     monkeypatch.setattr(WebSearchTool, "_search_duckduckgo", mock_ddg)
     tool = _tool(provider="tinyfish", api_key="tinyfish-key")
     assert await tool.execute(query="nanobot") == "ddg fallback"

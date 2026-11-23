@@ -2,10 +2,10 @@
 
 <!-- Meta description: Run nanobot from a browser WebUI with persistent and temporary chats, visible tool activity, workspace controls, Apps, skill discovery, settings, and Automations. -->
 
-The WebUI is nanobot's browser workbench for persistent topics, grouped
-conversation panes, temporary chats, visible agent activity, workspace controls,
-Apps, skill discovery, settings, and Automations in one place. It shares the
-gateway and saved sessions with the native terminal client.
+The WebUI is nanobot's browser workbench for persistent topics, temporary
+chats, visible agent activity, workspace controls, Apps, skill discovery,
+settings, and Automations in one place. It shares the gateway and saved sessions
+with the native terminal client.
 
 For a visual tour, see the [README feature gallery](../README.md#-webui).
 This guide follows the current source tree; some features are newer than the
@@ -83,7 +83,6 @@ This path avoids hand-editing `config.json` for normal setup. Use the reference 
 | Area | Use it for |
 |---|---|
 | Topics | Start persistent topics or temporary chats; switch, search, reorder, fork, or delete persistent topics |
-| Conversation groups | Arrange up to four independent topics in one workbench with resizable panes |
 | Agent activity | See thinking, tool calls, file edits with diffs, command output, and generated artifacts in context |
 | Context usage | Inspect current context size, per-round token and cache usage, and compaction progress |
 | Working in | Focus the current topic on a folder without creating a new topic |
@@ -106,18 +105,6 @@ Drag a topic within its current sidebar group to keep frequently used work in
 your preferred order. Drag a topic from the sidebar into the composer when you
 want to reference it in the next message instead of switching to it.
 
-### Conversation groups and panes
-
-Open a topic's sidebar action menu and choose **Create group** to turn it into
-a conversation group. Use **Add pane** in the workbench header to start another
-topic alongside it. A group holds up to four panes. To bring in an existing
-topic, drag it onto the group or use **Move to** in its action menu.
-
-Use **Pane layout** to choose columns, rows, a grid, BSP, or a main pane with a
-stack. Drag a divider to resize panes. Each pane has its own conversation;
-select one to direct the shared composer to that topic. Group membership and
-layout persist across refreshes. Grouping topics does not merge their histories.
-
 To bring another topic's work into a conversation, select it from the `@` menu
 or drag it from the sidebar into the composer. The agent can read the selected
 session and exchange messages with other saved sessions. See [Composer](#composer)
@@ -135,6 +122,11 @@ shows available unified patches inline, and **Collapsed diff** lets you expand
 them with **View diff**. Large diffs may hide unchanged lines or truncate the
 inline preview. Select the filename in the activity row to open the read-only
 file preview panel.
+
+Select a subagent activity row to see its read-only history. On a wide screen,
+file previews and subagent activity open as tabs in the same side panel. Drag
+the divider to resize the panel. On a phone, subagent activity fills the screen.
+Select the arrow beside the task title to return to the chat.
 
 File previews follow the active topic's effective access. In managed mode, a
 preview is available only when the server grants read access to that folder;

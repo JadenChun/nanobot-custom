@@ -14,12 +14,25 @@ import (
 )
 
 type HTTPRequest struct {
-	Operation  string            `json:"operation"`
-	Method     string            `json:"method"`
-	Path       string            `json:"path"`
+	Operation string `json:"operation"`
+	Method    string `json:"method"`
+	Path      string `json:"path"`
+	// Native is set only by the packaged Android owner, never by the WebView bridge.
+	Native     bool              `json:"native,omitempty"`
 	Headers    map[string]string `json:"headers,omitempty"`
 	BodyBase64 string            `json:"body_base64,omitempty"`
 	TimeoutMS  int               `json:"timeout_ms,omitempty"`
+}
+
+const maxResponseHeaderBytes = 8192
+
+var safeResponseHeaderNames = map[string]bool{
+	"content-type":   true,
+	"content-length": true,
+	"content-range":  true,
+	"accept-ranges":  true,
+	"etag":           true,
+	"cache-control":  true,
 }
 
 func (c *Core) HTTP(input HTTPRequest) (uint64, error) {
@@ -36,7 +49,7 @@ func (c *Core) HTTP(input HTTPRequest) (uint64, error) {
 		baseContext = context.Background()
 	}
 
-	target, route, err := resolveRoute(&c.cfg, c.origin, input.Operation, input.Method, input.Path)
+	target, route, err := resolveRoute(&c.cfg, c.origin, input.Operation, input.Method, input.Path, input.Native)
 	if err != nil {
 		return 0, err
 	}
@@ -68,6 +81,11 @@ func (c *Core) HTTP(input HTTPRequest) (uint64, error) {
 	ctx, cancel := context.WithTimeout(baseContext, timeout)
 	id := c.nextID()
 	c.mu.Lock()
+	if len(c.requests) >= c.cfg.MaxRequests || !c.hasTerminalCapacityLocked() {
+		c.mu.Unlock()
+		cancel()
+		return 0, ErrQueueFull
+	}
 	c.requests[id] = cancel
 	c.mu.Unlock()
 	go c.doHTTP(ctx, id, target, route, headers, body)
@@ -105,6 +123,14 @@ func (c *Core) doHTTP(
 		request.Header = headers.Clone()
 
 		response, err := client.Do(request)
+		if err != nil && method == http.MethodGet && ctx.Err() == nil && isStaleConnError(err) {
+			client.CloseIdleConnections()
+			retryReq, reqErr := http.NewRequestWithContext(ctx, method, current.String(), nil)
+			if reqErr == nil {
+				retryReq.Header = headers.Clone()
+				response, err = client.Do(retryReq)
+			}
+		}
 		if err != nil {
 			c.emitHTTPError(id, classifyHTTPError(err), err.Error(), 0)
 			return
@@ -138,14 +164,16 @@ func (c *Core) doHTTP(
 			c.emitHTTPError(id, "too_large", "response body exceeds the configured limit", response.StatusCode)
 			return
 		}
-		c.emit(map[string]any{
+		if err := c.emit(map[string]any{
 			"type":        "http_response",
 			"request_id":  id,
 			"status":      response.StatusCode,
 			"headers":     safeResponseHeaders(response.Header),
 			"body_base64": base64.StdEncoding.EncodeToString(responseBody),
 			"bytes":       len(responseBody),
-		})
+		}); err != nil {
+			c.emitHTTPError(id, "unavailable", "response could not be queued", response.StatusCode)
+		}
 		return
 	}
 	c.emitHTTPError(id, "redirect_denied", "redirect limit exceeded", 0)
@@ -153,11 +181,28 @@ func (c *Core) doHTTP(
 
 func (c *Core) removeRequest(id uint64) {
 	c.mu.Lock()
+	cancel, ok := c.requests[id]
 	delete(c.requests, id)
 	c.mu.Unlock()
+	if ok && cancel != nil {
+		cancel()
+	}
+}
+
+func isStaleConnError(err error) bool {
+	if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
+		return true
+	}
+	lower := strings.ToLower(err.Error())
+	return strings.Contains(lower, "connection reset") ||
+		strings.Contains(lower, "broken pipe") ||
+		strings.Contains(lower, "use of closed network connection")
 }
 
 func (c *Core) emitHTTPError(id uint64, code, message string, status int) {
+	if len(message) > maxResponseHeaderBytes {
+		message = message[:maxResponseHeaderBytes]
+	}
 	_ = c.emit(map[string]any{
 		"type":       "http_error",
 		"request_id": id,
@@ -191,23 +236,15 @@ func isRedirect(status int) bool {
 }
 
 func safeResponseHeaders(headers http.Header) map[string]string {
-	allowed := map[string]bool{
-		"content-type":   true,
-		"content-length": true,
-		"content-range":  true,
-		"accept-ranges":  true,
-		"etag":           true,
-		"cache-control":  true,
-	}
 	out := make(map[string]string)
 	for key, values := range headers {
 		lower := strings.ToLower(key)
-		if !allowed[lower] || len(values) == 0 {
+		if !safeResponseHeaderNames[lower] || len(values) == 0 {
 			continue
 		}
 		value := values[0]
-		if len(value) > 8192 {
-			value = value[:8192]
+		if len(value) > maxResponseHeaderBytes {
+			value = value[:maxResponseHeaderBytes]
 		}
 		out[lower] = value
 	}

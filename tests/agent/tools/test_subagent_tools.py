@@ -657,13 +657,20 @@ async def test_terminal_drain_timeout(tmp_path, admitted_async):
 
     loop.runner.run = AsyncMock(side_effect=fake_runner_run)
 
-    # Register a "running" sub-agent that will never complete
+    # Register a "running" sub-agent that will never complete. The normal
+    # loop owns a retired authority; this test exercises the retained legacy
+    # terminal-drain adapter with an explicit compatibility surface.
     async def _hang_forever():
         await asyncio.Event().wait()
 
     hang_task = asyncio.create_task(_hang_forever())
-    loop.subagents._session_tasks.setdefault(session.key, set()).add("sub-timeout-1")
-    loop.subagents._running_tasks["sub-timeout-1"] = hang_task
+    authority = SimpleNamespace(
+        _session_tasks={session.key: {"sub-timeout-1"}},
+        _running_tasks={"sub-timeout-1": hang_task},
+        get_running_count_by_session=lambda key: 1,
+        close=AsyncMock(),
+    )
+    loop.subagents = authority  # type: ignore[assignment]
 
     runtime = loop.llm_runtime()
     await loop._run_agent_loop(
@@ -730,8 +737,13 @@ async def test_terminal_drain_reuses_one_timeout_budget(tmp_path, admitted_async
         await asyncio.Event().wait()
 
     hang_task = asyncio.create_task(_hang_forever())
-    loop.subagents._session_tasks.setdefault(session.key, set()).add("sub-deadline-1")
-    loop.subagents._running_tasks["sub-deadline-1"] = hang_task
+    authority = SimpleNamespace(
+        _session_tasks={session.key: {"sub-deadline-1"}},
+        _running_tasks={"sub-deadline-1": hang_task},
+        get_running_count_by_session=lambda key: 1,
+        close=AsyncMock(),
+    )
+    loop.subagents = authority  # type: ignore[assignment]
 
     await loop._run_agent_loop(
         TranscriptInput(history=[{"role": "user", "content": "test"}], current_message=None),

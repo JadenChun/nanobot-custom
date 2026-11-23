@@ -44,13 +44,23 @@ type Core struct {
 	pending []byte
 	eventMu sync.Mutex
 
+	terminalMu         sync.Mutex
+	terminalEvents     map[terminalKey][]byte
+	terminalOrder      []terminalKey
+	terminalBytes      int
+	terminalByteLimit  int
+	maxTerminalResults int
+
 	peerMu  sync.Mutex
 	peerIPs map[string]string
 	peerAt  time.Time
 
-	mediaToken   string
-	mediaStreams map[uint64]*mediaStream
-	nextMediaID  uint64
+	mediaToken        string
+	mediaStreams      map[uint64]*mediaStream
+	nextMediaID       uint64
+	mediaCacheMu      sync.Mutex
+	mediaCacheBudget  int64
+	mediaCacheReserve int64
 }
 
 func NewCore(cfg Config) (*Core, error) {
@@ -61,13 +71,34 @@ func NewCore(cfg Config) (*Core, error) {
 	if err != nil {
 		return nil, fmt.Errorf("%w: origin cannot be parsed", ErrInvalid)
 	}
+	// A terminal event carries base64-encoded response bytes plus JSON
+	// overhead. Reserve one terminal slot for each of several maximum
+	// responses; admission refuses when all reserved slots are in use.
+	// JSON can encode each header byte as a six-byte escape.
+	headerBudget := len(safeResponseHeaderNames) * maxResponseHeaderBytes * 6
+	perResponse := base64.StdEncoding.EncodedLen(cfg.MaxResponseBytes) + headerBudget + 4096
+	terminalLimit := perResponse * 4
+	if terminalLimit < 16<<20 {
+		terminalLimit = 16 << 20
+	}
+	if terminalLimit > 64<<20 {
+		terminalLimit = 64 << 20
+	}
+	maxTerminalResults := terminalLimit / perResponse
+	if maxTerminalResults > cfg.MaxRequests {
+		maxTerminalResults = cfg.MaxRequests
+	}
 	return &Core{
-		cfg:          cfg,
-		origin:       origin,
-		state:        "new",
-		requests:     make(map[uint64]context.CancelFunc),
-		events:       make(chan []byte, cfg.QueueSize),
-		mediaStreams: make(map[uint64]*mediaStream),
+		cfg:                cfg,
+		origin:             origin,
+		state:              "new",
+		requests:           make(map[uint64]context.CancelFunc),
+		events:             make(chan []byte, cfg.QueueSize),
+		mediaStreams:       make(map[uint64]*mediaStream),
+		mediaCacheBudget:   mediaCacheBudget,
+		terminalEvents:     make(map[terminalKey][]byte),
+		terminalByteLimit:  terminalLimit,
+		maxTerminalResults: maxTerminalResults,
 	}, nil
 }
 
@@ -253,19 +284,50 @@ func (c *Core) Stop() error {
 		requestCancel()
 	}
 	c.requests = make(map[uint64]context.CancelFunc)
+	streams := make([]*mediaStream, 0, len(c.mediaStreams))
+	for _, stream := range c.mediaStreams {
+		streams = append(streams, stream)
+	}
+	c.mediaStreams = make(map[uint64]*mediaStream)
 	c.mu.Unlock()
 
+	for _, stream := range streams {
+		_ = stream.body.Close()
+		if stream.closer != nil {
+			stream.closer()
+		}
+		if stream.cancel != nil {
+			stream.cancel()
+		}
+	}
 	if ws != nil {
 		ws.close(1000, "transport stopped")
+	}
+	// Cancel c.ctx before node.Close() so runNode sees deliberate shutdown
+	// instead of emitting a spurious node_state: "error".
+	if cancel != nil {
+		cancel()
 	}
 	if node != nil {
 		_ = node.Close()
 	}
-	if cancel != nil {
-		cancel()
-	}
 	c.setState("stopped", "")
 	return nil
+}
+
+// NetworkChanged flushes stale pooled connections and invalidates the cached
+// tailnet peer map after an OS network handoff or foreground resume.
+func (c *Core) NetworkChanged() {
+	c.peerMu.Lock()
+	c.peerAt = time.Time{}
+	c.peerMu.Unlock()
+
+	c.mu.Lock()
+	client := c.httpClient
+	c.mu.Unlock()
+	if client != nil {
+		client.CloseIdleConnections()
+	}
 }
 
 func (c *Core) Cancel(requestID uint64) error {
@@ -296,22 +358,31 @@ func (c *Core) nextID() uint64 {
 // keeps the original host name for TLS SNI and certificate verification.
 func (c *Core) tailnetDial(node *tsnet.Server) DialFunc {
 	return func(ctx context.Context, network, address string) (net.Conn, error) {
+		dialCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+		defer cancel()
 		host, port, err := net.SplitHostPort(address)
 		if err == nil && net.ParseIP(host) == nil {
-			if ip, ok := c.peerIP(ctx, node, host); ok {
+			if ip, ok := c.peerIP(dialCtx, node, host); ok {
 				address = net.JoinHostPort(ip, port)
 			}
 		}
-		return node.Dial(ctx, network, address)
+		return node.Dial(dialCtx, network, address)
 	}
 }
 
-const peerCacheTTL = 30 * time.Second
+const (
+	peerCacheTTL      = 30 * time.Second
+	peerMissRetryWait = 2 * time.Second
+)
 
-// waitForPeers waits briefly until the netmap lists other nodes, because the
-// peer addresses can arrive after the node reports itself running and the
-// first request would otherwise fail name resolution.
+// waitForPeers waits briefly until the netmap lists the target host (or any
+// peers if no named target is configured), because peer addresses can arrive
+// after the node reports itself running.
 func (c *Core) waitForPeers(node *tsnet.Server) {
+	targetHost := strings.ToLower(strings.TrimSuffix(c.origin.Hostname(), "."))
+	if targetHost == "" || net.ParseIP(targetHost) != nil {
+		return
+	}
 	deadline := time.Now().Add(10 * time.Second)
 	for {
 		client, err := node.LocalClient()
@@ -319,7 +390,9 @@ func (c *Core) waitForPeers(node *tsnet.Server) {
 			if status, statusErr := client.Status(c.ctx); statusErr == nil {
 				if peers := peerAddresses(status); len(peers) > 0 {
 					c.storePeers(peers)
-					return
+					if _, found := peers[targetHost]; found {
+						return
+					}
 				}
 			}
 		}
@@ -335,15 +408,21 @@ func (c *Core) waitForPeers(node *tsnet.Server) {
 }
 
 // peerIP maps a tailnet host name to the node's Tailscale address. Results are
-// cached briefly so a stalled lookup does not hammer the local client.
+// cached briefly so a stalled lookup does not hammer the local client, while
+// misses retry quickly (peerMissRetryWait) so newly online peers recover fast.
 func (c *Core) peerIP(ctx context.Context, node *tsnet.Server, host string) (string, bool) {
 	name := strings.ToLower(strings.TrimSuffix(host, "."))
 	c.peerMu.Lock()
-	peers, cached := c.peerIPs, time.Since(c.peerAt) < peerCacheTTL
+	peers := c.peerIPs
+	age := time.Since(c.peerAt)
 	c.peerMu.Unlock()
-	if cached {
-		ip, ok := peers[name]
-		return ip, ok
+	if age < peerCacheTTL {
+		if ip, ok := peers[name]; ok {
+			return ip, true
+		}
+		if age < peerMissRetryWait {
+			return "", false
+		}
 	}
 	client, err := node.LocalClient()
 	if err != nil {
@@ -402,6 +481,7 @@ func newHTTPClient(dial DialFunc) *http.Client {
 		DialContext:           dial,
 		ForceAttemptHTTP2:     true,
 		MaxIdleConns:          8,
+		MaxIdleConnsPerHost:   8,
 		IdleConnTimeout:       30 * time.Second,
 		TLSHandshakeTimeout:   10 * time.Second,
 		ResponseHeaderTimeout: 20 * time.Second,

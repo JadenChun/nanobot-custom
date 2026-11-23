@@ -1,5 +1,5 @@
 use std::{
-    env, fs,
+    fs,
     io::{Read, Write},
     os::fd::AsRawFd,
     os::unix::{
@@ -15,15 +15,20 @@ use std::{
     time::Duration,
 };
 
+#[cfg(any(target_os = "linux", test))]
+use std::env;
+#[cfg(target_os = "linux")]
 use gio::{glib::translate::IntoGlib, prelude::*};
 use tauri::{
     menu::{Menu, MenuItem, PredefinedMenuItem},
     tray::TrayIconBuilder,
     webview::{NewWindowResponse, WebviewWindow},
-    AppHandle, LogicalSize, Manager, Wry,
+    AppHandle, Manager, Wry,
 };
+#[cfg(target_os = "linux")]
 use tauri_plugin_opener::OpenerExt;
 use url::Url;
+#[cfg(target_os = "linux")]
 use webkit2gtk::{
     NavigationPolicyDecisionExt, PolicyDecisionExt, PolicyDecisionType, URIRequestExt,
     WebViewExt,
@@ -38,7 +43,7 @@ pub struct HostGuard {
     _lock: fs::File,
     pub runtime_dir: PathBuf,
     socket_path: PathBuf,
-    pub bus_verified: bool,
+    pub instance_verified: bool,
 }
 
 impl Drop for HostGuard {
@@ -52,7 +57,7 @@ pub enum HostStart {
     Secondary,
 }
 
-pub fn acquire_host_guard(app: &AppHandle<Wry>) -> Result<HostStart, String> {
+pub fn acquire_host_guard(_app: &AppHandle<Wry>) -> Result<HostStart, String> {
     let runtime_dir = runtime_directory()?;
     let lock_path = runtime_dir.join("host.lock");
     let file = fs::OpenOptions::new()
@@ -87,12 +92,17 @@ pub fn acquire_host_guard(app: &AppHandle<Wry>) -> Result<HostStart, String> {
         return Err("host_lock_unavailable".to_owned());
     }
     let _ = fs::remove_file(&socket_path);
-    let bus_verified = owns_instance_name(app);
+    #[cfg(target_os = "linux")]
+    let instance_verified = owns_instance_name(_app);
+    // On macOS Launch Services reopens the running bundle. The per-user
+    // kernel lock also excludes additional hosts launched as executables.
+    #[cfg(target_os = "macos")]
+    let instance_verified = true;
     Ok(HostStart::Primary(HostGuard {
         _lock: file,
         runtime_dir,
         socket_path,
-        bus_verified,
+        instance_verified,
     }))
 }
 
@@ -119,10 +129,15 @@ pub fn initialize_primary(app: &AppHandle<Wry>, guard: &HostGuard, shared: Arc<S
             }
         });
     }
-    if guard.bus_verified {
+    if guard.instance_verified {
         if install_tray(app, shared.clone()).is_ok() {
-            shared.set_tray_available(tray_host_available());
-            start_tray_host_monitor(shared);
+            #[cfg(target_os = "linux")]
+            {
+                shared.set_tray_available(tray_host_available());
+                start_tray_host_monitor(shared);
+            }
+            #[cfg(target_os = "macos")]
+            shared.set_tray_available(true);
         } else {
             shared.set_tray_available(false);
         }
@@ -132,9 +147,12 @@ pub fn initialize_primary(app: &AppHandle<Wry>, guard: &HostGuard, shared: Arc<S
 }
 
 fn runtime_directory() -> Result<PathBuf, String> {
+    #[cfg(target_os = "linux")]
     let path = PathBuf::from(
         env::var_os("XDG_RUNTIME_DIR").ok_or_else(|| "host_lock_unavailable".to_owned())?,
     );
+    #[cfg(target_os = "macos")]
+    let path = macos_runtime_base()?;
     if !path.is_absolute() {
         return Err("host_lock_unavailable".to_owned());
     }
@@ -164,6 +182,25 @@ fn runtime_directory() -> Result<PathBuf, String> {
     Ok(app_dir)
 }
 
+#[cfg(target_os = "macos")]
+fn macos_runtime_base() -> Result<PathBuf, String> {
+    use std::{ffi::OsStr, os::unix::ffi::OsStrExt};
+
+    // Query Darwin directly: a shell may set TMPDIR differently from Finder.
+    let mut path = [0u8; 1024];
+    let len = unsafe {
+        libc::confstr(
+            libc::_CS_DARWIN_USER_TEMP_DIR,
+            path.as_mut_ptr().cast(),
+            path.len(),
+        )
+    };
+    if len <= 1 || len > path.len() {
+        return Err("host_lock_unavailable".to_owned());
+    }
+    Ok(PathBuf::from(OsStr::from_bytes(&path[..len - 1])))
+}
+
 fn activate_existing_host(path: &PathBuf) -> bool {
     let Ok(mut stream) = UnixStream::connect(path) else {
         return false;
@@ -171,6 +208,7 @@ fn activate_existing_host(path: &PathBuf) -> bool {
     stream.write_all(b"activate\n").is_ok()
 }
 
+#[cfg(target_os = "linux")]
 fn owns_instance_name(app: &AppHandle<Wry>) -> bool {
     let name = format!("{}.SingleInstance", app.config().identifier);
     let Ok(bus) = gio::bus_get_sync(gio::BusType::Session, None::<&gio::Cancellable>) else {
@@ -210,6 +248,7 @@ fn owns_instance_name(app: &AppHandle<Wry>) -> bool {
         .is_some_and(|(pid,)| pid == std::process::id())
 }
 
+#[cfg(target_os = "linux")]
 fn tray_host_available() -> bool {
     let Ok(bus) = gio::bus_get_sync(gio::BusType::Session, None::<&gio::Cancellable>) else {
         return false;
@@ -244,7 +283,7 @@ fn install_tray(app: &AppHandle<Wry>, shared: Arc<Shared>) -> Result<(), tauri::
     let open = MenuItem::with_id(app, "open", "Open Chat", true, None::<&str>)?;
     let retry = MenuItem::with_id(app, "retry", "Retry", true, None::<&str>)?;
     let separator = PredefinedMenuItem::separator(app)?;
-    let quit = MenuItem::with_id(app, "quit", "Quit Nanobot", true, None::<&str>)?;
+    let quit = MenuItem::with_id(app, "quit", "Quit Kohaku", true, None::<&str>)?;
     let menu = Menu::with_items(app, &[&status, &open, &retry, &separator, &quit])?;
     shared.set_tray_status_item(status);
     let shared_for_menu = shared.clone();
@@ -262,6 +301,7 @@ fn install_tray(app: &AppHandle<Wry>, shared: Arc<Shared>) -> Result<(), tauri::
     Ok(())
 }
 
+#[cfg(target_os = "linux")]
 fn start_tray_host_monitor(shared: Arc<Shared>) {
     thread::spawn(move || loop {
         thread::sleep(Duration::from_millis(500));
@@ -323,9 +363,10 @@ pub fn show_setup(app: &AppHandle<Wry>, shared: &Shared) {
                     .ok()
                     .is_some_and(|current| current == setup_url);
                 if !on_setup {
+                    #[cfg(target_os = "macos")]
+                    clear_gateway_origin(app);
                     let _ = window.navigate(setup_url);
-                    let _ = window.set_size(LogicalSize::new(650.0, 720.0));
-                    let _ = window.set_title("Nanobot Desktop");
+                    let _ = window.set_title("Kohaku");
                 }
             }
         }
@@ -335,12 +376,12 @@ pub fn show_setup(app: &AppHandle<Wry>, shared: &Shared) {
 
 /// Return the single window to the setup UI after a selection change.
 pub fn return_to_setup(app: &AppHandle<Wry>, shared: &Shared) {
+    clear_gateway_origin(app);
     if let Some(window) = app.get_webview_window("chat") {
         if let Some(setup_url) = shared.setup_url() {
             let _ = window.navigate(setup_url);
         }
-        let _ = window.set_size(LogicalSize::new(650.0, 720.0));
-        let _ = window.set_title("Nanobot Desktop");
+        let _ = window.set_title("Kohaku");
         reveal_window(shared, &window);
     }
 }
@@ -418,39 +459,29 @@ fn notify_before_window_action(
     let callback_window = window.clone();
     let timeout_window = window.clone();
     let (sender, receiver) = mpsc::sync_channel(1);
-    if window
-        .with_webview(move |platform| {
-            platform.inner().evaluate_javascript(
-                HIDE_SCRIPT,
-                None,
-                None,
-                None::<&gio::Cancellable>,
-                move |result| {
-                    let action_window = callback_window.clone();
-                    let restore_window = callback_window.clone();
-                    let confirmed = finish_hide_callback(
-                        &callback_disposition,
-                        result.is_ok(),
-                        move || {
-                            if destroy {
-                                let _ = action_window.destroy();
-                            } else if tray_available {
-                                let _ = action_window.hide();
-                            } else {
-                                let _ = action_window.minimize();
-                            }
-                        },
-                        move || {
-                            let _ = restore_window.unminimize();
-                            let _ = restore_window.show();
-                        },
-                    );
-                    let _ = sender.send(confirmed);
-                },
-            );
-        })
-        .is_err()
-    {
+    let evaluate = evaluate_hide_script(window, move |succeeded| {
+        let action_window = callback_window.clone();
+        let restore_window = callback_window.clone();
+        let confirmed = finish_hide_callback(
+            &callback_disposition,
+            succeeded,
+            move || {
+                if destroy {
+                    let _ = action_window.destroy();
+                } else if tray_available {
+                    let _ = action_window.hide();
+                } else {
+                    let _ = action_window.minimize();
+                }
+            },
+            move || {
+                let _ = restore_window.unminimize();
+                let _ = restore_window.show();
+            },
+        );
+        let _ = sender.send(confirmed);
+    });
+    if evaluate.is_err() {
         let _ = disposition.compare_exchange(0, 2, Ordering::AcqRel, Ordering::Acquire);
         let _ = timeout_window.unminimize();
         let _ = timeout_window.show();
@@ -480,6 +511,33 @@ fn notify_before_window_action(
     }
 }
 
+#[cfg(target_os = "linux")]
+fn evaluate_hide_script(
+    window: &WebviewWindow<Wry>,
+    finished: impl Fn(bool) + Send + 'static,
+) -> tauri::Result<()> {
+    window.with_webview(move |platform| {
+        platform.inner().evaluate_javascript(
+            HIDE_SCRIPT,
+            None,
+            None,
+            None::<&gio::Cancellable>,
+            move |result| finished(result.is_ok()),
+        );
+    })
+}
+
+#[cfg(target_os = "macos")]
+fn evaluate_hide_script(
+    window: &WebviewWindow<Wry>,
+    finished: impl Fn(bool) + Send + 'static,
+) -> tauri::Result<()> {
+    // Wry supplies a JSON result, or an empty string on evaluation failure.
+    window.eval_with_callback(format!("{HIDE_SCRIPT} true;"), move |value| {
+        finished(value == "true");
+    })
+}
+
 fn finish_hide_callback(
     disposition: &AtomicU8,
     callback_succeeded: bool,
@@ -500,6 +558,7 @@ fn finish_hide_callback(
     }
 }
 
+#[cfg(target_os = "linux")]
 pub fn install_navigation_policy(
     window: &WebviewWindow<Wry>,
     origin: Url,
@@ -641,12 +700,14 @@ fn has_credentials(url: &Url) -> bool {
     !url.username().is_empty() || url.password().is_some()
 }
 
+#[cfg(target_os = "linux")]
 fn is_safe_external(url: &Url) -> bool {
     matches!(url.scheme(), "http" | "https")
         && url.host_str().is_some()
         && !has_credentials(url)
 }
 
+#[cfg(target_os = "linux")]
 fn open_external_url(app: &AppHandle<Wry>, url: Url) {
     let app = app.clone();
     let href = url.to_string();
@@ -660,8 +721,11 @@ pub fn app_icon() -> tauri::image::Image<'static> {
 }
 
 pub fn set_window_icon(window: &WebviewWindow<Wry>) -> tauri::Result<()> {
+    #[cfg(target_os = "linux")]
     // Use the packaged theme icon so GTK publishes the icon to the window manager.
     window.gtk_window()?.set_property("icon-name", "nanobot-desktop");
+    #[cfg(target_os = "macos")]
+    let _ = window; // The bundle supplies the Dock and app icon.
     Ok(())
 }
 
@@ -669,10 +733,125 @@ pub fn new_window_response() -> NewWindowResponse<Wry> {
     NewWindowResponse::Deny
 }
 
+type GatewayNavigation = Arc<std::sync::RwLock<Option<Url>>>;
+
+pub fn initialize_gateway_navigation(app: &AppHandle<Wry>) {
+    app.manage(GatewayNavigation::default());
+}
+
+pub fn is_gateway_page(app: &AppHandle<Wry>, target: &Url) -> bool {
+    app.try_state::<GatewayNavigation>().is_some_and(|selected| {
+        selected
+            .read()
+            .ok()
+            .as_deref()
+            .and_then(Option::as_ref)
+            .is_some_and(|origin| navigation_allowed(target, origin, None))
+    })
+}
+
+#[cfg(target_os = "macos")]
+pub fn macos_menu(app: &AppHandle<Wry>) -> tauri::Result<Menu<Wry>> {
+    use tauri::menu::SubmenuBuilder;
+
+    // AppKit's built-in Quit exits immediately. Route the application menu
+    // and Cmd+Q through the controller, like the menu bar icon's Quit.
+    let quit = MenuItem::with_id(app, "managed-quit", "Quit Kohaku", true, Some("Cmd+Q"))?;
+    let application = SubmenuBuilder::new(app, "Kohaku")
+        .about(None)
+        .separator()
+        .hide()
+        .hide_others()
+        .show_all()
+        .separator()
+        .item(&quit)
+        .build()?;
+    let edit = SubmenuBuilder::new(app, "Edit")
+        .undo()
+        .redo()
+        .separator()
+        .cut()
+        .copy()
+        .paste()
+        .select_all()
+        .build()?;
+    let window = SubmenuBuilder::new(app, "Window")
+        .minimize()
+        .maximize()
+        .close_window()
+        .build()?;
+    Menu::with_items(app, &[&application, &edit, &window])
+}
+
+#[cfg(target_os = "macos")]
+pub fn macos_setup_url() -> Url {
+    Url::parse("tauri://localhost").expect("valid bundled setup URL")
+}
+
+#[cfg(target_os = "macos")]
+pub fn create_setup_window(app: &AppHandle<Wry>) -> tauri::Result<()> {
+    let selected = app.state::<GatewayNavigation>().inner().clone();
+    let setup = macos_setup_url();
+    let config = &app.config().app.windows[0];
+    tauri::WebviewWindowBuilder::from_config(app, config)?
+        .on_navigation(move |target| {
+            macos_navigation_allowed(
+                target,
+                &setup,
+                selected.read().ok().as_deref().and_then(Option::as_ref),
+            )
+        })
+        // Wry does not expose a trusted user gesture in the popup callback.
+        // Keep external navigation and popups closed rather than opening them.
+        .on_new_window(|_, _| new_window_response())
+        .build()?;
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn macos_navigation_allowed(target: &Url, setup: &Url, selected: Option<&Url>) -> bool {
+    // URL origins for the custom tauri: scheme are opaque; match the exact
+    // bundled setup URL, then use normal origin checks for the HTTP gateway.
+    target == setup
+        || target.as_str() == "tauri://localhost/"
+        || selected.is_some_and(|origin| navigation_allowed(target, origin, None))
+}
+
+pub fn allow_gateway_origin(app: &AppHandle<Wry>, origin: Url) -> Result<(), &'static str> {
+    let selected = app
+        .try_state::<GatewayNavigation>()
+        .ok_or("navigation_policy_install_failed")?;
+    *selected.write().map_err(|_| "navigation_policy_install_failed")? = Some(origin);
+    Ok(())
+}
+
+pub fn clear_gateway_origin(app: &AppHandle<Wry>) {
+    if let Some(selected) = app.try_state::<GatewayNavigation>() {
+        if let Ok(mut selected) = selected.write() {
+            *selected = None;
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_policy_allows_only_setup_and_the_current_gateway() {
+        let setup = macos_setup_url();
+        let old = Url::parse("http://127.0.0.1:18880/").unwrap();
+        let current = Url::parse("http://127.0.0.1:18881/").unwrap();
+
+        assert!(macos_navigation_allowed(&setup, &setup, None));
+        assert!(!macos_navigation_allowed(&current, &setup, None));
+        assert!(macos_navigation_allowed(&current, &setup, Some(&current)));
+        assert!(!macos_navigation_allowed(&old, &setup, Some(&current)));
+        let other_page = setup.join("other.html").unwrap();
+        assert!(!macos_navigation_allowed(&other_page, &setup, Some(&current)));
+    }
 
     #[test]
     fn generated_setup_acl_allows_local_setup_commands_on_chat_only() {
@@ -830,7 +1009,7 @@ mod tests {
             _lock: lock,
             runtime_dir: root.clone(),
             socket_path: socket_path.clone(),
-            bus_verified: false,
+            instance_verified: false,
         };
         let observer = fs::OpenOptions::new()
             .read(true)

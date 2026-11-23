@@ -161,8 +161,9 @@ def test_verify_rejects_changed_bytes_and_copied_inode_without_syncing(
         assert target.read_bytes() == b"mutated!"
 
         replacement = authority.snapshot_target("HISTORY.md")
-        target.unlink()
-        _target(memory, "HISTORY.md", b"mutated!")
+        next_target = _target(memory, "HISTORY.md.next", b"mutated!")
+        assert next_target.stat().st_ino != replacement.stat_identity.inode  # type: ignore[union-attr]
+        next_target.replace(target)
         assert target.stat().st_ino != replacement.stat_identity.inode  # type: ignore[union-attr]
         _assert_fixed_storage_error(lambda: _verify(authority, replacement, b"mutated!"))
         assert synced == []

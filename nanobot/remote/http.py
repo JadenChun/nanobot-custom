@@ -6,6 +6,7 @@ requiring the gateway. It does not serve gateway data or local-admin routes.
 
 from __future__ import annotations
 
+import base64
 import json
 from dataclasses import asdict
 from http import HTTPStatus
@@ -13,7 +14,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from threading import Thread
 from typing import TYPE_CHECKING, Any, cast
 
-from nanobot.remote.auth import AuthError, AuthRejectedError
+from nanobot.remote.auth import AuthError, AuthRejectedError, AuthUpgradeRequiredError
 from nanobot.remote.pairing import (
     PairingBusyError,
     PairingCodeInvalidError,
@@ -142,6 +143,9 @@ def _make_handler(
                         installation_id=_required(payload, "installation_id"),
                         refresh_token=_required(payload, "refresh_token"),
                     )
+                except AuthUpgradeRequiredError:
+                    self._write(HTTPStatus.UPGRADE_REQUIRED, {"error": "upgrade_required"})
+                    return
                 except AuthError:
                     self._write(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
                     return
@@ -230,6 +234,9 @@ def _make_handler(
                         label=_required(payload, "label"),
                         platform=_optional(payload, "platform"),
                         model=_optional(payload, "model"),
+                        device_public_key_der=_optional_base64(
+                            payload, "device_public_key"
+                        ),
                     )
                 except PairingDeniedError:
                     self._write(HTTPStatus.FORBIDDEN, {"error": "pairing_denied"})
@@ -266,6 +273,9 @@ def _make_handler(
                         collector_secret=_required(payload, "collector_secret"),
                         installation_id=_required(payload, "installation_id"),
                         label=_required(payload, "label"),
+                        device_public_key_der=_optional_base64(
+                            payload, "device_public_key"
+                        ),
                     )
                 else:
                     result = pairing.poll(
@@ -369,3 +379,10 @@ def _required(payload: dict[str, Any], key: str) -> str:
 def _optional(payload: dict[str, Any], key: str) -> str | None:
     value = payload.get(key)
     return value if isinstance(value, str) and value else None
+
+
+def _optional_base64(payload: dict[str, Any], key: str) -> bytes | None:
+    value = _optional(payload, key)
+    if value is None:
+        return None
+    return base64.b64decode(value, validate=True)

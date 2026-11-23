@@ -9,7 +9,12 @@ from nanobot.agent.tools.agent_device import AgentDeviceTool
 from nanobot.agent.tools.base import Tool
 from nanobot.agent.tools.context import ToolContext
 from nanobot.agent.tools.cron import CronTool
-from nanobot.agent.tools.delegation import DelegateTaskTool, PlanTaskTool, ReviewWorkTool
+from nanobot.agent.tools.delegation import (
+    DelegateTaskTool,
+    FollowupChildTool,
+    PlanTaskTool,
+    ReviewWorkTool,
+)
 from nanobot.agent.tools.desktop_use import DesktopUseTool
 from nanobot.agent.tools.exec_session import ExecSessionTool, ListExecSessionsTool
 from nanobot.agent.tools.explore import ExploreTool
@@ -68,6 +73,7 @@ def construct_core_tools(ctx: ToolContext) -> list[Tool]:
             launch_command=browser.launch_command,
             launch_wait_seconds=browser.launch_wait_seconds,
             executable_path=browser.executable_path,
+            resource_policy=deps.resource_policy,
         ),
     ))
     device = ctx.config.agent_device
@@ -79,6 +85,7 @@ def construct_core_tools(ctx: ToolContext) -> list[Tool]:
             timeout=device.timeout,
             max_output_chars=device.max_output_chars,
             working_dir=ctx.workspace,
+            resource_policy=deps.resource_policy,
         ),
     ))
     desktop = ctx.config.desktop_use
@@ -90,6 +97,11 @@ def construct_core_tools(ctx: ToolContext) -> list[Tool]:
                       ("review_work", ReviewWorkTool)):
         entries.append(ToolFactory(name, lambda: True,
                                    lambda cls=cls: cls(deps.foreground_manager)))
+    entries.append(ToolFactory(
+        "followup_child",
+        lambda: True,
+        lambda: FollowupChildTool(deps.foreground_manager),
+    ))
     entries.append(ToolFactory("explore", lambda: True, lambda: ExploreTool(
         deps.foreground_manager, max_iterations=deps.explore_max_iterations)))
     result: list[Tool] = []

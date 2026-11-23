@@ -9,7 +9,7 @@
     <meta name="color-scheme" content="light dark" />
     <meta
       name="description"
-      content="nanobot web UI — chat with your nanobot workspace."
+      content="Your personal AI assistant."
       data-i18n-meta="description"
     />
     <meta
@@ -21,10 +21,9 @@
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="default" />
-    <meta name="apple-mobile-web-app-title" content="nanobot" />
-    <link rel="icon" type="image/svg+xml" href="/brand/nanobot_mark.svg" />
-    <link rel="alternate icon" type="image/png" sizes="32x32" href="/brand/nanobot_favicon_32.png" />
-    <link rel="apple-touch-icon" sizes="180x180" href="/brand/nanobot_apple_touch.png" />
+    <meta name="apple-mobile-web-app-title" content="Kohaku" />
+    <link rel="icon" type="image/png" sizes="32x32" href="/brand/nanobot_favicon_32.png?v=62d969a7" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/brand/nanobot_apple_touch.png?v=62d969a7" />
     <link rel="manifest" href="/manifest.json" />
     <style>
       html,
@@ -59,9 +58,14 @@
 
       .boot-splash {
         display: flex;
+        box-sizing: border-box;
         height: 100%;
+        flex-direction: column;
         align-items: center;
         justify-content: center;
+        gap: 8px;
+        padding: 16px;
+        text-align: center;
       }
 
       .boot-splash-inner {
@@ -76,13 +80,27 @@
         color: rgba(10, 10, 10, 0.64);
       }
 
+      .boot-splash-status {
+        max-width: 24rem;
+        margin: 0;
+        color: inherit;
+        font-size: 13px;
+        opacity: 0.75;
+        overflow-wrap: anywhere;
+      }
+
       .boot-dot {
         width: 8px;
         height: 8px;
+        flex-shrink: 0;
         border-radius: 9999px;
         background: currentColor;
         opacity: 0.75;
         animation: boot-pulse 1s ease-in-out infinite;
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        .boot-dot { animation: none; }
       }
 
       @keyframes boot-pulse {
@@ -120,15 +138,16 @@
         } catch {}
       })();
     </script>
-    <title>nanobot</title>
+    <title>Kohaku</title>
   </head>
   <body class="bg-background text-foreground antialiased">
     <div id="root">
-      <div class="boot-splash">
+      <div class="boot-splash" role="status">
         <div class="boot-splash-inner">
           <span class="boot-dot" aria-hidden="true"></span>
-          <span data-boot-copy>Loading nanobot…</span>
+          <span data-boot-copy>Loading Kohaku…</span>
         </div>
+        <p class="boot-splash-status" hidden></p>
       </div>
     </div>
     <script>
@@ -136,44 +155,44 @@
         var localeKey = "nanobot.locale";
         var copy = {
           en: {
-            boot: "Loading nanobot…",
-            description: "nanobot web UI — chat with your nanobot workspace."
+            boot: "Loading Kohaku…",
+            description: "Your personal AI assistant."
           },
           "zh-CN": {
-            boot: "正在加载 nanobot…",
-            description: "nanobot Web UI —— 与你的 nanobot 工作区对话。"
+            boot: "正在加载 Kohaku…",
+            description: "Kohaku Web UI —— 与你的 Kohaku 工作区对话。"
           },
           "zh-TW": {
-            boot: "正在載入 nanobot…",
-            description: "nanobot Web UI —— 與你的 nanobot 工作區對話。"
+            boot: "正在載入 Kohaku…",
+            description: "Kohaku Web UI —— 與你的 Kohaku 工作區對話。"
           },
           fr: {
-            boot: "Chargement de nanobot…",
-            description: "Interface web nanobot — discutez avec votre espace de travail nanobot."
+            boot: "Chargement de Kohaku…",
+            description: "Interface web Kohaku — discutez avec votre espace de travail Kohaku."
           },
           ja: {
-            boot: "nanobot を読み込み中…",
-            description: "nanobot Web UI — nanobot ワークスペースと会話します。"
+            boot: "Kohaku を読み込み中…",
+            description: "Kohaku Web UI — Kohaku ワークスペースと会話します。"
           },
           ko: {
-            boot: "nanobot 불러오는 중…",
-            description: "nanobot 웹 UI — nanobot 작업공간과 대화하세요."
+            boot: "Kohaku 불러오는 중…",
+            description: "Kohaku 웹 UI — Kohaku 작업공간과 대화하세요."
           },
           es: {
-            boot: "Cargando nanobot…",
-            description: "Interfaz web de nanobot: conversa con tu espacio de trabajo de nanobot."
+            boot: "Cargando Kohaku…",
+            description: "Interfaz web de Kohaku: conversa con tu espacio de trabajo de Kohaku."
           },
           "pt-BR": {
-            boot: "Carregando nanobot…",
-            description: "Interface web do nanobot — converse com o seu espaço de trabalho do nanobot."
+            boot: "Carregando Kohaku…",
+            description: "Interface web do Kohaku — converse com o seu espaço de trabalho do Kohaku."
           },
           vi: {
-            boot: "Đang tải nanobot…",
-            description: "Giao diện web nanobot — trò chuyện với không gian làm việc nanobot của bạn."
+            boot: "Đang tải Kohaku…",
+            description: "Giao diện web Kohaku — trò chuyện với không gian làm việc Kohaku của bạn."
           },
           id: {
-            boot: "Memuat nanobot…",
-            description: "UI web nanobot — ngobrol dengan ruang kerja nanobot Anda."
+            boot: "Memuat Kohaku…",
+            description: "UI web Kohaku — ngobrol dengan ruang kerja Kohaku Anda."
           }
         };
 

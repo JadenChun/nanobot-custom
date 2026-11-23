@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from copy import deepcopy
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
 from loguru import logger
@@ -20,9 +21,22 @@ from nanobot.agent.tools.base import (
     ToolPreparationError,
     ToolPreparationErrorKind,
 )
+from nanobot.agent.tools.filesystem import (
+    EditContentBinding,
+    reset_assessed_write_target,
+    set_assessed_write_target,
+)
+from nanobot.agent.tools.filesystem_effect import (
+    FilesystemEffectCancelled,
+    FilesystemEffectFact,
+    FilesystemEffectReconciliationRequiredError,
+)
+from nanobot.agent.tools.progress import bind_tool_progress_sink
 from nanobot.agent.tools.registry import ToolRegistry, is_tool_error_result
+from nanobot.agent.tools.shell import bind_approved_exec_cwd
 from nanobot.agent.turn import ToolOutcome, TurnContext
 from nanobot.providers.base import ToolCallRequest
+from nanobot.utils.cancellation import task_is_cancelling
 from nanobot.utils.runtime import (
     repeated_external_lookup_error,
     repeated_workspace_violation_error,
@@ -32,6 +46,7 @@ if TYPE_CHECKING:
     from nanobot.agent.tools.artifact import ArtifactRetrievalReceipt
     from nanobot.agent.tools.read_provenance import FilesystemReadReceipt
     from nanobot.session.artifact_grants import ArtifactHandoffReceipt
+    from nanobot.session.turn_writer import SourceToolIntentBinding
 
 
 @dataclass(frozen=True, slots=True)
@@ -48,6 +63,7 @@ class KnownToolResult:
     producer_receipt: FilesystemReadReceipt | None = None
     retrieval_receipt: ArtifactRetrievalReceipt | None = None
     handoff_receipt: ArtifactHandoffReceipt | None = None
+    filesystem_effects: tuple[FilesystemEffectFact, ...] | None = None
 
 
 ToolResultCallback = Callable[[KnownToolResult], Awaitable[None]]
@@ -64,6 +80,8 @@ def _copy_recorded_value(value: Any) -> Any:
             producer_receipt=value.producer_receipt,
             retrieval_receipt=value.retrieval_receipt,
             handoff_receipt=value.handoff_receipt,
+            recovery_kind=value.recovery_kind,
+            filesystem_effects=value.filesystem_effects,
         )
     return deepcopy(value)
 
@@ -83,10 +101,13 @@ async def _record_result(callback: ToolResultCallback | None, ordinal: int,
                          producer_receipt: FilesystemReadReceipt | None = None,
                          retrieval_receipt: ArtifactRetrievalReceipt | None = None,
     handoff_receipt: ArtifactHandoffReceipt | None = None) -> None:
+    effects = raw.filesystem_effects if isinstance(raw, ToolOutcome) else None
     if callback is not None:
         await callback(KnownToolResult(ordinal, call.id, call.name, _copy_recorded_value(raw),
                                        _copy_recorded_value(result), deepcopy(event), dispatched, producer_receipt,
-                                       retrieval_receipt, handoff_receipt))
+                                       retrieval_receipt, handoff_receipt, effects))
+    if any(fact.reconciliation_required for fact in effects or ()):
+        raise FilesystemEffectReconciliationRequiredError()
 
 _RETRY_HINT = "\n\n[Analyze the error above and try a different approach.]"
 # SSRF is a hard security block at the tool boundary, but the agent turn
@@ -114,6 +135,13 @@ def _with_retry_hint(payload: str) -> str:
     return payload + _RETRY_HINT
 
 
+def strip_retry_hint(payload: str) -> str:
+    """Remove the model-only retry hint before surfacing a terminal tool error as assistant text."""
+    if payload.endswith(_RETRY_HINT):
+        return payload[: -len(_RETRY_HINT)]
+    return payload
+
+
 async def execute_tool_calls(
     tools: ToolRegistry,
     tool_calls: list[ToolCallRequest],
@@ -128,6 +156,7 @@ async def execute_tool_calls(
     turn_context: TurnContext | None = None,
     fail_on_tool_error: bool = False,
     tool_result_callback: ToolResultCallback | None = None,
+    tool_intent_bindings: Sequence[SourceToolIntentBinding | None] | None = None,
 ) -> tuple[list[Any], list[dict[str, Any]]]:
     """Execute one model response's tool calls in stable result order."""
     if turn_context is not None and turn_context.execution_owner is not None and tool_result_callback is None:
@@ -135,6 +164,7 @@ async def execute_tool_calls(
     # Policy inspects the complete response before any side effect can begin.
     terminal: ToolOutcome | None = None
     if tool_policy is not None:
+        tool_policy = tool_policy.for_tools(tools)
         decision = await tool_policy.evaluate(messages=messages or [], tool_calls=tool_calls)
         if decision.action != "allow":
             terminal = ToolOutcome(decision.response, decision.stop_reason or "policy_blocked",
@@ -156,8 +186,15 @@ async def execute_tool_calls(
                     hook,
                     context,
                     turn_context,
+                    tool_policy=tool_policy,
+                    tool_intent_binding=(
+                        tool_intent_bindings[ordinal + index]
+                        if tool_intent_bindings is not None
+                        and ordinal + index < len(tool_intent_bindings)
+                        else None
+                    ),
                 )
-                for tool_call in batch
+                for index, tool_call in enumerate(batch)
             ))
             terminal = next((value for value, _ in batch_results
                              if isinstance(value, ToolOutcome) and value.stop_reason
@@ -183,6 +220,13 @@ async def execute_tool_calls(
                             turn_context,
                             tool_result_callback,
                             ordinal,
+                            tool_policy=tool_policy,
+                            tool_intent_binding=(
+                                tool_intent_bindings[ordinal]
+                                if tool_intent_bindings is not None
+                                and ordinal < len(tool_intent_bindings)
+                                else None
+                            ),
                         )
                         ordinal += 1
                         outcome, event = result
@@ -211,6 +255,13 @@ async def execute_tool_calls(
                     turn_context,
                     tool_result_callback,
                     ordinal,
+                    tool_policy=tool_policy,
+                    tool_intent_binding=(
+                        tool_intent_bindings[ordinal]
+                        if tool_intent_bindings is not None
+                        and ordinal < len(tool_intent_bindings)
+                        else None
+                    ),
                 )
                 ordinal += 1
                 outcome, event = result
@@ -256,6 +307,8 @@ async def _execute_tool_call(
     turn_context: TurnContext | None = None,
     tool_result_callback: ToolResultCallback | None = None,
     ordinal: int = 0,
+    tool_policy: ToolPolicy | None = None,
+    tool_intent_binding: SourceToolIntentBinding | None = None,
 ) -> tuple[Any, dict[str, Any]]:
     lookup_error = repeated_external_lookup_error(
         tool_call.name,
@@ -319,6 +372,41 @@ async def _execute_tool_call(
         return payload, event
 
     await hook.before_execute_tool(context, tool_call, tool, params)
+
+    assessed_write_target: Path | None = None
+    if tool_policy is not None:
+        validation_tool = tool if tool is not None else tools.get(tool_call.name)
+        target_error, assessed_write_target = tool_policy.validate_write_target_binding(
+            tool_call, validation_tool, params,
+        )
+        if isinstance(target_error, ToolOutcome):
+            stopped = {"name": tool_call.name, "status": "stopped", "detail": target_error.stop_reason}
+            await _record_result(tool_result_callback, ordinal, tool_call, target_error,
+                                 target_error, stopped, dispatched=False)
+            return target_error, stopped
+        if target_error:
+            payload = _with_retry_hint(target_error)
+            event: dict[str, Any] = {
+                "name": tool_call.name,
+                "status": "error",
+                "detail": target_error[:120],
+            }
+            handled = _classify_violation(
+                raw_text=target_error,
+                soft_payload=payload,
+                event=event,
+                tool_call=tool_call,
+                workspace_violation_counts=workspace_violation_counts,
+            )
+            if handled is not None:
+                payload, event = handled
+            await _record_result(tool_result_callback, ordinal, tool_call,
+                                 target_error, payload, event, dispatched=False)
+            await hook.on_execute_tool_error(context, tool_call, tool, params, target_error)
+            return payload, event
+    preflight_result: str | ToolOutcome | None = None
+    edit_binding: EditContentBinding | None = None
+    exec_cwd: Path | None = None
     with tools.dispatch_admission(tool_call.name) as dispatch_error:
         if dispatch_error is not None:
             payload = _with_retry_hint(dispatch_error)
@@ -327,24 +415,70 @@ async def _execute_tool_call(
                 "status": "error",
                 "detail": dispatch_error[:120],
             }
+            captured_refusal = isinstance(dispatch_error, ToolPreparationError)
+            if captured_refusal:
+                event["_prepare_error_kind"] = dispatch_error.kind.value
             classified = ToolOutcome(
                 payload,
                 "tool_error",
-                recovery_kind=ToolDenialKind.MANAGED_UNAVAILABLE,
+                recovery_kind=(None if captured_refusal else ToolDenialKind.MANAGED_UNAVAILABLE),
             )
             await _record_result(tool_result_callback, ordinal, tool_call, dispatch_error,
                                  classified, event, dispatched=False)
             return classified, event
         if turn_context is not None and turn_context.execution_owner is not None:
             turn_context.execution_owner.validate_dispatch()
+        if tool_policy is not None:
+            decision = tool_policy.authorize_dispatch(tool_call, params, turn_context)
+            if decision.action != "allow":
+                refused = ToolOutcome(
+                    decision.response, decision.stop_reason or "policy_blocked", decision.metadata,
+                )
+                event = {"name": tool_call.name, "status": "stopped", "detail": refused.stop_reason}
+                await _record_result(tool_result_callback, ordinal, tool_call, refused,
+                                     refused, event, dispatched=False)
+                return refused, event
+            preflight_result = decision.preflight_result
+            edit_binding = decision.edit_binding
+            exec_cwd = decision.exec_cwd
+        dispatched = preflight_result is None
+        progress_sink = hook.tool_progress_sink(tool_call) if dispatched else None
         try:
-            if tool is not None:
-                result = await tools.execute_prepared(tool, params, turn_context)
-            else:
-                result = await tools.execute(tool_call.name, params)
+            binding_token = set_assessed_write_target(assessed_write_target, edit_binding)
+            previous_intent = (
+                turn_context.active_tool_intent_binding if turn_context is not None else None
+            )
+            if turn_context is not None:
+                turn_context.active_tool_intent_binding = tool_intent_binding
+            try:
+                with bind_approved_exec_cwd(exec_cwd), bind_tool_progress_sink(progress_sink):
+                    if preflight_result is not None:
+                        result = preflight_result
+                    elif tool is not None:
+                        result = await tools.execute_prepared(tool, params, turn_context)
+                    else:
+                        result = await tools.execute(tool_call.name, params)
+            finally:
+                if turn_context is not None:
+                    turn_context.active_tool_intent_binding = previous_intent
+                reset_assessed_write_target(binding_token)
+        except FilesystemEffectCancelled as exc:
+            raw = ToolOutcome(
+                content={"exception_type": "CancelledError", "message": str(exc)},
+                filesystem_effects=exc.facts,
+            )
+            event = {"name": tool_call.name, "status": "cancelled", "detail": "cancelled"}
+            try:
+                await _record_result(tool_result_callback, ordinal, tool_call, raw, raw,
+                                     event, dispatched=True)
+            except FilesystemEffectReconciliationRequiredError:
+                pass
+            raise
         except asyncio.CancelledError:
             raise
         except Exception as exc:
+            if task_is_cancelling():
+                raise asyncio.CancelledError() from exc
             event = {
                 "name": tool_call.name,
                 "status": "error",
@@ -368,20 +502,44 @@ async def _execute_tool_call(
 
     raw_result = result
     outcome = result if isinstance(result, ToolOutcome) else None
+    if outcome is not None and outcome.stop_reason == "kohaku_media_settled":
+        from nanobot.agent.tools.mcp import is_kohaku_media_stop_settlement
+
+        if is_kohaku_media_stop_settlement(outcome, tool):
+            event = {
+                "name": tool_call.name,
+                "status": "stopped",
+                "detail": f"Comfy media request settled as {outcome.disposition}",
+            }
+            _attach_media_artifacts(event, outcome)
+            await _record_result(
+                tool_result_callback,
+                ordinal,
+                tool_call,
+                raw_result,
+                outcome,
+                event,
+                dispatched=True,
+            )
+            await hook.after_execute_tool(context, tool_call, tool, params, outcome.content)
+            return outcome, event
+        # A plugin or generic registry result cannot mint the Comfy settlement.
+        outcome = ToolOutcome(content=outcome.content, media_artifacts=outcome.media_artifacts)
+        raw_result = outcome
     if outcome is not None:
         result = outcome.content
         if outcome.stop_reason and outcome.stop_reason != "tool_error":
             event = {"name": tool_call.name, "status": "stopped", "detail": outcome.stop_reason}
             _attach_media_artifacts(event, outcome)
             await _record_result(tool_result_callback, ordinal, tool_call, raw_result,
-                                 outcome, event, dispatched=True)
+                                 outcome, event, dispatched=dispatched)
             await hook.after_execute_tool(context, tool_call, tool, params, result)
             return outcome, event
 
     if is_tool_error_result(result) or (outcome is not None and outcome.stop_reason == "tool_error"):
         recovery_kind = _trusted_exec_denial_kind(tool, result)
         result = str(result)
-        payload = _with_retry_hint(result)
+        payload = result if outcome is not None and outcome.filesystem_effects else _with_retry_hint(result)
         event = {
             "name": tool_call.name,
             "status": "error",
@@ -402,10 +560,11 @@ async def _execute_tool_call(
             outcome.policy_metadata if outcome else {},
             media_artifacts=outcome.media_artifacts if outcome else (),
             recovery_kind=recovery_kind,
+            filesystem_effects=outcome.filesystem_effects if outcome else None,
         )
         _attach_media_artifacts(event, classified)
         await _record_result(tool_result_callback, ordinal, tool_call, raw_result,
-                             classified, event, dispatched=True)
+                             classified, event, dispatched=dispatched)
         await hook.on_execute_tool_error(context, tool_call, tool, params, result)
         return classified, event
 
@@ -418,7 +577,7 @@ async def _execute_tool_call(
     event = {"name": tool_call.name, "status": "ok", "detail": detail}
     _attach_media_artifacts(event, outcome)
     await _record_result(tool_result_callback, ordinal, tool_call, raw_result,
-                         result, event, dispatched=True,
+                         result, event, dispatched=dispatched,
                          producer_receipt=outcome.producer_receipt if outcome else None,
                          retrieval_receipt=outcome.retrieval_receipt if outcome else None,
                          handoff_receipt=outcome.handoff_receipt if outcome else None)

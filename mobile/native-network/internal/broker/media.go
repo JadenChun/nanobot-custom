@@ -69,10 +69,20 @@ func (c *Core) OpenMediaStream(path, rangeHeader string) (uint64, error) {
 	}
 
 	c.mu.Lock()
+	state := c.state
+	started := c.started
+	testMode := c.testMode
 	client := c.httpClient
 	token := c.mediaToken
 	ctx := c.ctx
+	busy := len(c.mediaStreams) >= mediaStreamLimit
 	c.mu.Unlock()
+	if busy {
+		return 0, ErrBusy
+	}
+	if !testMode && (!started || state != "ready") {
+		return 0, ErrUnavailable
+	}
 	if client == nil || ctx == nil {
 		return 0, ErrUnavailable
 	}
@@ -98,6 +108,27 @@ func (c *Core) OpenMediaStream(path, rangeHeader string) (uint64, error) {
 		cancel()
 		return 0, fmt.Errorf("%w: media request failed", ErrUnavailable)
 	}
+	if response.StatusCode == http.StatusRequestEntityTooLarge && rangeHeader == "" {
+		response.Body.Close()
+		part := request.Clone(reqCtx)
+		part.Header.Set("Range", "bytes=0-")
+		response, err = client.Do(part)
+		if err == nil && response.StatusCode != http.StatusPartialContent {
+			response.Body.Close()
+			err = errMediaStream
+		}
+		if err != nil {
+			cancel()
+			return 0, err
+		}
+	}
+	if response.StatusCode == http.StatusPartialContent {
+		response, err = completeMediaRange(client, request, response)
+		if err != nil {
+			cancel()
+			return 0, err
+		}
+	}
 	stream := &mediaStream{
 		body:    response.Body,
 		cancel:  cancel,
@@ -108,6 +139,79 @@ func (c *Core) OpenMediaStream(path, rangeHeader string) (uint64, error) {
 		stream.body, stream.closer = c.cachingBody(sig, payload, response.Body, response.Header)
 	}
 	return c.storeMediaStream(stream)
+}
+
+// completeMediaRange exposes the entire requested range to the WebView.
+func completeMediaRange(client *http.Client, request *http.Request, first *http.Response) (*http.Response, error) {
+	start, next, total, err := mediaPartRange(first)
+	if err != nil {
+		first.Body.Close()
+		return nil, err
+	}
+	requestedStart, length, partial, err := parseSingleRange(request.Header.Get("Range"), total)
+	end := requestedStart + length
+	if err != nil || start != requestedStart || next > end {
+		first.Body.Close()
+		return nil, errMediaStream
+	}
+	if partial && next == end {
+		return first, nil
+	}
+	body := first.Body
+	if next < end {
+		reader, writer := io.Pipe()
+		body = reader
+		go func() {
+			part := first.Body
+			for {
+				_, copyErr := io.CopyN(writer, part, next-start)
+				part.Close()
+				if copyErr == io.EOF {
+					copyErr = io.ErrUnexpectedEOF
+				}
+				if copyErr != nil || next == end {
+					writer.CloseWithError(copyErr)
+					return
+				}
+				start = next
+				partRequest := request.Clone(request.Context())
+				partRequest.Header.Set("Range", fmt.Sprintf("bytes=%d-%d", start, end-1))
+				response, openErr := client.Do(partRequest)
+				if openErr != nil {
+					writer.CloseWithError(openErr)
+					return
+				}
+				firstByte, nextByte, partTotal, rangeErr := mediaPartRange(response)
+				if rangeErr != nil || firstByte != start || nextByte > end || partTotal != total {
+					response.Body.Close()
+					writer.CloseWithError(errMediaStream)
+					return
+				}
+				part, next = response.Body, nextByte
+			}
+		}()
+	}
+
+	headers := first.Header.Clone()
+	headers.Set("Content-Length", strconv.FormatInt(length, 10))
+	status := http.StatusOK
+	if partial {
+		status = http.StatusPartialContent
+		headers.Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", requestedStart, end-1, total))
+	} else {
+		headers.Del("Content-Range")
+	}
+	return &http.Response{StatusCode: status, Header: headers, Body: body}, nil
+}
+
+// mediaPartRange returns the start, exclusive end, and file size of one response.
+func mediaPartRange(response *http.Response) (int64, int64, int64, error) {
+	var first, last, total int64
+	_, err := fmt.Sscanf(response.Header.Get("Content-Range"), "bytes %d-%d/%d", &first, &last, &total)
+	if err != nil || response.StatusCode != http.StatusPartialContent || first < 0 || last < first || last >= total {
+		return 0, 0, 0, errMediaStream
+	}
+	return first, last + 1, total, nil
 }
 
 // MediaStreamInfo reports the upstream status and response headers.
@@ -195,6 +299,9 @@ func (c *Core) storeMediaStream(stream *mediaStream) (uint64, error) {
 	if len(c.mediaStreams) >= mediaStreamLimit {
 		c.mu.Unlock()
 		_ = stream.body.Close()
+		if stream.closer != nil {
+			stream.closer()
+		}
 		if stream.cancel != nil {
 			stream.cancel()
 		}
@@ -278,7 +385,9 @@ func (c *Core) openCachedMedia(sig, payload, rangeHeader string) (*mediaStream, 
 }
 
 // cachingBody mirrors one full response into the media cache and finalizes it
-// when the reader reaches EOF.
+// when the reader reaches EOF. Bytes are reserved against the cache budget
+// before they are written. If the budget cannot hold the body, the copy stops
+// and the caller keeps streaming from the source.
 func (c *Core) cachingBody(
 	sig, payload string,
 	body io.ReadCloser,
@@ -288,26 +397,55 @@ func (c *Core) cachingBody(
 	if path == "" {
 		return body, nil
 	}
+	known := false
+	var expected int64
+	if raw := strings.TrimSpace(headers.Get("Content-Length")); raw != "" {
+		if parsed, parseErr := strconv.ParseInt(raw, 10, 64); parseErr == nil && parsed >= 0 {
+			known = true
+			expected = parsed
+		}
+	}
+	if known && !c.reserveMediaCache(expected) {
+		return body, nil
+	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		c.releaseMediaCache(expected)
 		return body, nil
 	}
 	temp, err := os.CreateTemp(filepath.Dir(path), payload+".part-*")
 	if err != nil {
+		c.releaseMediaCache(expected)
 		return body, nil
 	}
-	reader := &cacheTee{source: body, sink: temp}
+	reader := &cacheTee{
+		source:   body,
+		sink:     temp,
+		core:     c,
+		known:    known,
+		reserved: expected,
+	}
 	reader.finalize = func() {
-		if reader.complete && reader.writeErr == nil {
+		reader.mu.Lock()
+		complete := reader.complete
+		abandoned := reader.abandoned
+		writeErr := reader.writeErr
+		written := reader.written
+		reserved := reader.reserved
+		reader.mu.Unlock()
+		full := !reader.known || written == reserved
+		if complete && !abandoned && writeErr == nil && full {
 			_ = temp.Sync()
 			_ = temp.Close()
 			if err := os.Rename(temp.Name(), path); err == nil {
 				writeMediaMeta(path, headers)
+				c.releaseMediaCache(reader.takeReserved())
 				c.trimMediaCache()
 				return
 			}
 		}
 		_ = temp.Close()
 		_ = os.Remove(temp.Name())
+		c.releaseMediaCache(reader.takeReserved())
 	}
 	return reader, reader.finalize
 }
@@ -315,7 +453,13 @@ func (c *Core) cachingBody(
 type cacheTee struct {
 	source     io.ReadCloser
 	sink       *os.File
+	core       *Core
+	known      bool
+	mu         sync.Mutex
+	reserved   int64
+	written    int64
 	complete   bool
+	abandoned  bool
 	writeErr   error
 	finalize   func()
 	finalizing sync.Once
@@ -323,16 +467,80 @@ type cacheTee struct {
 
 func (t *cacheTee) Read(p []byte) (int, error) {
 	n, err := t.source.Read(p)
-	if n > 0 && t.writeErr == nil {
-		if _, writeErr := t.sink.Write(p[:n]); writeErr != nil {
-			t.writeErr = writeErr
-		}
+	if n > 0 {
+		t.absorb(p[:n])
 	}
 	if errors.Is(err, io.EOF) {
+		t.mu.Lock()
 		t.complete = true
+		t.mu.Unlock()
 		t.done()
 	}
 	return n, err
+}
+
+// absorb mirrors one chunk into the sink only after the budget covers it.
+func (t *cacheTee) absorb(chunk []byte) {
+	size := int64(len(chunk))
+	t.mu.Lock()
+	skip := t.abandoned || t.writeErr != nil
+	t.mu.Unlock()
+	if skip {
+		return
+	}
+	if !t.known {
+		if !t.core.reserveMediaCache(size) {
+			t.stopCaching()
+			return
+		}
+		t.mu.Lock()
+		t.reserved += size
+		t.mu.Unlock()
+	}
+	t.mu.Lock()
+	if t.known && t.written+size > t.reserved {
+		// The declared length was shorter than the body.
+		t.mu.Unlock()
+		t.stopCaching()
+		return
+	}
+	_, writeErr := t.sink.Write(chunk)
+	if writeErr == nil {
+		t.written += size
+	} else {
+		t.writeErr = writeErr
+	}
+	t.mu.Unlock()
+	if writeErr != nil {
+		t.stopCaching()
+	}
+}
+
+// stopCaching abandons the cached copy and releases its reservation. The
+// caller keeps streaming every byte from the source.
+func (t *cacheTee) stopCaching() {
+	t.mu.Lock()
+	if t.abandoned {
+		t.mu.Unlock()
+		return
+	}
+	t.abandoned = true
+	reserved := t.reserved
+	t.reserved = 0
+	t.mu.Unlock()
+	_ = t.sink.Close()
+	_ = os.Remove(t.sink.Name())
+	if reserved > 0 {
+		t.core.releaseMediaCache(reserved)
+	}
+}
+
+func (t *cacheTee) takeReserved() int64 {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	reserved := t.reserved
+	t.reserved = 0
+	return reserved
 }
 
 func (t *cacheTee) Close() error {
@@ -347,6 +555,92 @@ func (t *cacheTee) done() {
 			t.finalize()
 		}
 	})
+}
+
+// mediaCacheUsage reports the bytes held by finalized cache bodies. Temp files
+// are excluded because in-flight writes are tracked by mediaCacheReserve.
+func (c *Core) mediaCacheUsage() int64 {
+	root := c.mediaCacheRoot()
+	if root == "" {
+		return 0
+	}
+	var total int64
+	_ = filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+		if err != nil || info == nil || !info.Mode().IsRegular() {
+			return nil
+		}
+		name := info.Name()
+		if strings.HasSuffix(name, ".meta.json") || strings.Contains(name, ".part-") {
+			return nil
+		}
+		total += info.Size()
+		return nil
+	})
+	return total
+}
+
+// evictOldestMediaCache removes the least recently used cached body. It reports
+// false when nothing can be evicted. The caller holds c.mu.
+func (c *Core) evictOldestMediaCache() bool {
+	root := c.mediaCacheRoot()
+	if root == "" {
+		return false
+	}
+	oldest := ""
+	var oldestMod time.Time
+	_ = filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+		if err != nil || info == nil || !info.Mode().IsRegular() {
+			return nil
+		}
+		name := info.Name()
+		if strings.HasSuffix(name, ".meta.json") || strings.Contains(name, ".part-") {
+			return nil
+		}
+		if oldest == "" || info.ModTime().Before(oldestMod) {
+			oldest = path
+			oldestMod = info.ModTime()
+		}
+		return nil
+	})
+	if oldest == "" {
+		return false
+	}
+	_ = os.Remove(oldest)
+	_ = os.Remove(oldest + ".meta.json")
+	return true
+}
+
+// reserveMediaCache reserves bytes for one body before it is written. It trims
+// the oldest cached bodies first. It reports false when the budget cannot hold
+// the body, in which case the caller streams without caching.
+func (c *Core) reserveMediaCache(n int64) bool {
+	if n <= 0 {
+		return true
+	}
+	c.mediaCacheMu.Lock()
+	defer c.mediaCacheMu.Unlock()
+	if c.mediaCacheBudget <= 0 || n > c.mediaCacheBudget {
+		return false
+	}
+	for c.mediaCacheUsage()+c.mediaCacheReserve+n > c.mediaCacheBudget {
+		if !c.evictOldestMediaCache() {
+			return false
+		}
+	}
+	c.mediaCacheReserve += n
+	return true
+}
+
+func (c *Core) releaseMediaCache(n int64) {
+	if n <= 0 {
+		return
+	}
+	c.mediaCacheMu.Lock()
+	c.mediaCacheReserve -= n
+	if c.mediaCacheReserve < 0 {
+		c.mediaCacheReserve = 0
+	}
+	c.mediaCacheMu.Unlock()
 }
 
 type mediaMeta struct {
@@ -387,6 +681,8 @@ func (c *Core) trimMediaCache() {
 	if root == "" {
 		return
 	}
+	c.mediaCacheMu.Lock()
+	defer c.mediaCacheMu.Unlock()
 	type entry struct {
 		path string
 		size int64
@@ -398,19 +694,20 @@ func (c *Core) trimMediaCache() {
 		if err != nil || info == nil || !info.Mode().IsRegular() {
 			return nil
 		}
-		if strings.HasSuffix(path, ".meta.json") {
+		name := info.Name()
+		if strings.HasSuffix(name, ".meta.json") || strings.Contains(name, ".part-") {
 			return nil
 		}
 		entries = append(entries, entry{path: path, size: info.Size(), mod: info.ModTime()})
 		total += info.Size()
 		return nil
 	})
-	if total <= mediaCacheBudget {
+	if total <= c.mediaCacheBudget {
 		return
 	}
 	sort.Slice(entries, func(i, j int) bool { return entries[i].mod.Before(entries[j].mod) })
 	for _, item := range entries {
-		if total <= mediaCacheBudget {
+		if total <= c.mediaCacheBudget {
 			break
 		}
 		_ = os.Remove(item.path)

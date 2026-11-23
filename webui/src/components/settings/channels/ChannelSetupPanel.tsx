@@ -2,6 +2,7 @@ import {
   Suspense,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ComponentType,
 } from "react";
@@ -348,13 +349,32 @@ function ChannelSetupSurface({
     });
   };
 
+  const featureNameRef = useRef(feature.name);
+  featureNameRef.current = feature.name;
+  // A surface is reused across selections, so the channel name alone cannot
+  // separate the first A selection from a later A view. Each name change
+  // advances a request generation; a completion may write only when both the
+  // name and the generation it started under are still current.
+  const surfaceGenerationRef = useRef(0);
+  const surfaceNameRef = useRef(feature.name);
+  if (surfaceNameRef.current !== feature.name) {
+    surfaceNameRef.current = feature.name;
+    surfaceGenerationRef.current += 1;
+  }
+
   const saveCredentialSettings = async () => {
+    const targetFeature = feature.name;
+    const generation = surfaceGenerationRef.current;
+    const isCurrent = () =>
+      featureNameRef.current === targetFeature
+      && surfaceGenerationRef.current === generation;
     setSaving(true);
     setValidating(true);
     setNotice(null);
     const values = channelValuesForSubmit(fields, fieldValues, touchedFields);
     try {
-      const validationPayload = await validateChannel(client, feature.name, values);
+      const validationPayload = await validateChannel(client, targetFeature, values);
+      if (!isCurrent()) return;
       setValidation(validationPayload);
       if (!validationPayload.can_enable) {
         setNotice(
@@ -365,37 +385,53 @@ function ChannelSetupSurface({
       }
       const payload = await configureChannel(
         client,
-        feature.name,
+        targetFeature,
         values,
         { enable: true },
       );
+      if (!isCurrent()) return;
       if (payload.nanobot_features) {
         onFeaturesUpdate(payload.nanobot_features);
       }
+      if (!isCurrent()) return;
       setNotice(tx("settings.channels.checkedAndEnabled", "Checked and enabled."));
     } catch (err) {
-      setNotice((err as Error).message);
+      if (isCurrent()) {
+        setNotice((err as Error).message);
+      }
     } finally {
-      setSaving(false);
-      setValidating(false);
+      if (isCurrent()) {
+        setSaving(false);
+        setValidating(false);
+      }
     }
   };
 
   const checkCurrentSettings = async () => {
+    const targetFeature = feature.name;
+    const generation = surfaceGenerationRef.current;
+    const isCurrent = () =>
+      featureNameRef.current === targetFeature
+      && surfaceGenerationRef.current === generation;
     setValidating(true);
     setNotice(null);
     try {
       const payload = await validateChannel(
         client,
-        feature.name,
+        targetFeature,
         channelValuesForSubmit(fields, fieldValues, touchedFields),
       );
+      if (!isCurrent()) return;
       setValidation(payload);
       if (payload.message) setNotice(payload.message);
     } catch (err) {
-      setNotice((err as Error).message);
+      if (isCurrent()) {
+        setNotice((err as Error).message);
+      }
     } finally {
-      setValidating(false);
+      if (isCurrent()) {
+        setValidating(false);
+      }
     }
   };
 

@@ -89,7 +89,6 @@ class RunKeepAliveService : Service() {
 
     override fun onDestroy() {
         handler.removeCallbacks(timeout)
-        RunKeepAliveRegistry.clear()
         ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
         super.onDestroy()
     }
@@ -123,7 +122,7 @@ class RunKeepAliveService : Service() {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
         return NotificationCompat.Builder(this, CHANNEL_ID)
-            .setSmallIcon(android.R.drawable.stat_notify_sync)
+            .setSmallIcon(R.drawable.ic_stat_nanobot)
             .setContentTitle(getString(R.string.run_keepalive_title))
             .setContentText(getString(R.string.run_keepalive_text))
             .setContentIntent(openApp)

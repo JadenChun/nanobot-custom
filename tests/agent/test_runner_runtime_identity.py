@@ -12,6 +12,7 @@ from nanobot.providers.base import (
     ToolCallRequest,
 )
 from nanobot.utils.llm_runtime import LLMRuntime
+from tests.agent.runner_helpers import install_test_tool_dispatch
 
 
 @pytest.mark.asyncio
@@ -61,6 +62,7 @@ async def test_active_run_keeps_provider_captured_at_admission() -> None:
     tools = MagicMock()
     tools.get_definitions.return_value = []
     tools.execute = AsyncMock(return_value="contents")
+    install_test_tool_dispatch(tools)
 
     await runner.run(AgentRunSpec(
         initial_messages=[{"role": "user", "content": "read it"}],

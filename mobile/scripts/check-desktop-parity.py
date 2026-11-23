@@ -53,6 +53,7 @@ ROW_KEYS = {
 # Read routes that are matched by regex rather than exact string equality.
 READ_TEMPLATES = {
     "/api/sessions/{key}/webui-thread": r"^/api/sessions/([^/]+)/webui-thread$",
+    "/api/sessions/{key}/delegated-children": r"^/api/sessions/([^/]+)/delegated-children$",
     "/api/sessions/{key}/context": r"^/api/sessions/([^/]+)/context$",
     "/api/sessions/{key}/file-preview": r"^/api/sessions/([^/]+)/file-preview$",
     "/api/sessions/{key}/automations": r"^/api/sessions/([^/]+)/automations$",
@@ -130,13 +131,32 @@ def ws_command_types(tree: ast.Module) -> set[str]:
     return out
 
 
-def misc_get_routes(tree: ast.Module) -> set[str]:
-    out = set()
+DISPATCH_FUNCTIONS = ("_dispatch_misc_routes", "_dispatch_directory_routes")
+
+
+def dispatch_get_routes(tree: ast.Module) -> set[str]:
+    """Collect exact GET paths from synchronous and asynchronous dispatch."""
+    out: set[str] = set()
     for node in ast.walk(tree):
-        if isinstance(node, ast.FunctionDef) and node.name == "_dispatch_misc_routes":
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        if node.name not in DISPATCH_FUNCTIONS:
+            continue
+        for sub in ast.walk(node):
+            if isinstance(sub, ast.Constant) and isinstance(sub.value, str):
+                if sub.value.startswith("/api/"):
+                    out.add(sub.value)
+    return out
+
+
+def async_recovery_routes(tree: ast.Module) -> set[str]:
+    """Collect the recovery route alternatives from the async dispatcher."""
+    out: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.AsyncFunctionDef) and node.name == "_dispatch_recovery_route":
             for sub in ast.walk(node):
                 if isinstance(sub, ast.Constant) and isinstance(sub.value, str):
-                    if sub.value.startswith("/api/"):
+                    if sub.value.startswith("/api/webui/recovery/"):
                         out.add(sub.value)
     return out
 
@@ -301,13 +321,22 @@ def validate_source(rows: dict[str, dict], data: dict) -> list[str]:
         if not any(row["api"].get("path") == template for row in rows.values()):
             fail(errors, f"unclassified read route template: {template}")
 
-    for path in sorted(misc_get_routes(ws_tree)):
+    for path in sorted(dispatch_get_routes(ws_tree)):
         if path in {row["api"].get("path") for row in rows.values()}:
             continue
-        # _dispatch_misc_routes includes the prefix check and a skills regex.
+        # The dispatch functions include the prefix check and a skills regex.
         if path == "/api/":
             continue
-        fail(errors, f"unclassified misc GET route: {path}")
+        fail(errors, f"unclassified dispatch GET route: {path}")
+
+    # The recovery dispatcher is async and matches a regex with two alternatives.
+    recovery_paths = async_recovery_routes(ws_tree)
+    if recovery_paths != {"/api/webui/recovery/(continue|dismiss)"}:
+        fail(errors, "async recovery dispatcher route drift")
+    for suffix in ("continue", "dismiss"):
+        template = f"/api/webui/recovery/{suffix}"
+        if not any(row["api"].get("path") == template for row in rows.values()):
+            fail(errors, f"unclassified async recovery route: {template}")
 
     for path in sorted(local_only):
         row = path_rows.get(path)
@@ -370,11 +399,22 @@ def self_test(data: dict) -> list[str]:
                 if row["id"] == "workspace.grant.upsert":
                     row["auth"]["current_local_only"] = False
 
+    def drop_async_route(candidate: dict) -> None:
+        for category in candidate["categories"]:
+            if category["id"] == "chat":
+                category["rows"] = [
+                    r
+                    for r in category["rows"]
+                    if r["api"].get("path") != "/api/webui/recovery/continue"
+                ]
+                category["row_count"] = len(category["rows"])
+
     expect_failure("omitted-action", drop_action)
     expect_failure("silent-exception", silent_exception)
     expect_failure("unbounded-native", unbounded)
     expect_failure("omitted-category", drop_category)
     expect_failure("unmarked-local-path", fake_local)
+    expect_failure("missing-async-route", drop_async_route)
     return failures
 
 
@@ -400,7 +440,10 @@ def main() -> int:
     for category in data["categories"]:
         print(f"  {category['id']}: {category['row_count']} rows")
     if args.self_test:
-        print("  self-test: omitted action/category, silent exception, unbounded native and unmarked local path all rejected")
+        print(
+            "  self-test: omitted action/category/async route, silent exception, "
+            "unbounded native and unmarked local path all rejected"
+        )
     return 0
 
 

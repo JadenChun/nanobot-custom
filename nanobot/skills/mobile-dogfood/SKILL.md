@@ -2,7 +2,7 @@
 name: mobile-dogfood
 description: Explore an already-installed mobile app on a local iOS simulator or Android emulator, find bugs, and capture reproducible evidence with agent_device screenshots and notes.
 homepage: https://agent-device.dev
-metadata: {"nanobot":{"emoji":"🧭","requires":{"bins":["npx","xcrun","adb"]}}}
+metadata: {"nanobot":{"emoji":"🧭","requires":{"bins":["npx"],"anyBins":["xcrun","adb"]}}}
 ---
 
 # Mobile Dogfood

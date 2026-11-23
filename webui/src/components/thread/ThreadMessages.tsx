@@ -1,16 +1,26 @@
-import { memo, useCallback, useMemo, useRef } from "react";
+import { memo, type RefObject, useCallback, useEffect, useMemo, useRef } from "react";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import { useTranslation } from "react-i18next";
 import { MessageBubble } from "@/components/MessageBubble";
 import { AgentActivityCluster } from "@/components/thread/AgentActivityCluster";
 import { AssistantSelectionAction } from "@/components/thread/AssistantSelectionAction";
 import { projectActivityTimeline, type TurnUnit } from "@/lib/activity-timeline";
-import type { CliAppInfo, McpPresetInfo, RetryStatus, SlashCommand, UIMessage } from "@/lib/types";
+import type {
+  CliAppInfo,
+  DelegatedChildReference,
+  McpPresetInfo,
+  RetryStatus,
+  SlashCommand,
+  UIMessage,
+} from "@/lib/types";
 
 interface ThreadMessagesProps {
   messages: UIMessage[];
   temporary?: boolean;
   /** When true, agent turn still in flight — keeps activity timeline expanded. */
   isStreaming?: boolean;
+  /** Reveal the latest ordinary assistant body after a conversation handoff. */
+  revealLatestHistoryMessage?: boolean;
   activeTurnId?: string | null;
   /** Optimistic or canonical active-turn start, in unix seconds. */
   runStartedAt?: number | null;
@@ -23,6 +33,16 @@ interface ThreadMessagesProps {
   onOpenFilePreview?: (path: string) => void;
   onForkFromMessage?: (beforeUserIndex: number) => void;
   onQuoteSelection?: (text: string) => void;
+  onOpenChildHistory?: (child: DelegatedChildReference, trigger: HTMLButtonElement) => void;
+  delegatedStatusAvailable?: boolean;
+  /** Prompt id (stable ``promptId`` or row ``id``) currently highlighted after a reveal. */
+  highlightedPromptId?: string | null;
+  /** Scrollport ref for virtualized infinite scrolling from the bottom. */
+  scrollRef?: RefObject<HTMLDivElement | null>;
+  /** Enable TanStack Virtual end-anchored virtualization (disabled in layoutless DOMs). */
+  virtualize?: boolean;
+  /** Register an index-based jump handler for virtualized off-screen prompts. */
+  onRegisterScrollToPrompt?: (handler: ((promptId: string) => boolean) | null) => void;
 }
 
 export type DisplayUnit = TurnUnit;
@@ -58,10 +78,11 @@ export function assistantForkFlags(units: DisplayUnit[]): boolean[] {
   return flags;
 }
 
-export function ThreadMessages({
+export const ThreadMessages = memo(function ThreadMessages({
   messages,
   temporary = false,
   isStreaming = false,
+  revealLatestHistoryMessage = false,
   activeTurnId = null,
   runStartedAt = null,
   retryStatus = null,
@@ -73,6 +94,12 @@ export function ThreadMessages({
   onOpenFilePreview,
   onForkFromMessage,
   onQuoteSelection,
+  onOpenChildHistory,
+  delegatedStatusAvailable = true,
+  highlightedPromptId = null,
+  scrollRef,
+  virtualize = false,
+  onRegisterScrollToPrompt,
 }: ThreadMessagesProps) {
   const { t } = useTranslation();
   const messageListRef = useRef<HTMLDivElement>(null);
@@ -91,159 +118,327 @@ export function ThreadMessages({
       : new Set<number>(),
     [activeTurnId, isStreaming, units],
   );
-  const pendingTurn = useMemo(
-    () => pendingTurnProjection(messages, activeTurnId),
-    [activeTurnId, messages],
-  );
-  const pendingActivity = (
-    isStreaming
-    && liveActivityClusterIndices.size === 0
-    && pendingTurn !== null
-    && (retryStatus !== null || !pendingTurn.hasVisibleOutput)
-  ) ? pendingTurn : null;
   const currentTurnStartIndex = isStreaming
     ? activeTurnStartIndex(units, activeTurnId)
     : units.length;
+  const promptUnit = units[currentTurnStartIndex];
+  const activePrompt = promptUnit?.type === "message"
+    && (activeTurnId === null || promptUnit.message.turnId === activeTurnId)
+    ? promptUnit.message
+    : null;
+  // The elapsed clock must measure model work, not the client's send path.
+  // Before the server reports runStartedAt, show pulsing "Working" without a
+  // ticking timer so the clock does not start at send time and reset once the
+  // gateway begins the turn.
+  const promptStartedAtMs = activePrompt
+    && activePrompt.timestampAvailable !== false
+    && Number.isFinite(activePrompt.createdAt)
+    ? activePrompt.createdAt
+    : undefined;
+  const pendingStartedAtMs = runStartedAt != null
+    ? runStartedAt * 1000
+    : undefined;
+  const activeStartedAtMs = runStartedAt != null
+    ? runStartedAt * 1000
+    : promptStartedAtMs;
+  const showPendingActivity = isStreaming
+    && liveActivityClusterIndices.size === 0
+    && (activePrompt !== null || activeStartedAtMs !== undefined);
+  const lastUnit = units[units.length - 1];
+  const pendingActivityMarginTop =
+    units.length === 0
+      ? undefined
+      : lastUnit?.type === "message" && lastUnit.message.role === "assistant"
+        ? "mt-2"
+        : "mt-5";
   const unitKeys = useMemo(() => unitKeysForDisplay(units), [units]);
-  let nextUserIndex = hiddenUserMessageCount;
+  let revealMessageId: string | null = null;
+  if (revealLatestHistoryMessage && !isStreaming) {
+    for (let index = units.length - 1; index >= 0; index -= 1) {
+      const unit = units[index];
+      if (unit.type !== "message") continue;
+      const message = unit.message;
+      if (
+        message.role !== "assistant"
+        || (message.kind !== undefined && message.kind !== "message")
+        || message.compactReply !== undefined
+        || message.sessionMessage !== undefined
+        || message.activityKind === "model"
+      ) continue;
+      revealMessageId = message.id;
+      break;
+    }
+  }
+  const forkIndices = useMemo(() => {
+    const result = new Array<number | undefined>(units.length);
+    let nextUserIndex = hiddenUserMessageCount;
+    for (let index = 0; index < units.length; index += 1) {
+      const unit = units[index];
+      if (unit.type === "message" && unit.message.role === "assistant" && forkFlags[index]) {
+        result[index] = nextUserIndex;
+      }
+      if (
+        unit.type === "message"
+        && unit.message.role === "user"
+        && unit.message.deliveryStatus !== "failed"
+      ) {
+        nextUserIndex += 1;
+      }
+    }
+    return result;
+  }, [forkFlags, hiddenUserMessageCount, units]);
 
-  // Render historical units eagerly. `content-visibility: auto` skipped their
-  // layout until they entered the viewport, and the browser's estimated height
-  // changed the scroll extent mid-scroll, which made the transcript bounce.
+  const shouldVirtualize = Boolean(virtualize && scrollRef && units.length > 0);
+
+  const virtualizer = useVirtualizer({
+    count: shouldVirtualize ? units.length : 0,
+    getScrollElement: () => scrollRef?.current ?? null,
+    estimateSize: (index) =>
+      estimateDisplayUnitHeight(units[index], liveActivityClusterIndices.has(index)),
+    getItemKey: (index) => unitKeys[index] ?? index,
+    measureElement: (element, entry, instance) => {
+      const index = instance.indexFromElement(element);
+      const key = instance.options.getItemKey(index);
+      const cachedSize = instance.itemSizeCache.get(key);
+      // When the thread container is hidden (e.g. display: none while Settings is open),
+      // ResizeObserver reports 0px. Preserve cached/estimated heights instead of
+      // overwriting itemSizeCache with 0 while a session streams in the background.
+      const scrollEl = instance.scrollElement;
+      if (scrollEl && scrollEl.clientHeight === 0 && scrollEl.clientWidth === 0) {
+        return cachedSize ?? instance.options.estimateSize(index);
+      }
+      if (entry?.borderBoxSize?.[0]) {
+        const size = Math.round(entry.borderBoxSize[0].blockSize);
+        if (size > 0) return size;
+        if (cachedSize !== undefined) return cachedSize;
+      }
+      const measured = (element as HTMLElement).offsetHeight;
+      if (measured > 0) return measured;
+      return cachedSize ?? instance.options.estimateSize(index);
+    },
+    overscan: 6,
+    anchorTo: "end",
+    followOnAppend: false,
+    scrollEndThreshold: 48,
+    enabled: shouldVirtualize,
+    directDomUpdates: true,
+    directDomUpdatesMode: "transform",
+  });
+
+  const measureVirtualRow = useCallback(
+    (node: HTMLDivElement | null) => {
+      virtualizer.measureElement(node);
+      if (!node || !node.isConnected || !virtualizer.isScrolling) return;
+      const index = virtualizer.indexFromElement(node);
+      const key = unitKeys[index] ?? index;
+      if (virtualizer.itemSizeCache.has(key)) return;
+      const measured =
+        node.offsetHeight || Math.round(node.getBoundingClientRect().height);
+      if (measured > 0) {
+        virtualizer.resizeItem(index, measured);
+      }
+    },
+    [unitKeys, virtualizer],
+  );
+
+  useEffect(() => {
+    if (!onRegisterScrollToPrompt) return undefined;
+    if (!shouldVirtualize) {
+      onRegisterScrollToPrompt(null);
+      return undefined;
+    }
+    onRegisterScrollToPrompt((promptId: string) => {
+      const index = units.findIndex(
+        (unit) =>
+          unit.type === "message"
+          && unit.message.role === "user"
+          && (unit.message.id === promptId || unit.message.promptId === promptId),
+      );
+      if (index < 0) return false;
+      virtualizer.scrollToIndex(index, { align: "start", behavior: "auto" });
+      return true;
+    });
+    return () => onRegisterScrollToPrompt(null);
+  }, [onRegisterScrollToPrompt, shouldVirtualize, units, virtualizer]);
+
+  const renderUnit = (unit: DisplayUnit, index: number, usePaddingSpacing: boolean) => {
+    const prev = units[index - 1];
+    const marginTop =
+      index > 0
+        ? (usePaddingSpacing ? paddingAfterPrevUnit(prev, unit) : marginAfterPrevUnit(prev, unit))
+        : "";
+    const next = units[index + 1];
+    const hasBodyBelow =
+      unit.type === "activity"
+      && next?.type === "message"
+      && next.message.role === "assistant";
+    const isIntermediateAssistant =
+      unit.type === "message"
+      && unit.message.role === "assistant"
+      && next !== undefined
+      && (next.type === "activity" || next.message.role !== "user");
+    const userPromptId =
+      unit.type === "message" && unit.message.role === "user"
+        ? unit.message.id
+        : undefined;
+    const userPromptKey =
+      unit.type === "message" && unit.message.role === "user"
+        ? (unit.message.promptId ?? unit.message.id)
+        : undefined;
+    const isPromptHighlighted = Boolean(
+      highlightedPromptId
+      && unit.type === "message"
+      && unit.message.role === "user"
+      && (
+        unit.message.id === highlightedPromptId
+        || unit.message.promptId === highlightedPromptId
+      ),
+    );
+    const forkIndex = forkIndices[index];
+
+    const isUnitInActiveTurn = isStreaming && (
+      unit.type === "activity"
+        ? (
+            unit.turnId && activeTurnId !== null
+              ? unit.turnId === activeTurnId
+              : index > currentTurnStartIndex
+          )
+        : (
+            unit.message.turnId && activeTurnId !== null
+              ? unit.message.turnId === activeTurnId
+              : index > currentTurnStartIndex
+          )
+    );
+    const isActivityLive = unit.type === "activity" && liveActivityClusterIndices.has(index);
+    const showTurnDuration = unit.type === "activity"
+      ? (isActivityLive || (unit.showTurnDuration === true && !isUnitInActiveTurn))
+      : false;
+
+    return (
+      <ThreadDisplayUnit
+        key={unitKeys[index]}
+        unitKey={unitKeys[index]}
+        unit={unit}
+        marginTop={marginTop}
+        userPromptId={userPromptId}
+        userPromptKey={userPromptKey}
+        isPromptHighlighted={isPromptHighlighted}
+        revealOnHistoryEntry={
+          unit.type === "message" && unit.message.id === revealMessageId
+        }
+        hasBodyBelow={hasBodyBelow}
+        isTurnStreaming={
+          unit.type === "activity"
+            ? isActivityLive
+            : isUnitInActiveTurn
+        }
+        suppressReservedFooter={isIntermediateAssistant}
+        showTurnDuration={showTurnDuration}
+        retryStatus={
+          isActivityLive
+            ? retryStatus
+            : null
+        }
+        activeStartedAtMs={isActivityLive ? activeStartedAtMs : undefined}
+        forkIndex={forkIndex}
+        showForkBoundary={index === forkBoundaryAfterUnitIndex}
+        forkBoundaryLabel={t("thread.forkedFromHistory")}
+        temporary={temporary}
+        cliApps={cliApps}
+        mcpPresets={mcpPresets}
+        slashCommands={slashCommands}
+        onOpenFilePreview={onOpenFilePreview}
+        onForkFromMessage={onForkFromMessage}
+        onOpenChildHistory={onOpenChildHistory}
+        delegatedStatusAvailable={delegatedStatusAvailable}
+      />
+    );
+  };
+
+  if (shouldVirtualize) {
+    const virtualItems = virtualizer.getVirtualItems();
+    return (
+      <div ref={messageListRef} className="flex w-full flex-col">
+        <AssistantSelectionAction
+          containerRef={messageListRef}
+          onQuoteSelection={onQuoteSelection}
+        />
+        <div
+          ref={virtualizer.containerRef}
+          data-testid="thread-virtual-list"
+          className="relative w-full"
+        >
+          {virtualItems.map((virtualRow) => {
+            const unit = units[virtualRow.index];
+            if (!unit) return null;
+            return (
+              <div
+                key={virtualRow.key}
+                data-index={virtualRow.index}
+                ref={measureVirtualRow}
+                className="w-full"
+                style={{
+                  position: "absolute",
+                  top: 0,
+                  left: 0,
+                }}
+              >
+                {renderUnit(unit, virtualRow.index, true)}
+              </div>
+            );
+          })}
+        </div>
+        {showPendingActivity ? (
+          <div className={pendingActivityMarginTop}>
+            <AgentActivityCluster
+              messages={[]}
+              isTurnStreaming
+              hasBodyBelow={false}
+              retryStatus={retryStatus}
+              startedAtMs={pendingStartedAtMs}
+            />
+          </div>
+        ) : null}
+      </div>
+    );
+  }
+
   return (
     <div ref={messageListRef} className="flex w-full flex-col">
       <AssistantSelectionAction
         containerRef={messageListRef}
         onQuoteSelection={onQuoteSelection}
       />
-      {units.map((unit, index) => {
-        const prev = units[index - 1];
-        const marginTop =
-          index > 0
-            ? marginAfterPrevUnit(prev)
-            : "";
-        const next = units[index + 1];        const hasBodyBelow =
-          unit.type === "activity"
-          && next?.type === "message"
-          && next.message.role === "assistant";
-        const userPromptId =
-          unit.type === "message" && unit.message.role === "user"
-            ? unit.message.id
-            : undefined;
-        const forkIndex =
-          unit.type === "message" && unit.message.role === "assistant" && forkFlags[index]
-            ? nextUserIndex
-            : undefined;
-        if (
-          unit.type === "message"
-          && unit.message.role === "user"
-          && unit.message.deliveryStatus !== "failed"
-        ) nextUserIndex += 1;
-
-        return (
-          <ThreadDisplayUnit
-            key={unitKeys[index]}
-            unitKey={unitKeys[index]}
-            unit={unit}
-            marginTop={marginTop}
-            userPromptId={userPromptId}
-            hasBodyBelow={hasBodyBelow}
-            isTurnStreaming={
-              unit.type === "activity"
-                ? liveActivityClusterIndices.has(index)
-                : isStreaming && (
-                    unit.message.turnId && activeTurnId !== null
-                      ? unit.message.turnId === activeTurnId
-                      : index > currentTurnStartIndex
-                  )
-            }
-            retryStatus={
-              unit.type === "activity" && liveActivityClusterIndices.has(index)
-                ? retryStatus
-                : null
-            }
-            forkIndex={forkIndex}
-            showForkBoundary={index === forkBoundaryAfterUnitIndex}
-            forkBoundaryLabel={t("thread.forkedFromHistory")}
-            temporary={temporary}
-            cliApps={cliApps}
-            mcpPresets={mcpPresets}
-            slashCommands={slashCommands}
-            onOpenFilePreview={onOpenFilePreview}
-            onForkFromMessage={onForkFromMessage}
-          />
-        );
-      })}
-      {pendingActivity ? (
-        <div className={units.length > 0 ? "mt-5" : undefined}>
+      {units.map((unit, index) => renderUnit(unit, index, false))}
+      {showPendingActivity ? (
+        <div className={pendingActivityMarginTop}>
           <AgentActivityCluster
             messages={[]}
             isTurnStreaming
             hasBodyBelow={false}
             retryStatus={retryStatus}
-            startedAtMs={
-              // Match the activity timeline's prompt-based clock across the first output.
-              pendingActivity.startedAtMs ?? (runStartedAt != null ? runStartedAt * 1000 : undefined)
-            }
+            startedAtMs={pendingStartedAtMs}
           />
         </div>
       ) : null}
     </div>
   );
-}
-
-interface PendingTurnProjection {
-  startedAtMs?: number;
-  hasVisibleOutput: boolean;
-}
-
-function pendingTurnProjection(
-  messages: UIMessage[],
-  activeTurnId: string | null,
-): PendingTurnProjection | null {
-  let promptIndex = -1;
-  for (let index = messages.length - 1; index >= 0; index -= 1) {
-    const message = messages[index];
-    if (
-      message.role === "user"
-      && message.deliveryStatus !== "failed"
-      && (activeTurnId === null || message.turnId === activeTurnId)
-    ) {
-      promptIndex = index;
-      break;
-    }
-  }
-  if (promptIndex < 0) return null;
-
-  const prompt = messages[promptIndex];
-  const hasVisibleOutput = messages.slice(promptIndex + 1).some((message) => {
-    if (message.role === "user") return false;
-    if (activeTurnId && message.turnId && message.turnId !== activeTurnId) return false;
-    return (
-      message.content.trim().length > 0
-      || !!message.reasoning?.trim()
-      || !!message.reasoningStreaming
-      || message.kind === "trace"
-      || !!message.media?.length
-    );
-  });
-
-  return {
-    ...(typeof prompt.createdAt === "number" && Number.isFinite(prompt.createdAt)
-      ? { startedAtMs: prompt.createdAt }
-      : {}),
-    hasVisibleOutput,
-  };
-}
+});
 
 interface ThreadDisplayUnitProps {
   unitKey: string;
   unit: DisplayUnit;
   marginTop: string;
   userPromptId?: string;
+  userPromptKey?: string;
+  isPromptHighlighted?: boolean;
+  revealOnHistoryEntry: boolean;
   hasBodyBelow: boolean;
   isTurnStreaming: boolean;
+  suppressReservedFooter: boolean;
+  showTurnDuration: boolean;
   retryStatus: RetryStatus | null;
+  activeStartedAtMs?: number;
   forkIndex?: number;
   showForkBoundary: boolean;
   forkBoundaryLabel: string;
@@ -253,6 +448,8 @@ interface ThreadDisplayUnitProps {
   slashCommands: SlashCommand[];
   onOpenFilePreview?: (path: string) => void;
   onForkFromMessage?: (beforeUserIndex: number) => void;
+  onOpenChildHistory?: (child: DelegatedChildReference, trigger: HTMLButtonElement) => void;
+  delegatedStatusAvailable: boolean;
 }
 
 const ThreadDisplayUnit = memo(function ThreadDisplayUnit({
@@ -260,9 +457,15 @@ const ThreadDisplayUnit = memo(function ThreadDisplayUnit({
   unit,
   marginTop,
   userPromptId,
+  userPromptKey,
+  isPromptHighlighted = false,
+  revealOnHistoryEntry,
   hasBodyBelow,
   isTurnStreaming,
+  suppressReservedFooter,
+  showTurnDuration,
   retryStatus,
+  activeStartedAtMs,
   forkIndex,
   showForkBoundary,
   forkBoundaryLabel,
@@ -272,6 +475,8 @@ const ThreadDisplayUnit = memo(function ThreadDisplayUnit({
   slashCommands,
   onOpenFilePreview,
   onForkFromMessage,
+  onOpenChildHistory,
+  delegatedStatusAvailable,
 }: ThreadDisplayUnitProps) {
   const onForkFromHere = useCallback(() => {
     if (forkIndex !== undefined) onForkFromMessage?.(forkIndex);
@@ -279,9 +484,15 @@ const ThreadDisplayUnit = memo(function ThreadDisplayUnit({
   return (
     <>
       <div
-        className={marginTop}
+        className={
+          isPromptHighlighted
+            ? `${marginTop} rounded-2xl ring-2 ring-primary/40 bg-primary/5 transition-colors duration-500`.trim()
+            : marginTop
+        }
         data-thread-display-unit={unitKey}
         data-user-prompt-id={userPromptId}
+        data-prompt-key={userPromptKey}
+        data-prompt-highlighted={isPromptHighlighted ? "true" : undefined}
       >
         {unit.type === "activity" ? (
           <AgentActivityCluster
@@ -289,8 +500,9 @@ const ThreadDisplayUnit = memo(function ThreadDisplayUnit({
             isTurnStreaming={isTurnStreaming}
             retryStatus={retryStatus}
             hasBodyBelow={hasBodyBelow}
+            showTurnDuration={showTurnDuration}
             turnLatencyMs={unit.turnLatencyMs}
-            startedAtMs={unit.startedAtMs}
+            startedAtMs={activeStartedAtMs ?? unit.startedAtMs}
             cliApps={cliApps}
             mcpPresets={mcpPresets}
             onOpenFilePreview={onOpenFilePreview}
@@ -299,12 +511,18 @@ const ThreadDisplayUnit = memo(function ThreadDisplayUnit({
           <MessageBubble
             message={unit.message}
             isTurnStreaming={isTurnStreaming}
+            suppressReservedFooter={suppressReservedFooter}
+            revealOnHistoryEntry={revealOnHistoryEntry}
             temporary={temporary}
             cliApps={cliApps}
             mcpPresets={mcpPresets}
             slashCommands={slashCommands}
             onOpenFilePreview={onOpenFilePreview}
-            onForkFromHere={forkIndex !== undefined ? onForkFromHere : undefined}
+            onForkFromHere={
+              forkIndex !== undefined && onForkFromMessage ? onForkFromHere : undefined
+            }
+            onOpenChildHistory={onOpenChildHistory}
+            delegatedStatusAvailable={delegatedStatusAvailable}
           />
         )}
       </div>
@@ -321,9 +539,15 @@ function threadDisplayUnitPropsEqual(
     displayUnitsEqual(previous.unit, next.unit)
     && previous.marginTop === next.marginTop
     && previous.userPromptId === next.userPromptId
+    && previous.userPromptKey === next.userPromptKey
+    && previous.isPromptHighlighted === next.isPromptHighlighted
+    && previous.revealOnHistoryEntry === next.revealOnHistoryEntry
     && previous.hasBodyBelow === next.hasBodyBelow
     && previous.isTurnStreaming === next.isTurnStreaming
+    && previous.suppressReservedFooter === next.suppressReservedFooter
+    && previous.showTurnDuration === next.showTurnDuration
     && previous.retryStatus === next.retryStatus
+    && previous.activeStartedAtMs === next.activeStartedAtMs
     && previous.forkIndex === next.forkIndex
     && previous.showForkBoundary === next.showForkBoundary
     && previous.forkBoundaryLabel === next.forkBoundaryLabel
@@ -332,6 +556,8 @@ function threadDisplayUnitPropsEqual(
     && previous.mcpPresets === next.mcpPresets
     && previous.slashCommands === next.slashCommands
     && previous.onOpenFilePreview === next.onOpenFilePreview
+    && previous.onOpenChildHistory === next.onOpenChildHistory
+    && previous.delegatedStatusAvailable === next.delegatedStatusAvailable
     && previous.onForkFromMessage === next.onForkFromMessage
   );
 }
@@ -368,6 +594,8 @@ function displayUnitsEqual(previous: DisplayUnit, next: DisplayUnit): boolean {
   if (previous.type !== "activity" || next.type !== "activity") return false;
   return (
     previous.sourceMessageCount === next.sourceMessageCount
+    && previous.turnId === next.turnId
+    && previous.showTurnDuration === next.showTurnDuration
     && previous.turnLatencyMs === next.turnLatencyMs
     && previous.startedAtMs === next.startedAtMs
     && previous.messages.length === next.messages.length
@@ -408,36 +636,33 @@ function ForkBoundaryDivider({ label }: { label: string }) {
   );
 }
 
+/**
+ * Only a trailing activity fold at the bottom of the active turn owns the live
+ * "Working" surface. Earlier activity folds before an intermediate assistant
+ * response stay collapsed above that response, and if an intermediate response
+ * is currently the last unit while the turn is still running, the pending
+ * "Working" indicator appears below it at the bottom of the thread.
+ */
 function currentActivityClusterIndices(
   units: DisplayUnit[],
   activeTurnId: string | null,
 ): Set<number> {
   const indices = new Set<number>();
-  if (activeTurnId) {
-    for (let i = units.length - 1; i >= 0; i -= 1) {
-      const unit = units[i];
-      if (
-        unit.type === "activity"
-        && unit.messages.some((message) => message.turnId === activeTurnId)
-      ) {
-        indices.add(i);
-        return indices;
-      }
-    }
-  }
-
-  let markedCurrentActivity = false;
   for (let i = units.length - 1; i >= 0; i -= 1) {
     const unit = units[i];
-    if (unit.type === "activity") {
-      if (!markedCurrentActivity) {
-        indices.add(i);
-        markedCurrentActivity = true;
-      }
+    if (
+      unit.type === "message"
+      && unit.message.role === "user"
+      && unit.message.deliveryStatus === "failed"
+    ) {
       continue;
     }
-    if (unit.message.role === "assistant" && unit.message.isStreaming) continue;
-    if (unit.message.role === "user") break;
+    if (unit.type === "activity") {
+      if (!activeTurnId || !unit.turnId || unit.turnId === activeTurnId) {
+        indices.add(i);
+      }
+    }
+    break;
   }
   return indices;
 }
@@ -456,8 +681,8 @@ export function unitKeysForDisplay(units: DisplayUnit[]): string[] {
 function unitKeyBase(unit: DisplayUnit, index: number): string {
   if (unit.type === "activity") {
     const anchor = unit.messages[0];
-    const turnKey = stableTurnMessageKey(anchor, "activity");
-    if (turnKey) return turnKey;
+    const turnId = unit.turnId ?? anchor?.turnId;
+    if (turnId) return `turn-${turnId}-activity`;
     const anchorId = anchor?.id;
     return anchorId != null ? `activity-${anchorId}` : `activity-idx-${index}`;
   }
@@ -476,7 +701,7 @@ function stableTurnMessageKey(message: UIMessage | undefined, fallbackPhase?: st
   return `turn-${message.turnId}-${phase}`;
 }
 
-function marginAfterPrevUnit(prev: DisplayUnit): string {
+function marginAfterPrevUnit(prev: DisplayUnit, current: DisplayUnit): string {
   if (prev.type === "activity") {
     return "mt-4";
   }
@@ -491,5 +716,56 @@ function marginAfterPrevUnit(prev: DisplayUnit): string {
   if (denseP) {
     return "mt-2";
   }
+  const sameAssistantTurn =
+    p.role === "assistant"
+    && (current.type === "activity" || current.message.role !== "user");
+  if (sameAssistantTurn) {
+    return "mt-3";
+  }
   return "mt-5";
+}
+
+function paddingAfterPrevUnit(prev: DisplayUnit, current: DisplayUnit): string {
+  if (prev.type === "activity") {
+    return "pt-4";
+  }
+  const p = prev.message;
+  const denseP =
+    p.kind === "trace"
+    || (
+      p.role === "assistant"
+      && p.content.trim().length === 0
+      && (!!p.reasoning || !!p.reasoningStreaming)
+    );
+  if (denseP) {
+    return "pt-2";
+  }
+  const sameAssistantTurn =
+    p.role === "assistant"
+    && (current.type === "activity" || current.message.role !== "user");
+  if (sameAssistantTurn) {
+    return "pt-3";
+  }
+  return "pt-5";
+}
+
+function estimateDisplayUnitHeight(
+  unit: DisplayUnit | undefined,
+  isLiveActivity: boolean,
+): number {
+  if (!unit) return 80;
+  if (unit.type === "activity") {
+    return isLiveActivity ? 180 : 48;
+  }
+  const content = unit.message.content;
+  const contentLen = content.length;
+  const hasMedia = Boolean(unit.message.media?.length || unit.message.images?.length);
+  const newlineCount = content.split("\n").length - 1;
+  if (unit.message.role === "user") {
+    const lines = Math.max(1, Math.ceil(contentLen / 60), newlineCount + 1);
+    return 44 + Math.min(280, lines * 24) + (hasMedia ? 160 : 0);
+  }
+  const codeBlocks = Math.floor((content.split("```").length - 1) / 2);
+  const lines = Math.max(1, Math.ceil(contentLen / 68), newlineCount + 1);
+  return 60 + Math.min(900, lines * 24 + codeBlocks * 44) + (hasMedia ? 260 : 0);
 }

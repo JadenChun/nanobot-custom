@@ -12,7 +12,12 @@ import { Check, Globe2 } from "lucide-react";
 import remarkBreaks from "remark-breaks";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
-import { Streamdown, type Components, type StreamdownProps } from "streamdown";
+import {
+  createAnimatePlugin,
+  Streamdown,
+  type Components,
+  type StreamdownProps,
+} from "streamdown";
 
 import { AttachmentTile } from "@/components/AttachmentTile";
 import { CodeBlock } from "@/components/CodeBlock";
@@ -43,6 +48,7 @@ interface MarkdownTextRendererProps {
   className?: string;
   highlightCode?: boolean;
   streaming?: boolean;
+  revealOnHistoryEntry?: boolean;
   onOpenFilePreview?: (path: string) => void;
 }
 
@@ -286,6 +292,17 @@ const remarkPlugins: NonNullable<StreamdownProps["remarkPlugins"]> = [
   remarkSafeHtmlSubset,
 ];
 const rehypePlugins: NonNullable<StreamdownProps["rehypePlugins"]> = [rehypeKatex];
+const historyWordRevealPlugin = createAnimatePlugin({
+  animation: "fadeIn",
+  duration: 180,
+  easing: "ease-out",
+  sep: "word",
+  stagger: 2,
+}).rehypePlugin;
+const historyRevealRehypePlugins: NonNullable<StreamdownProps["rehypePlugins"]> = [
+  historyWordRevealPlugin,
+  rehypeKatex,
+];
 
 const DIRECT_LINKS = { enabled: false } as const;
 const SAFE_MARKDOWN_PROTOCOL = /^(https?|ircs?|mailto|xmpp)$/i;
@@ -516,6 +533,7 @@ export default function MarkdownTextRenderer({
   className,
   highlightCode = true,
   streaming = false,
+  revealOnHistoryEntry = false,
   onOpenFilePreview,
 }: MarkdownTextRendererProps) {
   const { t } = useTranslation();
@@ -802,7 +820,7 @@ export default function MarkdownTextRenderer({
       linkSafety={DIRECT_LINKS}
       urlTransform={safeMarkdownUrl}
       remarkPlugins={remarkPlugins}
-      rehypePlugins={rehypePlugins}
+      rehypePlugins={revealOnHistoryEntry ? historyRevealRehypePlugins : rehypePlugins}
       components={components}
       className={cn(
         "markdown-content prose max-w-none dark:prose-invert",

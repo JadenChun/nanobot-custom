@@ -40,6 +40,7 @@ class ModelRuntimeResolver:
         self._refresh_required = False
         self._resolved_presets: dict[str, LLMRuntime] = {}
         self._tracks_provider_generation = initial_runtime.model_preset is None
+        self._capability_generation = initial_runtime.capability_generation
         self._default_selection_signature = preset_helpers.default_selection_signature(
             initial_runtime.snapshot_signature,
             configured_default_preset,
@@ -182,15 +183,20 @@ class ModelRuntimeResolver:
         self._tracks_provider_generation = False
         return runtime
 
+    def _next_capability_generation(self) -> int:
+        self._capability_generation += 1
+        return self._capability_generation
+
     def select_model(self, model: str) -> LLMRuntime:
         """Change the default model without reconstructing downstream consumers."""
         if not isinstance(cast(object, model), str) or not model.strip():
             raise ValueError("model must be a non-empty string")
-        self._runtime = replace(
-            self._runtime,
+        runtime = self._runtime.with_route_identity(
             model=model.strip(),
-            model_preset=None,
+            context_window_tokens=self._runtime.context_window_tokens,
+            capability_generation=self._next_capability_generation(),
         )
+        self._runtime = replace(runtime, model_preset=None)
         return self._runtime
 
     def select_context_window(self, context_window_tokens: int) -> LLMRuntime:
@@ -201,9 +207,10 @@ class ModelRuntimeResolver:
             bool,
         ):
             raise TypeError("context_window_tokens must be an integer")
-        self._runtime = replace(
-            self._runtime,
+        self._runtime = self._runtime.with_route_identity(
+            model=self._runtime.model,
             context_window_tokens=context_window_tokens,
+            capability_generation=self._next_capability_generation(),
         )
         return self._runtime
 

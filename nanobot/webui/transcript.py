@@ -6,24 +6,36 @@ import base64
 import binascii
 import hashlib
 import json
+import math
 import os
 import re
+import secrets
 import shutil
 import time
 import uuid
+from contextlib import AbstractContextManager, suppress
 from pathlib import Path
-from typing import Any, Callable, Mapping, NamedTuple, Sequence, cast
+from typing import Any, Callable, Literal, Mapping, NamedTuple, Sequence, cast
 from urllib.parse import unquote, urlparse
 
 from loguru import logger
 
 from nanobot.attachments.context import media_paths_for_message
+from nanobot.bus.events import CommittedUserInput
 from nanobot.config.paths import get_webui_dir
+from nanobot.providers.base import ContextUsageSnapshot
 from nanobot.runtime_context import public_history_message
 from nanobot.session.automation_turns import is_automation_kind
 from nanobot.session.history_visibility import is_hidden_history_message
 from nanobot.session.manager import SessionManager
-from nanobot.webui.metadata import WEBUI_MESSAGE_SOURCE_METADATA_KEY, WEBUI_TURN_METADATA_KEY
+from nanobot.session.mode_storage import SessionModeError
+from nanobot.session.source_store import SourceSnapshot, SourceState
+from nanobot.webui.metadata import (
+    WEBUI_DISPLAY_ANSWER_EVENT_ID_KEY,
+    WEBUI_DISPLAY_SOURCE_KEY,
+    WEBUI_MESSAGE_SOURCE_METADATA_KEY,
+    WEBUI_TURN_METADATA_KEY,
+)
 from nanobot.webui.session_identity import webui_chat_id, webui_session_key
 
 WEBUI_TRANSCRIPT_SCHEMA_VERSION = 3
@@ -32,13 +44,29 @@ WEBUI_TRANSCRIPT_INCOMPLETE_KEY = "transcript_incomplete"
 _MAX_TRANSCRIPT_FILE_BYTES = 8 * 1024 * 1024
 _ACTIVE_TRANSCRIPT_ROTATE_BYTES = 2 * 1024 * 1024
 _TARGET_ACTIVE_TRANSCRIPT_BYTES = _ACTIVE_TRANSCRIPT_ROTATE_BYTES // 2
-_TRANSCRIPT_SEGMENT_MANIFEST_VERSION = 2
+_TRANSCRIPT_SEGMENT_MANIFEST_VERSION = 3
+_LEGACY_TRANSCRIPT_SEGMENT_MANIFEST_VERSION = 2
+_TRANSCRIPT_ROTATION_INTENT_VERSION = 1
+_TRANSCRIPT_ROTATION_INTENT_NAME = "rotation.json"
 _TRANSCRIPT_ACTIVE_CHUNK_ID = "active"
 _TRANSCRIPT_SEGMENT_RE = re.compile(r"^\d{6}\.jsonl$")
 _DEFAULT_TRANSCRIPT_PAGE_LIMIT = 160
 _MAX_TRANSCRIPT_PAGE_LIMIT = 1000
+_MAX_PENDING_TRANSCRIPT_DELETIONS = 256
+# The no-query replay path uses the same bounded page budget as paginated
+# reads. Older history remains reachable through the returned page cursor.
+_NO_QUERY_TRANSCRIPT_PAGE_LIMIT = _MAX_TRANSCRIPT_PAGE_LIMIT
 _WEBUI_TURN_ID_RE = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
 _WEBUI_REPLAY_IDENTITY_KEY = "_webui_replay_identity"
+_RECORD_ORIGIN = "_webui_source_origin"
+_PROMPT_SOURCE_EVENT = "_webui_source_prompt_id"
+_TEXT_SOURCE_REF_KEY = "_webui_text_ref"
+_PROMPT_PREVIEW_KEY = "prompt_preview"
+TRANSCRIPT_RECORD_ORIGIN_KEY = _RECORD_ORIGIN
+TRANSCRIPT_PROMPT_SOURCE_EVENT_KEY = _PROMPT_SOURCE_EVENT
+TRANSCRIPT_TEXT_SOURCE_REF_KEY = _TEXT_SOURCE_REF_KEY
+TRANSCRIPT_SEGMENT_MANIFEST_VERSION = _TRANSCRIPT_SEGMENT_MANIFEST_VERSION
+LEGACY_TRANSCRIPT_SEGMENT_MANIFEST_VERSION = _LEGACY_TRANSCRIPT_SEGMENT_MANIFEST_VERSION
 _MARKDOWN_LOCAL_IMAGE_RE = re.compile(
     r"!\[([^\]]*)\]\((<[^>]+>|[^)\s]+)(\s+(?:\"[^\"]*\"|'[^']*'))?\)"
 )
@@ -149,13 +177,169 @@ def _media_kind_from_name(name: str) -> str:
     return "file"
 
 
+def _transcript_stem(session_key: str) -> str:
+    """Collision-resistant, reversible transcript filename stem."""
+    return SessionManager.storage_key(session_key)
+
+
+def _legacy_transcript_stem(session_key: str) -> str:
+    return SessionManager.safe_key(session_key)
+
+
+def _transcript_chat_id(session_key: str) -> str:
+    return session_key.split(":", 1)[1] if ":" in session_key else session_key
+
+
+def _legacy_transcript_path(session_key: str) -> Path:
+    return get_webui_dir() / f"{_legacy_transcript_stem(session_key)}.jsonl"
+
+
+def _legacy_transcript_segments_dir(session_key: str) -> Path:
+    return get_webui_dir() / f"{_legacy_transcript_stem(session_key)}.segments"
+
+
+def _jsonl_chat_ids(path: Path) -> set[str]:
+    ids: set[str] = set()
+    try:
+        with open(path, encoding="utf-8") as handle:
+            for line in handle:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    value = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(value, dict):
+                    row = cast(dict[str, Any], value)
+                    chat_id = row.get("chat_id")
+                    if isinstance(chat_id, str) and chat_id:
+                        ids.add(chat_id)
+    except OSError:
+        return set()
+    return ids
+
+
+def _legacy_owner(path: Path, session_key: str) -> str:
+    if not path.is_file():
+        return "absent"
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        payload = None
+    expected = _transcript_chat_id(session_key)
+    if isinstance(payload, dict):
+        row = cast(dict[str, Any], payload)
+        chat_id = row.get("chat_id")
+        if isinstance(chat_id, str) and chat_id:
+            return "own" if chat_id == expected else "other"
+        return "ambiguous"
+    ids = _jsonl_chat_ids(path)
+    if not ids:
+        return "ambiguous"
+    if ids == {expected}:
+        return "own"
+    return "mixed" if expected in ids else "other"
+
+
+def _legacy_dir_owner(directory: Path, session_key: str) -> str:
+    if not directory.is_dir():
+        return "absent"
+    ids: set[str] = set()
+    for path in sorted(directory.glob("*.jsonl")):
+        ids.update(_jsonl_chat_ids(path))
+    if not ids:
+        return "ambiguous"
+    expected = _transcript_chat_id(session_key)
+    if ids == {expected}:
+        return "own"
+    return "mixed" if expected in ids else "other"
+
+
+def _write_manifest_json(path: Path, payload: dict[str, Any]) -> None:
+    tmp_path = path.with_suffix(path.suffix + ".tmp")
+    try:
+        with open(tmp_path, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle, ensure_ascii=False, separators=(",", ":"))
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp_path, path)
+    except BaseException:
+        tmp_path.unlink(missing_ok=True)
+        raise
+
+
+def _rewrite_manifest_active_name(
+    directory: Path,
+    *,
+    old_stem: str,
+    new_stem: str,
+) -> None:
+    manifest_path = directory / "manifest.json"
+    try:
+        raw = manifest_path.read_text(encoding="utf-8")
+        payload = json.loads(raw)
+    except (OSError, json.JSONDecodeError):
+        return
+    if not isinstance(payload, dict):
+        return
+    data = cast(dict[str, Any], payload)
+    active_name = data.get("active_name")
+    if not isinstance(active_name, str) or not active_name.startswith(old_stem):
+        return
+    new_name = new_stem + active_name[len(old_stem):]
+    old_active = get_webui_dir() / active_name
+    new_active = get_webui_dir() / new_name
+    if old_active.is_file() and not new_active.exists():
+        os.replace(old_active, new_active)
+    data["active_name"] = new_name
+    _write_manifest_json(manifest_path, data)
+
+
+def _migrate_legacy_transcript(session_key: str) -> None:
+    """Move one unambiguous legacy transcript to its collision-free identity."""
+    new_path = webui_transcript_path(session_key)
+    new_dir = webui_transcript_segments_dir(session_key)
+    if new_path.exists() or new_dir.exists():
+        return
+    old_path = _legacy_transcript_path(session_key)
+    old_dir = _legacy_transcript_segments_dir(session_key)
+    root_owner = _legacy_owner(old_path, session_key)
+    dir_owner = _legacy_dir_owner(old_dir, session_key)
+    if root_owner in {"other", "mixed"} or dir_owner in {"other", "mixed"}:
+        logger.warning(
+            "Quarantining colliding legacy transcript for {}",
+            session_key,
+        )
+    old_stem = _legacy_transcript_stem(session_key)
+    new_stem = _transcript_stem(session_key)
+    if dir_owner == "own" and old_dir.is_dir() and not new_dir.exists():
+        os.replace(old_dir, new_dir)
+        _rewrite_manifest_active_name(
+            new_dir,
+            old_stem=old_stem,
+            new_stem=new_stem,
+        )
+    if root_owner == "own" and old_path.is_file() and not new_path.exists():
+        os.replace(old_path, new_path)
+
+
+def active_transcript_path(session_key: str) -> Path:
+    """Return the committed active transcript file for this session."""
+    _migrate_legacy_transcript(session_key)
+    _entries, active_name = _read_segment_manifest_state(session_key)
+    if active_name:
+        return get_webui_dir() / active_name
+    return webui_transcript_path(session_key)
+
+
 def webui_transcript_path(session_key: str) -> Path:
-    stem = SessionManager.safe_key(session_key)
+    stem = _transcript_stem(session_key)
     return get_webui_dir() / f"{stem}.jsonl"
 
 
 def webui_transcript_segments_dir(session_key: str) -> Path:
-    stem = SessionManager.safe_key(session_key)
+    stem = _transcript_stem(session_key)
     return get_webui_dir() / f"{stem}.segments"
 
 
@@ -164,7 +348,7 @@ def _webui_transcript_manifest_path(session_key: str) -> Path:
 
 
 def _legacy_webui_thread_path(session_key: str) -> Path:
-    stem = SessionManager.safe_key(session_key)
+    stem = _legacy_transcript_stem(session_key)
     return get_webui_dir() / f"{stem}.json"
 
 
@@ -188,6 +372,324 @@ class _SessionBackfillTurn(NamedTuple):
 
 def _record_json_line(record: dict[str, Any]) -> str:
     return json.dumps(record, ensure_ascii=False, separators=(",", ":"))
+
+
+_DELEGATED_CHILD_LIFETIME_FIELDS = (
+    "parent_session_key",
+    "parent_store_identity",
+    "parent_incarnation",
+    "parent_generation",
+    "root_key",
+    "root_store_identity",
+    "root_incarnation",
+    "root_generation",
+    "child_session_key",
+    "child_store_identity",
+    "child_incarnation",
+    "child_generation",
+)
+_DELEGATED_CHILD_CANONICAL_FIELDS = (
+    "parent_session_key",
+    "child_session_key",
+    "child_id",
+    "profile",
+    "state",
+    "outcome",
+    "runtime_generation",
+    "task_label",
+    "task_label_truncated",
+    "result_summary",
+    "result_summary_truncated",
+    "parent_run_id",
+    "child_run_id",
+    "parent_store_identity",
+    "parent_incarnation",
+    "parent_generation",
+    "root_key",
+    "root_store_identity",
+    "root_incarnation",
+    "root_generation",
+    "child_store_identity",
+    "child_incarnation",
+    "child_generation",
+    "run_sequence",
+    "state_sequence",
+    "control_epoch",
+    "holds_capacity",
+    "can_stop",
+    "owned_work",
+    "pending_approval_id",
+    "blocked_run_id",
+    "result_disposition",
+)
+
+
+def _delegated_child_lifetime(
+    child: Mapping[str, Any],
+) -> tuple[object, ...] | None:
+    values: list[object] = []
+    for name in _DELEGATED_CHILD_LIFETIME_FIELDS:
+        value = child.get(name)
+        if name.endswith("_generation"):
+            if type(value) is not int or value < 0:
+                return None
+        elif not isinstance(value, str) or not value:
+            return None
+        values.append(value)
+    return tuple(values)
+
+
+def _delegated_child_version(child: Mapping[str, Any]) -> tuple[int, int]:
+    run_sequence = child.get("run_sequence")
+    state_sequence = child.get("state_sequence")
+    return (
+        run_sequence if type(run_sequence) is int and run_sequence >= 0 else 0,
+        state_sequence if type(state_sequence) is int and state_sequence >= 0 else 0,
+    )
+
+
+def _delegated_child_facts(child: Mapping[str, Any]) -> tuple[object, ...]:
+    return tuple(child.get(name) for name in _DELEGATED_CHILD_CANONICAL_FIELDS)
+
+
+def validate_retained_transcript_record(row: dict[str, object]) -> None:
+    """Qualify known durable display rows without replay normalization/repair."""
+    supported = {
+        "user", "message", "delta", "reasoning_delta", "reasoning_end", "stream_end",
+        "turn_end", "file_edit", "fork_marker", "delegated_child", "context_compaction",
+        "goal_state", "goal_status", "session_updated", "user_message", "error",
+        "runtime_model_updated", "turn_model_updated",
+    }
+    event = row.get("event")
+    version = row.get("schemaVersion", row.get("schema_version", WEBUI_TRANSCRIPT_SCHEMA_VERSION))
+    if (event not in supported or type(version) is not int
+            or version != WEBUI_TRANSCRIPT_SCHEMA_VERSION):
+        raise ValueError("unsupported retained transcript event/version")
+    if "chat_id" in row and (not isinstance(row["chat_id"], str) or not row["chat_id"]):
+        raise ValueError("invalid retained transcript chat identity")
+    if "context_usage" in row and (
+        row["context_usage"] != ContextUsageSnapshot.from_value(row["context_usage"]).to_dict()
+    ):
+        raise ValueError("invalid retained context usage")
+    if event == "delegated_child":
+        if (any(not isinstance(row.get(name), str) or not row.get(name)
+                for name in ("child_id", "child_session_key", "profile", "state"))
+                or type(row.get("runtime_generation", 0)) is not int
+                or cast(int, row.get("runtime_generation", 0)) < 0):
+            raise ValueError("invalid retained delegated-child activity")
+        optional_strings = (
+            "parent_session_key", "outcome", "parent_run_id", "child_run_id", "parent_store_identity",
+            "parent_incarnation", "root_key", "root_store_identity",
+            "root_incarnation", "child_store_identity", "child_incarnation",
+            "pending_approval_id", "blocked_run_id", "result_disposition",
+        )
+        if any(
+            row.get(name) is not None and not isinstance(row.get(name), str)
+            for name in optional_strings
+        ):
+            raise ValueError("invalid retained delegated-child activity")
+        integer_fields = (
+            "parent_generation", "root_generation", "child_generation",
+            "run_sequence", "state_sequence", "control_epoch",
+        )
+        if any(
+            row.get(name) is not None and type(row.get(name)) is not int
+            for name in integer_fields
+        ):
+            raise ValueError("invalid retained delegated-child activity")
+        boolean_fields = ("holds_capacity", "can_stop", "owned_work")
+        if any(
+            row.get(name) is not None and type(row.get(name)) is not bool
+            for name in boolean_fields
+        ):
+            raise ValueError("invalid retained delegated-child activity")
+        task_label = row.get("task_label")
+        if task_label is not None and (
+            not isinstance(task_label, str) or len(task_label) > 160
+        ):
+            raise ValueError("invalid retained delegated-child task label")
+        result_summary = row.get("result_summary")
+        if result_summary is not None and (
+            not isinstance(result_summary, str) or len(result_summary) > 1000
+        ):
+            raise ValueError("invalid retained delegated-child result summary")
+        for name in ("task_label_truncated", "result_summary_truncated"):
+            if name in row and type(row[name]) is not bool:
+                raise ValueError("invalid retained delegated-child truncation flag")
+    if event == "context_compaction" and (
+        not isinstance(row.get("compaction_id"), str) or not row.get("compaction_id")
+        or row.get("phase") not in {"started", "succeeded", "failed", "cancelled"}
+    ):
+        raise ValueError("invalid retained compaction activity")
+    if event == "goal_state" and not isinstance(row.get("goal_state"), dict):
+        raise ValueError("invalid retained goal state")
+    if event == "goal_status" and not isinstance(row.get("status"), str):
+        raise ValueError("invalid retained goal status")
+    for name in ("text", "content"):
+        if name in row and not isinstance(row[name], (str, list)):
+            raise ValueError("invalid retained display text")
+    if _TEXT_SOURCE_REF_KEY in row and (
+        not isinstance(row[_TEXT_SOURCE_REF_KEY], str) or not row[_TEXT_SOURCE_REF_KEY]
+    ):
+        raise ValueError("invalid retained canonical text reference")
+    if _PROMPT_PREVIEW_KEY in row and not isinstance(row[_PROMPT_PREVIEW_KEY], str):
+        raise ValueError("invalid retained prompt preview")
+    for name in ("tool_events", "edits"):
+        if name in row and (not isinstance(row[name], list)
+                            or any(not isinstance(item, dict) for item in cast(list[object], row[name]))):
+            raise ValueError("invalid retained display records")
+
+
+def validate_retained_webui_thread(data: dict[str, object]) -> None:
+    """Qualify retained WebuiThreadPersistedPayload/UIMessage snapshots purely.
+
+    Legacy JSON snapshots and current replay payloads share these display rows;
+    accepting their outer messages list alone cannot certify retained evidence.
+    Unknown fields fail closed so a future reference representation needs its
+    owner's explicit inventory support before maintenance can delete anything.
+    """
+    allowed = {
+        "schemaVersion", "schema_version", "sessionKey", "chat_id", "savedAt", "messages",
+        "fork_boundary_message_count", "completed_turn_ids", "has_pending_tool_calls",
+        "active_turn_id", "page", "workspace_scope", "workspace_access_request",
+        "workspace_permissions",
+    }
+    if set(data) - allowed or not isinstance(data.get("messages"), list):
+        raise ValueError("unsupported retained thread record")
+    versions = [data[name] for name in ("schemaVersion", "schema_version") if name in data]
+    if len(versions) > 1 or any(type(value) is not int or value != WEBUI_TRANSCRIPT_SCHEMA_VERSION for value in versions):
+        raise ValueError("unsupported retained display version")
+    for name in ("sessionKey", "chat_id", "savedAt"):
+        if name in data and not isinstance(data[name], str):
+            raise ValueError("invalid retained thread identity")
+    for name in ("fork_boundary_message_count",):
+        if name in data and (type(data[name]) is not int or cast(int, data[name]) < 0):
+            raise ValueError("invalid retained thread count")
+    if "completed_turn_ids" in data and (
+        not isinstance(data["completed_turn_ids"], list)
+        or any(not isinstance(value, str) for value in cast(list[object], data["completed_turn_ids"]))
+    ):
+        raise ValueError("invalid retained completed turns")
+    if "has_pending_tool_calls" in data and type(data["has_pending_tool_calls"]) is not bool:
+        raise ValueError("invalid retained pending state")
+    if data.get("active_turn_id") is not None and not isinstance(data["active_turn_id"], str):
+        raise ValueError("invalid retained active turn")
+    for name in ("workspace_scope", "workspace_access_request", "workspace_permissions"):
+        if name in data and data[name] is not None and not isinstance(data[name], dict):
+            raise ValueError("invalid retained workspace projection")
+    if "page" in data:
+        page = data["page"]
+        page_fields = {"before_cursor", "has_more_before", "loaded_message_count", "total_known_message_count", "user_message_offset", "first_turn_ordinal", "loaded_turn_count", "total_turn_count"}
+        if not isinstance(page, dict) or set(cast(dict[object, object], page)) - page_fields:
+            raise ValueError("invalid retained thread page")
+        checked = cast(dict[str, object], page)
+        for name, value in checked.items():
+            if name == "before_cursor":
+                valid = value is None or isinstance(value, str)
+            elif name == "has_more_before":
+                valid = type(value) is bool
+            else:
+                valid = type(value) is int and value >= 0
+            if not valid:
+                raise ValueError("invalid retained thread page")
+        if (checked.get("has_more_before") is not False
+                or checked.get("before_cursor") is not None
+                or checked.get("user_message_offset", 0) != 0
+                or any(checked[name] != len(cast(list[object], data["messages"]))
+                       for name in ("loaded_message_count", "total_known_message_count") if name in checked)):
+            raise ValueError("incomplete retained thread page")
+
+    strings = {"id", "content", "activitySegmentId", "reasoning", "turnId", "promptId"}
+    numbers = {"createdAt", "latencyMs", "completedAt", "contextWindowTokens", "turnSeq",
+               "turnOrdinal"}
+    booleans = {"isStreaming", "reasoningStreaming"}
+    objects = {"compaction", "delegatedChild", "usage", "source", "sessionMessage", "contextUsage"}
+    records = {"toolEvents", "fileEdits", "cliApps", "mcpPresets", "sessionMentions", "roundUsages"}
+    choices = {
+        "role": {"user", "assistant", "tool", "system"},
+        "kind": {"message", "trace", "compaction", "delegated_child"},
+        "activityKind": {"model"}, "compactReply": {"empty", "failed"},
+        "turnPhase": {"user", "reasoning", "activity", "answer", "complete"},
+        "deliveryStatus": {"sending", "accepted", "failed"},
+        "deliveryErrorKind": {
+            "message_too_big", "workspace_scope_rejected", "connection_closed",
+            "session_recovery_required", "turn_rejected",
+        },
+    }
+    known = strings | numbers | booleans | objects | records | set(choices) | {"traces", "images", "media"}
+    for raw in cast(list[object], data["messages"]):
+        if not isinstance(raw, dict):
+            raise ValueError("nonobject retained display message")
+        row = cast(dict[str, object], raw)
+        if set(row) - known or not {"id", "role", "content", "createdAt"} <= set(row):
+            raise ValueError("unsupported retained display message")
+        for name, value in row.items():
+            if name in strings:
+                valid = isinstance(value, str) and (name != "id" or bool(value))
+            elif name in numbers:
+                valid = type(value) in (int, float) and math.isfinite(cast(int | float, value)) and cast(int | float, value) >= 0
+            elif name in booleans:
+                valid = type(value) is bool
+            elif name in choices:
+                valid = isinstance(value, str) and value in choices[name]
+            elif name == "contextUsage":
+                if not isinstance(value, dict):
+                    raise ValueError("invalid retained context usage")
+                snapshot = cast(dict[str, object], value)
+                normalized = ContextUsageSnapshot.from_value({
+                    "context_tokens": snapshot.get("contextTokens"),
+                    "context_window_tokens": snapshot.get("contextWindowTokens"),
+                })
+                valid = (
+                    {"contextTokens", "contextWindowTokens"} <= snapshot.keys()
+                    and not snapshot.keys() - {"contextTokens", "contextWindowTokens", "completionTurnSeq"}
+                    and snapshot["contextTokens"] == normalized.context_tokens
+                    and snapshot["contextWindowTokens"] == normalized.context_window_tokens
+                    and ("completionTurnSeq" not in snapshot
+                         or (type(snapshot["completionTurnSeq"]) is int
+                             and snapshot["completionTurnSeq"] >= 0))
+                )
+            elif name in objects:
+                valid = isinstance(value, dict)
+            elif name in records:
+                # Replay can retain a null toolEvents field after merging an
+                # ordinary trace with a prior unstructured activity row.
+                valid = (name == "toolEvents" and value is None) or (
+                    isinstance(value, list) and all(isinstance(item, dict) for item in cast(list[object], value)))
+            elif name == "traces":
+                valid = isinstance(value, list) and all(isinstance(item, str) for item in cast(list[object], value))
+            else:
+                valid = isinstance(value, list)
+                if valid:
+                    for media in cast(list[object], value):
+                        if not isinstance(media, dict):
+                            valid = False
+                            break
+                        item = cast(dict[str, object], media)
+                        fields = {"url", "name", "kind", "id"}
+                        if name == "images":
+                            fields.add("path")
+                        if (set(item) - fields or any(not isinstance(field, str) for field in item.values())
+                                or (name == "media" and item.get("kind") not in {"image", "video", "file"})):
+                            valid = False
+                            break
+            if not valid:
+                raise ValueError("invalid retained display message field")
+
+
+def media_publication(value: object) -> AbstractContextManager[None]:
+    from nanobot.attachments._media import configured_custody
+    from nanobot.attachments.store import AttachmentStore
+
+    custody = configured_custody()
+    custody.declare("webui", get_webui_dir().resolve(strict=True))
+    return AttachmentStore(custody.root / "attachments", media_root=custody.root).publication(value)
+
+
+def _fsync_transcript_directory(path: Path) -> None:
+    from nanobot.attachments._media import fsync_directory
+
+    fsync_directory(path)
 
 
 def _read_transcript_file(path: Path) -> list[dict[str, Any]]:
@@ -240,15 +742,17 @@ def _write_records_to_path(path: Path, rows: list[dict[str, Any]]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp_path = path.with_suffix(path.suffix + ".tmp")
     try:
-        with open(tmp_path, "w", encoding="utf-8") as f:
-            for row in rows:
-                raw = _record_json_line(row)
-                if len(raw.encode("utf-8")) > _MAX_TRANSCRIPT_FILE_BYTES:
-                    raise ValueError("webui transcript line too large")
-                f.write(raw + "\n")
-            f.flush()
-            os.fsync(f.fileno())
-        os.replace(tmp_path, path)
+        with media_publication(rows):
+            with open(tmp_path, "w", encoding="utf-8") as f:
+                for row in rows:
+                    raw = _record_json_line(row)
+                    if len(raw.encode("utf-8")) > _MAX_TRANSCRIPT_FILE_BYTES:
+                        raise ValueError("webui transcript line too large")
+                    f.write(raw + "\n")
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp_path, path)
+            _fsync_transcript_directory(path.parent)
     except BaseException:
         tmp_path.unlink(missing_ok=True)
         raise
@@ -310,37 +814,193 @@ def _normalize_manifest_entry(session_key: str, entry: Any) -> dict[str, Any] | 
     }
 
 
-def _write_segment_manifest(session_key: str, entries: list[dict[str, Any]]) -> None:
+def _write_segment_manifest(
+    session_key: str,
+    entries: list[dict[str, Any]],
+    *,
+    active_name: str | None = None,
+) -> None:
     directory = webui_transcript_segments_dir(session_key)
     directory.mkdir(parents=True, exist_ok=True)
     data = {
         "version": _TRANSCRIPT_SEGMENT_MANIFEST_VERSION,
         "segments": entries,
+        "active": active_name,
     }
     path = _webui_transcript_manifest_path(session_key)
     tmp_path = path.with_suffix(".json.tmp")
     try:
-        tmp_path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-        os.replace(tmp_path, path)
+        from nanobot.attachments._inventory import rows
+        from nanobot.attachments._media import read_bytes
+
+        retained_rows: list[dict[str, object]] = []
+        for entry in entries:
+            retained_rows.extend(rows(read_bytes(directory / f"{entry['id']}.jsonl")))
+        if active_name:
+            retained_rows.extend(rows(read_bytes(get_webui_dir() / active_name)))
+        with media_publication(retained_rows):
+            with tmp_path.open("w", encoding="utf-8") as handle:
+                handle.write(json.dumps(data, ensure_ascii=False, indent=2) + "\n")
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(tmp_path, path)
+            _fsync_transcript_directory(directory)
     except BaseException:
         tmp_path.unlink(missing_ok=True)
         raise
 
 
-def _rebuild_segment_manifest(session_key: str) -> list[dict[str, Any]]:
+def _transcript_file_name(value: object) -> str | None:
+    if not isinstance(value, str) or not value or not value.endswith(".jsonl"):
+        return None
+    if "/" in value or "\\" in value or value != Path(value).name:
+        return None
+    return value
+
+
+def _transcript_rotation_intent_path(session_key: str) -> Path:
+    return webui_transcript_segments_dir(session_key) / _TRANSCRIPT_ROTATION_INTENT_NAME
+
+
+class _TranscriptRotationIntent(NamedTuple):
+    source_active: str | None
+    target_active: str | None
+    committed_segments: frozenset[str]
+
+
+def _write_transcript_rotation_intent(
+    session_key: str,
+    *,
+    source_active: str,
+    target_active: str,
+    committed_segments: Sequence[str],
+) -> None:
+    """Record a rotation before any segment is published.
+
+    The intent is a committed watermark: it names the active file the rotation
+    started from and the segments that were committed at that point. A crash
+    before the manifest commit therefore leaves the source active authoritative
+    and the published segments uncommitted.
+    """
+    directory = webui_transcript_segments_dir(session_key)
+    directory.mkdir(parents=True, exist_ok=True)
+    _write_manifest_json(
+        _transcript_rotation_intent_path(session_key),
+        {
+            "version": _TRANSCRIPT_ROTATION_INTENT_VERSION,
+            "source_active": source_active,
+            "target_active": target_active,
+            "committed_segments": list(committed_segments),
+        },
+    )
+    _fsync_transcript_directory(directory)
+
+
+def _read_transcript_rotation_intent(
+    session_key: str,
+) -> _TranscriptRotationIntent | None:
+    path = _transcript_rotation_intent_path(session_key)
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    intent = cast(dict[str, Any], data)
+    raw_segments = intent.get("committed_segments")
+    if (
+        intent.get("version") != _TRANSCRIPT_ROTATION_INTENT_VERSION
+        or not isinstance(raw_segments, list)
+    ):
+        return None
+    committed: set[str] = set()
+    for raw_segment in cast(list[Any], raw_segments):
+        if not isinstance(raw_segment, str) or not _TRANSCRIPT_SEGMENT_RE.fullmatch(
+            f"{raw_segment}.jsonl"
+        ):
+            return None
+        committed.add(raw_segment)
+    return _TranscriptRotationIntent(
+        _transcript_file_name(intent.get("source_active")),
+        _transcript_file_name(intent.get("target_active")),
+        frozenset(committed),
+    )
+
+
+def _committed_manifest_active(session_key: str) -> str | None:
+    path = _webui_transcript_manifest_path(session_key)
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    manifest = cast(dict[str, Any], data)
+    if manifest.get("version") != _TRANSCRIPT_SEGMENT_MANIFEST_VERSION:
+        return None
+    return _transcript_file_name(manifest.get("active"))
+
+
+def _recover_interrupted_rotation(session_key: str) -> None:
+    """Roll back or finish a rotation that stopped before its manifest commit."""
+    intent = _read_transcript_rotation_intent(session_key)
+    if intent is None:
+        return
+    root = get_webui_dir()
+    if intent.target_active is not None and (
+        _committed_manifest_active(session_key) == intent.target_active
+    ):
+        # The manifest commit succeeded; only the old active unlink is left.
+        if intent.source_active is not None and intent.source_active != intent.target_active:
+            with suppress(OSError):
+                (root / intent.source_active).unlink()
+    else:
+        # No manifest commit: the source active still holds every turn. Drop the
+        # uncommitted segments and the uncommitted tail so the read path never
+        # sees both generations.
+        if intent.target_active is not None:
+            with suppress(OSError):
+                (root / intent.target_active).unlink()
+        for segment_id in _segment_ids_on_disk(session_key):
+            if segment_id not in intent.committed_segments:
+                with suppress(OSError):
+                    _segment_file_path(session_key, segment_id).unlink()
+    with suppress(OSError):
+        _transcript_rotation_intent_path(session_key).unlink()
+
+
+def _rebuild_segment_manifest(
+    session_key: str,
+) -> tuple[list[dict[str, Any]], str | None]:
     segment_ids = _segment_ids_on_disk(session_key)
     entries = [_segment_manifest_entry(session_key, segment_id) for segment_id in segment_ids]
-    if entries:
-        _write_segment_manifest(session_key, entries)
+    stem = _transcript_stem(session_key)
+    active_names = sorted(
+        path.name
+        for path in get_webui_dir().glob(f"{stem}.active.*.jsonl")
+        if path.is_file()
+    )
+    # Never merge two active generations. One committed file is recoverable;
+    # multiple candidates need operator review.
+    active_name = active_names[0] if len(active_names) == 1 else None
+    if entries or active_name:
+        _write_segment_manifest(session_key, entries, active_name=active_name)
     else:
         _webui_transcript_manifest_path(session_key).unlink(missing_ok=True)
-    return entries
+    return entries, active_name
 
 
-def _read_segment_manifest_entries(session_key: str) -> list[dict[str, Any]]:
+def _read_segment_manifest_state(
+    session_key: str,
+    *,
+    recover_rotation: bool = True,
+) -> tuple[list[dict[str, Any]], str | None]:
+    _migrate_legacy_transcript(session_key)
     directory = webui_transcript_segments_dir(session_key)
     if not directory.is_dir():
-        return []
+        return [], None
+    if recover_rotation:
+        _recover_interrupted_rotation(session_key)
     path = _webui_transcript_manifest_path(session_key)
     if not path.is_file():
         return _rebuild_segment_manifest(session_key)
@@ -350,7 +1010,10 @@ def _read_segment_manifest_entries(session_key: str) -> list[dict[str, Any]]:
         raw_segments = manifest.get("segments") if manifest is not None else None
         if (
             manifest is None
-            or manifest.get("version") != _TRANSCRIPT_SEGMENT_MANIFEST_VERSION
+            or manifest.get("version") not in (
+                _LEGACY_TRANSCRIPT_SEGMENT_MANIFEST_VERSION,
+                _TRANSCRIPT_SEGMENT_MANIFEST_VERSION,
+            )
             or not isinstance(raw_segments, list)
         ):
             return _rebuild_segment_manifest(session_key)
@@ -360,21 +1023,45 @@ def _read_segment_manifest_entries(session_key: str) -> list[dict[str, Any]]:
             if normalized is None:
                 return _rebuild_segment_manifest(session_key)
             entries.append(normalized)
-        if [entry["id"] for entry in entries] != _segment_ids_on_disk(session_key):
+        if manifest.get("version") == _LEGACY_TRANSCRIPT_SEGMENT_MANIFEST_VERSION:
+            # Version 2 uses the original active filename. The next rotation
+            # writes a version 3 manifest with the committed active filename.
+            return entries, None
+        active_name = manifest.get("active")
+        if active_name is not None and (
+            not isinstance(active_name, str)
+            or "/" in active_name
+            or "\\" in active_name
+            or not active_name.endswith(".jsonl")
+        ):
             return _rebuild_segment_manifest(session_key)
-        return entries
+        return entries, active_name
     except (OSError, json.JSONDecodeError, TypeError, AttributeError):
         return _rebuild_segment_manifest(session_key)
+
+
+def _read_segment_manifest_entries(
+    session_key: str,
+    *,
+    recover_rotation: bool = True,
+) -> list[dict[str, Any]]:
+    return _read_segment_manifest_state(session_key, recover_rotation=recover_rotation)[0]
 
 
 def _read_segment_ids(session_key: str) -> list[str]:
     return [entry["id"] for entry in _read_segment_manifest_entries(session_key)]
 
 
-def _append_segment_turns(session_key: str, turns: list[list[dict[str, Any]]]) -> None:
+def _append_segment_turns(
+    session_key: str,
+    turns: list[list[dict[str, Any]]],
+    *,
+    write_manifest: bool = True,
+    recover_rotation: bool = True,
+) -> list[dict[str, Any]]:
     if not turns:
-        return
-    entries = _read_segment_manifest_entries(session_key)
+        return _read_segment_manifest_entries(session_key, recover_rotation=recover_rotation)
+    entries = _read_segment_manifest_entries(session_key, recover_rotation=recover_rotation)
     next_id = int(entries[-1]["id"]) + 1 if entries else 1
     batch: list[list[dict[str, Any]]] = []
     batch_bytes = 0
@@ -407,20 +1094,22 @@ def _append_segment_turns(session_key: str, turns: list[list[dict[str, Any]]]) -
         batch_bytes += turn_bytes
     if batch:
         write_batch()
-    _write_segment_manifest(session_key, entries)
+    if write_manifest:
+        _write_segment_manifest(session_key, entries)
+    return entries
 
 
 def _rotate_active_transcript_if_needed(session_key: str) -> None:
-    path = webui_transcript_path(session_key)
-    if not path.is_file():
+    active_path = active_transcript_path(session_key)
+    if not active_path.is_file():
         return
     try:
-        if path.stat().st_size <= _ACTIVE_TRANSCRIPT_ROTATE_BYTES:
+        if active_path.stat().st_size <= _ACTIVE_TRANSCRIPT_ROTATE_BYTES:
             return
     except OSError:
         return
 
-    lines = _read_transcript_file(path)
+    lines = _read_transcript_file(active_path)
     if not lines:
         return
     turns = _split_transcript_turns(lines)
@@ -441,21 +1130,57 @@ def _rotate_active_transcript_if_needed(session_key: str) -> None:
     kept = turns[keep_start:]
     if not moved:
         return
-    _append_segment_turns(session_key, moved)
-    _write_records_to_path(path, _flatten_turns(kept))
+    committed_entries = _read_segment_manifest_entries(session_key)
+    active_name = f"{_transcript_stem(session_key)}.active.{secrets.token_hex(8)}.jsonl"
+    # Publish the intent first. A crash before the manifest commit leaves no
+    # committed rotation, so recovery keeps this active file and drops the
+    # uncommitted segments instead of reading both generations.
+    _write_transcript_rotation_intent(
+        session_key,
+        source_active=active_path.name,
+        target_active=active_name,
+        committed_segments=[str(entry["id"]) for entry in committed_entries],
+    )
+    entries = _append_segment_turns(
+        session_key,
+        moved,
+        write_manifest=False,
+        recover_rotation=False,
+    )
+    next_active = get_webui_dir() / active_name
+    _write_records_to_path(next_active, _flatten_turns(kept))
+    # The manifest commit is the rotation point. Before it, readers use the
+    # old active file. After it, readers use the segments plus the new active.
+    _write_segment_manifest(session_key, entries, active_name=active_name)
+    with suppress(OSError):
+        _transcript_rotation_intent_path(session_key).unlink()
+    _fsync_transcript_directory(webui_transcript_segments_dir(session_key))
+    with suppress(OSError):
+        active_path.unlink()
+    new_segment_ids = [str(entry["id"]) for entry in entries[len(committed_entries):]]
+    try:
+        from nanobot.webui.transcript_index import on_transcript_rotated
+
+        on_transcript_rotated(
+            session_key,
+            new_segment_ids=new_segment_ids,
+            next_active_path=next_active,
+        )
+    except OSError as exc:
+        logger.debug("transcript index rotation update skipped for {}: {}", session_key, exc)
 
 
 def _chunk_ids(session_key: str) -> list[str]:
     _rotate_active_transcript_if_needed(session_key)
     ids = _read_segment_ids(session_key)
-    if webui_transcript_path(session_key).is_file():
+    if active_transcript_path(session_key).is_file():
         ids.append(_TRANSCRIPT_ACTIVE_CHUNK_ID)
     return ids
 
 
 def _read_chunk_turns(session_key: str, chunk_id: str) -> list[list[dict[str, Any]]]:
     if chunk_id == _TRANSCRIPT_ACTIVE_CHUNK_ID:
-        path = webui_transcript_path(session_key)
+        path = active_transcript_path(session_key)
     else:
         path = _segment_file_path(session_key, chunk_id)
     if not path.is_file():
@@ -503,6 +1228,36 @@ def _decode_page_cursor(value: str | None) -> int | None:
     return before_turn
 
 
+def _encode_after_cursor(after_turn_ordinal: int) -> str:
+    raw = json.dumps(
+        {"after_turn": after_turn_ordinal},
+        separators=(",", ":"),
+        ensure_ascii=False,
+    ).encode("utf-8")
+    return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
+
+
+def _decode_after_cursor(value: str | None) -> int | None:
+    if not value:
+        return None
+    try:
+        padded = value + "=" * (-len(value) % 4)
+        data = json.loads(base64.urlsafe_b64decode(padded.encode("ascii")).decode("utf-8"))
+    except (binascii.Error, json.JSONDecodeError, UnicodeDecodeError, ValueError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    cursor_data = cast(dict[str, Any], data)
+    after_turn = cursor_data.get("after_turn")
+    if (
+        isinstance(after_turn, bool)
+        or not isinstance(after_turn, int)
+        or after_turn < 0
+    ):
+        return None
+    return after_turn
+
+
 def _coerce_page_limit(limit: int | None) -> int:
     if limit is None:
         return _DEFAULT_TRANSCRIPT_PAGE_LIMIT
@@ -513,7 +1268,6 @@ def _chunk_turn_refs(
     session_key: str,
     turn_cache: dict[str, list[list[dict[str, Any]]]],
 ) -> list[_TranscriptChunkRef]:
-    _rotate_active_transcript_if_needed(session_key)
     refs: list[_TranscriptChunkRef] = []
     ordinal = 0
     for entry in _read_segment_manifest_entries(session_key):
@@ -523,22 +1277,16 @@ def _chunk_turn_refs(
             continue
         refs.append(_TranscriptChunkRef(chunk_id, ordinal, turn_count, int(entry["user_count"])))
         ordinal += turn_count
-    if webui_transcript_path(session_key).is_file():
-        active_turns = _cached_chunk_turns(
-            session_key,
+    # Use the same structural boundaries as segment rotation and replay.
+    # Cache the decoded active chunk for just this request, not across writes.
+    active_turns = _cached_chunk_turns(session_key, _TRANSCRIPT_ACTIVE_CHUNK_ID, turn_cache)
+    if active_turns:
+        refs.append(_TranscriptChunkRef(
             _TRANSCRIPT_ACTIVE_CHUNK_ID,
-            turn_cache,
-        )
-        active_turn_count = len(active_turns)
-        if active_turn_count > 0:
-            refs.append(
-                _TranscriptChunkRef(
-                    _TRANSCRIPT_ACTIVE_CHUNK_ID,
-                    ordinal,
-                    active_turn_count,
-                    sum(1 for turn in active_turns for row in turn if _is_user_transcript_row(row)),
-                ),
-            )
+            ordinal,
+            len(active_turns),
+            sum(1 for turn in active_turns for row in turn if _is_user_transcript_row(row)),
+        ))
     return refs
 
 
@@ -632,11 +1380,21 @@ def _select_transcript_page(
         }
 
     first_ref = selected_chronological[0]
+    last_ref = selected_chronological[-1]
     has_more = first_ref.ordinal > 0
+    has_more_after = last_ref.ordinal + 1 < total_turns
     page = {
         "before_cursor": _encode_page_cursor(first_ref.ordinal) if has_more else None,
         "has_more_before": has_more,
+        "after_cursor": _encode_after_cursor(last_ref.ordinal + 1) if has_more_after else None,
+        "has_more_after": has_more_after,
         "loaded_message_count": 0,
+        # Turn bookkeeping for a whole-session navigator. All three come from
+        # the chunk refs already computed above, so they cost nothing extra and
+        # need no replay of history.
+        "first_turn_ordinal": first_ref.ordinal,
+        "loaded_turn_count": len(selected_chronological),
+        "total_turn_count": total_turns,
         "user_message_offset": _count_user_messages_before_ordinal(
             session_key,
             chunks,
@@ -647,22 +1405,541 @@ def _select_transcript_page(
     return lines, page
 
 
-def read_transcript_lines(session_key: str) -> list[dict[str, Any]]:
+def _select_legacy_after_page(
+    session_key: str,
+    *,
+    limit: int | None,
+    after: str,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    page_limit = _coerce_page_limit(limit)
+    after_ordinal = _decode_after_cursor(after)
+    if after_ordinal is None:
+        raise HistoryWindowError(409, "stale_history_cursor")
+    turn_cache: dict[str, list[list[dict[str, Any]]]] = {}
+    chunks = _chunk_turn_refs(session_key, turn_cache)
+    total_turns = sum(chunk.turn_count for chunk in chunks)
+    selected: list[_TranscriptTurnRef] = []
+    selected_message_count = 0
+
+    for chunk in chunks:
+        if chunk.start_ordinal + chunk.turn_count <= after_ordinal:
+            continue
+        turns = _cached_chunk_turns(session_key, chunk.chunk_id, turn_cache)
+        local_start = max(0, after_ordinal - chunk.start_ordinal)
+        for turn_index in range(local_start, len(turns)):
+            ordinal = chunk.start_ordinal + turn_index
+            turn = turns[turn_index]
+            selected.append(_TranscriptTurnRef(ordinal, turn))
+            selected_message_count += len(replay_transcript_to_ui_messages(turn))
+            if selected_message_count >= page_limit:
+                break
+        if selected_message_count >= page_limit:
+            break
+
+    if not selected:
+        return [], {
+            "before_cursor": _encode_page_cursor(total_turns) if total_turns > 0 else None,
+            "has_more_before": total_turns > 0,
+            "after_cursor": None,
+            "has_more_after": False,
+            "loaded_message_count": 0,
+            "user_message_offset": _count_user_messages_before_ordinal(
+                session_key, chunks, total_turns, turn_cache,
+            ),
+        }
+
+    lines = [
+        record
+        for ref in selected
+        for record in _records_with_replay_identity(ref.records, turn_ordinal=ref.ordinal)
+    ]
+    first_ref = selected[0]
+    last_ref = selected[-1]
+    has_more_before = first_ref.ordinal > 0
+    has_more_after = last_ref.ordinal + 1 < total_turns
+    return lines, {
+        "before_cursor": _encode_page_cursor(first_ref.ordinal) if has_more_before else None,
+        "has_more_before": has_more_before,
+        "after_cursor": _encode_after_cursor(last_ref.ordinal + 1) if has_more_after else None,
+        "has_more_after": has_more_after,
+        "loaded_message_count": 0,
+        "first_turn_ordinal": first_ref.ordinal,
+        "loaded_turn_count": len(selected),
+        "total_turn_count": total_turns,
+        "user_message_offset": _count_user_messages_before_ordinal(
+            session_key, chunks, first_ref.ordinal, turn_cache,
+        ),
+    }
+
+
+def _select_legacy_around_page(
+    session_key: str,
+    *,
+    limit: int | None,
+    prompt_id: str | None,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    if not prompt_id:
+        raise HistoryWindowError(404, "prompt_not_found")
+    page_limit = _coerce_page_limit(limit)
+    turn_cache: dict[str, list[list[dict[str, Any]]]] = {}
+    chunks = _chunk_turn_refs(session_key, turn_cache)
+    total_turns = sum(chunk.turn_count for chunk in chunks)
+    all_turns: list[_TranscriptTurnRef] = []
+    target_idx: int | None = None
+    resolved_prompt_id = prompt_id
+
+    for chunk in chunks:
+        turns = _cached_chunk_turns(session_key, chunk.chunk_id, turn_cache)
+        for local_idx, turn in enumerate(turns):
+            ordinal = chunk.start_ordinal + local_idx
+            ref = _TranscriptTurnRef(ordinal, turn)
+            all_turns.append(ref)
+            if target_idx is not None:
+                continue
+            for record_index, rec in enumerate(turn):
+                if not _is_user_transcript_row(rec):
+                    continue
+                committed = rec.get(_PROMPT_SOURCE_EVENT)
+                legacy_id = f"legacy:{ordinal}:{record_index}"
+                if committed == prompt_id or legacy_id == prompt_id:
+                    target_idx = len(all_turns) - 1
+                    resolved_prompt_id = committed if isinstance(committed, str) and committed else legacy_id
+                    break
+            if target_idx is None:
+                stamped = _records_with_replay_identity(turn, turn_ordinal=ordinal)
+                replayed = replay_transcript_to_ui_messages(stamped)
+                for msg in replayed:
+                    if msg.get("role") == "user" and (
+                        msg.get("id") == prompt_id or msg.get("promptId") == prompt_id
+                    ):
+                        target_idx = len(all_turns) - 1
+                        pid = msg.get("promptId") or msg.get("id")
+                        if isinstance(pid, str) and pid:
+                            resolved_prompt_id = pid
+                        break
+
+    if target_idx is None:
+        raise HistoryWindowError(404, "prompt_not_found")
+
+    target_ref = all_turns[target_idx]
+    target_msg_count = max(1, len(replay_transcript_to_ui_messages(target_ref.records)))
+    half_before = max(1, (page_limit - target_msg_count) // 2)
+    half_after = max(1, page_limit - target_msg_count - half_before)
+
+    before_refs: list[_TranscriptTurnRef] = []
+    budget = 0
+    for idx in range(target_idx - 1, -1, -1):
+        ref = all_turns[idx]
+        before_refs.append(ref)
+        budget += len(replay_transcript_to_ui_messages(ref.records))
+        if budget >= half_before:
+            break
+    before_refs.reverse()
+
+    after_refs: list[_TranscriptTurnRef] = []
+    budget = 0
+    for idx in range(target_idx + 1, len(all_turns)):
+        ref = all_turns[idx]
+        after_refs.append(ref)
+        budget += len(replay_transcript_to_ui_messages(ref.records))
+        if budget >= half_after:
+            break
+
+    selected = [*before_refs, target_ref, *after_refs]
+    lines = [
+        record
+        for ref in selected
+        for record in _records_with_replay_identity(ref.records, turn_ordinal=ref.ordinal)
+    ]
+    first_ref = selected[0]
+    last_ref = selected[-1]
+    has_more_before = first_ref.ordinal > 0
+    has_more_after = last_ref.ordinal + 1 < total_turns
+    return lines, {
+        "before_cursor": _encode_page_cursor(first_ref.ordinal) if has_more_before else None,
+        "has_more_before": has_more_before,
+        "after_cursor": _encode_after_cursor(last_ref.ordinal + 1) if has_more_after else None,
+        "has_more_after": has_more_after,
+        "target_prompt_id": resolved_prompt_id,
+        "loaded_message_count": 0,
+        "first_turn_ordinal": first_ref.ordinal,
+        "loaded_turn_count": len(selected),
+        "total_turn_count": total_turns,
+        "user_message_offset": _count_user_messages_before_ordinal(
+            session_key, chunks, first_ref.ordinal, turn_cache,
+        ),
+    }
+
+
+_TURN_INDEX_DEFAULT_LIMIT = 400
+
+
+def _prompt_preview_text(raw: str) -> str:
+    compact = " ".join(raw.split())
+    return compact if len(compact) <= 120 else f"{compact[:117]}..."
+
+
+def _canonical_event_text(event: Mapping[str, Any]) -> str | None:
+    content = event.get("content")
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts: list[str] = []
+        for item in cast(list[object], content):
+            if isinstance(item, dict):
+                item_dict = cast(dict[str, Any], item)
+                if item_dict.get("type") == "text":
+                    part = item_dict.get("text")
+                    if isinstance(part, str):
+                        parts.append(part)
+        return "".join(parts)
+    return None
+
+
+def hydrate_consolidated_transcript_lines(
+    lines: list[dict[str, Any]],
+    canonical_events_loader: Callable[[Sequence[str]], Mapping[str, Mapping[str, Any]]] | None,
+) -> list[dict[str, Any]]:
+    """Resolve ``_webui_text_ref`` rows from canonical events via bounded lookup."""
+    if not lines or canonical_events_loader is None:
+        return lines
+    needed: list[str] = []
+    for rec in lines:
+        if rec.get("text") is not None:
+            continue
+        ref = rec.get(_TEXT_SOURCE_REF_KEY)
+        if isinstance(ref, str) and ref:
+            needed.append(ref)
+    if not needed:
+        return lines
+    resolved = canonical_events_loader(list(dict.fromkeys(needed)))
+    if not resolved:
+        return lines
+    hydrated: list[dict[str, Any]] = []
+    for rec in lines:
+        if rec.get("text") is None:
+            ref = rec.get(_TEXT_SOURCE_REF_KEY)
+            if isinstance(ref, str) and ref in resolved:
+                text = _canonical_event_text(resolved[ref])
+                if text is not None:
+                    copy = dict(rec)
+                    copy["text"] = text
+                    hydrated.append(copy)
+                    continue
+        hydrated.append(rec)
+    return hydrated
+
+
+def _turn_label(record: dict[str, Any] | None, ordinal: int) -> str:
+    text = ""
+    if record is not None:
+        raw = record.get("text")
+        if not isinstance(raw, str):
+            raw = record.get(_PROMPT_PREVIEW_KEY)
+        if not isinstance(raw, str):
+            raw = record.get("content")
+        if isinstance(raw, str):
+            text = " ".join(raw.split())
+    if not text:
+        return f"Prompt {ordinal + 1}"
+    return text if len(text) <= 120 else f"{text[:117]}..."
+
+
+class HistoryWindowError(RuntimeError):
+    """Explicit client-visible failure for a stale cursor or missing target."""
+
+    def __init__(self, status_code: int, detail: str) -> None:
+        super().__init__(detail)
+        self.status_code = status_code
+        self.detail = detail
+
+
+_LEGACY_ADOPTION_CACHE: dict[tuple[Any, ...], bool] = {}
+_LEGACY_ADOPTION_CACHE_MAX = 256
+
+
+def _legacy_display_rows_adoptable(
+    session_key: str, expected_source: SourceState | None,
+) -> bool:
+    """Whether a generation-0 display history starts with pre-stamping rows.
+
+    Sessions created before display rows were origin-stamped keep their whole
+    history unbound. Rows written after the upgrade (``/model`` replies, new
+    turns) are stamped with the current origin. The origin-bound index would
+    expose only the stamped suffix and hide the real history, so such a
+    history is served by the legacy reader instead. This is fail-closed:
+    any row stamped with a *different* origin (a prior deleted/reset
+    lifetime), or a first row that is already stamped, keeps the strict
+    origin-bound path. Scanning is read-only and cached per file signature.
+    """
+    if expected_source is None or expected_source.generation != 0:
+        return False
+    origin = _record_origin(expected_source)
+    paths = [_segment_file_path(session_key, seg) for seg in _read_segment_ids(session_key)]
+    paths.append(active_transcript_path(session_key))
+    signature: list[tuple[str, int, int, int]] = []
+    existing: list[Path] = []
+    for path in paths:
+        try:
+            info = path.stat()
+        except OSError:
+            continue
+        signature.append((str(path), info.st_ino, info.st_size, info.st_mtime_ns))
+        existing.append(path)
+    if not existing:
+        return False
+    cache_key = (origin, tuple(signature))
+    cached = _LEGACY_ADOPTION_CACHE.get(cache_key)
+    if cached is not None:
+        return cached
+    marker = _RECORD_ORIGIN.encode("ascii")
+    origin_bytes = origin.encode("ascii")
+    saw_unbound = False
+    saw_row = False
+    result: bool | None = None
+    try:
+        for path in existing:
+            with path.open("rb") as handle:
+                for raw in handle:
+                    if not raw.strip():
+                        continue
+                    stamped = marker in raw
+                    if not saw_row:
+                        saw_row = True
+                        if stamped:
+                            result = False
+                            break
+                    if not stamped:
+                        saw_unbound = True
+                    elif origin_bytes not in raw:
+                        result = False
+                        break
+            if result is not None:
+                break
+    except OSError:
+        return False
+    if result is None:
+        result = saw_unbound
+    if len(_LEGACY_ADOPTION_CACHE) >= _LEGACY_ADOPTION_CACHE_MAX:
+        _LEGACY_ADOPTION_CACHE.clear()
+    _LEGACY_ADOPTION_CACHE[cache_key] = result
+    return result
+
+
+def session_turn_index(
+    session_key: str,
+    *,
+    limit: int | None = None,
+    before: str | None = None,
+    expected_source: SourceState | None = None,
+) -> dict[str, Any] | None:
+    """Summarise a page of turns and visible prompts without replaying display rows."""
+    page_limit = max(
+        1,
+        min(_MAX_TRANSCRIPT_PAGE_LIMIT, int(limit) if limit is not None else _TURN_INDEX_DEFAULT_LIMIT),
+    )
+    legacy_adoptable = _legacy_display_rows_adoptable(session_key, expected_source)
+    if expected_source is not None and not legacy_adoptable:
+        from nanobot.webui.transcript_index import (
+            encode_window_cursor,
+            read_prompt_summary_range,
+        )
+
+        summary = read_prompt_summary_range(
+            session_key,
+            expected_source=expected_source,
+            limit=page_limit,
+            before=before,
+        )
+        if summary.status == "stale_cursor":
+            raise HistoryWindowError(409, "stale_history_cursor")
+        if summary.status == "unavailable":
+            raise HistoryWindowError(503, "history_index_unavailable")
+        if summary.status == "ok" and summary.entries:
+            prompts_payload: list[dict[str, Any]] = []
+            turns_by_ordinal: dict[int, dict[str, Any]] = {}
+            for item in summary.entries:
+                prompts_payload.append({
+                    "prompt_id": item.prompt_id,
+                    "turn_ordinal": item.turn_ordinal,
+                    "prompt_ordinal": item.prompt_ordinal,
+                    "label": item.label,
+                    "created_at": item.created_at_ms,
+                    "locator": item.locator,
+                })
+                if item.turn_ordinal not in turns_by_ordinal:
+                    turns_by_ordinal[item.turn_ordinal] = {
+                        "ordinal": item.turn_ordinal,
+                        "label": item.label,
+                        "created_at": item.created_at_ms,
+                        "cursor": encode_window_cursor(
+                            origin=summary.origin, ordinal=item.turn_ordinal + 1,
+                        ),
+                        "prompt_id": item.prompt_id,
+                        "locator": item.locator,
+                    }
+            turns_list = [turns_by_ordinal[key] for key in sorted(turns_by_ordinal)]
+            return {
+                "schemaVersion": WEBUI_TRANSCRIPT_SCHEMA_VERSION,
+                "sessionKey": session_key,
+                "turns": turns_list,
+                "prompts": prompts_payload,
+                "total_turn_count": summary.total_turn_count or 0,
+                "total_prompt_count": summary.total_prompt_count or 0,
+                "page": {
+                    "before_cursor": summary.before_cursor,
+                    "has_more_before": summary.has_more_before,
+                    "loaded_turn_count": len(turns_list),
+                    "loaded_prompt_count": len(prompts_payload),
+                },
+            }
+        # Legacy compatibility is handled above for pre-upgrade generation-0
+        # chats. Never adopt a prior deleted/reset lifetime's tagged rows.
+        return None
+    turn_cache: dict[str, list[list[dict[str, Any]]]] = {}
+    chunks = _chunk_turn_refs(session_key, turn_cache)
+    total_turns = sum(chunk.turn_count for chunk in chunks)
+    turns: list[dict[str, Any]] = []
+    if total_turns <= 0:
+        return None
+    before_ordinal = _decode_page_cursor(before)
+    upper_ordinal = total_turns if before_ordinal is None else min(before_ordinal, total_turns)
+    for chunk in reversed(chunks):
+        if len(turns) >= page_limit:
+            break
+        if chunk.start_ordinal >= upper_ordinal:
+            continue
+        local_upper = min(chunk.turn_count, upper_ordinal - chunk.start_ordinal)
+        if local_upper <= 0:
+            continue
+        chunk_turns = _cached_chunk_turns(session_key, chunk.chunk_id, turn_cache)
+        local_upper = min(local_upper, len(chunk_turns))
+        for turn_index in range(local_upper - 1, -1, -1):
+            ordinal = chunk.start_ordinal + turn_index
+            record = next(
+                (row for row in chunk_turns[turn_index] if _is_user_transcript_row(row)), None,
+            )
+            created_at = record.get("created_at_ms") if record is not None else None
+            turns.append({
+                "ordinal": ordinal,
+                "label": _turn_label(record, ordinal),
+                "created_at": created_at if type(created_at) is int else None,
+                # Direct page cursor: loading with this cursor returns a window
+                # whose newest turn is this one, so a navigator can jump to any
+                # turn without knowing the cursor encoding.
+                "cursor": _encode_page_cursor(ordinal + 1),
+            })
+            if len(turns) >= page_limit:
+                break
+    if not turns:
+        return None
+    turns.reverse()
+    first_ordinal = cast(int, turns[0]["ordinal"])
+    has_more = first_ordinal > 0
+    return {
+        "schemaVersion": WEBUI_TRANSCRIPT_SCHEMA_VERSION,
+        "sessionKey": session_key,
+        "turns": turns,
+        "total_turn_count": total_turns,
+        "page": {
+            "before_cursor": _encode_page_cursor(first_ordinal) if has_more else None,
+            "has_more_before": has_more,
+            "loaded_turn_count": len(turns),
+        },
+    }
+
+
+def transcript_stem(session_key: str) -> str:
+    return _transcript_stem(session_key)
+
+
+def transcript_manifest_path(session_key: str) -> Path:
+    return _webui_transcript_manifest_path(session_key)
+
+
+def transcript_rotation_intent_path(session_key: str) -> Path:
+    return _transcript_rotation_intent_path(session_key)
+
+
+def transcript_segment_path(session_key: str, segment_id: str) -> Path:
+    return _segment_file_path(session_key, segment_id)
+
+
+def transcript_fsync_directory(path: Path) -> None:
+    _fsync_transcript_directory(path)
+
+
+def transcript_migrate_legacy(session_key: str) -> None:
+    _migrate_legacy_transcript(session_key)
+
+
+def transcript_recover_rotation(session_key: str) -> None:
+    _recover_interrupted_rotation(session_key)
+
+
+def transcript_read_segment_manifest_state(
+    session_key: str,
+    *,
+    recover_rotation: bool = True,
+) -> tuple[list[dict[str, Any]], str | None]:
+    return _read_segment_manifest_state(session_key, recover_rotation=recover_rotation)
+
+
+def transcript_file_name(value: object) -> str | None:
+    return _transcript_file_name(value)
+
+
+def transcript_record_origin(state: SourceState) -> str:
+    return _record_origin(state)
+
+
+def transcript_is_user_row(row: dict[str, Any]) -> bool:
+    return _is_user_transcript_row(row)
+
+
+def transcript_turn_label(record: dict[str, Any] | None, ordinal: int) -> str:
+    return _turn_label(record, ordinal)
+
+
+def transcript_records_with_replay_identity(
+    records: list[dict[str, Any]],
+    *,
+    turn_ordinal: int,
+) -> list[dict[str, Any]]:
+    return _records_with_replay_identity(records, turn_ordinal=turn_ordinal)
+
+
+def _record_origin(state: SourceState) -> str:
+    parts = [state.store_identity, state.session_key, state.incarnation, state.generation]
+    return hashlib.sha256(json.dumps(parts, separators=(",", ":")).encode("ascii")).hexdigest()
+
+
+def read_transcript_lines(
+    session_key: str, *, expected_source: SourceState | None = None,
+) -> list[dict[str, Any]]:
+    """Read raw display rows, or only rows recorded by the qualified source."""
+    if expected_source is not None and expected_source.session_key != session_key:
+        return []
+    _migrate_legacy_transcript(session_key)
     lines: list[dict[str, Any]] = []
     for chunk_id in _chunk_ids(session_key):
         if chunk_id == _TRANSCRIPT_ACTIVE_CHUNK_ID:
-            lines.extend(_read_transcript_file(webui_transcript_path(session_key)))
+            lines.extend(_read_transcript_file(active_transcript_path(session_key)))
         else:
             lines.extend(_read_transcript_file(_segment_file_path(session_key, chunk_id)))
+    if expected_source is not None:
+        origin = _record_origin(expected_source)
+        return [line for line in lines if line.get(_RECORD_ORIGIN) == origin]
     return lines
 
 
 def webui_transcript_signature(session_key: str) -> tuple[tuple[str, int, int], ...]:
     """Return a cheap content signature for a session's transcript chunks."""
+    _migrate_legacy_transcript(session_key)
     entries: list[tuple[str, int, int]] = []
     for chunk_id in _chunk_ids(session_key):
         path = (
-            webui_transcript_path(session_key)
+            active_transcript_path(session_key)
             if chunk_id == _TRANSCRIPT_ACTIVE_CHUNK_ID
             else _segment_file_path(session_key, chunk_id)
         )
@@ -675,25 +1952,44 @@ def webui_transcript_signature(session_key: str) -> tuple[tuple[str, int, int], 
     return tuple(entries)
 
 
-def _write_transcript_lines(session_key: str, rows: list[dict[str, Any]]) -> None:
+def _write_transcript_lines(
+    session_key: str,
+    rows: list[dict[str, Any]],
+    *,
+    expected_source: SourceState | None = None,
+) -> None:
     delete_webui_transcript(session_key)
     path = webui_transcript_path(session_key)
     _write_records_to_path(path, rows)
     _rotate_active_transcript_if_needed(session_key)
+    try:
+        from nanobot.webui.transcript_index import on_transcript_rewritten
+
+        on_transcript_rewritten(session_key, expected_source=expected_source)
+    except OSError as exc:
+        logger.debug("transcript index rewrite update skipped for {}: {}", session_key, exc)
 
 
-def _append_to_active_transcript(session_key: str, obj: dict[str, Any]) -> None:
+def _append_to_active_transcript(
+    session_key: str,
+    obj: dict[str, Any],
+) -> tuple[Path, int, int, os.stat_result]:
     raw = _record_json_line(obj)
-    if len(raw.encode("utf-8")) > _MAX_TRANSCRIPT_FILE_BYTES:
+    line_bytes = (raw + "\n").encode("utf-8")
+    if len(line_bytes) - 1 > _MAX_TRANSCRIPT_FILE_BYTES:
         msg = "webui transcript line too large"
         raise ValueError(msg)
-    path = webui_transcript_path(session_key)
+    path = active_transcript_path(session_key)
     path.parent.mkdir(parents=True, exist_ok=True)
-    line = raw + "\n"
-    with open(path, "a", encoding="utf-8") as f:
-        f.write(line)
+    with media_publication(obj), open(path, "ab") as f:
+        f.write(line_bytes)
         f.flush()
         os.fsync(f.fileno())
+        active_info = os.fstat(f.fileno())
+        end_byte = active_info.st_size
+        start_byte = end_byte - len(line_bytes)
+        _fsync_transcript_directory(path.parent)
+    return path, start_byte, end_byte, active_info
 
 
 def _now_ms() -> int:
@@ -718,7 +2014,20 @@ def _record_for_append(obj: dict[str, Any]) -> dict[str, Any]:
 
 def append_transcript_object(session_key: str, obj: dict[str, Any]) -> None:
     record = _record_for_append(obj)
-    _append_to_active_transcript(session_key, record)
+    path, start_byte, end_byte, active_info = _append_to_active_transcript(session_key, record)
+    try:
+        from nanobot.webui.transcript_index import on_transcript_record_appended
+
+        on_transcript_record_appended(
+            session_key,
+            record=record,
+            active_path=path,
+            start_byte=start_byte,
+            end_byte=end_byte,
+            active_info=active_info,
+        )
+    except OSError as exc:
+        logger.debug("transcript index append update skipped for {}: {}", session_key, exc)
     if record.get("event") == "turn_end":
         _rotate_active_transcript_if_needed(session_key)
 
@@ -768,8 +2077,11 @@ def webui_message_source(metadata: dict[str, Any] | None) -> dict[str, str] | No
 class WebUITranscriptRecorder:
     """Prepare and persist WebUI wire events without leaking UI rules into channels."""
 
-    def __init__(self, log: Any = logger) -> None:
+    def __init__(
+        self, log: Any = logger, *, sessions: SessionManager | None = None,
+    ) -> None:
         self._log = log
+        self._sessions = sessions
         self._turn_sequences: dict[tuple[str, str], int] = {}
 
     def client_turn_metadata(self, value: Any) -> dict[str, str]:
@@ -808,7 +2120,7 @@ class WebUITranscriptRecorder:
         record = dict(event)
         if transcript_overrides:
             record.update(transcript_overrides)
-        return self.append(chat_id, record)
+        return self.append(chat_id, record, metadata=metadata)
 
     def prepare_and_append_stream_event(
         self,
@@ -838,7 +2150,7 @@ class WebUITranscriptRecorder:
         record = dict(event)
         if completed_text is not None:
             record["text"] = completed_text
-        return self.append(chat_id, record)
+        return self.append(chat_id, record, metadata=metadata)
 
     def append_user_message(
         self,
@@ -867,11 +2179,101 @@ class WebUITranscriptRecorder:
             return False
         return self.prepare_and_append(chat_id, payload, metadata=metadata, phase="user")
 
-    def append(self, chat_id: str, event: dict[str, Any]) -> bool:
+    def append_committed_user_message(
+        self,
+        chat_id: str,
+        user_input: CommittedUserInput,
+        metadata: dict[str, Any],
+    ) -> bool:
+        if not isinstance(metadata.get(WEBUI_DISPLAY_SOURCE_KEY), SourceState):
+            return False
+        payload = build_user_transcript_event(
+            chat_id,
+            user_input.content,
+            media_paths=list(user_input.media_paths),
+            attachments=[record.to_dict() for record in user_input.attachments],
+            cli_apps=metadata.get("cli_apps"),
+            mcp_presets=metadata.get("mcp_presets"),
+            session_mentions=metadata.get("session_mentions"),
+        )
+        if payload is None:
+            return False
+        payload["created_at_ms"] = user_input.created_at_ms
+        payload[_PROMPT_SOURCE_EVENT] = user_input.event_id
+        session_message = metadata.get("session_message")
+        if isinstance(session_message, Mapping):
+            payload["session_message"] = dict(cast(Mapping[str, Any], session_message))
+        return self.prepare_and_append(chat_id, payload, metadata=metadata, phase="user")
+
+    def append(
+        self,
+        chat_id: str,
+        event: dict[str, Any],
+        *,
+        metadata: dict[str, Any] | None = None,
+    ) -> bool:
         try:
-            dup = json.loads(json.dumps(event, ensure_ascii=False))
-            append_transcript_object(webui_session_key(chat_id), dup)
-        except (OSError, ValueError, TypeError) as e:
+            record: dict[str, Any] = json.loads(json.dumps(event, ensure_ascii=False))
+            session_key = webui_session_key(chat_id)
+            source = (metadata or {}).get(WEBUI_DISPLAY_SOURCE_KEY)
+            sessions = self._sessions
+            if isinstance(source, SourceState):
+                if source.session_key != session_key:
+                    return False
+                record[_RECORD_ORIGIN] = _record_origin(source)
+                # The lookup can reject late output but cannot supply its origin.
+                if sessions is not None and sessions.has_managed_authority:
+                    with sessions.locked_session_files():
+                        saved = sessions.read_saved_source_metadata(session_key)
+                        if saved is None or not saved.state.same_origin(source):
+                            # A retired turn does not own a failed write or
+                            # recovery marker in the replacement.
+                            return True
+                        canonical_ref: object = None
+                        if record.get("event") == "user":
+                            canonical_ref = record.get(_PROMPT_SOURCE_EVENT)
+                        elif (
+                            record.get("event") in {"stream_end", "message"}
+                            and not record.get("kind")
+                            and not record.get("merge_next")
+                        ):
+                            canonical_ref = (metadata or {}).get(WEBUI_DISPLAY_ANSWER_EVENT_ID_KEY)
+                        if (
+                            isinstance(canonical_ref, str)
+                            and canonical_ref
+                            and isinstance(record.get("text"), str)
+                        ):
+                            resolved = sessions.read_canonical_events_by_ids(
+                                session_key,
+                                [canonical_ref],
+                                expected_source=saved.state,
+                            )
+                            canonical_event = resolved.get(canonical_ref)
+                            if (
+                                canonical_event is not None
+                                and _canonical_event_text(canonical_event) == record["text"]
+                            ):
+                                record[_TEXT_SOURCE_REF_KEY] = canonical_ref
+                                if record.get("event") == "user" and record["text"]:
+                                    record[_PROMPT_PREVIEW_KEY] = _prompt_preview_text(
+                                        record["text"],
+                                    )
+                                record.pop("text", None)
+                        append_transcript_object(session_key, record)
+                    return True
+            else:
+                record.pop(_RECORD_ORIGIN, None)
+                if sessions is not None and sessions.has_managed_authority:
+                    with sessions.locked_session_files():
+                        resolved = sessions.resolve_session_mode(session_key)
+                        if resolved.state != "active" or resolved.mode != "legacy":
+                            # Live-only control/inline notices and orphaned events
+                            # must not append unbound rows to managed sessions.
+                            return True
+                        append_transcript_object(session_key, record)
+                    return True
+            append_transcript_object(session_key, record)
+        except (OSError, ValueError, TypeError, SessionModeError) as e:
             self._log.warning("webui transcript append failed: {}", e)
             return False
         return True
@@ -922,36 +2324,93 @@ def fork_transcript_before_user_index(
     ``before_user_index == user_count`` copies the full transcript prefix. WebUI
     uses that when forking from an assistant reply at the end of a chat.
     """
-    if before_user_index < 0:
+    copied = _fork_transcript_prefix(read_transcript_lines(source_key), before_user_index)
+    if copied is None:
         return False
-    lines = read_transcript_lines(source_key)
-    if not lines:
-        return False
-
     target_chat_id = _chat_id_from_session_key(target_key)
+    _write_transcript_lines(target_key, [
+        {**row, "chat_id": target_chat_id} if target_chat_id is not None else row
+        for row in copied
+    ])
+    return True
+
+
+def _fork_transcript_prefix(
+    lines: list[dict[str, Any]], before_user_index: int,
+) -> list[dict[str, Any]] | None:
+    if before_user_index < 0 or not lines:
+        return None
     copied: list[dict[str, Any]] = []
     user_index = 0
-    found_target = False
     for row in lines:
         if row.get("event") == WEBUI_FORK_MARKER_EVENT:
             continue
         if _is_user_transcript_row(row):
             if user_index == before_user_index:
-                found_target = True
                 break
             user_index += 1
-        dup = json.loads(json.dumps(row, ensure_ascii=False))
-        if target_chat_id is not None:
-            dup["chat_id"] = target_chat_id
-        copied.append(dup)
-    if user_index == before_user_index:
-        found_target = True
+        copied.append(row)
+    return copied if user_index == before_user_index else None
 
-    if not found_target:
-        return False
 
-    _write_transcript_lines(target_key, copied)
-    return True
+def write_managed_fork_transcript(
+    target: SourceState,
+    messages: list[dict[str, Any]],
+    *,
+    parent: SourceSnapshot | None,
+    before_user_index: int,
+) -> None:
+    """Publish a verified display prefix, or rebuild from the committed fork."""
+    prefix: list[dict[str, Any]] | None = None
+    if parent is not None:
+        records = read_transcript_lines(parent.state.session_key, expected_source=parent.state)
+        prompt_ids = [
+            row["_event_id"] for row in parent.events
+            if row.get("role") == "user" and not is_hidden_history_message(row)
+        ]
+        # Prompt IDs prove positions, not that every reply was published.
+        # Never copy a known-incomplete display prefix into a new lifetime.
+        if (
+            [row.get(_PROMPT_SOURCE_EVENT) for row in records if _is_user_transcript_row(row)] == prompt_ids
+            and not _needs_incomplete_turn_recovery(records)
+            and not _needs_unfinished_tail_repair(records)
+        ):
+            prefix = _fork_transcript_prefix(records, before_user_index)
+            if prefix is not None:
+                parent_events_by_id = {
+                    str(ev["_event_id"]): ev
+                    for ev in parent.events
+                    if isinstance(ev.get("_event_id"), str) and ev.get("_event_id")
+                }
+
+                def _load_parent_events(
+                    ids: Sequence[str],
+                ) -> dict[str, dict[str, Any]]:
+                    return {
+                        eid: parent_events_by_id[eid]
+                        for eid in ids
+                        if eid in parent_events_by_id
+                    }
+
+                prefix = [
+                    {k: v for k, v in rec.items() if k != _TEXT_SOURCE_REF_KEY}
+                    for rec in hydrate_consolidated_transcript_lines(
+                        prefix,
+                        _load_parent_events,
+                    )
+                ]
+    if prefix is None:
+        prefix = _session_transcript_rows(target.session_key, messages)
+    target_chat_id = _chat_id_from_session_key(target.session_key)
+    origin = _record_origin(target)
+    _write_transcript_lines(
+        target.session_key,
+        [
+            {**row, "chat_id": target_chat_id, _RECORD_ORIGIN: origin}
+            for row in (*prefix, {"event": WEBUI_FORK_MARKER_EVENT})
+        ],
+        expected_source=target,
+    )
 
 
 def append_fork_marker(session_key: str) -> None:
@@ -970,6 +2429,12 @@ def write_session_messages_as_transcript(
     messages: list[dict[str, Any]],
 ) -> None:
     """Write a minimal WebUI transcript from already-truncated session messages."""
+    _write_transcript_lines(target_key, _session_transcript_rows(target_key, messages))
+
+
+def _session_transcript_rows(
+    target_key: str, messages: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
     target_chat_id = _chat_id_from_session_key(target_key)
     rows: list[dict[str, Any]] = []
     for msg in messages:
@@ -981,6 +2446,10 @@ def write_session_messages_as_transcript(
         text = content if isinstance(content, str) else ""
         if role == "user":
             row: dict[str, Any] = {"event": "user", "chat_id": target_chat_id, "text": text}
+            if isinstance(msg.get("_event_id"), str):
+                row[_PROMPT_SOURCE_EVENT] = msg["_event_id"]
+            if isinstance(msg.get("attachments"), list):
+                row["attachments"] = msg["attachments"]
             media = msg.get("media")
             if isinstance(media, list) and media:
                 row["media_paths"] = [
@@ -1000,19 +2469,86 @@ def write_session_messages_as_transcript(
         else:
             continue
         rows.append(row)
-    _write_transcript_lines(target_key, rows)
+    return rows
 
 
-def delete_webui_transcript(session_key: str) -> bool:
+class TranscriptDeletionResult(NamedTuple):
+    """Outcome of one display-transcript delete attempt.
+
+    ``remaining`` names every display path that is still readable after the
+    attempt. A non-empty tuple means the delete is partial and the same session
+    key remains the retry owner.
+    """
+
+    deleted: bool
+    complete: bool
+    remaining: tuple[str, ...]
+
+
+_pending_transcript_deletions: dict[str, tuple[str, ...]] = {}
+
+
+def pending_transcript_deletions(session_key: str) -> tuple[str, ...]:
+    """Return the display paths a partial delete still owns for retry."""
+    return _pending_transcript_deletions.get(session_key, ())
+
+
+def _remember_pending_transcript_deletion(
+    session_key: str,
+    remaining: tuple[str, ...],
+) -> None:
+    if not remaining:
+        _pending_transcript_deletions.pop(session_key, None)
+        return
+    _pending_transcript_deletions[session_key] = remaining
+    while len(_pending_transcript_deletions) > _MAX_PENDING_TRANSCRIPT_DELETIONS:
+        _pending_transcript_deletions.pop(next(iter(_pending_transcript_deletions)))
+
+
+def delete_webui_transcript_result(session_key: str) -> TranscriptDeletionResult:
+    """Delete every display artifact and report any readable remainder."""
     removed = False
-    for path in (webui_transcript_path(session_key), _legacy_webui_thread_path(session_key)):
-        if not path.is_file():
-            continue
+    remaining: list[str] = []
+    try:
+        _migrate_legacy_transcript(session_key)
+    except OSError as e:
+        logger.warning("Failed to migrate legacy webui transcript {}: {}", session_key, e)
+        legacy_source = _legacy_transcript_path(session_key)
+        if (
+            legacy_source.is_file()
+            and _legacy_owner(legacy_source, session_key) == "own"
+        ):
+            remaining.append(str(legacy_source))
+        legacy_segments = _legacy_transcript_segments_dir(session_key)
+        if (
+            legacy_segments.is_dir()
+            and _legacy_dir_owner(legacy_segments, session_key) == "own"
+        ):
+            remaining.append(str(legacy_segments))
+    path = webui_transcript_path(session_key)
+    if path.is_file():
         try:
             path.unlink()
             removed = True
         except OSError as e:
             logger.warning("Failed to delete webui transcript {}: {}", path, e)
+            remaining.append(str(path))
+    legacy_thread = _legacy_webui_thread_path(session_key)
+    if _legacy_owner(legacy_thread, session_key) == "own" and legacy_thread.is_file():
+        try:
+            legacy_thread.unlink()
+            removed = True
+        except OSError as e:
+            logger.warning("Failed to delete legacy webui transcript {}: {}", legacy_thread, e)
+            remaining.append(str(legacy_thread))
+    active_glob = f"{_transcript_stem(session_key)}.active.*.jsonl"
+    for active_path in sorted(get_webui_dir().glob(active_glob)):
+        try:
+            active_path.unlink()
+            removed = True
+        except OSError as e:
+            logger.warning("Failed to delete active webui transcript {}: {}", active_path, e)
+            remaining.append(str(active_path))
     segments_dir = webui_transcript_segments_dir(session_key)
     if segments_dir.is_dir():
         try:
@@ -1020,10 +2556,23 @@ def delete_webui_transcript(session_key: str) -> bool:
             removed = True
         except OSError as e:
             logger.warning("Failed to delete webui transcript segments {}: {}", segments_dir, e)
+            remaining.append(str(segments_dir))
     from nanobot.webui.generated_asset_index import delete_generated_asset_index
+    from nanobot.webui.transcript_index import delete_transcript_index
 
     removed = delete_generated_asset_index(session_key) or removed
-    return removed
+    removed = delete_transcript_index(session_key) or removed
+    result = TranscriptDeletionResult(
+        deleted=removed,
+        complete=not remaining,
+        remaining=tuple(remaining),
+    )
+    _remember_pending_transcript_deletion(session_key, result.remaining)
+    return result
+
+
+def delete_webui_transcript(session_key: str) -> bool:
+    return delete_webui_transcript_result(session_key).deleted
 
 
 def normalize_session_mentions_metadata(raw: object) -> list[dict[str, str]]:
@@ -1094,14 +2643,14 @@ def build_user_transcript_event(
     text: str,
     *,
     media_paths: list[Any] | None = None,
-    attachments: Sequence[Mapping[str, Any]] | None = None,
+    attachments: Sequence[object] | None = None,
     cli_apps: list[Any] | None = None,
     mcp_presets: list[Any] | None = None,
     session_mentions: Sequence[Any] | None = None,
 ) -> dict[str, Any] | None:
     paths = [str(path) for path in (media_paths or []) if path]
     records = [
-        dict(attachment)
+        dict(cast(Mapping[str, Any], attachment))
         for attachment in (attachments or [])
         if isinstance(attachment, Mapping)
     ]
@@ -1173,7 +2722,11 @@ def _session_user_event(
         text,
         media_paths=media or None,
         attachments=(
-            [dict(item) for item in cast(list[Any], attachments) if isinstance(item, Mapping)]
+            [
+                dict(cast(Mapping[str, Any], item))
+                for item in cast(list[object], attachments)
+                if isinstance(item, Mapping)
+            ]
             if isinstance(attachments, list)
             else None
         ),
@@ -1256,6 +2809,36 @@ def _session_backfill_turns(
     return turns
 
 
+def _turn_ordinal_from_identity(record: dict[str, Any]) -> int | None:
+    """Read the transcript turn ordinal that replay identity already encodes.
+
+    Identity is written as ``turn:<ordinal>:record:<index>``. That ordinal is
+    the whole-session position of the turn, so it lets a navigator place a turn
+    even when only a window of the session is rendered.
+    """
+    identity = record.get(_WEBUI_REPLAY_IDENTITY_KEY)
+    if not isinstance(identity, str) or not identity.startswith("turn:"):
+        return None
+    _, _, rest = identity.partition("turn:")
+    raw = rest.split(":", 1)[0]
+    return int(raw) if raw.isdigit() else None
+
+
+def _prompt_id_from_record(record: dict[str, Any]) -> str | None:
+    """Return the stable prompt identifier matching ``transcript_index``."""
+    committed = record.get(_PROMPT_SOURCE_EVENT)
+    if isinstance(committed, str) and committed:
+        return committed
+    identity = record.get(_WEBUI_REPLAY_IDENTITY_KEY)
+    if not isinstance(identity, str) or not identity.startswith("turn:"):
+        return None
+    parts = identity.split(":")
+    if len(parts) == 4 and parts[0] == "turn" and parts[2] == "record":
+        if parts[1].isdigit() and parts[3].isdigit():
+            return f"legacy:{int(parts[1])}:{int(parts[3])}"
+    return None
+
+
 def _split_transcript_turns(lines: list[dict[str, Any]]) -> list[list[dict[str, Any]]]:
     turns: list[list[dict[str, Any]]] = []
     current: list[dict[str, Any]] = []
@@ -1267,17 +2850,6 @@ def _split_transcript_turns(lines: list[dict[str, Any]]) -> list[list[dict[str, 
     if current:
         turns.append(current)
     return turns
-
-
-def _annotate_replay_identities(lines: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    return [
-        record
-        for turn_ordinal, turn in enumerate(_split_transcript_turns(lines))
-        for record in _records_with_replay_identity(
-            turn,
-            turn_ordinal=turn_ordinal,
-        )
-    ]
 
 
 def _stable_record_digest(record: dict[str, Any]) -> str:
@@ -1545,8 +3117,23 @@ def _with_backfilled_user(
     return records
 
 
-def _needs_user_event_backfill(lines: list[dict[str, Any]]) -> bool:
-    for turn in _split_transcript_turns(lines):
+def _needs_user_event_backfill(
+    lines: list[dict[str, Any]],
+    *,
+    skip_leading_turn: bool = False,
+) -> bool:
+    """Whether a turn inside this page is missing its persisted user event.
+
+    A page that starts mid-conversation begins with a *continuation* turn whose
+    prompt row lives before the window. That turn is not repairable from this
+    page, so treating it as a defect made the condition permanently true: the
+    caller then re-read the whole session on every load and still could not
+    satisfy it. ``skip_leading_turn`` excludes that continuation.
+    """
+    turns = _split_transcript_turns(lines)
+    if skip_leading_turn and turns:
+        turns = turns[1:]
+    for turn in turns:
         if any(record.get("event") == "user" for record in turn):
             continue
         if _transcript_turn_signature(turn):
@@ -1627,7 +3214,7 @@ _MAX_TOOL_EVENT_FIELD_BYTES = 16 * 1024
 _TOOL_EVENT_BOUNDED_FIELDS = ("result", "arguments", "error")
 
 
-def _bounded_tool_value(value: Any) -> Any:
+def _bounded_tool_value(value: object) -> object:
     """Redact inline payloads and long text while preserving the value's shape."""
     if isinstance(value, str):
         if value.startswith("data:") and ";base64," in value:
@@ -1637,11 +3224,13 @@ def _bounded_tool_value(value: Any) -> Any:
             return value[:_MAX_TOOL_EVENT_TEXT_CHARS]
         return value
     if isinstance(value, list):
-        items = [_bounded_tool_value(item) for item in value]
-        return value if all(new is old for new, old in zip(items, value)) else items
+        values = cast(list[object], value)
+        items = [_bounded_tool_value(item) for item in values]
+        return values if all(new is old for new, old in zip(items, values)) else items
     if isinstance(value, dict):
-        items = {key: _bounded_tool_value(item) for key, item in value.items()}
-        return value if all(items[key] is value[key] for key in value) else items
+        entries = cast(dict[object, object], value)
+        items = {key: _bounded_tool_value(item) for key, item in entries.items()}
+        return entries if all(items[key] is entries[key] for key in entries) else items
     return value
 
 
@@ -1894,7 +3483,8 @@ def replay_transcript_to_ui_messages(
     messages: list[dict[str, Any]] = []
     buffer_message_id: str | None = None
     buffer_parts: list[str] = []
-    suppress_until_turn_end = False
+    media_reply_texts: set[tuple[str | None, str]] = set()
+    deferred_answers: dict[str, list[str]] = {}
     active_activity_segment_id: str | None = None
     active_file_edit_segment_id: str | None = None
     activity_segment_counter = 0
@@ -1945,8 +3535,8 @@ def replay_transcript_to_ui_messages(
         elif fallback_phase:
             fields["turnPhase"] = fallback_phase
         seq = rec.get("turn_seq")
-        if isinstance(seq, (int, float)):
-            fields["turnSeq"] = int(seq)
+        if type(seq) is int and seq >= 0:
+            fields["turnSeq"] = seq
         return fields
 
     def _source_fields(rec: dict[str, Any]) -> dict[str, Any]:
@@ -2106,10 +3696,28 @@ def replay_transcript_to_ui_messages(
         usage: dict[str, int] | None = None,
         round_usages: list[dict[str, int]] | None = None,
         context_window_tokens: int | None = None,
+        context_usage: ContextUsageSnapshot | None = None,
+        turn_id: str | None = None,
+        completion_turn_seq: int | None = None,
     ) -> None:
+        context_fields: dict[str, Any] = {}
+        if context_usage is not None and turn_id:
+            context_fields["contextUsage"] = {
+                "contextTokens": context_usage.context_tokens,
+                "contextWindowTokens": context_usage.context_window_tokens,
+                **({"completionTurnSeq": completion_turn_seq} if completion_turn_seq is not None else {}),
+            }
         for i in range(len(messages) - 1, -1, -1):
-            if messages[i].get("role") == "assistant" and messages[i].get("kind") != "trace":
+            row = messages[i]
+            if row.get("role") == "user":
+                if context_fields and row.get("turnId") == turn_id:
+                    messages[i] = {**row, **context_fields}
+                break
+            if (row.get("role") == "assistant" and row.get("kind") != "trace"
+                    and (not turn_id or row.get("turnId") == turn_id)):
                 completion: dict[str, Any] = {"isStreaming": False}
+                if row.get("turnId") == turn_id:
+                    completion.update(context_fields)
                 if latency_ms is not None:
                     completion["latencyMs"] = latency_ms
                 if usage:
@@ -2337,6 +3945,12 @@ def replay_transcript_to_ui_messages(
                 **_turn_fields(rec, "user"),
                 "createdAt": _created_at_ms(rec, idx),
             }
+            turn_ordinal = _turn_ordinal_from_identity(rec)
+            if turn_ordinal is not None:
+                row["turnOrdinal"] = turn_ordinal
+            prompt_id = _prompt_id_from_record(rec)
+            if prompt_id is not None:
+                row["promptId"] = prompt_id
             if media_att:
                 row["media"] = media_att
                 if all(m.get("kind") == "image" for m in media_att):
@@ -2365,6 +3979,115 @@ def replay_transcript_to_ui_messages(
             messages.append(row)
             continue
 
+        if ev == "delegated_child":
+            child_id = rec.get("child_id")
+            child_session_key = rec.get("child_session_key")
+            profile = rec.get("profile")
+            state = rec.get("state")
+            if (
+                not isinstance(child_id, str)
+                or not child_id
+                or not isinstance(child_session_key, str)
+                or not child_session_key
+                or not isinstance(profile, str)
+                or not profile
+                or not isinstance(state, str)
+                or not state
+            ):
+                continue
+            generation = rec.get("runtime_generation")
+            if type(generation) is not int or generation < 0:
+                generation = 0
+            task_label = rec.get("task_label")
+            if not isinstance(task_label, str) or len(task_label) > 160:
+                task_label = ""
+            result_summary = rec.get("result_summary")
+            if not isinstance(result_summary, str) or len(result_summary) > 1000:
+                result_summary = None
+            child: dict[str, Any] = {
+                "child_session_key": child_session_key,
+                "child_id": child_id,
+                "parent_session_key": (
+                    rec.get("parent_session_key")
+                    if isinstance(rec.get("parent_session_key"), str)
+                    else None
+                ),
+                "profile": profile,
+                "state": state,
+                "runtime_generation": generation,
+                "task_label": task_label,
+                "task_label_truncated": rec.get("task_label_truncated") is True,
+                "result_summary": result_summary,
+                "result_summary_truncated": rec.get("result_summary_truncated") is True,
+            }
+            outcome = rec.get("outcome")
+            child["outcome"] = outcome if isinstance(outcome, str) else None
+            turn_id = rec.get("turn_id")
+            child["turn_id"] = turn_id if isinstance(turn_id, str) and turn_id else None
+            for name in (
+                "parent_run_id", "child_run_id", "parent_store_identity",
+                "parent_incarnation", "root_key", "root_store_identity",
+                "root_incarnation", "child_store_identity", "child_incarnation",
+                "pending_approval_id", "blocked_run_id", "result_disposition",
+            ):
+                value = rec.get(name)
+                child[name] = value if isinstance(value, str) and value else None
+            for name in (
+                "parent_generation", "root_generation", "child_generation",
+                "run_sequence", "state_sequence", "control_epoch",
+            ):
+                value = rec.get(name)
+                child[name] = value if type(value) is int and value >= 0 else 0
+            for name in ("holds_capacity", "can_stop", "owned_work"):
+                value = rec.get(name)
+                child[name] = value if type(value) is bool else False
+            existing_index: int | None = None
+            for index, message in enumerate(messages):
+                candidate_child = message.get("delegatedChild")
+                if (
+                    isinstance(candidate_child, dict)
+                    and cast(dict[str, Any], candidate_child).get("child_id") == child_id
+                ):
+                    existing_index = index
+                    break
+            if existing_index is None:
+                messages.append(
+                    {
+                        "id": f"delegated-child-{child_id}",
+                        "role": "assistant",
+                        "kind": "delegated_child",
+                        "content": "",
+                        "delegatedChild": child,
+                        "createdAt": _created_at_ms(rec, idx),
+                        **({"turnId": turn_id} if isinstance(turn_id, str) and turn_id else {}),
+                    }
+                )
+            else:
+                previous_child = messages[existing_index].get("delegatedChild")
+                if not isinstance(previous_child, dict):
+                    continue
+                previous = cast(dict[str, Any], previous_child)
+                prior_lifetime = _delegated_child_lifetime(previous)
+                next_lifetime = _delegated_child_lifetime(child)
+                if prior_lifetime is None or next_lifetime is None or prior_lifetime != next_lifetime:
+                    continue
+                prior_version = _delegated_child_version(previous)
+                next_version = _delegated_child_version(child)
+                if next_version < prior_version:
+                    continue
+                if next_version == prior_version:
+                    if _delegated_child_facts(previous) != _delegated_child_facts(child):
+                        continue
+                    continue
+                if child["turn_id"] is None:
+                    child["turn_id"] = previous.get("turn_id")
+                messages[existing_index] = {
+                    **messages[existing_index],
+                    "delegatedChild": child,
+                    **({"turnId": turn_id} if isinstance(turn_id, str) and turn_id else {}),
+                }
+            continue
+
         if ev == "file_edit":
             raw_edits = rec.get("edits")
             if isinstance(raw_edits, list):
@@ -2377,13 +4100,23 @@ def replay_transcript_to_ui_messages(
             continue
 
         if ev == "delta":
-            if suppress_until_turn_end:
-                continue
             chunk = rec.get("text")
             if not isinstance(chunk, str):
                 continue
-            close_activity_for_answer()
             turn_fields = _turn_fields(rec, "answer")
+            turn_id = turn_fields.get("turnId")
+            turn_captions = [
+                caption for tid, caption in media_reply_texts if tid == turn_id and caption
+            ]
+            if turn_captions and isinstance(turn_id, str):
+                combined_deferred = "".join(deferred_answers.get(turn_id, [])) + chunk
+                trimmed = combined_deferred.strip()
+                if not trimmed or any(c.startswith(trimmed) for c in turn_captions):
+                    deferred_answers.setdefault(turn_id, []).append(chunk)
+                    continue
+                deferred_answers.pop(turn_id, None)
+                chunk = combined_deferred
+            close_activity_for_answer()
             source_fields = _source_fields(rec)
             adopted = find_active_placeholder(messages, turn_fields) if buffer_message_id is None else None
             if buffer_message_id is None:
@@ -2417,13 +4150,35 @@ def replay_transcript_to_ui_messages(
             continue
 
         if ev == "stream_end":
-            if suppress_until_turn_end:
+            final_text = rec.get("text")
+            if (
+                final_text is None
+                and isinstance(rec.get(_TEXT_SOURCE_REF_KEY), str)
+                and rec[_TEXT_SOURCE_REF_KEY]
+            ):
+                final_text = ""
+            turn_fields = _turn_fields(rec, "answer")
+            merge_next = rec.get("resuming") is True and rec.get("merge_next") is True
+            turn_id = turn_fields.get("turnId")
+            turn_captions = {
+                caption for tid, caption in media_reply_texts if tid == turn_id and caption
+            }
+            if isinstance(turn_id, str) and turn_id in deferred_answers:
+                deferred = deferred_answers.pop(turn_id, [])
+                if not isinstance(final_text, str):
+                    final_text = "".join(deferred)
+                if merge_next and final_text:
+                    deferred_answers[turn_id] = [final_text]
+            if turn_captions and (
+                (not isinstance(final_text, str) and buffer_message_id is None)
+                or (
+                    isinstance(final_text, str)
+                    and (not final_text.strip() or final_text.strip() in turn_captions)
+                )
+            ):
                 buffer_message_id = None
                 buffer_parts = []
                 continue
-            merge_next = rec.get("resuming") is True and rec.get("merge_next") is True
-            final_text = rec.get("text")
-            turn_fields = _turn_fields(rec, "answer")
             source_fields = _source_fields(rec)
             if isinstance(final_text, str):
                 if buffer_message_id is None:
@@ -2464,8 +4219,6 @@ def replay_transcript_to_ui_messages(
             continue
 
         if ev == "reasoning_delta":
-            if suppress_until_turn_end:
-                continue
             chunk = rec.get("text")
             if not isinstance(chunk, str) or not chunk:
                 continue
@@ -2480,8 +4233,6 @@ def replay_transcript_to_ui_messages(
             continue
 
         if ev == "reasoning_end":
-            if suppress_until_turn_end:
-                continue
             text = rec.get("text")
             if isinstance(text, str) and text:
                 close_file_edit_phase_before_activity()
@@ -2538,12 +4289,6 @@ def replay_transcript_to_ui_messages(
             continue
 
         if ev == "message":
-            if suppress_until_turn_end and rec.get("kind") in (
-                "tool_hint",
-                "progress",
-                "reasoning",
-            ):
-                continue
             kind = rec.get("kind")
             if kind == "reasoning":
                 line = rec.get("text")
@@ -2642,12 +4387,17 @@ def replay_transcript_to_ui_messages(
             extra.update(_turn_fields(rec, "answer"))
             extra.update(_source_fields(rec))
             absorb_complete(extra, idx, _created_at_ms(rec, idx))
-            if media:
-                suppress_until_turn_end = True
+            turn_id = extra.get("turnId")
+            if isinstance(turn_id, str):
+                deferred_answers.pop(turn_id, None)
+            if media and content_s.strip():
+                media_reply_texts.add((turn_id, content_s.strip()))
             continue
 
         if ev == "turn_end":
-            suppress_until_turn_end = False
+            completion_turn_id = _turn_fields(rec).get("turnId")
+            media_reply_texts.clear()
+            deferred_answers.clear()
             active_activity_segment_id = None
             active_file_edit_segment_id = None
             turn_id = rec.get("turn_id")
@@ -2675,6 +4425,12 @@ def replay_transcript_to_ui_messages(
             )
             context_window = rec.get("context_window_tokens")
             stamp_completion(
+                turn_id=completion_turn_id,
+                completion_turn_seq=(
+                    rec["turn_seq"] if type(rec.get("turn_seq")) is int and rec["turn_seq"] >= 0 else None
+                ),
+                context_usage=(ContextUsageSnapshot.from_value(rec["context_usage"])
+                               if "context_usage" in rec else None),
                 latency_ms=int(lat) if isinstance(lat, (int, float)) and lat >= 0 else None,
                 usage=sanitized_usage,
                 round_usages=sanitized_round_usages,
@@ -2769,8 +4525,9 @@ def has_unfinished_transcript_tail(session_key: str) -> bool:
     every historical segment here would make restart cost grow with the full
     conversation history.
     """
+    _migrate_legacy_transcript(session_key)
     return has_pending_tool_calls(
-        _read_transcript_file(webui_transcript_path(session_key))
+        _read_transcript_file(active_transcript_path(session_key))
     )
 
 
@@ -2792,6 +4549,147 @@ def completed_turn_ids(lines: list[dict[str, Any]]) -> list[str]:
     return completed
 
 
+def _select_indexed_transcript_page(
+    session_key: str,
+    *,
+    expected_source: SourceState | None,
+    limit: int | None,
+    direction: str | None,
+    before: str | None,
+    after: str | None,
+    around: str | None,
+    prompt_id: str | None,
+) -> tuple[list[dict[str, Any]], dict[str, Any]] | None:
+    """Serve a bounded window via the seekable read index or bounded pre-index tail.
+
+    Returns ``None`` only when legacy compatibility selection should run instead.
+    """
+    from nanobot.webui.transcript_index import (
+        decode_window_cursor,
+        read_history_window,
+        rebuild_transcript_index,
+    )
+
+    expected_origin = _record_origin(expected_source) if expected_source is not None else None
+    page_limit = _coerce_page_limit(limit)
+    is_legacy_adoptable = _legacy_display_rows_adoptable(session_key, expected_source)
+    if is_legacy_adoptable:
+        if after is not None and _decode_after_cursor(after) is not None:
+            return _select_legacy_after_page(session_key, limit=limit, after=after)
+        if (around is None and prompt_id is not None) or (
+            direction == "around" and around is None
+        ):
+            return _select_legacy_around_page(session_key, limit=limit, prompt_id=prompt_id)
+        if around is not None:
+            from nanobot.webui.transcript_index import decode_prompt_locator
+
+            decoded = decode_prompt_locator(around, expected_origin=expected_origin)
+            if decoded is not None:
+                return _select_legacy_around_page(session_key, limit=limit, prompt_id=decoded[2])
+        if (
+            after is None
+            and around is None
+            and prompt_id is None
+            and direction not in {"after", "around"}
+        ):
+            if before is None:
+                return None
+            _, v2_before = decode_window_cursor(before, expected_origin=expected_origin)
+            if not v2_before and _decode_page_cursor(before) is not None:
+                return None
+
+    if around is not None or prompt_id is not None or direction == "around":
+        window_dir: Literal["latest", "before", "after", "around"] = "around"
+        cursor: str | None = None
+    elif after is not None or direction == "after":
+        window_dir = "after"
+        cursor = after
+    elif before is not None or direction == "before":
+        if before is not None:
+            _, is_v2 = decode_window_cursor(before, expected_origin=expected_origin)
+            if not is_v2 and _decode_page_cursor(before) is not None:
+                if expected_source is None or _legacy_display_rows_adoptable(
+                    session_key, expected_source,
+                ):
+                    return None
+        window_dir = "before"
+        cursor = before
+    else:
+        window_dir = "latest"
+        cursor = None
+
+    window = read_history_window(
+        session_key,
+        expected_source=expected_source,
+        limit=page_limit,
+        direction=window_dir,
+        cursor=cursor,
+        prompt_locator=around,
+        prompt_id=prompt_id,
+    )
+    if window.status == "oversized_tail":
+        rebuild_transcript_index(session_key, expected_source=expected_source)
+        window = read_history_window(
+            session_key,
+            expected_source=expected_source,
+            limit=page_limit,
+            direction=window_dir,
+            cursor=cursor,
+            prompt_locator=around,
+            prompt_id=prompt_id,
+        )
+    if window.status == "stale_cursor":
+        raise HistoryWindowError(409, "stale_history_cursor")
+    if window.status == "not_found":
+        raise HistoryWindowError(404, "prompt_not_found")
+    if window.status in {"unavailable", "oversized_tail"}:
+        raise HistoryWindowError(503, "history_window_unavailable")
+    if window.status == "empty":
+        if (
+            expected_source is not None
+            and window_dir == "latest"
+            and _legacy_display_rows_adoptable(session_key, expected_source)
+        ):
+            return None
+        return [], {
+            "before_cursor": None,
+            "after_cursor": None,
+            "has_more_before": False,
+            "has_more_after": False,
+            "loaded_message_count": 0,
+            "user_message_offset": 0,
+            "coverage": window.coverage,
+        }
+
+    loaded_turn_count = (
+        window.last_turn_ordinal - window.first_turn_ordinal + 1
+        if window.first_turn_ordinal is not None and window.last_turn_ordinal is not None
+        else len(_split_transcript_turns(window.lines))
+    )
+    page: dict[str, Any] = {
+        "before_cursor": window.before_cursor,
+        "after_cursor": window.after_cursor,
+        "has_more_before": window.has_more_before,
+        "has_more_after": window.has_more_after,
+        "loaded_message_count": 0,
+        "loaded_turn_count": loaded_turn_count,
+        "coverage": window.coverage,
+    }
+    if window.first_turn_ordinal is not None:
+        page["first_turn_ordinal"] = window.first_turn_ordinal
+    if window.last_turn_ordinal is not None:
+        page["last_turn_ordinal"] = window.last_turn_ordinal
+    if window.total_turn_count is not None:
+        page["total_turn_count"] = window.total_turn_count
+    if window.total_prompt_count is not None:
+        page["total_prompt_count"] = window.total_prompt_count
+    if window.user_message_offset is not None:
+        page["user_message_offset"] = window.user_message_offset
+    if window.target_prompt_id is not None:
+        page["target_prompt_id"] = window.target_prompt_id
+    return window.lines, page
+
+
 def build_webui_thread_response(
     session_key: str,
     *,
@@ -2806,17 +4704,61 @@ def build_webui_thread_response(
     limit: int | None = None,
     direction: str | None = None,
     before: str | None = None,
+    after: str | None = None,
+    around: str | None = None,
+    prompt_id: str | None = None,
+    expected_source: SourceState | None = None,
+    canonical_events_loader: Callable[[Sequence[str]], Mapping[str, Mapping[str, Any]]] | None = None,
 ) -> dict[str, Any] | None:
     """Return a payload compatible with ``WebuiThreadPersistedPayload``."""
-    paginated = limit is not None or direction is not None or before is not None
-    page: dict[str, Any] | None = None
-    if paginated:
+    paginated = (
+        limit is not None
+        or direction is not None
+        or before is not None
+        or after is not None
+        or around is not None
+        or prompt_id is not None
+    )
+    use_indexed = (
+        expected_source is not None
+        or after is not None
+        or around is not None
+        or prompt_id is not None
+        or direction in {"before", "after", "around"}
+    )
+    selected: tuple[list[dict[str, Any]], dict[str, Any]] | None = None
+    if use_indexed:
+        selected = _select_indexed_transcript_page(
+            session_key,
+            expected_source=expected_source,
+            limit=limit if paginated else _NO_QUERY_TRANSCRIPT_PAGE_LIMIT,
+            direction=direction,
+            before=before,
+            after=after,
+            around=around,
+            prompt_id=prompt_id,
+        )
+    if selected is not None:
+        lines, page = selected
+    elif paginated:
         lines, page = _select_transcript_page(session_key, limit=limit, before=before)
     else:
-        lines = _annotate_replay_identities(read_transcript_lines(session_key))
+        lines, page = _select_transcript_page(
+            session_key,
+            limit=_NO_QUERY_TRANSCRIPT_PAGE_LIMIT,
+            before=None,
+        )
     if not lines and active_turn_started_at is None:
         return None
-    needs_user_backfill = _needs_user_event_backfill(lines)
+    lines = hydrate_consolidated_transcript_lines(lines, canonical_events_loader)
+    # A page that does not begin at the first turn starts with a continuation
+    # whose prompt row lives before the window. That turn cannot be repaired
+    # from this page, so it must not make the condition permanently true.
+    starts_mid_conversation = bool(page and page.get("has_more_before"))
+    needs_user_backfill = _needs_user_event_backfill(
+        lines,
+        skip_leading_turn=starts_mid_conversation,
+    )
     needs_incomplete_recovery = _needs_incomplete_turn_recovery(lines)
     needs_tail_repair = (
         active_turn_started_at is None
@@ -2860,9 +4802,8 @@ def build_webui_thread_response(
         ),
         "active_turn_id": active_turn_id,
     }
-    if page is not None:
-        page["loaded_message_count"] = len(msgs)
-        payload["page"] = page
+    page["loaded_message_count"] = len(msgs)
+    payload["page"] = page
     if fork_boundary is not None:
         payload["fork_boundary_message_count"] = fork_boundary
     return payload

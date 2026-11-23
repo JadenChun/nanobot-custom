@@ -6,13 +6,12 @@ use std::{
 
 use nanobot_desktop::{
     controller::{self, Shared, Snapshot},
+    microphone,
     native::{self, HostStart},
     preferences::{self, Preferences},
 };
 use serde_json::Value;
-use tauri::{
-    AppHandle, Manager, State, Wry,
-};
+use tauri::{webview::PageLoadEvent, AppHandle, Manager, State, Wry};
 use tauri_plugin_dialog::DialogExt;
 
 const INSTALL_MANIFEST: &str = include_str!("../resources/backend-compat.json");
@@ -103,7 +102,7 @@ async fn await_operation(
 
 fn select_initial(guard: Option<&native::HostGuard>) -> Result<Option<Preferences>, &'static str> {
     match guard {
-        Some(guard) if guard.bus_verified => preferences::load(),
+        Some(guard) if guard.instance_verified => preferences::load(),
         Some(_) => Err("singleton_guard"),
         None => Err("host_lock_unavailable"),
     }
@@ -122,10 +121,32 @@ fn register_commands(app: tauri::Builder<Wry>) -> tauri::Builder<Wry> {
 }
 
 fn run() {
-    let app = register_commands(tauri::Builder::default())
-        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
-            native::focus_existing_window(app);
-        }))
+    let builder = register_commands(tauri::Builder::default()).on_page_load(|view, payload| {
+        let app = view.app_handle();
+        if payload.event() == PageLoadEvent::Finished
+            && view.label() == "chat"
+            && native::is_gateway_page(app, payload.url())
+        {
+            if let Some(window) = app.get_webview_window("chat") {
+                microphone::request_on_first_chat(&window);
+            }
+        }
+    });
+    #[cfg(target_os = "macos")]
+    let builder = builder.on_permission_request(microphone::macos_permission);
+    #[cfg(target_os = "linux")]
+    let builder = builder.plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+        native::focus_existing_window(app);
+    }));
+    #[cfg(target_os = "macos")]
+    let builder = builder.menu(native::macos_menu).on_menu_event(|app, event| {
+        if event.id().as_ref() == "managed-quit" {
+            if let Some(shared) = app.try_state::<Arc<Shared>>() {
+                shared.inner().enqueue_quit();
+            }
+        }
+    });
+    let app = builder
         .plugin(
             tauri_plugin_opener::Builder::new()
                 .open_js_links_on_click(false)
@@ -142,21 +163,41 @@ fn run() {
                 }
                 Err(_) => None,
             };
+            native::initialize_gateway_navigation(&app_handle);
+            #[cfg(target_os = "macos")]
+            native::create_setup_window(&app_handle)?;
             let initial = select_initial(guard.as_ref());
             let shared = controller::initialize(app_handle.clone(), guard, initial);
             app.manage(shared.clone());
             if let Some(window) = app.get_webview_window("chat") {
+                #[cfg(target_os = "linux")]
                 if let Ok(url) = window.url() {
                     shared.set_setup_url(url);
                 }
                 native::set_window_icon(&window)?;
                 native::install_hide_on_close(&app_handle, shared.clone(), &window);
+                #[cfg(target_os = "linux")]
+                let _ = microphone::install(&window);
             }
             Ok(())
         })
         .build(tauri::generate_context!())
         .expect("failed to initialize Nanobot Desktop");
-    app.run(|_app, _event| {});
+    app.run(|_app, _event| {
+        #[cfg(target_os = "macos")]
+        match _event {
+            tauri::RunEvent::Reopen { .. } => native::focus_existing_window(_app),
+            // Controller-driven exit has an explicit code and occurs only
+            // after the owned gateway has stopped.
+            tauri::RunEvent::ExitRequested { code: None, api, .. } => {
+                if let Some(shared) = _app.try_state::<Arc<Shared>>() {
+                    api.prevent_exit();
+                    shared.inner().enqueue_quit();
+                }
+            }
+            _ => {}
+        }
+    });
 }
 
 fn main() {

@@ -18,6 +18,7 @@ from nanobot.bus.events import InboundMessage
 from nanobot.bus.outbound_events import (
     GoalStateSyncEvent,
     GoalStatusEvent,
+    MessageAdmittedEvent,
     RuntimeModelUpdatedEvent,
     SessionUpdatedEvent,
     TurnEndEvent,
@@ -28,6 +29,7 @@ from nanobot.bus.outbound_events import (
 from nanobot.bus.queue import MessageBus
 from nanobot.bus.runtime_events import (
     GoalStateChanged,
+    InjectionCommitted,
     RuntimeEventContext,
     RuntimeModelChanged,
     SessionTurnStarted,
@@ -35,9 +37,10 @@ from nanobot.bus.runtime_events import (
     TurnRunStatusChanged,
     TurnRuntimeAdmitted,
     UserInputAccepted,
+    UserInputCommitted,
 )
 from nanobot.llm_usage.context import llm_usage_source
-from nanobot.providers.base import LLMProvider, LLMUsage, ProviderCallContext
+from nanobot.providers.base import ContextUsageSnapshot, LLMProvider, LLMUsage, ProviderCallContext
 from nanobot.providers.fallback_provider import FallbackModelObserver
 from nanobot.providers.request_budget import derive_provider_request_limits
 from nanobot.runtime_context import public_history_message
@@ -50,11 +53,14 @@ from nanobot.session.session_messages import (
     SessionMessageEnvelope,
     session_message_envelope,
 )
+from nanobot.session.source_store import SourceState
 from nanobot.utils.helpers import strip_think, truncate_text
 from nanobot.utils.llm_runtime import LLMRuntime
 from nanobot.utils.runtime import CONTEXT_BUDGET_ERROR_MESSAGE
 from nanobot.webui.metadata import (
     WEBSOCKET_TURN_OWNER_METADATA_KEY,
+    WEBUI_DISPLAY_SOURCE_KEY,
+    WEBUI_REQUEST_INTENT_METADATA_KEY,
     WEBUI_TURN_METADATA_KEY,
 )
 from nanobot.webui.session_identity import is_webui_session_key
@@ -77,6 +83,8 @@ TITLE_GENERATION_REASONING_EFFORT = "none"
 _WEBSOCKET_TURN_WALL_STARTED_AT: dict[str, float] = {}
 _WEBSOCKET_TURN_IDS: dict[str, str] = {}
 _WEBSOCKET_TURN_OWNERS: dict[str, str] = {}
+# Owner-projected Stop state survives a reconnect while the turn settles.
+_WEBSOCKET_TURN_STOPPING: set[str] = set()
 
 
 @dataclass(frozen=True)
@@ -119,6 +127,7 @@ def _sync_websocket_turn_projection(chat_id: str) -> None:
         _WEBSOCKET_TURN_WALL_STARTED_AT.pop(chat_id, None)
         _WEBSOCKET_TURN_IDS.pop(chat_id, None)
         _WEBSOCKET_TURN_OWNERS.pop(chat_id, None)
+        _WEBSOCKET_TURN_STOPPING.discard(chat_id)
         return
 
     owner = next(reversed(turns))
@@ -366,6 +375,19 @@ def websocket_turn_id(chat_id: str) -> str | None:
     return _WEBSOCKET_TURN_IDS.get(chat_id)
 
 
+def websocket_turn_stopping(chat_id: str) -> bool:
+    """Whether the owner accepted Stop for the current turn and it is settling."""
+    return chat_id in _WEBSOCKET_TURN_STOPPING
+
+
+def mark_websocket_turn_stopping(chat_id: str, stopping: bool = True) -> None:
+    """Project the owner Stop state for reconnect hydration."""
+    if stopping:
+        _WEBSOCKET_TURN_STOPPING.add(chat_id)
+    else:
+        _WEBSOCKET_TURN_STOPPING.discard(chat_id)
+
+
 def bind_queued_websocket_turn_scope(
     chat_id: str,
     owner: str | None,
@@ -585,6 +607,7 @@ def clear_websocket_turn_if_current(
 def clear_websocket_turns(chat_id: str) -> None:
     """Forget every in-process turn projection for a discarded chat."""
     _WEBSOCKET_ACTIVE_TURNS.pop(chat_id, None)
+    _WEBSOCKET_TURN_STOPPING.discard(chat_id)
     _sync_websocket_turn_projection(chat_id)
 
 
@@ -600,6 +623,10 @@ async def publish_turn_run_status(
         return
     cid = str(msg.chat_id)
     started_at_event: float | None = None
+    if status == "stopping":
+        mark_websocket_turn_stopping(cid, True)
+    elif status in {"running", "interrupted", "idle"}:
+        mark_websocket_turn_stopping(cid, False)
     if status == "running":
         if isinstance(started_at, int | float) and started_at > 0:
             t0 = float(started_at)
@@ -742,8 +769,16 @@ class WebuiTurnCoordinator:
                 UserInputAccepted,
             ),
             self.bus.subscribe(
+                self._handle_injection_committed,
+                InjectionCommitted,
+            ),
+            self.bus.subscribe(
                 self._handle_session_turn_started,
                 SessionTurnStarted,
+            ),
+            self.bus.subscribe(
+                self._handle_user_input_committed,
+                UserInputCommitted,
             ),
             self.bus.subscribe(
                 self._handle_run_status_changed,
@@ -807,6 +842,15 @@ class WebuiTurnCoordinator:
             or not is_webui_session_key(session_key)
         ):
             return
+        if self.sessions.has_managed_authority:
+            # Managed canonical sessions archive cross-session input only after
+            # canonical append; absent/deleted sessions must never receive rows.
+            try:
+                resolved = self.sessions.resolve_session_mode(session_key)
+            except Exception:
+                return
+            if resolved.state != "active" or resolved.mode != "legacy":
+                return
         persisted = self.sessions.read_session_metadata(session_key)
         metadata_value: object = persisted.get("metadata") if persisted is not None else None
         metadata = (
@@ -840,11 +884,123 @@ class WebuiTurnCoordinator:
             ),
         ))
 
-    def _handle_session_turn_started(self, event: SessionTurnStarted) -> None:
+    async def _publish_committed_session_message(
+        self,
+        event: UserInputCommitted | InjectionCommitted,
+    ) -> None:
+        """Archive and broadcast a cross-session input only after canonical commit."""
+        if event.input is None:
+            return
+        envelope = session_message_envelope(event.context.metadata)
+        session_key = event.context.session_key
+        source = event.context.metadata.get(WEBUI_DISPLAY_SOURCE_KEY)
+        if (
+            event.context.channel != "system"
+            or envelope is None
+            or envelope["target_session_key"] != session_key
+            or not is_webui_session_key(session_key)
+            or not isinstance(source, SourceState)
+            or source.session_key != session_key
+        ):
+            return
+        if self.sessions.has_managed_authority:
+            saved = self.sessions.read_saved_source_metadata(session_key)
+            if saved is None or not saved.webui or not saved.state.same_origin(source):
+                return
+        else:
+            persisted = self.sessions.read_session_metadata(session_key)
+            metadata_value: object = persisted.get("metadata") if persisted is not None else None
+            if (
+                not isinstance(metadata_value, dict)
+                or cast(dict[str, Any], metadata_value).get(WEBUI_SESSION_METADATA_KEY) is not True
+            ):
+                return
+        public_metadata = _session_message_public_metadata(envelope)
+        outbound_metadata: dict[str, Any] = {WEBUI_DISPLAY_SOURCE_KEY: source}
+        owner = event.context.metadata.get(WEBSOCKET_TURN_OWNER_METADATA_KEY)
+        if isinstance(owner, str) and owner:
+            outbound_metadata[WEBSOCKET_TURN_OWNER_METADATA_KEY] = owner
+            outbound_metadata[WEBUI_SESSION_METADATA_KEY] = True
+        await self.bus.publish_outbound(outbound_message_for_event(
+            channel="websocket",
+            chat_id=session_key.split(":", 1)[1],
+            event=UserInputEvent(
+                content=event.input.content,
+                created_at_ms=envelope["created_at_ms"],
+                provenance={"session_message": public_metadata},
+                input=event.input,
+            ),
+            metadata=outbound_metadata,
+        ))
+
+    async def _handle_injection_committed(self, event: InjectionCommitted) -> None:
+        """Publish the owner receipt for guidance committed into a running turn."""
+        if event.context.channel == "system":
+            await self._publish_committed_session_message(event)
+            return
+        if not self._is_websocket_event(event.context):
+            return
+        metadata = event.context.metadata
+        turn_id = metadata.get(WEBUI_TURN_METADATA_KEY)
+        if not isinstance(turn_id, str) or not turn_id:
+            return
+        session = self.sessions.get_or_create(event.context.session_key)
+        await self.bus.publish_outbound(
+            outbound_message_for_event(
+                channel=event.context.channel,
+                chat_id=event.context.chat_id,
+                event=MessageAdmittedEvent(
+                    turn_id=turn_id,
+                    attempt_id=turn_id,
+                    session_key=event.context.session_key,
+                    session_incarnation=session.incarnation,
+                    active_turn_id=websocket_turn_id(event.context.chat_id),
+                    starts_turn=False,
+                    input=event.input,
+                ),
+                metadata=dict(metadata),
+            )
+        )
+
+    async def _handle_session_turn_started(self, event: SessionTurnStarted) -> None:
         if not self._is_websocket_event(event.context):
             return
         session = self.sessions.get_or_create(event.context.session_key)
         mark_webui_session(session, event.context.metadata)
+
+    async def _handle_user_input_committed(self, event: UserInputCommitted) -> None:
+        """Publish an admission receipt only after a named browser input was appended."""
+        if event.context.channel == "system":
+            await self._publish_committed_session_message(event)
+            return
+        if not self._is_websocket_event(event.context):
+            return
+        raw_turn_id = event.context.metadata.get(WEBUI_TURN_METADATA_KEY)
+        turn_id = raw_turn_id if isinstance(raw_turn_id, str) and raw_turn_id else None
+        if event.context.metadata.get(WEBUI_SESSION_METADATA_KEY) is not True or turn_id is None:
+            return
+        session = self.sessions.get_or_create(event.context.session_key)
+        active_turn_id = websocket_turn_id(event.context.chat_id)
+        await self.bus.publish_outbound(
+            outbound_message_for_event(
+                channel=event.context.channel,
+                chat_id=event.context.chat_id,
+                event=MessageAdmittedEvent(
+                    turn_id=turn_id,
+                    attempt_id=turn_id,
+                    session_key=event.context.session_key,
+                    session_incarnation=session.incarnation,
+                    active_turn_id=active_turn_id,
+                    input_attempt_proof=event.input_attempt_proof,
+                    input=event.input,
+                    starts_turn=(
+                        not event.joined and event.context.metadata.get(WEBUI_REQUEST_INTENT_METADATA_KEY)
+                        != "steer"
+                    ),
+                ),
+                metadata=event.context.metadata,
+            )
+        )
 
     async def _handle_run_status_changed(self, event: TurnRunStatusChanged) -> None:
         if not self._is_websocket_event(event.context):
@@ -882,6 +1038,7 @@ class WebuiTurnCoordinator:
             latency_ms=event.latency_ms,
             usage=event.usage,
             round_usages=event.round_usages,
+            context_usage=event.context_usage,
             context_window_tokens=(
                 event.runtime.context_window_tokens if event.runtime is not None else None
             ),
@@ -931,6 +1088,7 @@ class WebuiTurnCoordinator:
         latency_ms: int | None,
         usage: LLMUsage | None = None,
         round_usages: tuple[LLMUsage, ...] = (),
+        context_usage: ContextUsageSnapshot | None = None,
         context_window_tokens: int | None = None,
         outcome: str = "completed",
         failure_kind: str | None = None,
@@ -950,6 +1108,7 @@ class WebuiTurnCoordinator:
                     goal_state=goal_state_ws_blob(session.metadata),
                     usage=usage,
                     round_usages=round_usages,
+                    context_usage=context_usage,
                     context_window_tokens=context_window_tokens,
                     outcome=outcome,
                     failure_kind=failure_kind,

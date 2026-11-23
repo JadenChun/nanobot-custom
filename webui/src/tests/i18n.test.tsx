@@ -279,22 +279,6 @@ const LOCALIZED_NEW_SURFACE_KEYS = [
   "chat.groups.yesterday",
   "chat.groups.earlier",
   "chat.groups.archived",
-  "workbench.tabAria",
-  "workbench.panesInTab",
-  "workbench.collapseTabGroup",
-  "workbench.expandTabGroup",
-  "workbench.dropPane",
-  "workbench.createGroup",
-  "workbench.moveTo",
-  "workbench.renameGroupTitle",
-  "workbench.renameGroupDescription",
-  "workbench.renameGroupPlaceholder",
-  "workbench.dissolveTab",
-  "workbench.deleteConversations",
-  "workbench.paneLimit",
-  "workbench.paneActions",
-  "workbench.detachPane",
-  "workbench.composerAria",
   "thread.promptNavigator.railAria",
   "thread.composer.mentions.cliTitle",
   "thread.composer.mentions.mcpTitle",
@@ -354,7 +338,7 @@ const INDEX_HTML = readFileSync(resolve(process.cwd(), "index.html"), "utf8");
 const PREBOOT_SCRIPT = INDEX_HTML.match(
   /<script>\s*(\(function \(\) \{\s*var localeKey = "nanobot\.locale";[\s\S]*?\}\)\(\);)\s*<\/script>/,
 )?.[1];
-const BOOT_COPY_MARKUP = '<span data-boot-copy>Loading nanobot…</span>';
+const BOOT_COPY_MARKUP = '<span data-boot-copy>Loading Kohaku…</span>';
 
 function runPrebootLocale(storedLocale: string) {
   if (!PREBOOT_SCRIPT) throw new Error("Could not find the preboot locale script in index.html");
@@ -681,18 +665,6 @@ describe("webui i18n", () => {
     expect(settings.skills.marketplaceProviderAll).toBe("全部");
     expect(settings.skills.marketplaceSearchPlaceholder).toBe("搜索技能");
     expect(settings.skills.marketplaceTrendingTitle).toBe("各市场热门技能");
-  });
-
-  it("keeps the Simplified Chinese group workflow localized", () => {
-    const workbench = resources["zh-CN"].common.workbench;
-
-    expect(workbench.tabAria).toBe("分组：{{title}}");
-    expect(workbench.createGroup).toBe("创建分组");
-    expect(workbench.renameGroupTitle).toBe("重命名分组");
-    expect(workbench.renameGroupDescription).toBe("为这个分组命名。");
-    expect(workbench.renameGroupPlaceholder).toBe("分组名称");
-    expect(workbench.moveTo).toBe("移动到");
-    expect(workbench.detachPane).toBe("移出");
   });
 
   it("keeps Indonesian and Vietnamese settings free of copied Spanish help text", () => {

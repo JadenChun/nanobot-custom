@@ -3,24 +3,31 @@
 from __future__ import annotations
 
 import asyncio
+import functools
 import hashlib
 import json
 import os
 import re
 import shutil
 import urllib.parse
+import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterable, Mapping, Sequence
 from contextlib import AsyncExitStack, suppress
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal, Protocol, cast
+from typing import TYPE_CHECKING, Any, Literal, Protocol, TypeGuard, cast
 from urllib.parse import urlparse
 
 import httpx
 from loguru import logger
 
-from nanobot.agent.tools.base import Tool, ToolResult
+from nanobot.agent.tools.base import Tool, ToolResult, invalid_numeric_limit
+from nanobot.agent.tools.progress import (
+    ProgressThrottle,
+    current_tool_progress_sink,
+)
 from nanobot.agent.tools.registry import ToolRegistry
+from nanobot.agent.turn import ToolOutcome
 from nanobot.security.network import (
     PinnedDNSAsyncTransport,
     env_proxy_applies_to_url,
@@ -60,6 +67,10 @@ _SANITIZE_RE = re.compile(r"_+")
 _ReconnectCallback = Callable[[str, str, Tool], Awaitable[Tool | None]]
 MCPServerLoader = Callable[[], Mapping[str, "MCPServerConfig"]]
 MCPRuntimeStatus = Literal["connecting", "connected", "failed"]
+_KOHAKU_MEDIA_CONTROL_TOOL = "cancel_kohaku_media_call"
+_KOHAKU_MEDIA_CALL_META_KEY = "ai.nanobot.media.call_id"
+_KOHAKU_MEDIA_SETTLE_STOP_REASON = "kohaku_media_settled"
+_KOHAKU_MEDIA_CONTROL_TIMEOUT_SECONDS = 5.0
 
 
 class MCPConnection(Protocol):
@@ -497,12 +508,179 @@ def _normalize_nullable_schema(schema: dict[str, Any]) -> dict[str, Any]:
     return normalized
 
 
+_SUPPORTED_MCP_SCHEMA_KEYS = frozenset({
+    "type", "properties", "required", "additionalProperties", "items",
+    "enum", "minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum",
+    "multipleOf", "minLength", "maxLength", "minItems", "maxItems",
+    "nullable", "description", "title", "default", "$ref", "$schema",
+    "definitions", "anyOf",
+})
+
+
+def _is_null_schema_branch(branch: Any) -> bool:
+    """Return whether one anyOf branch is the JSON null marker."""
+    return isinstance(branch, dict) and cast(dict[str, Any], branch).get("type") == "null"
+
+
+def _validate_mcp_schema(schema: Any, *, path: str = "") -> str | None:
+    """Reject a schema whose advertised constraints the local validator cannot enforce."""
+    if not isinstance(schema, dict):
+        return f"{path or 'schema'} must be an object"
+    mapping = cast(dict[str, Any], schema)
+    for key in mapping:
+        if key not in _SUPPORTED_MCP_SCHEMA_KEYS:
+            return f"{path or 'schema'} uses unsupported keyword {key!r}"
+    if "$schema" in mapping:
+        dialect = mapping["$schema"]
+        if not isinstance(dialect, str) or not dialect.strip():
+            return f"{path or 'schema'} requires a non-empty string '$schema'"
+    for key in ("multipleOf", "exclusiveMinimum", "exclusiveMaximum"):
+        error = invalid_numeric_limit(mapping, key, path=path)
+        if error:
+            return error
+    raw_type = mapping.get("type")
+    if raw_type is not None:
+        types: list[Any] = (
+            list(cast(list[Any], raw_type))
+            if isinstance(raw_type, list) else [raw_type]
+        )
+        if any(item not in {"string", "integer", "number", "boolean", "array", "object", "null"} for item in types):
+            return f"{path or 'schema'} uses an unsupported type"
+    for key, value in mapping.items():
+        if key == "properties" and isinstance(value, dict):
+            for name, child in cast(dict[str, Any], value).items():
+                error = _validate_mcp_schema(child, path=f"{path}.{name}" if path else name)
+                if error:
+                    return error
+        elif key == "items":
+            error = _validate_mcp_schema(value, path=f"{path}[]" if path else "[]")
+            if error:
+                return error
+        elif key == "additionalProperties" and isinstance(value, dict):
+            error = _validate_mcp_schema(value, path=f"{path}.*" if path else "*")
+            if error:
+                return error
+        elif key == "anyOf" and isinstance(value, list):
+            branches = cast(list[Any], value)
+            non_null = [
+                branch for branch in branches if not _is_null_schema_branch(branch)
+            ]
+            if len(non_null) > 1:
+                return f"{path or 'schema'} uses an unsupported anyOf branch"
+            for index, branch in enumerate(branches):
+                error = _validate_mcp_schema(branch, path=f"{path}.anyOf[{index}]")
+                if error:
+                    return error
+    return None
+
+
 def _normalize_schema_for_openai(schema: Any) -> dict[str, Any]:
     """Normalize MCP JSON Schema patterns for tool definitions."""
     if not isinstance(schema, dict):
         return {"type": "object", "properties": {}}
     schema_mapping = cast(dict[str, Any], schema)
     return _normalize_nullable_schema(_rewrite_local_schema_refs(schema_mapping))
+
+
+class MCPGenerationLease:
+    """Keep sampled and executing users of one generation alive through settlement."""
+
+    def __init__(self) -> None:
+        self._inflight = 0
+        self._sampled = 0
+        self._retired = False
+        self._revoked = False
+        self._closed = False
+        self._closed_event = asyncio.Event()
+        self._closer: Callable[[], Awaitable[None]] | None = None
+        self._authorized: Callable[[], bool] | None = None
+        self._close_task: asyncio.Task[None] | None = None
+
+    def bind(self, closer: Callable[[], Awaitable[None]]) -> None:
+        self._closer = closer
+
+    def set_authorization(self, authorized: Callable[[], bool]) -> None:
+        self._authorized = authorized
+
+    def dispatch_error(self) -> str | None:
+        if self._authorized is not None and not self._authorized():
+            self.revoke()
+        if self._revoked or self._closed:
+            return "the bound connection generation is revoked or closed"
+        return None
+
+    def revoke(self) -> None:
+        self._revoked = True
+
+    def acquire_sampled(self) -> bool:
+        if self._closed:
+            return False
+        self._sampled += 1
+        return True
+
+    def release_sampled(self) -> None:
+        if self._sampled > 0:
+            self._sampled -= 1
+        self._close_when_idle()
+
+    def begin(self) -> bool:
+        if self.dispatch_error() is not None:
+            return False
+        self._inflight += 1
+        return True
+
+    def _close_when_idle(self) -> None:
+        if self._retired and self._inflight == self._sampled == 0 and not self._closed:
+            self._closed = True
+            self._close_task = asyncio.create_task(self._finish_close())
+
+    def end(self) -> None:
+        if self._inflight > 0:
+            self._inflight -= 1
+        self._close_when_idle()
+
+    async def retire(self) -> None:
+        """Close now when idle; otherwise retain the generation through its last hold."""
+        self._retired = True
+        if self._inflight == self._sampled == 0:
+            await self.close_once()
+
+    async def close_once(self) -> None:
+        self._close_when_idle()
+        if self._close_task is not None:
+            await asyncio.shield(self._close_task)
+
+    async def _finish_close(self) -> None:
+        try:
+            closer = self._closer
+            if closer is not None:
+                await closer()
+        finally:
+            self._closed_event.set()
+
+    async def wait_closed(self) -> None:
+        await self._closed_event.wait()
+
+
+def _admitted_generation(execute_method: Any) -> Any:
+    """Count one admitted call against the wrapper's published generation."""
+
+    @functools.wraps(execute_method)
+    async def wrapper(self: Any, **kwargs: Any) -> Any:
+        lease = getattr(self, "_generation_lease", None)
+        error = self.binding_error()
+        if error is not None:
+            return ToolResult.error(error)
+        if isinstance(lease, MCPGenerationLease):
+            if not lease.begin():
+                return ToolResult.error("MCP call refused: the bound connection generation ended")
+        try:
+            return await execute_method(self, **kwargs)
+        finally:
+            if isinstance(lease, MCPGenerationLease):
+                lease.end()
+
+    return wrapper
 
 
 class _MCPWrapperBase(Tool):
@@ -512,6 +690,8 @@ class _MCPWrapperBase(Tool):
     _session: ClientSession
     _server_name: str
     _name: str
+    _generation_lease: MCPGenerationLease | None = None
+    _binding_ended: bool = False
 
     def _set_mcp_connection(self, session: ClientSession, server_name: str) -> None:
         self._session = session
@@ -520,6 +700,24 @@ class _MCPWrapperBase(Tool):
 
     def set_reconnect_handler(self, reconnect: _ReconnectCallback) -> None:
         self._reconnect = reconnect
+
+    def bind_generation(self, lease: MCPGenerationLease) -> None:
+        """Bind this wrapper to its published connection generation."""
+        self._generation_lease = lease
+        self._binding_ended = False
+
+    def binding_error(self) -> str | None:
+        if self._binding_ended:
+            return "MCP call refused: the bound connection generation ended"
+        if self._generation_lease is not None:
+            error = self._generation_lease.dispatch_error()
+            if error is not None:
+                return f"MCP call refused: {error}"
+        return None
+
+    @property
+    def generation_lease(self) -> MCPGenerationLease | None:
+        return self._generation_lease
 
     async def _refresh_session_after_termination(
         self,
@@ -530,23 +728,71 @@ class _MCPWrapperBase(Tool):
         if already_refreshed or not _is_session_terminated(exc) or self._reconnect is None:
             return False
         logger.warning(
-            "MCP {} '{}' session terminated; reconnecting server '{}' before retry",
+            "MCP {} '{}' session terminated; reconnecting server '{}' for future calls",
             capability_kind,
             self._name,
             self._server_name,
         )
-        refreshed_tool = await self._reconnect(self._server_name, self._name, self)
-        refreshed_session = getattr(refreshed_tool, "_session", None)
-        if refreshed_session is None:
-            logger.warning(
-                "MCP {} '{}' could not refresh session for server '{}'",
-                capability_kind,
-                self._name,
-                self._server_name,
-            )
-            return False
-        self._session = refreshed_session
-        return True
+        # Publish a replacement generation for later model requests, but keep
+        # this admitted wrapper on its original binding. A call must not be
+        # retried by tool name against a different schema or session.
+        await self._reconnect(self._server_name, self._name, self)
+        self._binding_ended = True
+        logger.warning(
+            "MCP {} '{}' admitted generation ended; refusing retry on replacement",
+            capability_kind,
+            self._name,
+        )
+        return False
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class KohakuMediaStopSettlement(ToolOutcome):
+    """Exact terminal proof from the configured Comfy video wrapper."""
+
+    call_id: str
+    disposition: Literal["stopped", "completed"]
+    result_is_error: bool
+
+
+def _kohaku_media_terminal_result(
+    result: Any,
+    call_id: str,
+) -> tuple[Literal["stopped", "completed"], bool] | None:
+    """Accept proof only when the original call reply matches its request ID."""
+    structured = getattr(result, "structuredContent", None)
+    if not isinstance(structured, Mapping):
+        return None
+    content = cast(Mapping[str, Any], structured)
+    if content.get("call_id") != call_id or content.get("stop_status") != "settled":
+        return None
+    disposition = content.get("outcome")
+    if disposition not in ("stopped", "completed"):
+        return None
+    return disposition, getattr(result, "isError", False) is True
+
+
+def is_kohaku_media_stop_settlement(
+    result: Any,
+    tool: Tool | None,
+) -> TypeGuard[KohakuMediaStopSettlement]:
+    """Accept the terminal type only from the exact eligible MCP wrapper."""
+    return (
+        type(tool) is MCPToolWrapper
+        and tool.kohaku_media_stop_enabled
+        and type(result) is KohakuMediaStopSettlement
+        and result.stop_reason == _KOHAKU_MEDIA_SETTLE_STOP_REASON
+    )
+
+
+def mcp_generation_lease(tool: Tool) -> MCPGenerationLease | None:
+    """Expose a concrete MCP wrapper's existing resource owner to request capture."""
+    return tool.generation_lease if isinstance(tool, _MCPWrapperBase) else None
+
+
+def mcp_binding_error(tool: Tool) -> str | None:
+    """Recheck the captured MCP wrapper without name-based session lookup."""
+    return tool.binding_error() if isinstance(tool, _MCPWrapperBase) else None
 
 
 def _image_block_data_url(block: Any, types: Any) -> str | None:
@@ -574,7 +820,12 @@ def _image_block_data_url(block: Any, types: Any) -> str | None:
     return None
 
 
-def _mcp_media_tool_result(text_parts: list[str], artifacts: list[dict[str, Any]]) -> str:
+def _mcp_media_tool_result(
+    text_parts: list[str],
+    artifacts: list[dict[str, Any]],
+    *,
+    reference_images: Sequence[str] = (),
+) -> str:
     """Build the compact tool result for an MCP call that returned media.
 
     The base64 stays out of the model context entirely — only artifact paths and
@@ -585,14 +836,16 @@ def _mcp_media_tool_result(text_parts: list[str], artifacts: list[dict[str, Any]
         "artifacts": artifacts,
         "next_step": (
             "These media files were returned by an MCP tool and saved as local artifacts. "
-            "Call the message tool with the artifact 'path' values in the media "
-            "parameter to deliver them to the user. To copy or inspect a saved "
+            "Use the paths in 'artifacts' for the message tool's 'media' parameter. "
+            "Use 'reference_images' to review the source images. To copy or inspect a saved "
             "file inside a Sandbox command, pass its exact path in the exec tool's "
             "'input_files' list and write only to an authorized workspace folder. "
             "Do not paste base64 or raw paths into your reply unless the user asks "
             "for debug details."
         ),
     }
+    if reference_images:
+        payload["reference_images"] = list(reference_images)
     text = "\n".join(part for part in text_parts if part)
     if text:
         payload["text"] = text
@@ -674,10 +927,14 @@ def _classify_read_only(
     annotations: Any,
 ) -> tuple[bool, str, bool]:
     read_only_hint = _annotation_bool(annotations, "readOnlyHint")
-    if read_only_hint is not None:
-        return read_only_hint, "annotation", _is_trusted_local_mcp(transport_type, server_url)
-
     trusted_for_heuristics = _is_trusted_local_mcp(transport_type, server_url)
+    if read_only_hint is not None:
+        # A remote annotation is a hint, not proof. An untrusted server cannot
+        # authorize a read-only child by declaring its tool non-mutating.
+        if read_only_hint and not trusted_for_heuristics:
+            return False, "annotation_untrusted", False
+        return read_only_hint, "annotation", trusted_for_heuristics
+
     if trusted_for_heuristics:
         lowered_name = tool_name.lower()
         if lowered_name.startswith(_READ_ONLY_PREFIXES):
@@ -708,8 +965,17 @@ class MCPToolWrapper(_MCPWrapperBase):
         server_url: str | None = None,
         server_command: str | None = None,
         media_output_roots: Sequence[Path] = (),
+        generation: str = "",
+        kohaku_media_cancel_available: bool = False,
     ):
         self._set_mcp_connection(session, server_name)
+        self.generation = generation
+        self._kohaku_media_stop_enabled = (
+            server_name == "comfy"
+            and transport_type == "stdio"
+            and tool_def.name == "generate_video"
+            and kohaku_media_cancel_available
+        )
         self._media_output_roots = tuple(
             Path(root).expanduser() for root in media_output_roots
         )
@@ -752,6 +1018,10 @@ class MCPToolWrapper(_MCPWrapperBase):
         return self._mcp_metadata.read_only
 
     @property
+    def kohaku_media_stop_enabled(self) -> bool:
+        return self._kohaku_media_stop_enabled
+
+    @property
     def read_only(self) -> bool:
         return self.is_read_only
 
@@ -762,6 +1032,132 @@ class MCPToolWrapper(_MCPWrapperBase):
     @property
     def exclusive(self) -> bool:
         return not self.supports_parallel_calls
+
+    async def _attempt_media_cancel(self, call_id: str) -> Any | None:
+        """Send one bounded control request without treating its ACK as proof."""
+        try:
+            result = await asyncio.wait_for(
+                self._session.call_tool(
+                    _KOHAKU_MEDIA_CONTROL_TOOL,
+                    arguments={"call_id": call_id},
+                ),
+                timeout=_KOHAKU_MEDIA_CONTROL_TIMEOUT_SECONDS,
+            )
+            structured = getattr(result, "structuredContent", None)
+            if not isinstance(structured, Mapping):
+                logger.debug("Comfy media cancel request for '{}' returned an invalid ACK", call_id)
+            else:
+                ack = cast(Mapping[str, Any], structured)
+                if ack.get("call_id") != call_id or type(ack.get("accepted")) is not bool:
+                    logger.debug("Comfy media cancel request for '{}' returned an invalid ACK", call_id)
+                elif ack["accepted"] is False:
+                    logger.debug("Comfy media cancel request for '{}' was not accepted", call_id)
+            return result
+        except Exception as exc:
+            logger.debug(
+                "Comfy media cancel request for '{}' did not settle: {}",
+                call_id,
+                type(exc).__name__,
+            )
+            return None
+
+    async def _settle_cancelled_media_call(
+        self,
+        original_call: asyncio.Task[Any],
+        call_id: str,
+        cancellation: asyncio.CancelledError,
+        *,
+        arguments: Mapping[str, Any],
+    ) -> KohakuMediaStopSettlement:
+        """Wait for exact original-call proof after attempting the bound cancel RPC."""
+        control = asyncio.create_task(self._attempt_media_cancel(call_id))
+        pending = {original_call, control}
+        while pending:
+            try:
+                done, _ = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
+            except asyncio.CancelledError:
+                if not task_is_cancelling():
+                    raise
+                continue
+            pending.difference_update(cast(set[asyncio.Task[Any]], done))
+        with suppress(asyncio.CancelledError, Exception):
+            control.result()
+        try:
+            original_result = original_call.result()
+        except (asyncio.CancelledError, Exception):
+            raise cancellation
+        terminal = _kohaku_media_terminal_result(original_result, call_id)
+        if terminal is None:
+            raise cancellation
+        disposition, result_is_error = terminal
+        return self._render_media_stop_settlement(
+            original_result,
+            arguments,
+            call_id=call_id,
+            disposition=disposition,
+            result_is_error=result_is_error,
+        )
+
+    @staticmethod
+    def _media_status_content(
+        rendered: str,
+        *,
+        call_id: str,
+        disposition: Literal["stopped", "completed"],
+        result_is_error: bool,
+    ) -> str:
+        try:
+            raw_payload = json.loads(rendered)
+        except (ValueError, TypeError):
+            raw_payload: Any = {"result": rendered}
+        payload: dict[str, Any]
+        if isinstance(raw_payload, dict):
+            payload = cast(dict[str, Any], raw_payload)
+        else:
+            payload = {"result": raw_payload}
+        payload["media_call"] = {
+            "call_id": call_id,
+            "stop_status": "settled",
+            "outcome": disposition,
+            "result_is_error": result_is_error,
+            "summary": (
+                "The video completed before Stop took effect. Its output files remain available."
+                if disposition == "completed"
+                else "ComfyUI confirmed the video stopped after cleanup and GPU restoration."
+            ),
+        }
+        return json.dumps(payload, ensure_ascii=False)
+
+    def _render_media_stop_settlement(
+        self,
+        result: Any,
+        arguments: Mapping[str, Any],
+        *,
+        call_id: str,
+        disposition: Literal["stopped", "completed"],
+        result_is_error: bool,
+    ) -> KohakuMediaStopSettlement:
+        original_content = getattr(result, "content", None)
+        content: list[Any] = (
+            cast(list[Any], original_content) if isinstance(original_content, list) else []
+        )
+        rendered, artifacts = self._render_call_result(content, arguments)
+        from nanobot.utils.artifacts import media_artifact_ref
+
+        status_content = self._media_status_content(
+            rendered,
+            call_id=call_id,
+            disposition=disposition,
+            result_is_error=result_is_error,
+        )
+        return KohakuMediaStopSettlement(
+            content=status_content,
+            stop_reason=_KOHAKU_MEDIA_SETTLE_STOP_REASON,
+            media_artifacts=tuple(media_artifact_ref(artifact) for artifact in artifacts),
+            call_id=call_id,
+            disposition=disposition,
+            result_is_error=result_is_error,
+        )
 
     @property
     def name(self) -> str:
@@ -775,15 +1171,76 @@ class MCPToolWrapper(_MCPWrapperBase):
     def parameters(self) -> dict[str, Any]:
         return self._parameters
 
+    def _mcp_progress_callback(self) -> Any:
+        """Build a callback that forwards MCP progress to the live UI.
+
+        The MCP SDK attaches ``_meta.progressToken`` only when a callback is
+        present, so servers such as the ComfyUI harness start sending
+        ``notifications/progress`` frames. Frames stay live-only: no transcript
+        row is written for them.
+        """
+        sink = current_tool_progress_sink()
+        if sink is None:
+            return None
+        throttle = ProgressThrottle()
+
+        async def on_progress(
+            progress: float,
+            total: float | None,
+            message: str | None,
+        ) -> None:
+            if not throttle.should_emit(total, message):
+                return
+            with suppress(Exception):
+                await sink.emit(progress, total, message)
+
+        return on_progress
+
+    @_admitted_generation
     async def execute(self, **kwargs: Any) -> Any:
         retried_transient = False
         refreshed_session = False
+        progress_callback = self._mcp_progress_callback()
+        call_options: dict[str, Any] = (
+            {"progress_callback": progress_callback}
+            if progress_callback is not None
+            else {}
+        )
         while True:
             try:
-                result = await asyncio.wait_for(
-                    self._session.call_tool(self._original_name, arguments=kwargs),
-                    timeout=self._tool_timeout,
-                )
+                if self._kohaku_media_stop_enabled:
+                    call_id = str(uuid.uuid4())
+                    original_call = asyncio.create_task(
+                        asyncio.wait_for(
+                            self._session.call_tool(
+                                self._original_name,
+                                arguments=kwargs,
+                                meta={_KOHAKU_MEDIA_CALL_META_KEY: call_id},
+                                **call_options,
+                            ),
+                            timeout=self._tool_timeout,
+                        )
+                    )
+                    try:
+                        result = await asyncio.shield(original_call)
+                    except asyncio.CancelledError as cancellation:
+                        if not task_is_cancelling():
+                            raise
+                        return await self._settle_cancelled_media_call(
+                            original_call,
+                            call_id,
+                            cancellation,
+                            arguments=kwargs,
+                        )
+                else:
+                    result = await asyncio.wait_for(
+                        self._session.call_tool(
+                            self._original_name,
+                            arguments=kwargs,
+                            **call_options,
+                        ),
+                        timeout=self._tool_timeout,
+                    )
             except asyncio.TimeoutError:
                 logger.warning(
                     "MCP tool '{}' timed out after {}s", self._name, self._tool_timeout
@@ -806,6 +1263,10 @@ class MCPToolWrapper(_MCPWrapperBase):
                 ):
                     refreshed_session = True
                     continue
+                if self._binding_ended:
+                    return ToolResult.error(
+                        "(MCP tool call refused: the bound connection generation ended)"
+                    )
                 if _is_transient(exc):
                     if not retried_transient:
                         retried_transient = True
@@ -878,6 +1339,7 @@ class MCPToolWrapper(_MCPWrapperBase):
 
         text_parts: list[str] = []
         artifacts: list[dict[str, Any]] = []
+        inline_images: list[dict[str, Any] | None] = []
         resource_link_type = getattr(types, "ResourceLink", None)
         for block in content:
             if isinstance(block, types.TextContent):
@@ -886,6 +1348,7 @@ class MCPToolWrapper(_MCPWrapperBase):
             data_url = _image_block_data_url(block, types)
             if data_url is not None:
                 stored = self._store_image_block(data_url, arguments)
+                inline_images.append(stored)
                 if stored is not None:
                     artifacts.append(stored)
                 else:
@@ -905,11 +1368,40 @@ class MCPToolWrapper(_MCPWrapperBase):
 
         if artifacts:
             from nanobot.utils.artifacts import (
+                candidate_artifact_count,
                 parse_embedded_text_payload,
                 select_candidate_artifacts,
             )
 
             payload = parse_embedded_text_payload("\n".join(text_parts))
+            staged_videos = [
+                artifact for artifact in artifacts if artifact.get("kind") == "video"
+            ]
+            review_images = [
+                image["path"] for image in inline_images if image is not None
+            ]
+            if staged_videos and review_images:
+                # Video tools return the clip as a resource link plus sampled
+                # review frames. Keep the clip as the primary artifact and expose
+                # the frames only as reference images so the assets library stays clean.
+                return (
+                    _mcp_media_tool_result(
+                        text_parts,
+                        staged_videos,
+                        reference_images=review_images,
+                    ),
+                    staged_videos,
+                )
+            candidate_count = candidate_artifact_count(payload)
+            if candidate_count is not None and candidate_count <= len(inline_images):
+                # Each inline image has one slot. File links can repeat those images.
+                candidates = select_candidate_artifacts(inline_images, payload)
+                references = [
+                    image["path"] for image in inline_images[:-candidate_count] if image is not None
+                ]
+                return _mcp_media_tool_result(
+                    text_parts, candidates, reference_images=references,
+                ), candidates
             candidates = select_candidate_artifacts(artifacts, payload)
             return _mcp_media_tool_result(text_parts, artifacts), candidates
         return ("\n".join(text_parts) or "(no output)"), []
@@ -924,7 +1416,7 @@ class MCPToolWrapper(_MCPWrapperBase):
             return store_generated_image_artifact(
                 data_url,
                 prompt=str(arguments.get("prompt") or ""),
-                model=str(arguments.get("model") or ""),
+                model=str(arguments.get("model") or arguments.get("workflow") or ""),
                 save_dir="generated",
                 provider=f"mcp:{self._server_name}",
             )
@@ -942,11 +1434,21 @@ class MCPToolWrapper(_MCPWrapperBase):
         """Stage a trusted local MCP resource file into the managed media store."""
         from nanobot.utils.artifacts import ArtifactError, store_generated_file_artifact
 
-        uri = getattr(block, "uri", None)
-        if not isinstance(uri, str) or not uri:
+        raw_uri = getattr(block, "uri", None)
+        # The MCP SDK models ``uri`` as ``pydantic.AnyUrl``, not ``str``.
+        uri = str(raw_uri).strip() if raw_uri is not None else ""
+        if not uri:
+            logger.warning(
+                "MCP tool '{}' returned a resource link without a URI", self._name
+            )
             return None
         parsed = urllib.parse.urlparse(uri)
         if parsed.scheme != "file":
+            logger.debug(
+                "MCP tool '{}' returned non-file resource link scheme '{}'",
+                self._name,
+                parsed.scheme,
+            )
             return None
         raw_path = urllib.parse.unquote(parsed.path)
         if parsed.netloc and parsed.netloc not in {"", "localhost"}:
@@ -958,7 +1460,7 @@ class MCPToolWrapper(_MCPWrapperBase):
                 Path(raw_path),
                 kind=kind,
                 prompt=str(arguments.get("prompt") or ""),
-                model=str(arguments.get("model") or ""),
+                model=str(arguments.get("model") or arguments.get("workflow") or ""),
                 provider=f"mcp:{self._server_name}",
                 allowed_roots=self._media_output_roots,
                 save_dir="generated",
@@ -1012,6 +1514,7 @@ class MCPResourceWrapper(_MCPWrapperBase):
     def read_only(self) -> bool:
         return True
 
+    @_admitted_generation
     async def execute(self, **kwargs: Any) -> str:
         from mcp import types
 
@@ -1041,6 +1544,8 @@ class MCPResourceWrapper(_MCPWrapperBase):
                 ):
                     refreshed_session = True
                     continue
+                if self._binding_ended:
+                    return "(MCP resource read refused: the bound connection generation ended)"
                 if _is_transient(exc):
                     if not retried_transient:
                         retried_transient = True
@@ -1130,6 +1635,7 @@ class MCPPromptWrapper(_MCPWrapperBase):
     def read_only(self) -> bool:
         return True
 
+    @_admitted_generation
     async def execute(self, **kwargs: Any) -> str:
         from mcp import types
         from mcp.shared.exceptions import McpError
@@ -1160,6 +1666,8 @@ class MCPPromptWrapper(_MCPWrapperBase):
                 ):
                     refreshed_session = True
                     continue
+                if self._binding_ended:
+                    return "(MCP prompt call refused: the bound connection generation ended)"
                 logger.exception(
                     "MCP prompt '{}' failed: code={} message={}",
                     self._name,
@@ -1175,6 +1683,8 @@ class MCPPromptWrapper(_MCPWrapperBase):
                 ):
                     refreshed_session = True
                     continue
+                if self._binding_ended:
+                    return "(MCP prompt call refused: the bound connection generation ended)"
                 if _is_transient(exc):
                     if not retried_transient:
                         retried_transient = True
@@ -1221,6 +1731,8 @@ async def connect_mcp_servers(
     *,
     oauth_handlers: Mapping[str, MCPOAuthHandlers] | None = None,
     media_output_roots: Sequence[Path] = (),
+    readiness_timeout: float = 10.0,
+    data_dir: Path | None = None,
 ) -> dict[str, MCPConnection]:
     """Connect to configured MCP servers and register their tools, resources, prompts.
 
@@ -1278,6 +1790,7 @@ async def connect_mcp_servers(
                         name,
                         cfg.url,
                         (oauth_handlers or {}).get(name),
+                        data_dir=data_dir,
                     )
                 except MCPAuthorizationRequiredError:
                     logger.info("MCP server '{}': waiting for browser authorization", name)
@@ -1357,14 +1870,36 @@ async def connect_mcp_servers(
             await session.initialize()
 
             tools = await session.list_tools()
+            pending_tools: list[Tool] = []
+            generation = hashlib.sha256(
+                f"{name}:{cfg.type or ''}:{cfg.url or ''}:{cfg.command or ''}".encode("utf-8")
+            ).hexdigest()[:16]
             enabled_tools = set(cfg.enabled_tools)
             allow_all_tools = "*" in enabled_tools
             registered_count = 0
             matched_enabled_tools: set[str] = set()
             available_raw_names = [tool_def.name for tool_def in tools.tools]
             available_wrapped_names = [_sanitize_mcp_tool_name(f"mcp_{name}_{tool_def.name}") for tool_def in tools.tools]
+            kohaku_media_cancel_available = (
+                name == "comfy"
+                and transport_type == "stdio"
+                and any(tool_def.name == _KOHAKU_MEDIA_CONTROL_TOOL for tool_def in tools.tools)
+            )
             for tool_def in tools.tools:
                 wrapped_name = _sanitize_mcp_tool_name(f"mcp_{name}_{tool_def.name}")
+                if tool_def.name == _KOHAKU_MEDIA_CONTROL_TOOL:
+                    if enabled_tools and not allow_all_tools and (
+                        tool_def.name in enabled_tools or wrapped_name in enabled_tools
+                    ):
+                        matched_enabled_tools.add(
+                            tool_def.name if tool_def.name in enabled_tools else wrapped_name
+                        )
+                    logger.debug(
+                        "MCP: keeping control tool '{}' private on server '{}'",
+                        tool_def.name,
+                        name,
+                    )
+                    continue
                 if (
                     not allow_all_tools
                     and tool_def.name not in enabled_tools
@@ -1376,6 +1911,15 @@ async def connect_mcp_servers(
                         name,
                     )
                     continue
+                schema_error = _validate_mcp_schema(tool_def.inputSchema)
+                if schema_error is not None:
+                    logger.warning(
+                        "MCP server '{}': refusing tool '{}' schema: {}",
+                        name,
+                        tool_def.name,
+                        schema_error,
+                    )
+                    continue
                 wrapper = MCPToolWrapper(
                     session,
                     name,
@@ -1385,9 +1929,10 @@ async def connect_mcp_servers(
                     server_url=cfg.url,
                     server_command=cfg.command,
                     media_output_roots=media_output_roots,
+                    generation=generation,
+                    kohaku_media_cancel_available=kohaku_media_cancel_available,
                 )
-                registry.register(wrapper)
-                logger.debug("MCP: registered tool '{}' from server '{}'", wrapper.name, name)
+                pending_tools.append(wrapper)
                 registered_count += 1
                 if enabled_tools:
                     if tool_def.name in enabled_tools:
@@ -1423,7 +1968,7 @@ async def connect_mcp_servers(
                         wrapper = MCPResourceWrapper(
                             session, name, resource, resource_timeout=cfg.tool_timeout
                         )
-                        registry.register(wrapper)
+                        pending_tools.append(wrapper)
                         registered_count += 1
                         logger.debug(
                             "MCP: registered resource '{}' from server '{}'",
@@ -1441,7 +1986,7 @@ async def connect_mcp_servers(
                         wrapper = MCPPromptWrapper(
                             session, name, prompt, prompt_timeout=cfg.tool_timeout
                         )
-                        registry.register(wrapper)
+                        pending_tools.append(wrapper)
                         registered_count += 1
                         logger.debug(
                             "MCP: registered prompt '{}' from server '{}'",
@@ -1459,6 +2004,23 @@ async def connect_mcp_servers(
                     name,
                 )
 
+            if pending_tools:
+                published: list[Tool] = []
+                try:
+                    for tool in pending_tools:
+                        registry.register(tool)
+                        published.append(tool)
+                except BaseException:
+                    for tool in published:
+                        with suppress(Exception):
+                            registry.unregister(tool.name)
+                    raise
+                logger.debug(
+                    "MCP: published {} bindings for server '{}' generation {}",
+                    len(published),
+                    name,
+                    generation,
+                )
             logger.info(
                 "MCP server '{}': connected, {} capabilities registered", name, registered_count
             )
@@ -1485,7 +2047,7 @@ async def connect_mcp_servers(
             return False
 
     async def connect_single_server(
-        name: str, cfg: MCPServerConfig
+        name: str, cfg: MCPServerConfig,
     ) -> tuple[str, MCPConnection | None]:
         loop = asyncio.get_running_loop()
         ready: asyncio.Future[bool] = loop.create_future()
@@ -1507,7 +2069,21 @@ async def connect_mcp_servers(
         owner = asyncio.create_task(own_connection(), name=f"mcp:{name}")
         connection = _OwnedMCPConnection(owner, close_requested)
         try:
-            connected = await ready
+            connected = await asyncio.wait_for(
+                asyncio.shield(ready),
+                timeout=readiness_timeout,
+            )
+        except asyncio.TimeoutError:
+            logger.warning(
+                "MCP server '{}': readiness timed out after {}s",
+                name,
+                readiness_timeout,
+            )
+            close_requested.set()
+            owner.cancel()
+            with suppress(BaseException):
+                await asyncio.shield(owner)
+            return name, None
         except BaseException as exc:
             close_requested.set()
             owner.cancel()
@@ -1571,6 +2147,16 @@ def _load_current_servers() -> dict[str, MCPServerConfig]:
     return _configured_servers(resolve_config_env_vars(load_config()))
 
 
+class MCPReadinessAbortedError(RuntimeError):
+    """Bounded readiness outcome observed by waiters when the owner is cancelled."""
+
+
+def _consume_readiness_gate_exception(gate: asyncio.Future[None]) -> None:
+    """Retrieve a gate exception so an unawaited bounded outcome stays quiet."""
+    if not gate.cancelled():
+        gate.exception()
+
+
 class MCPProvider:
     """Own configured MCP connections and their dynamic tool registrations."""
 
@@ -1581,15 +2167,21 @@ class MCPProvider:
         *,
         server_loader: MCPServerLoader | None = None,
         media_output_roots: Sequence[Path] = (),
+        data_dir: Path | None = None,
     ) -> None:
         self._servers = dict(servers)
+        self._data_dir = Path(data_dir) if data_dir is not None else None
         self._registry = registry
         self._server_loader = server_loader or _load_current_servers
         self._media_output_roots = tuple(media_output_roots)
         self._connections: dict[str, MCPConnection] = {}
+        self._generation_leases: dict[str, MCPGenerationLease] = {}
+        self._retired_generations: set[MCPGenerationLease] = set()
         self._runtime_statuses: dict[str, MCPRuntimeStatus] = {}
         self._lock = asyncio.Lock()
         self._closing = False
+        self._connect_inflight: asyncio.Future[None] | None = None
+        self._connect_waiters = 0
 
     @classmethod
     def from_config(
@@ -1604,6 +2196,7 @@ class MCPProvider:
             registry,
             server_loader=server_loader,
             media_output_roots=[Path(root) for root in config.tools.media_output_roots],
+            data_dir=config.runtime_data_dir,
         )
 
     @property
@@ -1641,7 +2234,57 @@ class MCPProvider:
         self._set_runtime_status(attempted_names - connected_names, "failed")
 
     async def connect(self) -> None:
-        """Connect configured servers that are not currently live."""
+        """Connect configured servers, sharing one initial readiness attempt.
+
+        The first caller owns the connection task so transports that require a
+        stable owning task keep working. Concurrent callers await that caller's
+        completion gate and observe the same bounded result. Cancellation is
+        caller-scoped: the owner's cancellation completes the gate with a bounded
+        readiness failure instead of cancelling a waiter's own await.
+        """
+        inflight = self._connect_inflight
+        if inflight is not None and not inflight.done():
+            self._connect_waiters += 1
+            try:
+                await asyncio.shield(inflight)
+            finally:
+                self._connect_waiters -= 1
+            return
+        gate: asyncio.Future[None] = asyncio.get_running_loop().create_future()
+        gate.add_done_callback(_consume_readiness_gate_exception)
+        self._connect_inflight = gate
+        # Let concurrently scheduled callers join this attempt before the
+        # owner starts work that may not suspend on a fast mock or cache hit.
+        await asyncio.sleep(0)
+        try:
+            await self._connect_once()
+        except asyncio.CancelledError:
+            if not gate.done():
+                if self._connect_waiters:
+                    gate.set_exception(MCPReadinessAbortedError(
+                        "MCP readiness was cancelled by its owning caller"
+                    ))
+                else:
+                    gate.cancel()
+            raise
+        except BaseException as exc:
+            if not gate.done():
+                if self._connect_waiters:
+                    gate.set_exception(exc)
+                else:
+                    gate.cancel()
+            raise
+        else:
+            if not gate.done():
+                if self._connect_waiters:
+                    gate.set_result(None)
+                else:
+                    gate.cancel()
+        finally:
+            if self._connect_inflight is gate:
+                self._connect_inflight = None
+
+    async def _connect_once(self) -> None:
         async with self._lock:
             if self._closing:
                 return
@@ -1662,7 +2305,7 @@ class MCPProvider:
                 authorization_pending = {
                     name
                     for name, cfg in oauth_servers.items()
-                    if not mcp_oauth_has_credentials(name, cfg.url)
+                    if not mcp_oauth_has_credentials(name, cfg.url, data_dir=self._data_dir)
                 }
             for name in authorization_pending:
                 self._runtime_statuses.pop(name, None)
@@ -1675,16 +2318,19 @@ class MCPProvider:
                 return
             self._set_runtime_status(missing_servers, "connecting")
             try:
+                candidate_registry = ToolRegistry()
                 connected = await connect_mcp_servers(
                     missing_servers,
-                    self._registry,
+                    candidate_registry,
                     media_output_roots=self._media_output_roots,
+                    data_dir=self._data_dir,
                 )
                 if self._closing:
                     await close_mcp_connections(connected)
                     return
-                self._connections.update(connected)
+                await self._publish_connections(connected, candidate_registry)
                 self._record_connection_result(missing_servers, connected)
+                self._attach_generation_leases(connected)
                 self._attach_reconnect_handlers(connected)
                 if connected:
                     logger.info("MCP connected servers: {}", sorted(connected))
@@ -1732,7 +2378,7 @@ class MCPProvider:
             authorization_pending = {
                 name
                 for name, cfg in next_servers.items()
-                if cfg.auth == "oauth" and not mcp_oauth_has_credentials(name, cfg.url)
+                if cfg.auth == "oauth" and not mcp_oauth_has_credentials(name, cfg.url, data_dir=self._data_dir)
             }
             removed = sorted(current_names - next_names)
             added = sorted(next_names - current_names)
@@ -1744,7 +2390,7 @@ class MCPProvider:
             )
 
             tools_removed = 0
-            for name in [*removed, *changed]:
+            for name in set(removed) | authorization_pending:
                 tools_removed += _unregister_server_tools(self._registry, name)
                 await self._close_server(name)
 
@@ -1752,6 +2398,49 @@ class MCPProvider:
                 self._runtime_statuses.pop(name, None)
 
             self._servers = next_servers
+
+            # Prepare replacement generations privately. Only a ready candidate
+            # may retire the old healthy generation for that server.
+            changed_failed: set[str] = set()
+            changed_ready = set(changed) - authorization_pending
+            if changed_ready:
+                candidate_registry = ToolRegistry()
+                self._set_runtime_status(changed_ready, "connecting")
+                try:
+                    candidates = await connect_mcp_servers(
+                        {name: next_servers[name] for name in changed_ready},
+                        candidate_registry,
+                        media_output_roots=self._media_output_roots,
+                        data_dir=self._data_dir,
+                    )
+                except BaseException:
+                    self._set_runtime_status(changed_ready, "failed")
+                    raise
+                if self._closing:
+                    await close_mcp_connections(candidates)
+                    return self._closing_result()
+                for name in changed_ready:
+                    candidate = candidates.get(name)
+                    if candidate is None:
+                        changed_failed.add(name)
+                        self._set_runtime_status({name}, "failed")
+                        continue
+                    tools_removed += _unregister_server_tools(self._registry, name)
+                    await self._retire_server(name)
+                    for tool_name in list(candidate_registry.tool_names):
+                        tool = candidate_registry.get(tool_name)
+                        if tool is None:
+                            continue
+                        if _tool_belongs_to_server(tool, tool_name, name):
+                            candidate_registry.unregister(tool_name)
+                            self._registry.register(tool)
+                    self._connections[name] = candidate
+                    # No await may expose these wrappers without their real
+                    # generation; the next old server may suspend retirement.
+                    self._attach_generation_leases({name})
+                    self._attach_reconnect_handlers({name})
+                    self._set_runtime_status({name}, "connected")
+
             retry_missing = sorted(
                 name
                 for name in next_names
@@ -1760,18 +2449,19 @@ class MCPProvider:
                 and name not in authorization_pending
             )
             to_connect_names = sorted(
-                (set(added) | set(changed) | set(retry_missing))
-                - authorization_pending
+                (set(added) | set(retry_missing)) - authorization_pending
             )
             to_connect = {name: next_servers[name] for name in to_connect_names}
             connected: dict[str, MCPConnection] = {}
             if to_connect:
                 self._set_runtime_status(to_connect, "connecting")
+                candidate_registry = ToolRegistry()
                 try:
                     connected = await connect_mcp_servers(
                         to_connect,
-                        self._registry,
+                        candidate_registry,
                         media_output_roots=self._media_output_roots,
+                        data_dir=self._data_dir,
                     )
                 except BaseException:
                     self._set_runtime_status(to_connect, "failed")
@@ -1779,11 +2469,12 @@ class MCPProvider:
                 if self._closing:
                     await close_mcp_connections(connected)
                     return self._closing_result()
-                self._connections.update(connected)
+                await self._publish_connections(connected, candidate_registry)
                 self._record_connection_result(to_connect, connected)
+                self._attach_generation_leases(connected)
                 self._attach_reconnect_handlers(connected)
 
-            failed = sorted(set(to_connect) - set(connected))
+            failed = sorted(set(to_connect) - set(connected) | changed_failed)
             unchanged = not removed and not added and not changed and not retry_missing
             ok = not failed
             if failed:
@@ -1857,6 +2548,8 @@ class MCPProvider:
         tool_name: str,
         stale_tool: Tool,
     ) -> Tool | None:
+        if self._closing:
+            return None
         async with self._lock:
             if self._closing:
                 return None
@@ -1884,16 +2577,19 @@ class MCPProvider:
             await self._close_server(server_name)
 
             self._set_runtime_status({server_name}, "connecting")
+            candidate_registry = ToolRegistry()
             connected = await connect_mcp_servers(
                 {server_name: cfg},
-                self._registry,
+                candidate_registry,
                 media_output_roots=self._media_output_roots,
+                data_dir=self._data_dir,
             )
             if self._closing:
                 await close_mcp_connections(connected)
                 return None
-            self._connections.update(connected)
+            await self._publish_connections(connected, candidate_registry)
             self._record_connection_result({server_name}, connected)
+            self._attach_generation_leases(connected)
             self._attach_reconnect_handlers(connected)
             if server_name not in connected:
                 logger.warning(
@@ -1903,22 +2599,101 @@ class MCPProvider:
                 return None
             return self._registry.get(tool_name)
 
-    async def _close_server(self, server_name: str) -> None:
+    async def _publish_connections(
+        self, connections: Mapping[str, MCPConnection], candidates: ToolRegistry,
+    ) -> None:
+        """Publish only after readiness; attaching generation holds cannot suspend."""
+        tools = [tool for tool in candidates.iter_tools()
+                 if any(_tool_belongs_to_server(tool, tool.name, name) for name in connections)]
+        for tool in tools:
+            if self._registry.has(tool.name):
+                await close_mcp_connections(connections)
+                raise ValueError(f"Duplicate tool registration: {tool.name}")
+        for tool in tools:
+            self._registry.register(tool)
+        self._connections.update(connections)
+
+    def _attach_generation_leases(
+        self,
+        server_names: Iterable[str],
+    ) -> None:
+        """Bind newly published wrappers to one retire-on-last-call lease."""
+        for server_name in server_names:
+            connection = self._connections.get(server_name)
+            if connection is None:
+                continue
+            wrappers = [tool for tool in self._registry.iter_tools()
+                        if isinstance(tool, _MCPWrapperBase)
+                        and _tool_belongs_to_server(tool, tool.name, server_name)]
+            if not wrappers:
+                # Connections with no callable wrappers have no sampled/active
+                # users. Preserve their existing same-task close path.
+                continue
+            lease = MCPGenerationLease()
+            cfg = self._servers.get(server_name)
+            if cfg is not None and cfg.auth == "oauth":
+                def authorized(name: str = server_name, url: str = cfg.url) -> bool:
+                    from nanobot.agent.tools.mcp_oauth import mcp_oauth_has_credentials
+
+                    return mcp_oauth_has_credentials(name, url, data_dir=self._data_dir)
+
+                lease.set_authorization(authorized)
+
+            async def closer(
+                name: str = server_name,
+                conn: MCPConnection = connection,
+                generation: MCPGenerationLease = lease,
+            ) -> None:
+                try:
+                    await _close_mcp_connection(name, conn)
+                finally:
+                    self._retired_generations.discard(generation)
+
+            lease.bind(closer)
+            for tool in wrappers:
+                tool.bind_generation(lease)
+            self._generation_leases[server_name] = lease
+
+    async def _retire_server(self, server_name: str) -> None:
+        """Retire a generation after its admitted calls settle."""
         connection = self._connections.pop(server_name, None)
+        lease = self._generation_leases.pop(server_name, None)
         if connection is None:
             return
-        await _close_mcp_connection(server_name, connection)
+        if lease is None:
+            await _close_mcp_connection(server_name, connection)
+            return
+        self._retired_generations.add(lease)
+        await lease.retire()
+
+    async def _close_server(self, server_name: str) -> None:
+        lease = self._generation_leases.get(server_name)
+        if lease is not None:
+            lease.revoke()
+        await self._retire_server(server_name)
 
     async def aclose(self) -> None:
         """Close every connection while excluding reconnect and hot reload."""
         self._closing = True
+        # Fence admission before the lock or any resource cleanup can suspend.
+        for lease in {*self._generation_leases.values(), *self._retired_generations}:
+            lease.revoke()
         async with self._lock:
-            connections = dict(self._connections)
-            self._connections.clear()
             self._runtime_statuses.clear()
             for name in self._servers:
                 _unregister_server_tools(self._registry, name)
-            await close_mcp_connections(connections)
+            cancellation: asyncio.CancelledError | None = None
+            for name in list(self._connections):
+                try:
+                    await self._close_server(name)
+                except asyncio.CancelledError as exc:
+                    cancellation = cancellation or exc
+            if cancellation is not None:
+                raise cancellation
+            # Retired generations remain owned after replacement/removal and
+            # participate in shutdown even when no longer in _connections.
+            for lease in tuple(self._retired_generations):
+                await lease.wait_closed()
 
 
 def _server_signature(cfg: Any) -> Any:

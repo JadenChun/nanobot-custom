@@ -608,11 +608,11 @@ async def test_cli_app_scope_controls_working_dir(
 
     seen: dict[str, str] = {}
 
-    def fake_run(argv, **kwargs):
-        seen["cwd"] = kwargs["cwd"]
+    def fake_run_owned(self, argv, *, timeout, cwd=None):
+        seen["cwd"] = os.fspath(cwd)
         return SimpleNamespace(returncode=0, stdout="ok", stderr="")
 
-    monkeypatch.setattr("nanobot.apps.cli.service.subprocess.run", fake_run)
+    monkeypatch.setattr(CliAppManager, "_run_owned_argv", fake_run_owned)
     tool = CliAppsTool(
         workspace=tmp_path,
         restrict_to_workspace=True,

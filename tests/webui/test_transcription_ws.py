@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 from pathlib import Path
 from typing import Any
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -143,6 +144,10 @@ async def test_webui_transcribe_audio_returns_text_and_removes_temp_file(
     monkeypatch.setattr(
         "nanobot.audio.transcription.transcribe_audio_file",
         fake_transcribe_audio_file,
+    )
+    monkeypatch.setattr(
+        "nanobot.audio.transcription.measure_audio_duration",
+        AsyncMock(return_value=1.0),
     )
 
     event, payload = await webui_transcription_event({

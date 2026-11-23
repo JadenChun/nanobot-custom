@@ -8,31 +8,15 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import { clearComposerDraftsForSession } from "@/lib/composer-drafts";
 import { Eye, EyeOff, Moon, ShieldCheck, Sun, X } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { channelUiPresentation } from "@/channel-plugins/registry";
+import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { Sidebar } from "@/components/Sidebar";
 import type { SidebarDeleteItem } from "@/components/ChatList";
 import type { SettingsSectionKey } from "@/components/settings/SettingsView";
 import { ThreadShell } from "@/components/thread/ThreadShell";
-import { PaneWorkbench } from "@/components/workbench/PaneWorkbench";
-import {
-  MAX_WORKBENCH_PANES,
-  addWorkbenchPane,
-  attachWorkbenchPane,
-  createWorkbenchTab,
-  detachWorkbenchPane,
-  dissolveWorkbenchTab,
-  orderWorkbenchTabs,
-  reconcileWorkbench,
-  renameWorkbenchTab,
-  setWorkbenchLayout,
-  setWorkbenchPaneLayoutOrder,
-  setWorkbenchSplitRatios,
-  workbenchTab,
-  workbenchTabForPane,
-  type WorkbenchState,
-} from "@/components/workbench/workbench-model";
 import { floatingSurfaceElevationClassName } from "@/components/ui/floating-surface";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import { MobileConnectionNotice } from "@/components/MobileConnectionNotice";
@@ -41,11 +25,10 @@ import { useMobileBack } from "@/hooks/useMobileBack";
 import { useSessions } from "@/hooks/useSessions";
 import { useDeferredTitleRefresh } from "@/hooks/useDeferredTitleRefresh";
 import { useSidebarState } from "@/hooks/useSidebarState";
-import { isMobileRuntimeActive, mobileOwnerCapability } from "@/lib/mobile-runtime";
+import { getMobileRuntime, isMobileRuntimeActive, mobileOwnerCapability } from "@/lib/mobile-runtime";
 import { useSkillsCatalog } from "@/hooks/useSkills";
 import { useLogoFallback } from "@/hooks/useLogoFallback";
 import { usePageVisibility } from "@/hooks/usePageVisibility";
-import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { useTaskNotifications } from "@/hooks/useTaskNotifications";
 import { ThemeProvider, useTheme } from "@/hooks/useTheme";
 import { logoFallbackUrls } from "@/lib/provider-brand";
@@ -66,6 +49,7 @@ import { ClientProvider, useClient } from "@/providers/ClientProvider";
 import type {
   BootstrapResponse,
   ChatSummary,
+  ConnectionStatus,
   RuntimeSurface,
   PairingRequestInfo,
   SessionAutomationJob,
@@ -313,15 +297,12 @@ function writeShellRoute(route: ShellRoute, replace = false): void {
   if (typeof window === "undefined") return;
   const nextHash = shellRouteHash(route);
   if (window.location.hash === nextHash) return;
+  const nextUrl = `${window.location.pathname}${window.location.search}${nextHash}`;
   if (replace) {
-    window.history.replaceState(
-      null,
-      "",
-      `${window.location.pathname}${window.location.search}${nextHash}`,
-    );
+    window.history.replaceState(null, "", nextUrl);
     return;
   }
-  window.location.hash = nextHash;
+  window.history.pushState(null, "", nextUrl);
 }
 
 function bootstrapTokenExpiresAt(expiresInSeconds: number): number {
@@ -799,6 +780,13 @@ export default function App() {
   const { t } = useTranslation();
   const [state, setState] = useState<BootState>({ status: "loading" });
   const bootstrapSecretRef = useRef("");
+  const handleModelNameChange = useCallback((modelName: string | null) => {
+    setState((current) =>
+      current.status === "ready" && current.modelName !== modelName
+        ? { ...current, modelName }
+        : current,
+    );
+  }, []);
 
   const refreshReadyClient = useCallback(
     async (client: NanobotClient, fallbackSurface: RuntimeSurface) => {
@@ -852,8 +840,14 @@ export default function App() {
               try {
                 const refreshed = await refreshReadyClient(client, runtimeSurface);
                 return refreshed.url;
-              } catch {
-                return null;
+              } catch (e) {
+                if (
+                  isBootstrapAuthRequired(e) ||
+                  (e instanceof Error && /handshake_status_401\b/.test(e.message))
+                ) {
+                  return null;
+                }
+                throw e;
               }
             },
           });
@@ -911,15 +905,10 @@ export default function App() {
 
   if (state.status === "loading") {
     return (
-      <div className="flex h-full w-full items-center justify-center">
-        <div className="flex flex-col items-center gap-3 animate-in fade-in-0 duration-300">
-          <div className="flex items-center gap-2 text-sm text-muted-foreground">
-            <span className="relative flex h-2 w-2">
-              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-foreground/40" />
-              <span className="relative inline-flex h-2 w-2 rounded-full bg-foreground/60" />
-            </span>
-            {t("app.loading.connecting")}
-          </div>
+      <div className="boot-splash" role="status">
+        <div className="boot-splash-inner">
+          <span className="boot-dot" aria-hidden="true" />
+          <span>{t("app.loading.connecting")}</span>
         </div>
       </div>
     );
@@ -933,30 +922,52 @@ export default function App() {
     );
   }
   if (state.status === "error") {
+    const mobileActive = isMobileRuntimeActive();
+    const mobileLogout = getMobileRuntime()?.transport.logout;
     return (
       <div className="flex h-full w-full items-center justify-center px-4 text-center">
         <div className="flex max-w-md flex-col items-center gap-3">
           <p className="text-lg font-semibold">{t("app.error.title")}</p>
           <p className="text-sm text-muted-foreground">{state.message}</p>
-          <p className="text-xs text-muted-foreground">
-            {t("app.error.gatewayHint")}
-          </p>
+          {!mobileActive ? (
+            <p className="text-xs text-muted-foreground">
+              {t("app.error.gatewayHint")}
+            </p>
+          ) : null}
+          <div className="mt-1 flex flex-wrap items-center justify-center gap-2">
+            <Button
+              type="button"
+              onClick={() => bootstrapWithSecret(bootstrapSecretRef.current || loadSavedSecret())}
+            >
+              {t("common.retry", { defaultValue: "Retry" })}
+            </Button>
+            {mobileActive && mobileLogout ? (
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => void mobileLogout()}
+              >
+                {t("app.account.unpair", { defaultValue: "Unpair / Switch server" })}
+              </Button>
+            ) : null}
+          </div>
         </div>
       </div>
     );
   }
-
-  const handleModelNameChange = (modelName: string | null) => {
-    setState((current) =>
-      current.status === "ready" ? { ...current, modelName } : current,
-    );
-  };
 
   const handleLogout = () => {
     if (state.status === "ready") {
       state.client.close();
     }
     clearSavedSecret();
+    if (isMobileRuntimeActive()) {
+      const mobileLogout = getMobileRuntime()?.transport.logout;
+      if (mobileLogout) {
+        void mobileLogout();
+        return;
+      }
+    }
     setState({ status: "auth" });
   };
 
@@ -1016,10 +1027,10 @@ function Shell({
   const { t, i18n } = useTranslation();
   const { client, getToken } = useClient();
   const { theme, toggle } = useTheme();
-  useTaskNotifications();
   const {
     sessions,
     loading,
+    error: sessionsError,
     refresh,
     createChat,
     forkChat,
@@ -1028,7 +1039,6 @@ function Shell({
   } = useSessions();
   const {
     state: sidebarState,
-    loading: sidebarStateLoading,
     update: updateSidebarState,
   } =
     useSidebarState(sessions, !loading);
@@ -1039,6 +1049,13 @@ function Shell({
   );
   const [view, setView] = useState<ShellView>(initialRouteRef.current.view);
   const [temporarySessions, setTemporarySessions] = useState<Record<string, ChatSummary>>({});
+  useTaskNotifications(useCallback((chatId: string) => {
+    const key = `websocket:${chatId}`;
+    return {
+      temporary: !!temporarySessions[key],
+      threadTitle: sidebarState.title_overrides[key] || sessions.find((s) => s.key === key)?.title,
+    };
+  }, [sessions, sidebarState.title_overrides, temporarySessions]));
   const [temporaryChatEnabled, setTemporaryChatEnabled] = useState(false);
   const [settingsInitialSection, setSettingsInitialSection] =
     useState<SettingsSectionKey>(initialRouteRef.current.settingsSection);
@@ -1046,28 +1063,12 @@ function Shell({
     useState<boolean>(readSidebarOpen);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [sessionSearchOpen, setSessionSearchOpen] = useState(false);
-  const mobileWorkbench = useMediaQuery("(max-width: 767px)");
-  const workbenchState = sidebarState.workbench;
-  const updateWorkbenchState = useCallback((
-    updater: (current: WorkbenchState) => WorkbenchState,
-  ) => {
-    void updateSidebarState((current) => {
-      const next = updater(current.workbench);
-      return next === current.workbench ? current : { ...current, workbench: next };
-    });
-  }, [updateSidebarState]);
-  const lastActivePaneByTabRef = useRef(new Map<string, string>());
-  const [creatingPane, setCreatingPane] = useState(false);
   const topicSessions = sessions;
   const [pendingDelete, setPendingDelete] = useState<{
     items: SidebarDeleteItem[];
     automations?: SessionAutomationJob[];
   } | null>(null);
   const [pendingRename, setPendingRename] = useState<{
-    key: string;
-    label: string;
-  } | null>(null);
-  const [pendingTabRename, setPendingTabRename] = useState<{
     key: string;
     label: string;
   } | null>(null);
@@ -1093,6 +1094,12 @@ function Shell({
   const skills = skillCatalog.skills;
   const pageVisible = usePageVisibility();
   const [settingsSnapshot, setSettingsSnapshot] = useState<SettingsPayload | null>(null);
+  const settingsReadVersionRef = useRef(0);
+  const applySettingsSnapshot = useCallback((payload: SettingsPayload) => {
+    // A mutation result supersedes any catalog read already in flight.
+    settingsReadVersionRef.current += 1;
+    setSettingsSnapshot(payload);
+  }, []);
   const [workspaceError, setWorkspaceError] = useState<string | null>(null);
   const [draftWorkspaceScope, setDraftWorkspaceScope] =
     useState<WorkspaceScopePayload | null>(null);
@@ -1104,7 +1111,7 @@ function Shell({
   const temporarySessionsRef = useRef<Record<string, ChatSummary>>({});
   const effectiveRuntimeSurface =
     settingsSnapshot?.surface ?? settingsSnapshot?.runtime_surface ?? runtimeSurface;
-  const showHostChrome = isNativeRuntime(effectiveRuntimeSurface);
+  const showHostChrome = !isMobileRuntimeActive() && isNativeRuntime(effectiveRuntimeSurface);
   const showMainSidebar = view !== "settings";
   const activeTemporarySession = activeKey ? temporarySessions[activeKey] ?? null : null;
   const temporaryChatId = activeTemporarySession?.chatId ?? null;
@@ -1143,7 +1150,11 @@ function Shell({
       }
     };
     window.addEventListener("hashchange", applyRoute);
-    return () => window.removeEventListener("hashchange", applyRoute);
+    window.addEventListener("popstate", applyRoute);
+    return () => {
+      window.removeEventListener("hashchange", applyRoute);
+      window.removeEventListener("popstate", applyRoute);
+    };
   }, []);
 
   useEffect(() => {
@@ -1164,23 +1175,31 @@ function Shell({
   useEffect(() => {
     let cancelled = false;
     const load = () => {
+      const version = ++settingsReadVersionRef.current;
       fetchSettings(getToken())
         .then((payload) => {
-          if (!cancelled) setSettingsSnapshot(payload);
+          if (!cancelled && settingsReadVersionRef.current === version) {
+            setSettingsSnapshot(payload);
+          }
         })
         .catch(() => {
-          if (!cancelled) setSettingsSnapshot(null);
+          // Keep the last known catalog usable during a transient refresh failure.
         });
     };
     load();
     // Another client changed app-level settings: reload the shared projection
     // so the composer's model presets and the settings surface stay in sync.
     const unsubscribe = client.onSettingsUpdated(load);
+    const unsubscribeModel = client.onRuntimeModelUpdate((modelName) => {
+      onModelNameChange(modelName);
+      load();
+    });
     return () => {
       cancelled = true;
       unsubscribe();
+      unsubscribeModel();
     };
-  }, [client, getToken]);
+  }, [client, getToken, onModelNameChange]);
 
   useEffect(() => {
     try {
@@ -1233,6 +1252,7 @@ function Shell({
 
   useEffect(() => {
     if (!pageVisible) return undefined;
+    if (isMobileRuntimeActive() && !mobileOwnerCapability()) return undefined;
 
     let disposed = false;
     let timer: number | null = null;
@@ -1256,18 +1276,6 @@ function Shell({
     if (temporarySessions[activeKey]) return temporarySessions[activeKey];
     return sessions.find((s) => s.key === activeKey) ?? null;
   }, [sessions, activeKey, temporarySessions]);
-  const activeTabMatch = useMemo(() => (
-    activeKey && !temporarySessions[activeKey]
-      ? workbenchTabForPane(workbenchState, activeKey)
-      : null
-  ), [activeKey, temporarySessions, workbenchState]);
-  const activeTabKey = activeTabMatch?.tabKey ?? null;
-  const activeTabState = activeTabMatch?.tab ?? null;
-  const activePaneSession = activeSession;
-  useEffect(() => {
-    if (!activeTabKey || !activeKey || !activeTabState?.paneKeys.includes(activeKey)) return;
-    lastActivePaneByTabRef.current.set(activeTabKey, activeKey);
-  }, [activeKey, activeTabKey, activeTabState]);
   const runningChatIdList = useMemo(() => Array.from(runningChatIds), [runningChatIds]);
   const updatedChatIdList = useMemo(() => Array.from(updatedChatIds), [updatedChatIds]);
   const recoveryChatIdList = useMemo(
@@ -1279,6 +1287,7 @@ function Shell({
       .map((session) => session.chatId),
     [sessions],
   );
+  const activePaneSession = activeSession;
   const activeChatId = activePaneSession?.chatId ?? null;
   useEffect(() => {
     activeChatIdRef.current = activeChatId;
@@ -1356,18 +1365,6 @@ function Shell({
     });
   }, [loading, sessions]);
 
-  useEffect(() => {
-    if (loading || sidebarStateLoading) return;
-    const validKeys = new Set(sessions.map((session) => session.key));
-    updateWorkbenchState((current) => {
-      return reconcileWorkbench(current, validKeys);
-    });
-  }, [
-    loading,
-    sidebarStateLoading,
-    sessions,
-    updateWorkbenchState,
-  ]);
 
   useEffect(() => {
     if (loading) return;
@@ -1386,6 +1383,8 @@ function Shell({
     // WebKit can commit the route before useSessions' optimistic insert.
     // Keep that just-created destination valid until the session list catches up.
     if (pendingCreatedKey === activeKey) return;
+    // A list request that failed cannot prove that a saved chat was deleted.
+    if (sessionsError) return;
     navigate(
       currentRoute.view === "chat"
         ? defaultShellRoute()
@@ -1395,7 +1394,7 @@ function Shell({
           },
       { replace: true },
     );
-  }, [activeKey, loading, navigate, sessions, temporarySessions]);
+  }, [activeKey, loading, navigate, sessions, sessionsError, temporarySessions]);
 
   useEffect(() => {
     return client.onSessionUpdate((chatId, scope, workspaceScope) => {
@@ -1480,6 +1479,18 @@ function Shell({
   }, []);
 
   useMobileBack(useCallback(() => {
+    if (pendingDelete) {
+      setPendingDelete(null);
+      return true;
+    }
+    if (pendingRename) {
+      setPendingRename(null);
+      return true;
+    }
+    if (pendingProjectRename) {
+      setPendingProjectRename(null);
+      return true;
+    }
     if (sessionSearchOpen) {
       setSessionSearchOpen(false);
       return true;
@@ -1489,11 +1500,11 @@ function Shell({
       return true;
     }
     if (view !== "chat") {
-      setView("chat");
+      navigate({ view: "chat", activeKey, settingsSection: "overview" }, { replace: true });
       return true;
     }
     return false;
-  }, [mobileSidebarOpen, sessionSearchOpen, view]));
+  }, [activeKey, mobileSidebarOpen, navigate, pendingDelete, pendingProjectRename, pendingRename, sessionSearchOpen, view]));
 
   const toggleSidebar = useCallback(() => {
     const isNativeHost =
@@ -1736,6 +1747,7 @@ function Shell({
     [navigate, sessions],
   );
 
+
   const onCloseTemporaryChat = useCallback((key: string) => {
     const session = temporarySessionsRef.current[key];
     if (!session) return;
@@ -1800,18 +1812,6 @@ function Shell({
     },
     [pendingRename, updateSidebarState],
   );
-
-  const onRequestRenameTab = useCallback((key: string, label: string) => {
-    setPendingTabRename({ key, label });
-  }, []);
-
-  const onConfirmTabRename = useCallback((title: string) => {
-    if (!pendingTabRename) return;
-    updateWorkbenchState((current) => (
-      renameWorkbenchTab(current, pendingTabRename.key, title)
-    ));
-    setPendingTabRename(null);
-  }, [pendingTabRename, updateWorkbenchState]);
 
   const onToggleGroup = useCallback(
     (groupId: string) => {
@@ -1912,57 +1912,6 @@ function Shell({
     setSessionSearchOpen(true);
   }, []);
 
-  const onAddPane = useCallback(async () => {
-    const tabKey = activeTabKey;
-    if (
-      !tabKey
-      || !activeKey
-      || !activeSession
-      || creatingPane
-      || (activeTabState?.paneKeys.length ?? 0) >= MAX_WORKBENCH_PANES
-      || temporarySessionsRef.current[activeKey]
-    ) return;
-    setMobileSidebarOpen(false);
-    setSessionSearchOpen(false);
-    setCreatingPane(true);
-    try {
-      const scope = activeWorkspaceScope;
-      const chatId = await createChat(scope);
-      const paneKey = `websocket:${chatId}`;
-      pendingCreatedSessionKeyRef.current = paneKey;
-      updateWorkbenchState((current) => addWorkbenchPane(current, activeKey, paneKey));
-      navigate({
-        view: "chat",
-        activeKey: paneKey,
-        settingsSection: "overview",
-      });
-      if (scope) {
-        setWorkspaceOverrides((current) => ({
-          ...current,
-          [chatId]: normalizeWorkspaceScope(scope),
-        }));
-      }
-    } catch (error) {
-      console.error("Failed to create pane", error);
-      if (error instanceof Error && error.message.startsWith("workspace_scope_rejected:")) {
-        setWorkspaceError(t("errors.workspaceScopeRejected.body"));
-      }
-    } finally {
-      setCreatingPane(false);
-    }
-  }, [
-    activeKey,
-    activeSession,
-    activeTabKey,
-    activeTabState,
-    activeWorkspaceScope,
-    createChat,
-    creatingPane,
-    navigate,
-    t,
-    updateWorkbenchState,
-  ]);
-
   useEffect(() => {
     const handleKeyDown = (event: globalThis.KeyboardEvent) => {
       if (event.defaultPrevented) return;
@@ -2000,7 +1949,7 @@ function Shell({
   }, [activeKey, navigate]);
 
   const onSettingsIntent = useCallback(() => {
-    void loadSettingsView();
+    void loadSettingsView().catch(() => {});
   }, []);
 
   const onOpenModelSettings = useCallback(() => {
@@ -2065,12 +2014,6 @@ function Shell({
   }, [activeSession?.chatId, client]);
 
   useEffect(() => {
-    return client.onRuntimeModelUpdate((modelName) => {
-      onModelNameChange(modelName);
-    });
-  }, [client, onModelNameChange]);
-
-  useEffect(() => {
     return client.onRunStatus((chatId, startedAt) => {
       if (startedAt != null) {
         const nextRunning = new Set(runningChatIdsRef.current);
@@ -2106,6 +2049,36 @@ function Shell({
         return next;
       });
     });
+  }, [client]);
+
+  const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>(client.status);
+
+  useEffect(() => {
+    return client.onStatus(setConnectionStatus);
+  }, [client]);
+
+  useEffect(() => {
+    const reviveIfDisconnected = () => {
+      if (document.visibilityState !== "visible") return;
+      if (client.status === "error" || client.status === "closed") {
+        void client.retry();
+      }
+    };
+    const reviveOnOnline = () => {
+      if (client.status === "error" || client.status === "closed") {
+        void client.retry();
+      }
+    };
+    document.addEventListener("visibilitychange", reviveIfDisconnected);
+    window.addEventListener("pageshow", reviveIfDisconnected);
+    window.addEventListener("online", reviveOnOnline);
+    window.addEventListener("nanobot-native-resume", reviveOnOnline);
+    return () => {
+      document.removeEventListener("visibilitychange", reviveIfDisconnected);
+      window.removeEventListener("pageshow", reviveIfDisconnected);
+      window.removeEventListener("online", reviveOnOnline);
+      window.removeEventListener("nanobot-native-resume", reviveOnOnline);
+    };
   }, [client]);
 
   useEffect(() => {
@@ -2166,16 +2139,9 @@ function Shell({
     const hasAutomations = (pendingDelete.automations?.length ?? 0) > 0;
     const deletingActive = activeKey !== null && deletingKeys.has(activeKey);
     const currentIndex = topicSessions.findIndex((s) => s.key === activeKey);
-    const availableKeys = new Set(topicSessions.map((session) => session.key));
-    const siblingFallbackKey = deletingActive
-      ? activeTabState?.paneKeys.find((key) => (
-          !deletingKeys.has(key) && availableKeys.has(key)
-        )) ?? null
-      : null;
     const fallbackKey = deletingActive
       ? (
-          siblingFallbackKey
-          ?? topicSessions.slice(currentIndex + 1).find((session) => (
+          topicSessions.slice(currentIndex + 1).find((session) => (
             !deletingKeys.has(session.key)
           ))?.key
           ?? topicSessions.slice(0, Math.max(0, currentIndex)).reverse().find((session) => (
@@ -2199,6 +2165,9 @@ function Shell({
           return;
         }
       }
+      for (const item of items) {
+        clearComposerDraftsForSession(null, item.key, { deleted: true });
+      }
       setPendingDelete(null);
       if (deletingActive) {
         navigate({
@@ -2210,7 +2179,7 @@ function Shell({
     } catch (e) {
       console.error("Failed to delete session", e);
     }
-  }, [pendingDelete, deleteChat, activeKey, activeTabState, navigate, topicSessions]);
+  }, [pendingDelete, deleteChat, activeKey, navigate, topicSessions]);
 
   const onRequestDeleteMany = useCallback(async (items: SidebarDeleteItem[]) => {
     const uniqueItems = Array.from(new Map(items.map((item) => [item.key, item])).values());
@@ -2281,63 +2250,14 @@ function Shell({
   const automaticSidebarSort = sidebarState.view.sort === "manual"
     ? "updated_desc"
     : sidebarState.view.sort;
-  const orderedWorkbenchTabs = useMemo(() => {
-    const orderedSessions = sortSessions(
+  const sidebarTopicSessions = useMemo(
+    () => sortSessions(
       sessions,
       automaticSidebarSort,
       sidebarState.title_overrides,
       sidebarState.session_order,
-    );
-    const updatedAtByKey = new Map(sessions.map((session) => [
-      session.key,
-      session.updatedAt ?? session.createdAt,
-    ]));
-    return orderWorkbenchTabs(
-      workbenchState,
-      orderedSessions.map((session) => session.key),
-      updatedAtByKey,
-    );
-  }, [
-    automaticSidebarSort,
-    sessions,
-    sidebarState.session_order,
-    sidebarState.title_overrides,
-    workbenchState,
-  ]);
-  const orderedWorkbenchTabsByKey = useMemo(
-    () => new Map(orderedWorkbenchTabs.map((tab) => [tab.tabKey, tab])),
-    [orderedWorkbenchTabs],
-  );
-  const sidebarTabPresentations = useMemo(() => {
-    const sessionsByKey = new Map(sessions.map((session) => [session.key, session]));
-    return orderedWorkbenchTabs.flatMap((tab) => {
-      const anchorKey = tab.tab.paneKeys.find((key) => sessionsByKey.has(key))
-        ?? tab.paneKeys[0];
-      const anchor = sessionsByKey.get(anchorKey);
-      if (!anchor) return [];
-      const title = tab.tab.title ?? titleForSession(anchor);
-      const visible = tab.tab.explicit || tab.paneKeys.length > 1;
-      const rowKey = visible ? tab.tabKey : tab.paneKeys[0];
-      return [{
-        orderedTab: tab,
-        rowKey,
-        title,
-        session: visible
-          ? {
-              ...anchor,
-              key: tab.tabKey,
-              chatId: `workbench-tab:${tab.tabKey}`,
-              title,
-              preview: "",
-              updatedAt: tab.updatedAt,
-            }
-          : anchor,
-      }];
-    });
-  }, [orderedWorkbenchTabs, sessions, titleForSession]);
-  const sidebarTopicSessions = useMemo(
-    () => sidebarTabPresentations.map((presentation) => presentation.session),
-    [sidebarTabPresentations],
+    ),
+    [automaticSidebarSort, sessions, sidebarState.session_order, sidebarState.title_overrides],
   );
 
   const headerTitle = temporaryChatActive
@@ -2345,146 +2265,9 @@ function Shell({
     : activeSession
     ? titleForSession(activeSession)
     : t("app.brand");
-  const workbenchPaneSessions = useMemo(() => {
-    if (!activeTabState) return [];
-    const byKey = new Map(sessions.map((session) => [session.key, session]));
-    const sortedPaneKeys = activeTabKey
-      ? orderedWorkbenchTabsByKey.get(activeTabKey)?.paneKeys ?? activeTabState.paneKeys
-      : activeTabState.paneKeys;
-    const paneKeys = [
-      ...activeTabState.layoutPaneKeys.filter((key) => byKey.has(key)),
-      ...sortedPaneKeys.filter((key) => !activeTabState.layoutPaneKeys.includes(key)),
-    ];
-    return paneKeys
-      .map((key) => byKey.get(key))
-      .filter((session): session is ChatSummary => session !== undefined);
-  }, [activeTabKey, activeTabState, orderedWorkbenchTabsByKey, sessions]);
-  const paneChromeEnabled = Boolean(
-    activeKey && activeSession && !temporaryChatActive && activeTabState,
-  );
-  const activeTabVisible = Boolean(
-    activeTabState
-    && (activeTabState.explicit || activeTabState.paneKeys.length > 1),
-  );
-  const renderedWorkbenchPanes = useMemo(() => {
-    if (paneChromeEnabled) {
-      return workbenchPaneSessions.map((session) => ({
-        key: session.key,
-        reactKey: session.key === activeTabState?.paneKeys[0]
-          ? "tab-root"
-          : `pane:${session.key}`,
-        title: titleForSession(session),
-      }));
-    }
-    return [{
-      key: activeKey ?? "new-topic",
-      reactKey: "tab-root",
-      title: headerTitle,
-    }];
-  }, [
-    activeKey,
-    activeTabState?.paneKeys,
-    headerTitle,
-    paneChromeEnabled,
-    titleForSession,
-    workbenchPaneSessions,
-  ]);
-  const renderedActivePaneKey = activeKey ?? renderedWorkbenchPanes[0].key;
-  const renderedWorkbenchLayout = paneChromeEnabled && activeTabState
-    ? activeTabState.layout
-    : "columns";
-  const renderedWorkbenchSplitRatios = paneChromeEnabled && activeTabState
-    ? activeTabState.splitRatios
-    : [];
-  const sidebarPaneGroups = useMemo(() => {
-    const sessionsByKey = new Map(sessions.map((session) => [session.key, session]));
-    return Object.fromEntries(sidebarTabPresentations.map((presentation) => {
-      const orderedTab = presentation.orderedTab;
-      const panes = orderedTab.paneKeys
-        .map((key) => sessionsByKey.get(key))
-        .filter((session): session is ChatSummary => session !== undefined)
-        .map((session) => ({
-          key: session.key,
-          chatId: session.chatId,
-          title: titleForSession(session),
-          handle: session.handle,
-        }));
-      return [presentation.rowKey, {
-        tabKey: orderedTab.tabKey,
-        title: presentation.title,
-        activePaneKey: activeKey && orderedTab.paneKeys.includes(activeKey)
-          ? activeKey
-          : orderedTab.paneKeys[0],
-        visible: orderedTab.tab.explicit || orderedTab.paneKeys.length > 1,
-        panes,
-      }];
-    }));
-  }, [
-    activeKey,
-    sessions,
-    sidebarTabPresentations,
-    titleForSession,
-  ]);
-  const activePaneLimitReached = Boolean(
-    activeTabState && activeTabState.paneKeys.length >= MAX_WORKBENCH_PANES,
-  );
-
-  const onActivateWorkbenchPane = useCallback((paneKey: string) => {
-    onSelectChat(paneKey);
-  }, [onSelectChat]);
-
-  const onSelectSidebarTab = useCallback((tabKey: string) => {
-    const tab = workbenchTab(workbenchState, tabKey);
-    if (!tab) return;
-    const rememberedPaneKey = lastActivePaneByTabRef.current.get(tabKey);
-    onSelectChat(
-      rememberedPaneKey && tab.paneKeys.includes(rememberedPaneKey)
-        ? rememberedPaneKey
-        : tab.paneKeys[0],
-    );
-  }, [onSelectChat, workbenchState]);
-
   const onSelectSidebarItem = useCallback((key: string) => {
-    if (
-      temporarySessionsRef.current[key]
-      || sessions.some((session) => session.key === key)
-    ) {
-      onSelectChat(key);
-      return;
-    }
-    onSelectSidebarTab(key);
-  }, [onSelectChat, onSelectSidebarTab, sessions]);
-
-  const onSelectSidebarPane = useCallback((_tabKey: string, paneKey: string) => {
-    onSelectChat(paneKey);
+    onSelectChat(key);
   }, [onSelectChat]);
-
-  const onDetachWorkbenchPane = useCallback((tabKey: string, paneKey: string) => {
-    updateWorkbenchState((current) => detachWorkbenchPane(current, tabKey, paneKey));
-  }, [updateWorkbenchState]);
-
-  const onCreateWorkbenchTab = useCallback((paneKey: string) => {
-    updateWorkbenchState((current) => createWorkbenchTab(current, paneKey));
-  }, [updateWorkbenchState]);
-
-  const onDissolveWorkbenchTab = useCallback((tabKey: string) => {
-    updateWorkbenchState((current) => dissolveWorkbenchTab(current, tabKey));
-  }, [updateWorkbenchState]);
-
-  const onAttachWorkbenchPane = useCallback((
-    paneKey: string,
-    tabKey: string,
-  ) => {
-    updateWorkbenchState((current) => {
-      const target = workbenchTab(current, tabKey);
-      if (
-        !target
-        || (!target.explicit && target.paneKeys.length < 2)
-        || (!target.paneKeys.includes(paneKey) && target.paneKeys.length >= MAX_WORKBENCH_PANES)
-      ) return current;
-      return attachWorkbenchPane(current, tabKey, paneKey);
-    });
-  }, [updateWorkbenchState]);
 
   useEffect(() => {
     if (view === "settings") {
@@ -2516,32 +2299,15 @@ function Shell({
       : t("app.documentTitle.base");
   }, [activeSession, headerTitle, i18n.resolvedLanguage, t, view]);
 
-  const pinnedPaneKeys = useMemo(
-    () => new Set(sidebarState.pinned_keys),
-    [sidebarState.pinned_keys],
+  const sidebarPinnedKeys = sidebarState.pinned_keys.filter(
+    (key) => temporarySessions[key] === undefined,
   );
-  const archivedPaneKeys = useMemo(
-    () => new Set(sidebarState.archived_keys),
-    [sidebarState.archived_keys],
-  );
-  const sidebarPinnedTabKeys = useMemo(() => sidebarTabPresentations
-    .filter(({ orderedTab }) => orderedTab.paneKeys.some((key) => pinnedPaneKeys.has(key)))
-    .map(({ rowKey }) => rowKey), [pinnedPaneKeys, sidebarTabPresentations]);
-  const sidebarArchivedTabKeys = useMemo(() => sidebarTabPresentations
-    .filter(({ orderedTab }) => orderedTab.paneKeys.every((key) => archivedPaneKeys.has(key)))
-    .map(({ rowKey }) => rowKey), [archivedPaneKeys, sidebarTabPresentations]);
-  const activeSidebarKey = activeTabKey
-    ? sidebarTabPresentations.find(({ orderedTab }) => (
-        orderedTab.tabKey === activeTabKey
-      ))?.rowKey ?? activeKey
-    : activeKey;
+  const sidebarArchivedKeys = sidebarState.archived_keys;
 
   const sidebarProps = {
     sessions: sidebarTopicSessions,
     temporarySessions: temporarySessionList,
-    activeKey: view === "chat"
-      ? (temporaryChatActive ? activeKey : activeSidebarKey)
-      : null,
+    activeKey: view === "chat" ? activeKey : null,
     loading,
     newChatActive: view === "chat" && activeKey === null,
     onNewChat,
@@ -2552,13 +2318,6 @@ function Shell({
     onTogglePin,
     onRequestRename,
     onToggleArchive,
-    onRequestRenameTab,
-    paneGroups: sidebarPaneGroups,
-    onSelectPane: onSelectSidebarPane,
-    onCreateTab: mobileWorkbench ? undefined : onCreateWorkbenchTab,
-    onDetachPane: mobileWorkbench ? undefined : onDetachWorkbenchPane,
-    onDissolveTab: mobileWorkbench ? undefined : onDissolveWorkbenchTab,
-    onAttachPane: mobileWorkbench ? undefined : onAttachWorkbenchPane,
     onToggleGroup,
     onRequestRenameProject,
     onNewChatInProject,
@@ -2571,10 +2330,8 @@ function Shell({
     onOpenSearch: onOpenSessionSearch,
     activeUtility: view === "apps" || view === "automations" || view === "skills" ? view : null,
     onToggleArchived,
-    pinnedKeys: sidebarPinnedTabKeys,
-    archivedKeys: sidebarArchivedTabKeys,
-    pinnedPaneKeys: sidebarState.pinned_keys,
-    archivedPaneKeys: sidebarState.archived_keys,
+    pinnedKeys: sidebarPinnedKeys,
+    archivedKeys: sidebarArchivedKeys,
     sessionOrder: sidebarState.session_order,
     titleOverrides: sidebarState.title_overrides,
     projectNameOverrides: sidebarState.project_name_overrides,
@@ -2584,7 +2341,7 @@ function Shell({
     recoveryChatIds: recoveryChatIdList,
     viewState: { ...sidebarState.view, sort: automaticSidebarSort },
     showArchived: sidebarState.view.show_archived,
-    archivedCount: sidebarArchivedTabKeys.length,
+    archivedCount: sidebarArchivedKeys.length,
     defaultWorkspacePath: workspaces?.default_scope.project_path ?? null,
   };
   const hostSidebarFlowWidth = hostSidebarOpen ? SIDEBAR_WIDTH : SIDEBAR_RAIL_WIDTH;
@@ -2605,7 +2362,7 @@ function Shell({
         )}
       >
         <MobileConnectionNotice
-          status={client.status}
+          status={connectionStatus}
           onRetry={() => void client.retry()}
         />
         {showHostChrome ? (
@@ -2689,17 +2446,23 @@ function Shell({
           ) : null}
 
           {sessionSearchOpen ? (
-            <Suspense fallback={null}>
-              <SessionSearchDialog
-                open
-                onOpenChange={setSessionSearchOpen}
-                sessions={topicSessions}
-                activeKey={activeKey}
-                loading={loading}
-                titleOverrides={sidebarState.title_overrides}
-                onSelect={onSelectSearchResult}
-              />
-            </Suspense>
+            <ErrorBoundary
+              resetKeys={[sessionSearchOpen]}
+              fallback={() => null}
+              onError={() => setSessionSearchOpen(false)}
+            >
+              <Suspense fallback={null}>
+                <SessionSearchDialog
+                  open
+                  onOpenChange={setSessionSearchOpen}
+                  sessions={topicSessions}
+                  activeKey={activeKey}
+                  loading={loading}
+                  titleOverrides={sidebarState.title_overrides}
+                  onSelect={onSelectSearchResult}
+                />
+              </Suspense>
+            </ErrorBoundary>
           ) : null}
         <main
           className={cn(
@@ -2712,217 +2475,144 @@ function Shell({
                 view !== "chat" && "hidden",
               )}
             >
-              <PaneWorkbench
-                panes={renderedWorkbenchPanes}
-                activePaneKey={renderedActivePaneKey}
-                layout={renderedWorkbenchLayout}
-                splitRatios={renderedWorkbenchSplitRatios}
-                chrome={paneChromeEnabled}
-                showLayoutControl={activeTabVisible}
-                addPaneDisabled={creatingPane || activePaneLimitReached}
-                addPaneDisabledLabel={activePaneLimitReached
-                  ? t("workbench.paneLimit", {
-                      count: MAX_WORKBENCH_PANES,
-                    })
+              <ThreadShell
+                session={activeSession}
+                routeSessionKey={
+                  activeKey && /^websocket:[A-Za-z0-9_:-]{1,64}$/.test(activeKey)
+                    && !readShellRoute().temporary ? activeKey : null
+                }
+                openingConversation={activeKey !== null && activeSession === null}
+                sessions={sessions}
+                title={headerTitle}
+                temporary={temporaryChatRequested}
+                temporaryChatIds={temporaryChatIds}
+                temporaryChatEnabled={temporaryChatEnabled}
+                onTemporaryChatEnabledChange={
+                  !activeKey ? onTemporaryChatEnabledChange : undefined
+                }
+                onToggleSidebar={toggleSidebar}
+                onNewChat={onNewChat}
+                onCreateChat={
+                  temporaryChatEnabled ? onCreateTemporaryChat : onCreateChat
+                }
+                onForkChat={temporaryChatActive ? undefined : onForkChat}
+                onTurnEnd={onTurnEnd}
+                theme={theme}
+                onToggleTheme={toggle}
+                hideSidebarToggleForHostChrome
+                hideHeader={false}
+                composerInputAriaLabel={activeSession
+                  ? t("thread.composer.inputAriaFor", { title: headerTitle })
                   : undefined}
-                onActivatePane={onActivateWorkbenchPane}
-                onAddPane={onAddPane}
-                onLayoutChange={(layout) => {
-                  if (!activeTabKey) return;
-                  updateWorkbenchState((current) => (
-                    setWorkbenchLayout(current, activeTabKey, layout)
-                  ));
+                composerActive={view === "chat"}
+                workspaceScope={activeWorkspaceScope}
+                workspaceDefaultScope={workspaces?.default_scope ?? null}
+                workspaceControls={workspaces?.controls ?? null}
+                workspaces={workspaces}
+                onRefreshWorkspaces={refreshWorkspaces}
+                workspaceError={workspaceError}
+                onDismissWorkspaceError={() => setWorkspaceError(null)}
+                onWorkspaceScopeChange={applyWorkspaceScope}
+                onWorkspaceScopeAcknowledged={(scope) => {
+                  if (activeChatId) acknowledgeWorkspaceScope(activeChatId, scope);
                 }}
-                onPaneOrderChange={(paneKeys) => {
-                  if (!activeTabKey) return;
-                  updateWorkbenchState((current) => (
-                    setWorkbenchPaneLayoutOrder(current, activeTabKey, paneKeys)
-                  ));
-                }}
-                onSplitRatiosChange={(splitRatios) => {
-                  if (!activeTabKey) return;
-                  updateWorkbenchState((current) => (
-                    setWorkbenchSplitRatios(current, activeTabKey, splitRatios)
-                  ));
-                }}
-                renderPane={(pane, context) => {
-                  if (!paneChromeEnabled) {
-                    return (
-                      <ThreadShell
-                        session={activeSession}
-                        sessions={sessions}
-                        title={headerTitle}
-                        temporary={temporaryChatRequested}
-                        temporaryChatIds={temporaryChatIds}
-                        temporaryChatEnabled={temporaryChatEnabled}
-                        onTemporaryChatEnabledChange={
-                          !activeKey ? onTemporaryChatEnabledChange : undefined
-                        }
-                        onToggleSidebar={toggleSidebar}
-                        onNewChat={onNewChat}
-                        onCreateChat={
-                          temporaryChatEnabled ? onCreateTemporaryChat : onCreateChat
-                        }
-                        onForkChat={temporaryChatActive ? undefined : onForkChat}
-                        onTurnEnd={onTurnEnd}
-                        theme={theme}
-                        onToggleTheme={toggle}
-                        hideSidebarToggleForHostChrome
-                        hideHeader={false}
-                        workspaceScope={activeWorkspaceScope}
-                        workspaceDefaultScope={workspaces?.default_scope ?? null}
-                        workspaceControls={workspaces?.controls ?? null}
-                      workspaces={workspaces}
-                      onRefreshWorkspaces={refreshWorkspaces}
-                        workspaceError={workspaceError}
-                        onWorkspaceScopeChange={applyWorkspaceScope}
-                        onWorkspaceScopeAcknowledged={(scope) => {
-                          if (activeChatId) acknowledgeWorkspaceScope(activeChatId, scope);
-                        }}
-                        settingsSnapshot={settingsSnapshot}
-                        onOpenModelSettings={onOpenModelSettings}
-                        skills={skills}
-                      />
-                    );
-                  }
-
-                  const paneSession = workbenchPaneSessions.find(
-                    (session) => session.key === pane.key,
-                  );
-                  if (!paneSession) return null;
-                  const paneScope = workspaceOverrides[paneSession.chatId]
-                    ?? paneSession.workspaceScope
-                    ?? workspaces?.default_scope
-                    ?? null;
-                  const paneRunning = runningChatIds.has(paneSession.chatId);
-                  return (
-                    <ThreadShell
-                      session={paneSession}
-                      sessions={sessions}
-                      title={pane.title}
-                      onToggleSidebar={toggleSidebar}
-                      onNewChat={onNewChat}
-                      onCreateChat={onCreateChat}
-                      onForkChat={onForkChat}
-                      onTurnEnd={context.active ? onTurnEnd : () => void refresh()}
-                      theme={theme}
-                      onToggleTheme={toggle}
-                      hideSidebarToggle={!context.active}
-                      hideSidebarToggleForHostChrome={context.active}
-                      hideThemeButton={!context.active}
-                      hideHeaderTitle
-                      inlineHandle={workbenchPaneSessions.length > 1}
-                      headerActions={context.headerActions}
-                      headerPortalTarget={context.headerPortalTarget}
-                      headerActive={context.active}
-                      composerPortalTarget={context.composerPortalTarget}
-                      composerActive={context.active}
-                      composerInputAriaLabel={t("workbench.composerAria", {
-                        title: pane.title,
-                      })}
-                      emptyComposerVariant="thread"
-                      workspaceScope={paneScope}
-                      workspaceDefaultScope={workspaces?.default_scope ?? null}
-                      workspaceControls={workspaces?.controls ?? null}
-                      workspaces={workspaces}
-                      onRefreshWorkspaces={refreshWorkspaces}
-                      workspaceError={context.active ? workspaceError : null}
-                      onWorkspaceScopeChange={(scope) => {
-                        if (paneRunning) return;
-                        const next = normalizeWorkspaceScope(scope);
-                        setWorkspaceError(null);
-                        client.setWorkspaceScope(paneSession.chatId, next);
-                      }}
-                      onWorkspaceScopeAcknowledged={(scope) => acknowledgeWorkspaceScope(paneSession.chatId, scope)}
-                      settingsSnapshot={settingsSnapshot}
-                      onOpenModelSettings={onOpenModelSettings}
-                      skills={skills}
-                    />
-                  );
-                }}
+                settingsSnapshot={settingsSnapshot}
+                onOpenModelSettings={onOpenModelSettings}
+                skills={skills}
               />
             </div>
             {view !== "chat" && (
               <div className="absolute inset-0 flex flex-col">
-                <Suspense fallback={<SurfaceLoadingFallback />}>
-                  <SettingsView
-                    theme={theme}
-                    initialSection={settingsInitialSection}
-                    initialSettings={settingsSnapshot}
-                    workspaces={workspaces}
-                    onRefreshWorkspaces={refreshWorkspaces}
-                    onPickWorkspaceFolder={workspaces?.controls.can_pick_folder ? pickWorkspaceFolder : undefined}
-                    showSidebar={view === "settings"}
-                    onToggleTheme={toggle}
-                    onBackToChat={onBackToChat}
-                    onModelNameChange={onModelNameChange}
-                    onSettingsChange={setSettingsSnapshot}
-                    skills={skills}
-                    skillsCatalogComplete={skillCatalog.catalog_complete}
-                    skillsCatalogNotice={skillCatalog.catalog_notice}
-                    skillsCatalogLoading={skillCatalog.loading}
-                    skillsCatalogError={skillCatalog.error}
-                    onRetrySkillsCatalog={skillCatalog.refresh}
-                    onSectionChange={onSettingsSectionChange}
-                    onLogout={onLogout}
-                    onRestart={onRestart}
-                    onNativeEngineRestart={onNativeEngineRestart}
-                    isRestarting={isRestarting}
-                    hostChromeInset={showHostChrome}
-                  />
-                </Suspense>
+                <ErrorBoundary
+                  resetKeys={[view, settingsInitialSection]}
+                  onBack={onBackToChat}
+                  backLabel={t("settings.backToChat")}
+                >
+                  <Suspense fallback={<SurfaceLoadingFallback />}>
+                    <SettingsView
+                      theme={theme}
+                      initialSection={settingsInitialSection}
+                      initialSettings={settingsSnapshot}
+                      workspaces={workspaces}
+                      onRefreshWorkspaces={refreshWorkspaces}
+                      onPickWorkspaceFolder={workspaces?.controls.can_pick_folder ? pickWorkspaceFolder : undefined}
+                      showSidebar={view === "settings"}
+                      onToggleTheme={toggle}
+                      onBackToChat={onBackToChat}
+                      onModelNameChange={onModelNameChange}
+                      onSettingsChange={applySettingsSnapshot}
+                      skills={skills}
+                      skillsCatalogComplete={skillCatalog.catalog_complete}
+                      skillsCatalogNotice={skillCatalog.catalog_notice}
+                      skillsCatalogLoading={skillCatalog.loading}
+                      skillsCatalogError={skillCatalog.error}
+                      onRetrySkillsCatalog={skillCatalog.refresh}
+                      onSectionChange={onSettingsSectionChange}
+                      onLogout={onLogout}
+                      onRestart={onRestart}
+                      onNativeEngineRestart={onNativeEngineRestart}
+                      isRestarting={isRestarting}
+                      hostChromeInset={showHostChrome}
+                    />
+                  </Suspense>
+                </ErrorBoundary>
               </div>
             )}
           </main>
         </div>
 
         {pendingDelete ? (
-          <Suspense fallback={null}>
-            <DeleteConfirm
-              open
-              title={pendingDelete.items[0]?.label ?? ""}
-              count={pendingDelete.items.length}
-              automations={pendingDelete.automations}
-              onCancel={() => setPendingDelete(null)}
-              onConfirm={onConfirmDelete}
-            />
-          </Suspense>
+          <ErrorBoundary
+            resetKeys={[pendingDelete]}
+            fallback={() => null}
+            onError={() => setPendingDelete(null)}
+          >
+            <Suspense fallback={null}>
+              <DeleteConfirm
+                open
+                title={pendingDelete.items[0]?.label ?? ""}
+                count={pendingDelete.items.length}
+                automations={pendingDelete.automations}
+                onCancel={() => setPendingDelete(null)}
+                onConfirm={onConfirmDelete}
+              />
+            </Suspense>
+          </ErrorBoundary>
         ) : null}
         {pendingRename ? (
-          <Suspense fallback={null}>
-            <RenameChatDialog
-              open
-              title={pendingRename.label}
-              onCancel={() => setPendingRename(null)}
-              onConfirm={onConfirmRename}
-            />
-          </Suspense>
-        ) : null}
-        {pendingTabRename ? (
-          <Suspense fallback={null}>
-            <RenameChatDialog
-              open
-              title={pendingTabRename.label}
-              dialogTitle={t("workbench.renameGroupTitle")}
-              description={t("workbench.renameGroupDescription")}
-              placeholder={t("workbench.renameGroupPlaceholder")}
-              onCancel={() => setPendingTabRename(null)}
-              onConfirm={onConfirmTabRename}
-            />
-          </Suspense>
+          <ErrorBoundary
+            resetKeys={[pendingRename]}
+            fallback={() => null}
+            onError={() => setPendingRename(null)}
+          >
+            <Suspense fallback={null}>
+              <RenameChatDialog
+                open
+                title={pendingRename.label}
+                onCancel={() => setPendingRename(null)}
+                onConfirm={onConfirmRename}
+              />
+            </Suspense>
+          </ErrorBoundary>
         ) : null}
         {pendingProjectRename ? (
-          <Suspense fallback={null}>
-            <RenameChatDialog
-              open
-              title={pendingProjectRename.label}
-              dialogTitle={t("chat.renameProjectTitle")}
-              description={t("chat.renameProjectDescription")}
-              placeholder={t("chat.renameProjectPlaceholder")}
-              onCancel={() => setPendingProjectRename(null)}
-              onConfirm={onConfirmProjectRename}
-            />
-          </Suspense>
+          <ErrorBoundary
+            resetKeys={[pendingProjectRename]}
+            fallback={() => null}
+            onError={() => setPendingProjectRename(null)}
+          >
+            <Suspense fallback={null}>
+              <RenameChatDialog
+                open
+                title={pendingProjectRename.label}
+                dialogTitle={t("chat.renameProjectTitle")}
+                description={t("chat.renameProjectDescription")}
+                placeholder={t("chat.renameProjectPlaceholder")}
+                onCancel={() => setPendingProjectRename(null)}
+                onConfirm={onConfirmProjectRename}
+              />
+            </Suspense>
+          </ErrorBoundary>
         ) : null}
         {restartToast ? (
           <div className="fixed left-1/2 top-[calc(0.75rem+env(safe-area-inset-top))] z-50 flex w-[min(32rem,calc(100vw-1rem))] -translate-x-1/2 flex-col items-center gap-2">

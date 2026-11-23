@@ -30,7 +30,7 @@ export function WorkspaceManagementDialog({
         <DialogHeader className="pr-8 text-left">
           <DialogTitle>{t("settings.nav.folders", { defaultValue: "Folders & projects" })}</DialogTitle>
           <DialogDescription>
-            {t("workspace.management.dialogDescription", { defaultValue: "Choose folders Nanobot may use and the projects it remembers." })}
+            {t("workspace.management.dialogDescription", { defaultValue: "Choose folders Kohaku may use and the projects it remembers." })}
           </DialogDescription>
         </DialogHeader>
         <FoldersProjectsManager

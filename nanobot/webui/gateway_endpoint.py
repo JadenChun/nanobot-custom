@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hmac
+import time
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
@@ -11,12 +12,13 @@ from websockets.http11 import Request as WsRequest
 
 from nanobot.webui.gateway_tokens import GatewayTokenStore
 from nanobot.webui.http_utils import (
+    is_loopback_host,
     is_trusted_proxy_authenticated_request,
     normalize_config_path,
     parse_request_path,
     query_first,
 )
-from nanobot.webui.ws_http import GatewayHTTPHandler
+from nanobot.webui.ws_http import GatewayHTTPHandler, attached_mobile_identity
 
 if TYPE_CHECKING:
     from nanobot.channels.websocket.runtime import WebSocketConfig
@@ -35,6 +37,18 @@ def is_websocket_upgrade(request: WsRequest) -> bool:
     )
 
 
+def listener_requires_authentication(config: Any) -> bool:
+    """Return whether every handshake on this listener needs a credential.
+
+    A loopback listener keeps the configured local behavior. A Unix socket
+    listener is local by construction. Any other bind needs effective
+    authentication even when ``websocket_requires_token`` is disabled.
+    """
+    if getattr(config, "unix_socket_path", ""):
+        return bool(config.websocket_requires_token)
+    return bool(config.websocket_requires_token) or not is_loopback_host(config.host)
+
+
 class WebUIGatewayEndpoint:
     """Compose HTTP routing and WebSocket authentication on one listener."""
 
@@ -45,11 +59,14 @@ class WebUIGatewayEndpoint:
         http: GatewayHTTPHandler,
         tokens: GatewayTokenStore,
         mobile_edge: "MobileGatewayEdge | None" = None,
+        mobile_enabled: Callable[[], bool] | None = None,
     ) -> None:
         self._config = config
         self._http = http
         self._tokens = tokens
         self._mobile_edge = mobile_edge
+        self._mobile_enabled = mobile_enabled
+        http.mobile_revalidator = self.revalidate_mobile_connection
         self.webui_connections: set[ServerConnection] = set()
         # Every accepted WebUI-protocol socket, desktop and mobile. Kept apart
         # from ``webui_connections`` (a trust/local-authority set) so broadcasts
@@ -65,17 +82,18 @@ class WebUIGatewayEndpoint:
     ) -> Any:
         """Route one listener request to a WS handshake or the HTTP application."""
         got, query = parse_request_path(request.path)
+        mobile_edge = self._current_mobile_edge()
         if got == "/mobile/v1/ws" and is_websocket_upgrade(request):
-            if self._mobile_edge is None:
+            if mobile_edge is None:
                 return connection.respond(404, "Not Found")
-            response = await self._mobile_edge.authorize_websocket(connection, request)
+            response = await mobile_edge.authorize_websocket(connection, request)
             if response is None:
                 self.protocol_connections.add(connection)
             return response
         if got == "/mobile/v1" or got.startswith("/mobile/v1/"):
-            if self._mobile_edge is None:
+            if mobile_edge is None:
                 return connection.respond(404, "Not Found")
-            return await self._mobile_edge.handle(connection, request)
+            return await mobile_edge.handle(connection, request)
         expected_ws = normalize_config_path(self._config.path)
         if got == expected_ws and is_websocket_upgrade(request):
             terminal_version = query_first(query, "terminal_protocol")
@@ -115,7 +133,7 @@ class WebUIGatewayEndpoint:
                 return None
             return connection.respond(401, "Unauthorized")
 
-        if self._config.websocket_requires_token:
+        if listener_requires_authentication(self._config):
             if supplied and self.consume_issued_token(connection, supplied):
                 return None
             return connection.respond(401, "Unauthorized")
@@ -134,18 +152,75 @@ class WebUIGatewayEndpoint:
     def is_webui_connection(self, connection: ServerConnection) -> bool:
         return connection in self.webui_connections
 
+    def _current_mobile_edge(self) -> MobileGatewayEdge | None:
+        if self._mobile_enabled is not None and not self._mobile_enabled():
+            return None
+        return self._mobile_edge
+
     async def revalidate_mobile_connection(self, connection: ServerConnection) -> bool:
         """Revalidate current owner authority for one established mobile socket."""
-        identity = getattr(connection, "mobile_identity", None)
+        identity = attached_mobile_identity(connection)
         if identity is None:
             return True
+        from nanobot.remote.client import OwnerUnavailableError
+        from nanobot.remote.edge import AccessIdentity
+
+        if not isinstance(identity, AccessIdentity):
+            return False
         token = getattr(connection, "mobile_access_token", None)
-        if self._mobile_edge is None or not isinstance(token, str) or not token:
+        mobile_edge = self._current_mobile_edge()
+        if mobile_edge is None or not isinstance(token, str) or not token:
             return False
         try:
-            fresh = await self._mobile_edge.revalidate_mobile_access(identity, token)
+            request = getattr(connection, "request", None)
+            if not isinstance(request, WsRequest):
+                return False
+            mobile_edge.authorize_target(request, identity.origin)
+            fresh = await mobile_edge.revalidate_mobile_access(identity, token)
+        except OwnerUnavailableError:
+            # Brief owner restart/IPC timeout should not permanently revoke
+            # scopes or kick active mobile sockets with 1008 while unexpired.
+            return time.time() < identity.expires_at
+        except Exception:
+            from dataclasses import replace
+
+            setattr(connection, "mobile_identity", replace(identity, scopes=()))
+            return False
+        setattr(connection, "mobile_identity", fresh)
+        return True
+
+    async def refresh_mobile_connection(
+        self,
+        connection: ServerConnection,
+        access_token: str,
+    ) -> bool:
+        """Rotate the pinned access token of an active mobile WebSocket in place."""
+        identity = attached_mobile_identity(connection)
+        if identity is None:
+            return False
+        from nanobot.remote.edge import AccessIdentity
+
+        if not isinstance(identity, AccessIdentity):
+            return False
+        mobile_edge = self._current_mobile_edge()
+        if mobile_edge is None or not access_token:
+            return False
+        try:
+            request = getattr(connection, "request", None)
+            if not isinstance(request, WsRequest):
+                return False
+            mobile_edge.authorize_target(request, identity.origin)
+            fresh = await mobile_edge.validator.validate_uncached(access_token)
+            if (
+                fresh.installation_id != identity.installation_id
+                or not fresh.origin
+                or fresh.origin != identity.origin
+                or not fresh.allows("chat.read")
+            ):
+                return False
         except Exception:
             return False
+        setattr(connection, "mobile_access_token", access_token)
         setattr(connection, "mobile_identity", fresh)
         return True
 

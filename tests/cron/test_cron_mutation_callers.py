@@ -297,8 +297,15 @@ def _cascade_handler(monkeypatch, service, triggers, calls, cleanup_mask: int = 
         calls.append((kind, key))
         return bool(cleanup_mask & {"draft": 1, "session": 2, "transcript": 4}[kind])
 
+    from nanobot.webui.transcript import TranscriptDeletionResult
+
     monkeypatch.setattr(
-        "nanobot.webui.ws_http.delete_webui_thread", lambda key: cleanup("transcript", key)
+        "nanobot.webui.ws_http.delete_webui_transcript_result",
+        lambda key: TranscriptDeletionResult(
+            deleted=cleanup("transcript", key),
+            complete=True,
+            remaining=(),
+        ),
     )
     return SimpleNamespace(
         check_api_token=lambda _request: True,
@@ -365,7 +372,11 @@ def test_session_delete_preserves_optional_service_and_cleanup_order(
         expected.append(("trigger", "local-1"))
     expected.extend((kind, "websocket:chat") for kind in ("draft", "session", "transcript"))
     assert response.status_code == 200
-    assert json.loads(response.body) == {"deleted": bool(cleanup_mask)}
+    assert json.loads(response.body) == {
+        "deleted": bool(cleanup_mask),
+        "complete": True,
+        "remaining": [],
+    }
     assert calls == expected
 
 

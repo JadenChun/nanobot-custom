@@ -3,13 +3,16 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
 from websockets.http11 import Request as WsRequest
 
 from nanobot.config.loader import save_config
 from nanobot.config.schema import Config
+from nanobot.remote.auth import AuthRejectedError
 from nanobot.remote.owner import RemoteAccessOwner
 from nanobot.webui.settings_remote import handle_remote_access
 from nanobot.webui.settings_services import WebUISettingsConfig
+from tests.remote.proof_helpers import new_device_key
 
 
 def _request(path: str, payload: dict | None = None) -> WsRequest:
@@ -20,7 +23,7 @@ def _request(path: str, payload: dict | None = None) -> WsRequest:
 
 
 def test_remote_access_settings_routes(tmp_path: Path) -> None:
-    owner = RemoteAccessOwner(tmp_path / "remote-access")
+    owner = RemoteAccessOwner(tmp_path / "remote-access", serve_verifier=lambda _origin: True)
     owner.start()
     config_path = tmp_path / "config.json"
     config = Config.model_validate(
@@ -68,13 +71,15 @@ def test_remote_access_settings_routes(tmp_path: Path) -> None:
             "/api/settings/remote-access/revoke",
         )
         assert revoked.status_code == 200
-        assert owner.store.get_device("settings-install").revoked
+        assert owner.store.get_device("settings-install") is None
+        with pytest.raises(AuthRejectedError):
+            owner.tokens.validate_access(pair.access_token)
     finally:
         owner.stop()
 
 
 def test_owner_pairing_start_requires_consent_and_exposes_pending(tmp_path: Path) -> None:
-    owner = RemoteAccessOwner(tmp_path / "remote-access")
+    owner = RemoteAccessOwner(tmp_path / "remote-access", serve_verifier=lambda _origin: True)
     owner.start()
     owner.store.set_enabled(True)
     config_path = tmp_path / "config.json"
@@ -128,6 +133,7 @@ def test_owner_pairing_start_requires_consent_and_exposes_pending(tmp_path: Path
         assert pending.status_code == 200
         assert json.loads(pending.body)["pending"][0]["pairing_id"] == pairing["pairing_id"]
 
+        _key, public_der = new_device_key()
         owner.pairing.collect(
             pairing_id=pairing["pairing_id"],
             nonce=pairing["nonce"],
@@ -135,6 +141,7 @@ def test_owner_pairing_start_requires_consent_and_exposes_pending(tmp_path: Path
             installation_id="settings-owner-1",
             label="Pixel 10",
             platform="Android 16",
+            device_public_key_der=public_der,
         )
         pending = handle_remote_access(
             settings,
@@ -171,11 +178,13 @@ def test_owner_pairing_start_requires_consent_and_exposes_pending(tmp_path: Path
                 "/api/settings/remote-access/pairing/start",
             ).body
         )
+        _manual_key, manual_public = new_device_key()
         owner.pairing.collect_by_code(
             origin="https://fixture.example:8443",
             pairing_code=manual["pairing_code"],
             installation_id="settings-owner-2",
             label="Manual phone",
+            device_public_key_der=manual_public,
         )
         missing_code = handle_remote_access(
             settings,
@@ -213,12 +222,14 @@ def test_owner_pairing_start_requires_consent_and_exposes_pending(tmp_path: Path
                 "/api/settings/remote-access/pairing/start",
             ).body
         )
+        _deny_key, deny_public = new_device_key()
         owner.pairing.collect(
             pairing_id=denied["pairing_id"],
             nonce=denied["nonce"],
             collector_secret=denied["collector_secret"],
             installation_id="settings-owner-3",
             label="Denied phone",
+            device_public_key_der=deny_public,
         )
         denied_response = handle_remote_access(
             settings,
@@ -238,16 +249,20 @@ def test_tailscale_readiness_route(tmp_path: Path, monkeypatch) -> None:
     config_path = tmp_path / "config.json"
     save_config(Config(), config_path)
     settings = WebUISettingsConfig(config_path)
+    seen_ports: list[int | None] = []
     monkeypatch.setattr(
         "nanobot.remote.tailscale.tailscale_status",
-        lambda: {
-            "available": True,
-            "connected": True,
-            "serve_mapped": True,
-            "dns_name": "desktop.tailnet.ts.net",
-            "origin": "https://desktop.tailnet.ts.net",
-            "error": "",
-        },
+        lambda *, expected_port=None: (
+            seen_ports.append(expected_port)
+            or {
+                "available": True,
+                "connected": True,
+                "serve_mapped": True,
+                "dns_name": "desktop.tailnet.ts.net",
+                "origin": "https://desktop.tailnet.ts.net",
+                "error": "",
+            }
+        ),
     )
     response = handle_remote_access(
         settings,
@@ -255,4 +270,5 @@ def test_tailscale_readiness_route(tmp_path: Path, monkeypatch) -> None:
         "/api/settings/remote-access/tailscale",
     )
     assert response.status_code == 200
+    assert seen_ports == [None]
     assert json.loads(response.body)["origin"] == "https://desktop.tailnet.ts.net"

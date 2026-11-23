@@ -229,7 +229,10 @@ def test_delete_webui_transcript_removes_segments(tmp_path, monkeypatch) -> None
     _write_segmented_turns(tmp_path, monkeypatch, key, "delete-segments", 4)
     legacy_path = webui_thread_file_path(key)
     legacy_path.parent.mkdir(parents=True, exist_ok=True)
-    legacy_path.write_text('{"messages":[]}', encoding="utf-8")
+    legacy_path.write_text(
+        '{"chat_id":"delete-segments","messages":[]}',
+        encoding="utf-8",
+    )
 
     assert webui_transcript_segments_dir(key).is_dir()
     assert delete_webui_transcript(key) is True

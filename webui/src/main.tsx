@@ -1,6 +1,7 @@
 import ReactDOM from "react-dom/client";
 
 import App from "./App";
+import { ErrorBoundary } from "./components/ErrorBoundary";
 import "./globals.css";
 import "./styles/mobile-shell.css";
 import { initializeI18n } from "./i18n";
@@ -64,7 +65,11 @@ if (isMobileRuntimeActive()) {
 async function renderWebui(container: HTMLElement) {
   await initializeI18n();
   /* StrictMode disabled: dev double-invokes state updaters; delta accumulation must stay pure — see useNanobotStream. */
-  ReactDOM.createRoot(container).render(<App />);
+  ReactDOM.createRoot(container).render(
+    <ErrorBoundary>
+      <App />
+    </ErrorBoundary>,
+  );
 }
 
 async function startWebui(): Promise<void> {
@@ -73,7 +78,7 @@ async function startWebui(): Promise<void> {
   } catch {
     // The shared UI shows its bootstrap/auth state when no target is ready.
   }
-  if (injectedMobileTransport) {
+  if (injectedMobileTransport && !isMobileRuntimeActive()) {
     installMobileRuntime(createMobileRuntime(injectedMobileTransport));
   }
   await renderWebui(appRoot);

@@ -54,14 +54,21 @@ def pair(
         full_control_consent=full_control,
         shared_history_consent=full_control if shared_history is None else shared_history,
     )
-    pairing.collect(
+    from tests.remote.proof_helpers import approve_and_prove, collect_with_key
+
+    collect_with_key(
+        pairing,
         pairing_id=offer.pairing_id,
         nonce=offer.nonce,
         collector_secret=offer.collector_secret,
         installation_id=installation_id,
         label="phone",
     )
-    pairing.approve(pairing_id=offer.pairing_id, comparison_code=offer.comparison_code)
+    approve_and_prove(
+        pairing,
+        pairing_id=offer.pairing_id,
+        comparison_code=offer.comparison_code,
+    )
     result = pairing.poll(
         pairing_id=offer.pairing_id,
         nonce=offer.nonce,
@@ -292,7 +299,7 @@ def test_device_rename_and_revoke_are_owner_scoped(tmp_path) -> None:
 
     revoked = delegation.revoke_device("install-legacy")
     assert revoked["revoked"] is True
-    assert store.get_device("install-legacy").revoked is True  # type: ignore[union-attr]
+    assert store.get_device("install-legacy") is None
 
     # The owner token remains valid after revoking another device.
     context = delegation.authenticate(owner_token)
@@ -336,7 +343,6 @@ def test_audit_is_bounded_sanitized_and_distinguishes_devices(tmp_path) -> None:
     assert len(snapshot["audit"]) == 500
     assert {device["installation_id"] for device in snapshot["devices"]} == {
         "install-owner",
-        "install-legacy",
     }
     serialized = str(snapshot)
     assert "refresh" not in serialized.lower()
@@ -347,7 +353,7 @@ def test_product_pairing_path_grants_owner_via_ipc(tmp_path) -> None:
     from nanobot.remote.client import RemoteAccessClient
     from nanobot.remote.owner import RemoteAccessOwner
 
-    owner = RemoteAccessOwner(tmp_path / "remote-access")
+    owner = RemoteAccessOwner(tmp_path / "remote-access", serve_verifier=lambda _origin: True)
     owner.start()
     owner.store.set_enabled(True)
     try:
@@ -361,22 +367,34 @@ def test_product_pairing_path_grants_owner_via_ipc(tmp_path) -> None:
             shared_history_consent=True,
         )
         assert "owner" in offer["scopes"]
+        from nanobot.remote.device_proof import DeviceProofClaims
+        from tests.remote.proof_helpers import (
+            encode_proof_base64url,
+            new_device_key,
+            sign_claims,
+        )
+
+        key, public_der = new_device_key()
         pending = client.collect_pairing(
             pairing_id=offer["pairing_id"],
             nonce=offer["nonce"],
             collector_secret=offer["collector_secret"],
             installation_id="install-product-owner",
             label="phone",
+            device_public_key=encode_proof_base64url(public_der),
         )
         assert pending["comparison_code"] == offer["comparison_code"]
         client.approve_pairing(
             pairing_id=offer["pairing_id"],
             comparison_code=offer["comparison_code"],
         )
-        result = client.poll_pairing(
+        payload = owner.pairing.proof_challenge_claims(offer["pairing_id"])
+        assert payload is not None
+        claims = DeviceProofClaims.from_payload(payload)
+        result = client.prove_pairing(
             pairing_id=offer["pairing_id"],
-            nonce=offer["nonce"],
-            collector_secret=offer["collector_secret"],
+            claims=claims.payload(),
+            signature=encode_proof_base64url(sign_claims(key, claims)),
         )
         assert result["status"] == "approved"
         assert "owner" in result["scopes"]
@@ -389,7 +407,7 @@ def test_product_pairing_without_owner_consent_is_rejected(tmp_path) -> None:
     from nanobot.remote.client import OwnerRequestError, RemoteAccessClient
     from nanobot.remote.owner import RemoteAccessOwner
 
-    owner = RemoteAccessOwner(tmp_path / "remote-access")
+    owner = RemoteAccessOwner(tmp_path / "remote-access", serve_verifier=lambda _origin: True)
     owner.start()
     owner.store.set_enabled(True)
     try:
@@ -422,7 +440,7 @@ def test_ipc_revoke_audits_acting_device(tmp_path) -> None:
     from nanobot.remote.client import RemoteAccessClient
     from nanobot.remote.owner import RemoteAccessOwner
 
-    owner = RemoteAccessOwner(tmp_path / "remote-access")
+    owner = RemoteAccessOwner(tmp_path / "remote-access", serve_verifier=lambda _origin: True)
     owner.start()
     owner.store.set_enabled(True)
     try:

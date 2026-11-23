@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, cast
 
 import yaml
+from loguru import logger
 
 from nanobot.context_repo.policy import ResourceAccessPolicy
 from nanobot.runtime_context import RuntimeContextBlock
@@ -82,16 +83,76 @@ class SkillsLoader:
         except OSError:
             return {}
 
+    def _skill_candidate_valid(self, skill_file: Path, name: str) -> bool:
+        """Validate one candidate before it enters precedence/shadowing.
+
+        Legacy skills without frontmatter remain readable. A declared identity
+        must satisfy the same contract as ``valid_skill_metadata``, so a
+        candidate that the packaging validator rejects cannot hide a valid
+        lower-precedence skill. Malformed YAML must also not hide one.
+        """
+        try:
+            content = skill_file.read_text(encoding="utf-8")
+        except (OSError, UnicodeError):
+            return False
+        if not content.startswith("---"):
+            return True
+        match = _STRIP_SKILL_FRONTMATTER.match(content)
+        if match is None:
+            if re.match(r"^---\s*\r?\n---\s*(?:\r?\n|$)", content):
+                return True
+            logger.warning("Ignoring skill '{}': malformed frontmatter", name)
+            return False
+        try:
+            parsed = yaml.safe_load(match.group(1))
+        except yaml.YAMLError:
+            logger.warning("Ignoring skill '{}': malformed frontmatter", name)
+            return False
+        if parsed is None:
+            return True
+        if not isinstance(parsed, dict):
+            logger.warning("Ignoring skill '{}': malformed frontmatter", name)
+            return False
+        metadata = {str(key): value for key, value in cast(dict[object, object], parsed).items()}
+        if not valid_skill_metadata(metadata, name):
+            logger.warning(
+                "Ignoring skill '{}': invalid identity metadata (name or description)",
+                name,
+            )
+            return False
+        return True
+
     def _skill_entries_from_dir(self, base: Path, source: str, *, skip_names: set[str] | None = None) -> list[dict[str, str]]:
         if not base.exists():
+            return []
+        try:
+            base_resolved = base.resolve(strict=True)
+        except OSError:
             return []
         entries: list[dict[str, str]] = []
         for skill_dir in base.iterdir():
             if not skill_dir.is_dir():
                 continue
+            resolved_dir = skill_dir
+            if skill_dir.is_symlink():
+                try:
+                    resolved_dir = skill_dir.resolve(strict=True)
+                except OSError:
+                    continue
+                if not resolved_dir.is_relative_to(base_resolved):
+                    logger.warning("Ignoring skill '{}': directory escapes its source root", skill_dir.name)
+                    continue
             skill_file = skill_dir / "SKILL.md"
             if not skill_file.exists():
                 continue
+            if skill_file.is_symlink():
+                try:
+                    resolved_file = skill_file.resolve(strict=True)
+                except OSError:
+                    continue
+                if not resolved_file.is_relative_to(resolved_dir):
+                    logger.warning("Ignoring skill '{}': SKILL.md escapes its skill directory", skill_dir.name)
+                    continue
             name = skill_dir.name
             if skip_names is not None and name in skip_names:
                 continue
@@ -111,27 +172,49 @@ class SkillsLoader:
         from nanobot.agent.plugins import enabled_agent_plugin_skills
 
         plugin_skills = enabled_agent_plugin_skills(self.workspace)
-        skills = self._skill_entries_from_dir(self.workspace_skills, "workspace")
-        seen_names = {entry["name"] for entry in skills}
-        for root in self.extra_paths:
-            entries = self._skill_entries_from_dir(root, "library", skip_names=seen_names)
-            skills.extend(entries)
-            seen_names.update(entry["name"] for entry in entries)
-        for name, path in plugin_skills:
-            if name in seen_names:
-                continue
-            skills.append(
-                {
-                    "name": name,
-                    "path": str(path),
-                    "source": "plugin",
-                }
-            )
-            seen_names.add(name)
+        groups: list[list[dict[str, str]]] = [
+            self._skill_entries_from_dir(self.workspace_skills, "workspace"),
+        ]
+        groups.extend(
+            self._skill_entries_from_dir(root, "library")
+            for root in self.extra_paths
+        )
+        groups.append([
+            {"name": name, "path": str(path), "source": "plugin"}
+            for name, path in plugin_skills
+        ])
         if self.builtin_skills and self.builtin_skills.exists():
-            skills.extend(
-                self._skill_entries_from_dir(self.builtin_skills, "builtin", skip_names=seen_names)
+            groups.append(
+                self._skill_entries_from_dir(self.builtin_skills, "builtin")
             )
+
+        names_by_group = [
+            {entry["name"] for entry in group}
+            for group in groups
+        ]
+        lower_names: set[str] = set()
+        shadowed_by_lower: list[set[str]] = []
+        for names in reversed(names_by_group):
+            shadowed_by_lower.append(set(lower_names))
+            lower_names.update(names)
+        shadowed_by_lower.reverse()
+
+        # Validate only a candidate that would shadow a lower-precedence skill.
+        # Unique skills keep the legacy compatibility tier without extra reads.
+        skills: list[dict[str, str]] = []
+        seen_names: set[str] = set()
+        for index, group in enumerate(groups):
+            for entry in group:
+                name = entry["name"]
+                if name in seen_names:
+                    continue
+                if (
+                    name in shadowed_by_lower[index]
+                    and not self._skill_candidate_valid(Path(entry["path"]), name)
+                ):
+                    continue
+                skills.append(entry)
+                seen_names.add(name)
 
         if self.disabled_skills:
             disabled = set(self.disabled_skills)
@@ -291,6 +374,11 @@ class SkillsLoader:
                     "Use `skills/<name>/SKILL.md` for these bundled skills. "
                     "The built-in `read_file` tool resolves that agents-relative path."
                 )
+            elif source == "library":
+                lines.append(
+                    "Use `read_file` by joining this library root and the relative `SKILL.md` path; "
+                    "shell commands cannot access configured skill repositories."
+                )
             for entry in entries:
                 skill_name = entry["name"]
                 meta = self._get_skill_meta(skill_name)
@@ -308,24 +396,44 @@ class SkillsLoader:
         return "\n\n".join(sections)
 
     @staticmethod
-    def _requirement_lists(skill_meta: dict[str, Any]) -> tuple[list[str], list[str]]:
-        """Return (bins, env) lists from skill metadata, tolerating null/wrong shapes."""
-        requires = cast(dict[str, Any], skill_meta.get("requires") or {})
-        if not isinstance(skill_meta.get("requires") or {}, dict):
-            return [], []
+    def _requirement_lists(
+        skill_meta: dict[str, Any],
+    ) -> tuple[list[str], list[str], list[str]]:
+        """Return (bins, any_bins, env) lists from metadata, tolerating bad shapes.
+
+        ``bins`` and ``env`` are conjunctive. ``any_bins`` is one alternatives
+        group: at least one listed command must be present.
+        """
+        requires_raw: object = skill_meta.get("requires") or {}
+        if not isinstance(requires_raw, dict):
+            return [], [], []
+        requires = cast(dict[str, Any], requires_raw)
         bins_raw: object = requires.get("bins") or []
+        any_bins_raw: object = requires.get("anyBins") or []
         env_raw: object = requires.get("env") or []
         bins = [value for value in cast(list[object], bins_raw) if isinstance(value, str) and value.strip()] if isinstance(bins_raw, list) else []
+        any_bins = [value for value in cast(list[object], any_bins_raw) if isinstance(value, str) and value.strip()] if isinstance(any_bins_raw, list) else []
         env = [value for value in cast(list[object], env_raw) if isinstance(value, str) and value.strip()] if isinstance(env_raw, list) else []
-        return bins, env
+        return bins, any_bins, env
 
     def _get_missing_requirements(self, skill_meta: dict[str, Any]) -> str:
         """Get a description of missing requirements."""
-        required_bins, required_env_vars = self._requirement_lists(skill_meta)
-        return ", ".join(
-            [f"CLI: {command_name}" for command_name in required_bins if not shutil.which(command_name)]
-            + [f"ENV: {env_name}" for env_name in required_env_vars if not os.environ.get(env_name)]
+        required_bins, required_any_bins, required_env_vars = self._requirement_lists(skill_meta)
+        missing: list[str] = [
+            f"CLI: {command_name}"
+            for command_name in required_bins
+            if not shutil.which(command_name)
+        ]
+        if required_any_bins and not any(
+            shutil.which(command_name) for command_name in required_any_bins
+        ):
+            missing.append(f"CLI: one of {', '.join(required_any_bins)}")
+        missing.extend(
+            f"ENV: {env_name}"
+            for env_name in required_env_vars
+            if not os.environ.get(env_name)
         )
+        return ", ".join(missing)
 
     def get_skill_availability(self, name: str) -> tuple[bool, str]:
         """Return whether a skill can run and why not when it cannot."""
@@ -335,11 +443,15 @@ class SkillsLoader:
 
     def get_skill_requirements(self, name: str) -> dict[str, list[str]]:
         """Return explicit command/env requirements and currently missing entries."""
-        bins, env = self._requirement_lists(self._get_skill_meta(name))
+        bins, any_bins, env = self._requirement_lists(self._get_skill_meta(name))
         return {
             "bins": bins,
+            "any_bins": any_bins,
             "env": env,
             "missing_bins": [value for value in bins if not shutil.which(value)],
+            "missing_any_bins": [
+                value for value in any_bins if not shutil.which(value)
+            ],
             "missing_env": [value for value in env if not os.environ.get(value)],
         }
 
@@ -381,10 +493,15 @@ class SkillsLoader:
         return cast(dict[str, Any], payload) if isinstance(payload, dict) else {}
 
     def _check_requirements(self, skill_meta: dict[str, Any]) -> bool:
-        """Check if skill requirements are met (bins, env vars)."""
-        required_bins, required_env_vars = self._requirement_lists(skill_meta)
-        return all(shutil.which(cmd) for cmd in required_bins) and all(
-            os.environ.get(var) for var in required_env_vars
+        """Check if skill requirements are met (bins, any-of bins, env vars)."""
+        required_bins, required_any_bins, required_env_vars = self._requirement_lists(skill_meta)
+        return (
+            all(shutil.which(cmd) for cmd in required_bins)
+            and (
+                not required_any_bins
+                or any(shutil.which(cmd) for cmd in required_any_bins)
+            )
+            and all(os.environ.get(var) for var in required_env_vars)
         )
 
     def _get_skill_meta(self, name: str) -> dict[str, Any]:

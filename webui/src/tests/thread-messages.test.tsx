@@ -16,8 +16,83 @@ afterEach(() => {
 });
 
 describe("ThreadMessages", () => {
+  it("keeps one timer through interleaved work and freezes the full duration on completion", () => {
+    vi.useFakeTimers();
+    const startedAt = 1_800_000_000_000;
+    const turnId = "staged-work";
+    const search = 'web_search({"query":"stage handoff"})';
+    const read = 'read_file({"path":"frame.png"})';
+    const messages: UIMessage[] = [
+      { id: "prompt", role: "user", content: "Inspect the clip", turnId, createdAt: startedAt },
+      { id: "plan", role: "assistant", content: "Planning", turnId, createdAt: startedAt + 5_000 },
+      { id: "search", role: "tool", kind: "trace", content: search, turnId, createdAt: startedAt + 10_000 },
+      { id: "check", role: "assistant", content: "Checking", turnId, createdAt: startedAt + 18_000 },
+      { id: "read", role: "tool", kind: "trace", content: read, turnId, createdAt: startedAt + 25_000 },
+      { id: "write", role: "assistant", content: "Writing", turnId, createdAt: startedAt + 34_000 },
+    ];
+    vi.setSystemTime(startedAt + 7_000);
+    const { rerender } = render(
+      <ThreadMessages messages={messages.slice(0, 2)} isStreaming activeTurnId={turnId} />,
+    );
+    // Before the first activity row the pending fold already says "Working", so
+    // the request never looks idle while it is processing.
+    expect(screen.getByRole("status", { name: /^Working(?: · |$)/ })).toBeInTheDocument();
+
+    act(() => { vi.advanceTimersByTime(10_000); });
+    rerender(<ThreadMessages messages={messages.slice(0, 3)} isStreaming activeTurnId={turnId} />);
+    expect(screen.getByRole("button", { name: /^Working(?: · |$)/ })).toHaveAttribute("aria-expanded", "true");
+
+    act(() => { vi.advanceTimersByTime(10_000); });
+    rerender(<ThreadMessages messages={messages.slice(0, 5)} isStreaming activeTurnId={turnId} />);
+    const earlier = screen.getByRole("button", { name: "Activity" });
+    const live = screen.getByRole("button", { name: /^Working(?: · |$)/ });
+    expect(screen.getAllByRole("button", { name: /^Working(?: · |$)/ })).toHaveLength(1);
+    // Keep chronological order: earlier work folds above the intermediate
+    // commentary, and the active work stream stays open at the bottom below it.
+    const liveOrder = [
+      screen.getByText("Inspect the clip"), screen.getByText("Planning"),
+      earlier, screen.getByText("Checking"), live,
+    ];
+    for (let index = 1; index < liveOrder.length; index += 1) {
+      expect(liveOrder[index - 1].compareDocumentPosition(liveOrder[index]) & Node.DOCUMENT_POSITION_FOLLOWING)
+        .toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+    }
+    expect(screen.getByText("frame.png", { exact: false })).toBeVisible();
+
+    act(() => { vi.advanceTimersByTime(10_000); });
+    rerender(<ThreadMessages messages={messages} isStreaming activeTurnId={turnId} />);
+    const tailStatus = screen.getByRole("status", { name: /^Working(?: · |$)/ });
+    expect(screen.queryByRole("button", { name: /^Working(?: · |$)/ })).toBeNull();
+    expect(screen.getByText("Writing").compareDocumentPosition(tailStatus) & Node.DOCUMENT_POSITION_FOLLOWING)
+      .toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+
+    rerender(<ThreadMessages messages={[
+      ...messages.slice(0, -1),
+      { ...messages[5], content: "Done", latencyMs: 42_000, createdAt: startedAt + 42_000 },
+    ]} />);
+    expect(screen.getByRole("button", { name: "Worked for 42s" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^Working(?: · |$)/ })).toBeNull();
+    expect(screen.queryByRole("status", { name: /^Working(?: · |$)/ })).toBeNull();
+  });
+
+  it("shows one historical duration for each completed run", () => {
+    const startedAt = 1_800_000_000_000;
+    const messages = [32_000, 72_000].flatMap((latencyMs, index): UIMessage[] => {
+      const turnId = `history-${index}`;
+      const time = startedAt + index * 100_000;
+      return [
+        { id: `${turnId}-prompt`, role: "user", content: `Prompt ${index}`, turnId, createdAt: time },
+        { id: `${turnId}-tool`, role: "tool", kind: "trace", content: "search()", turnId, createdAt: time + 1_000 },
+        { id: `${turnId}-answer`, role: "assistant", content: `Result ${index}`, turnId, latencyMs, createdAt: time + latencyMs },
+      ];
+    });
+    render(<ThreadMessages messages={messages} />);
+    expect(screen.getAllByRole("button", { name: /^Worked for / }).map((button) => button.textContent))
+      .toEqual(["Worked for 32s", "Worked for 1m 12s"]);
+  });
+
   it.each([0, -13_000, -14_000, -15_000, 15_000])(
-    "keeps the optimistic timer through acknowledgement and output with %i ms server clock skew",
+    "keeps one live Working state through acknowledgement and output with %i ms server clock skew",
     (clockSkewMs) => {
       vi.useFakeTimers();
       const now = new Date("2026-08-13T10:00:05.000Z").getTime();
@@ -39,7 +114,7 @@ describe("ThreadMessages", () => {
         />,
       );
 
-      expect(screen.getByRole("status", { name: "Working for 0s" })).toBeInTheDocument();
+      expect(screen.getByRole("status", { name: /^Working(?: · |$)/ })).toBeInTheDocument();
 
       rerender(
         <ThreadMessages
@@ -49,7 +124,7 @@ describe("ThreadMessages", () => {
           runStartedAt={(now + clockSkewMs) / 1000}
         />,
       );
-      expect(screen.getByRole("status", { name: "Working for 0s" })).toBeInTheDocument();
+      expect(screen.getByRole("status", { name: /^Working(?: · |$)/ })).toBeInTheDocument();
       act(() => { vi.advanceTimersByTime(1000); });
 
       rerender(
@@ -73,7 +148,7 @@ describe("ThreadMessages", () => {
         />,
       );
 
-      expect(screen.getByRole("button", { name: "Working for 1s" })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /^Working(?: · |$)/ })).toBeInTheDocument();
     },
   );
 
@@ -98,7 +173,44 @@ describe("ThreadMessages", () => {
         runStartedAt={(now - 43_000) / 1000}
       />,
     );
-    expect(screen.getByRole("status", { name: "Working for 30s" })).toBeInTheDocument();
+    expect(screen.getByRole("status", { name: /^Working(?: · |$)/ })).toBeInTheDocument();
+  });
+
+  it("opens child history from its canonical row and marks disconnected state unavailable", () => {
+    const child = {
+      child_session_key: "child-session",
+      child_id: "child-id",
+      profile: "research",
+      state: "running",
+      task_label: "Compare release notes",
+      result_summary: null,
+      runtime_generation: 2,
+    };
+    const onOpenChildHistory = vi.fn();
+    render(
+      <ThreadMessages
+        messages={[{
+          id: "child-row",
+          role: "system",
+          kind: "delegated_child",
+          content: "",
+          createdAt: 1,
+          delegatedChild: child,
+        }]}
+        onOpenChildHistory={onOpenChildHistory}
+        delegatedStatusAvailable={false}
+      />,
+    );
+
+    expect(screen.getByText("Compare release notes")).toBeInTheDocument();
+    expect(screen.getByText("Status unavailable (last known Working)")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Wait" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Steer" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Stop" })).not.toBeInTheDocument();
+
+    const button = screen.getByRole("button", { name: "Inspect Compare release notes activity" });
+    fireEvent.click(button);
+    expect(onOpenChildHistory).toHaveBeenCalledWith(child, button);
   });
 
   it("keeps a mounted tail answer eagerly rendered on the next turn", () => {
@@ -347,10 +459,13 @@ describe("ThreadMessages", () => {
     );
     const firstAnswer = screen.getByText("I will inspect it.");
     const finalAnswer = screen.getByText("Inspection complete.");
-    const liveActivity = screen.getByRole("button", { name: /working/i });
-    expect(firstAnswer.compareDocumentPosition(liveActivity) & Node.DOCUMENT_POSITION_FOLLOWING)
+    const earlierActivity = screen.getByRole("button", { name: "Activity" });
+    const tailWorking = screen.getByRole("status", { name: /^Working(?: · |$)/ });
+    expect(firstAnswer.compareDocumentPosition(earlierActivity) & Node.DOCUMENT_POSITION_FOLLOWING)
       .toBeTruthy();
-    expect(liveActivity.compareDocumentPosition(finalAnswer) & Node.DOCUMENT_POSITION_FOLLOWING)
+    expect(earlierActivity.compareDocumentPosition(finalAnswer) & Node.DOCUMENT_POSITION_FOLLOWING)
+      .toBeTruthy();
+    expect(finalAnswer.compareDocumentPosition(tailWorking) & Node.DOCUMENT_POSITION_FOLLOWING)
       .toBeTruthy();
 
     rerender(<ThreadMessages messages={messages} isStreaming={false} activeTurnId={null} />);
@@ -359,6 +474,7 @@ describe("ThreadMessages", () => {
       .toBeTruthy();
     expect(completedActivity.compareDocumentPosition(finalAnswer) & Node.DOCUMENT_POSITION_FOLLOWING)
       .toBeTruthy();
+    expect(screen.queryByRole("status", { name: /^Working(?: · |$)/ })).toBeNull();
   });
 
   it("ignores a completed empty answer frame without splitting contiguous activity", () => {
@@ -459,7 +575,7 @@ describe("ThreadMessages", () => {
 
     render(<ThreadMessages messages={messages} isStreaming={false} />);
 
-    const activityShells = screen.getAllByRole("button", { name: /worked/i });
+    const activityShells = screen.getAllByRole("button", { name: /^(?:Activity|Worked)/ });
     const ok = screen.getByText("ok");
     const final = screen.getByText("finished");
     expect(activityShells).toHaveLength(2);
@@ -861,7 +977,7 @@ describe("ThreadMessages", () => {
     expect(screen.queryByLabelText(/edited foo\.txt/i)).not.toBeInTheDocument();
   });
 
-  it("times live activity from the user turn start", () => {
+  it("anchors live activity to the user turn start", () => {
     vi.useFakeTimers();
     const startedAt = 1_700_000_000_000;
     vi.setSystemTime(startedAt + 230_000);
@@ -896,14 +1012,13 @@ describe("ThreadMessages", () => {
 
     render(<ThreadMessages messages={messages} isStreaming />);
 
-    expect(screen.getByText("Working for 3m 50s")).toBeInTheDocument();
-    expect(screen.queryByText("Working for 10s")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^Working(?: · |$)/ })).toBeInTheDocument();
   });
 
-  it("keeps a guided run's timer on its original activity cluster", () => {
+  it("keeps the original turn start after guidance and more activity", () => {
     vi.useFakeTimers();
     const startedAt = 1_700_000_000_000;
-    vi.setSystemTime(startedAt + 215_000);
+    vi.setSystemTime(startedAt + 300_000);
     const messages: UIMessage[] = [
       {
         id: "u-original",
@@ -942,22 +1057,33 @@ describe("ThreadMessages", () => {
         turnId: "turn-guidance",
         turnPhase: "user",
         turnSeq: 0,
-        createdAt: startedAt + 215_000,
+        createdAt: startedAt + 310_000,
+      },
+      {
+        id: "t-after-guidance",
+        role: "tool",
+        kind: "trace",
+        content: "read_file()",
+        turnId: "turn-original",
+        turnSeq: 3,
+        createdAt: startedAt + 315_000,
       },
     ];
 
-    render(
-      <ThreadMessages
-        messages={messages}
-        isStreaming
-        activeTurnId="turn-original"
-        runStartedAt={startedAt / 1000}
-      />,
+    const renderRun = (visibleMessages: UIMessage[]) => (
+      <ThreadMessages messages={visibleMessages} isStreaming activeTurnId="turn-original"
+        runStartedAt={startedAt / 1000} />
     );
+    const { rerender } = render(renderRun(messages.slice(0, 3)));
+    expect(screen.getByRole("status", { name: /^Working(?: · |$)/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Activity" })).toBeInTheDocument();
 
-    expect(screen.getByText("Working for 3m 35s")).toBeInTheDocument();
-    expect(screen.queryByText("Worked for 1s")).not.toBeInTheDocument();
-    expect(screen.queryByText("Thinking for 3m 35s")).not.toBeInTheDocument();
+    act(() => { vi.advanceTimersByTime(20_000); });
+    rerender(renderRun(messages));
+    // Guidance and later work move the live fold to the bottom; the state is
+    // named once, so the transcript cannot show two progress claims at once.
+    expect(screen.getAllByRole("button", { name: /^Working(?: · |$)/ })).toHaveLength(1);
+    expect(screen.getByRole("button", { name: "Activity" })).toBeInTheDocument();
   });
 
   it("folds final answer reasoning into the preceding activity timeline", () => {
@@ -1189,7 +1315,7 @@ describe("ThreadMessages", () => {
 
     render(<ThreadMessages messages={messages} isStreaming={false} />);
 
-    const activities = screen.getAllByRole("button", { name: /worked/i });
+    const activities = screen.getAllByRole("button", { name: /^(?:Activity|Worked)/ });
     const answer = screen.getByText("知道，IEM Cologne Major 2026 今天开打了。");
     expect(activities).toHaveLength(2);
     expect(activities[0].compareDocumentPosition(answer) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
@@ -1742,5 +1868,341 @@ describe("ThreadMessages", () => {
       ["a1", true],
       ["compaction-1", false],
     ]);
+  });
+
+  it("keeps activity display unit keys stable across reasoning vs page-relative activitySegmentId", () => {
+    const liveUnits = buildDisplayUnits([
+      { id: "u1", role: "user", content: "q", turnId: "t-1", createdAt: 1 },
+      {
+        id: "r1",
+        role: "assistant",
+        content: "",
+        reasoning: "thinking",
+        turnId: "t-1",
+        turnPhase: "reasoning",
+        createdAt: 2,
+      },
+      { id: "a1", role: "assistant", content: "a", turnId: "t-1", createdAt: 3 },
+    ]);
+    const pagedReplayUnits = buildDisplayUnits([
+      { id: "u1", role: "user", content: "q", turnId: "t-1", createdAt: 1 },
+      {
+        id: "tr1",
+        role: "tool",
+        kind: "trace",
+        content: "search()",
+        traces: ["search()"],
+        turnId: "t-1",
+        turnPhase: "activity",
+        activitySegmentId: "activity-14",
+        createdAt: 2,
+      },
+      { id: "a1", role: "assistant", content: "a", turnId: "t-1", createdAt: 3 },
+    ]);
+
+    expect(unitKeysForDisplay(liveUnits)).toEqual(unitKeysForDisplay(pagedReplayUnits));
+    expect(unitKeysForDisplay(liveUnits)[1]).toBe("turn-t-1-activity-1");
+  });
+
+  it("keeps live ComfyUI MCP progress below an intermediate response instead of hoisting it above", () => {
+    vi.useFakeTimers();
+    const startedAt = 1_800_000_000_000;
+    const turnId = "turn-comfy";
+    vi.setSystemTime(startedAt + 45_000);
+
+    const prompt: UIMessage = {
+      id: "u1",
+      role: "user",
+      content: "Render style probes for video #2",
+      turnId,
+      turnPhase: "user",
+      turnSeq: 0,
+      createdAt: startedAt,
+    };
+    const inspectTrace: UIMessage = {
+      id: "t1",
+      role: "tool",
+      kind: "trace",
+      content: 'read_file({"path":"tiktok-test/v1look/montage.png"})',
+      traces: ['read_file({"path":"tiktok-test/v1look/montage.png"})'],
+      turnId,
+      turnPhase: "activity",
+      turnSeq: 1,
+      createdAt: startedAt + 5_000,
+    };
+    const intermediate: UIMessage = {
+      id: "a1",
+      role: "assistant",
+      content: "Checked the project state first. Rendering style probes now.",
+      isStreaming: true,
+      turnId,
+      turnPhase: "answer",
+      turnSeq: 2,
+      createdAt: startedAt + 30_000,
+    };
+    const comfyTrace: UIMessage = {
+      id: "t2",
+      role: "tool",
+      kind: "trace",
+      content: 'mcp_comfy_generate_image({"workflow":"flux"})',
+      traces: ['mcp_comfy_generate_image({"workflow":"flux"})'],
+      toolEvents: [
+        {
+          phase: "start",
+          call_id: "comfy-1",
+          name: "mcp_comfy_generate_image",
+          arguments: { workflow: "flux" },
+        },
+        {
+          phase: "progress",
+          call_id: "comfy-1",
+          name: "mcp_comfy_generate_image",
+          arguments: { workflow: "flux" },
+          progress: 45,
+          total: 100,
+          message: "Sampling step 9/20",
+        },
+      ],
+      turnId,
+      turnPhase: "activity",
+      turnSeq: 3,
+      createdAt: startedAt + 50_000,
+    };
+    const finalAnswer: UIMessage = {
+      id: "a2",
+      role: "assistant",
+      content: "All three style probes are ready.",
+      latencyMs: 188_000,
+      turnId,
+      turnPhase: "answer",
+      turnSeq: 4,
+      createdAt: startedAt + 188_000,
+    };
+
+    const mcpPresets = [{ name: "comfy", display_name: "ComfyUI" }];
+    const { rerender } = render(
+      <ThreadMessages
+        messages={[prompt, inspectTrace, intermediate]}
+        isStreaming
+        activeTurnId={turnId}
+        runStartedAt={startedAt / 1000}
+        mcpPresets={mcpPresets}
+      />,
+    );
+
+    // Phase 2: after intermediate commentary and before the ComfyUI tool trace
+    // arrives, earlier inspection folds above the text and Working stays at the bottom.
+    const earlierFold = screen.getByRole("button", { name: "Activity" });
+    const commentary = screen.getByText("Checked the project state first. Rendering style probes now.");
+    const pendingBottom = screen.getByRole("status", { name: "Working · 45s" });
+    expect(earlierFold.compareDocumentPosition(commentary) & Node.DOCUMENT_POSITION_FOLLOWING)
+      .toBeTruthy();
+    expect(commentary.compareDocumentPosition(pendingBottom) & Node.DOCUMENT_POSITION_FOLLOWING)
+      .toBeTruthy();
+
+    // Phase 3: ComfyUI MCP tool starts running — its live Working fold and
+    // progress bar stay at the bottom below the intermediate commentary.
+    act(() => { vi.advanceTimersByTime(143_000); });
+    rerender(
+      <ThreadMessages
+        messages={[prompt, inspectTrace, intermediate, comfyTrace]}
+        isStreaming
+        activeTurnId={turnId}
+        runStartedAt={startedAt / 1000}
+        mcpPresets={mcpPresets}
+      />,
+    );
+
+    const liveComfyFold = screen.getByRole("button", { name: "Working · 3m 8s" });
+    expect(liveComfyFold).toHaveAttribute("aria-expanded", "true");
+    expect(screen.queryByRole("status", { name: /^Working(?: · |$)/ })).toBeNull();
+    expect(screen.getByRole("button", { name: "Activity" })
+      .compareDocumentPosition(commentary) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(commentary.compareDocumentPosition(liveComfyFold) & Node.DOCUMENT_POSITION_FOLLOWING)
+      .toBeTruthy();
+    expect(screen.getByText(/Sampling step 9\/20/)).toBeVisible();
+    expect(screen.getByTestId("activity-progress-bar")).toHaveAttribute("aria-valuenow", "45");
+
+    // Phase 4: turn completes — chronological order is preserved and only the
+    // final activity fold carries the total turn duration.
+    rerender(
+      <ThreadMessages
+        messages={[
+          prompt,
+          inspectTrace,
+          { ...intermediate, isStreaming: false },
+          {
+            ...comfyTrace,
+            toolEvents: [
+              ...(comfyTrace.toolEvents ?? []),
+              {
+                phase: "end",
+                call_id: "comfy-1",
+                name: "mcp_comfy_generate_image",
+                arguments: { workflow: "flux" },
+              },
+            ],
+          },
+          finalAnswer,
+        ]}
+        isStreaming={false}
+        mcpPresets={mcpPresets}
+      />,
+    );
+
+    expect(screen.queryByRole("button", { name: /^Working(?: · |$)/ })).toBeNull();
+    expect(screen.queryByRole("status", { name: /^Working(?: · |$)/ })).toBeNull();
+    expect(screen.getByRole("button", { name: "Activity" })).toBeInTheDocument();
+    const completedComfy = screen.getByRole("button", { name: "Worked for 3m 8s" });
+    const doneText = screen.getByText("All three style probes are ready.");
+    expect(commentary.compareDocumentPosition(completedComfy) & Node.DOCUMENT_POSITION_FOLLOWING)
+      .toBeTruthy();
+    expect(completedComfy.compareDocumentPosition(doneText) & Node.DOCUMENT_POSITION_FOLLOWING)
+      .toBeTruthy();
+  });
+
+  it("keeps intermediate media inline with its caption instead of pulling it below later text", () => {
+    const turnId = "turn-inline-media";
+    const messages: UIMessage[] = [
+      {
+        id: "u1",
+        role: "user",
+        content: "Generate icon previews",
+        turnId,
+        turnPhase: "user",
+        turnSeq: 0,
+        createdAt: 1,
+      },
+      {
+        id: "a1",
+        role: "assistant",
+        content: "Here are the monochrome previews:",
+        media: [{ kind: "image", url: "/api/media/sig/preview.png", name: "preview.png" }],
+        turnId,
+        turnPhase: "answer",
+        turnSeq: 1,
+        createdAt: 2,
+      },
+      {
+        id: "a2",
+        role: "assistant",
+        content: "Two things to confirm before finalizing.",
+        turnId,
+        turnPhase: "answer",
+        turnSeq: 2,
+        createdAt: 3,
+      },
+    ];
+
+    const units = buildDisplayUnits(messages);
+    expect(units).toHaveLength(3);
+    expect(units[1]).toMatchObject({
+      type: "message",
+      message: {
+        content: "Here are the monochrome previews:",
+        media: [{ kind: "image", url: "/api/media/sig/preview.png", name: "preview.png" }],
+      },
+    });
+    expect(units[2]).toMatchObject({
+      type: "message",
+      message: {
+        content: "Two things to confirm before finalizing.",
+      },
+    });
+
+    render(<ThreadMessages messages={messages} isStreaming={false} />);
+    const caption = screen.getByText("Here are the monochrome previews:");
+    const img = screen.getByRole("img", { name: "preview.png" });
+    const followup = screen.getByText("Two things to confirm before finalizing.");
+    expect(caption.compareDocumentPosition(img) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(img.compareDocumentPosition(followup) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it("does not start the pending timer while sending before runStartedAt arrives", () => {
+    vi.useFakeTimers();
+    const sentAt = 1_800_000_000_000;
+    vi.setSystemTime(sentAt);
+    const prompt: UIMessage = {
+      id: "u-send",
+      role: "user",
+      content: "hello",
+      turnId: "turn-send",
+      turnPhase: "user",
+      deliveryStatus: "sending",
+      createdAt: sentAt,
+    };
+
+    const { rerender } = render(
+      <ThreadMessages
+        messages={[prompt]}
+        isStreaming
+        activeTurnId="turn-send"
+        runStartedAt={null}
+      />,
+    );
+
+    // Even if sending/uploading takes 4s, show plain "Working" without a timer
+    // that would jump back to 0s once the server starts the turn.
+    act(() => { vi.advanceTimersByTime(4_000); });
+    expect(screen.getByRole("status", { name: "Working" })).toBeInTheDocument();
+
+    // Once the server reports runStartedAt, the timer begins cleanly from 0s.
+    const serverStartSec = (sentAt + 4_000) / 1000;
+    rerender(
+      <ThreadMessages
+        messages={[{ ...prompt, deliveryStatus: "accepted" }]}
+        isStreaming
+        activeTurnId="turn-send"
+        runStartedAt={serverStartSec}
+      />,
+    );
+    expect(screen.getByRole("status", { name: "Working" })).toBeInTheDocument();
+
+    act(() => { vi.advanceTimersByTime(3_000); });
+    expect(screen.getByRole("status", { name: "Working · 3s" })).toBeInTheDocument();
+  });
+
+  it("removes reserved footer gaps under intermediate responses and tightens within-turn spacing", () => {
+    const messages: UIMessage[] = [
+      { id: "u1", role: "user", content: "so what next?", turnId: "t1", createdAt: 1 },
+      {
+        id: "tr1",
+        role: "tool",
+        kind: "trace",
+        content: 'exec({"command":"echo 1"})',
+        traces: ['exec({"command":"echo 1"})'],
+        turnId: "t1",
+        createdAt: 2,
+      },
+      {
+        id: "a1",
+        role: "assistant",
+        content: "First intermediate update.",
+        turnId: "t1",
+        createdAt: 3,
+      },
+      {
+        id: "tr2",
+        role: "tool",
+        kind: "trace",
+        content: 'exec({"command":"echo 2"})',
+        traces: ['exec({"command":"echo 2"})'],
+        turnId: "t1",
+        createdAt: 4,
+      },
+    ];
+
+    const { container } = render(
+      <ThreadMessages messages={messages} isStreaming activeTurnId="t1" />,
+    );
+
+    const units = Array.from(container.querySelectorAll("[data-thread-display-unit]"));
+    expect(units).toHaveLength(4);
+    // User -> first activity keeps standard turn spacing (mt-5).
+    expect(units[1]).toHaveClass("mt-5");
+    // Intermediate assistant -> next activity uses tighter within-turn spacing (mt-3).
+    expect(units[3]).toHaveClass("mt-3");
+    // Intermediate assistant does not mount an invisible reserved 40px footer slot.
+    expect(units[2].querySelector("[data-assistant-footer]")).not.toBeInTheDocument();
   });
 });

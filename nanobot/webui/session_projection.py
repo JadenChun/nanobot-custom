@@ -2,15 +2,26 @@
 
 from __future__ import annotations
 
-from typing import Any, Protocol, cast
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Any, Protocol, cast
 
 from loguru import logger as default_logger
 
 from nanobot.providers.base import LLMUsage
 from nanobot.session.goal_state import goal_state_ws_blob
-from nanobot.session.model_selection import model_preset_from_metadata
+from nanobot.session.model_selection import (
+    model_preset_from_metadata,
+    reasoning_effort_from_metadata,
+)
 from nanobot.session.recovery import recovery_state_from_metadata
-from nanobot.session.webui_turns import websocket_turn_id, websocket_turn_wall_started_at
+from nanobot.session.webui_turns import (
+    websocket_turn_id,
+    websocket_turn_stopping,
+    websocket_turn_wall_started_at,
+)
+
+if TYPE_CHECKING:
+    from nanobot.session.source_store import SourceSnapshot
 
 
 class SessionMetadataReader(Protocol):
@@ -26,20 +37,32 @@ class WebUISessionProjection:
         self,
         sessions: SessionMetadataReader | None,
         *,
+        stop_target_for_key: Callable[[str], dict[str, object] | None] | None = None,
         log: Any = default_logger,
     ) -> None:
         self._sessions = sessions
+        self._stop_target_for_key = stop_target_for_key
         self._log = log
 
-    def attach_fields(self, session_key: str) -> dict[str, Any]:
+    def attach_fields(
+        self, session_key: str, *, source: SourceSnapshot | None = None,
+    ) -> dict[str, Any]:
         """Return the session runtime facts sent with an attach handshake."""
-        if self._sessions is None:
-            return {}
-        snapshot = self._sessions.read_session_metadata(session_key)
-        raw_metadata = snapshot.get("metadata") if snapshot is not None else None
+        if source is not None and source.state.session_key == session_key:
+            raw_metadata = source.header["metadata"]
+        else:
+            snapshot = (
+                self._sessions.read_session_metadata(session_key)
+                if self._sessions is not None else None
+            )
+            raw_metadata = snapshot.get("metadata") if snapshot is not None else None
         metadata = cast(dict[str, object], raw_metadata) if isinstance(raw_metadata, dict) else None
 
         fields: dict[str, Any] = {}
+        fields["stop_target"] = (
+            self._stop_target_for_key(session_key)
+            if self._stop_target_for_key is not None else None
+        )
         try:
             fields["model_preset"] = model_preset_from_metadata(metadata)
         except ValueError:
@@ -48,6 +71,22 @@ class WebUISessionProjection:
         if metadata is None:
             return fields
 
+        effort = reasoning_effort_from_metadata(metadata)
+        if effort is not None:
+            fields["reasoning_effort"] = effort
+        read_prefs = getattr(self._sessions, "read_next_turn_preferences", None)
+        if callable(read_prefs):
+            from nanobot.session.next_turn_preferences import NextTurnPreferences
+
+            prefs = read_prefs(session_key)
+            if isinstance(prefs, NextTurnPreferences) and prefs.values:
+                if "model_preset" in prefs.values:
+                    fields["next_model_preset"] = prefs.get("model_preset")
+                if "reasoning_effort" in prefs.values:
+                    fields["next_reasoning_effort"] = prefs.get("reasoning_effort")
+                if "workspace_scope" in prefs.values:
+                    fields["next_workspace_scope"] = prefs.get("workspace_scope")
+                fields["next_turn_revision"] = prefs.revision
         recovery_state = recovery_state_from_metadata(metadata)
         if recovery_state is not None:
             fields["recovery_state"] = recovery_state
@@ -74,12 +113,20 @@ class WebUISessionProjection:
             event: dict[str, Any] = {
                 "event": "goal_status",
                 "chat_id": chat_id,
-                "status": "running",
+                "status": (
+                    "stopping" if websocket_turn_stopping(chat_id) else "running"
+                ),
                 "started_at": started_at,
             }
             if turn_id is not None:
                 event["turn_id"] = turn_id
             events.append(event)
+        if self._stop_target_for_key is not None:
+            events.append({
+                "event": "stop_target",
+                "chat_id": chat_id,
+                "stop_target": self._stop_target_for_key(session_key),
+            })
         return tuple(events)
 
     def persisted_goal_state(self, session_key: str) -> dict[str, Any] | None:

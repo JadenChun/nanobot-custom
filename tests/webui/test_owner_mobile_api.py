@@ -15,6 +15,10 @@ def mobile_connection(identity: AccessIdentity | None):
     return SimpleNamespace(mobile_identity=identity)
 
 
+async def allow_mobile_revalidation(_connection) -> bool:
+    return True
+
+
 def test_legacy_mobile_keeps_only_shared_organization_actions() -> None:
     connection = mobile_connection(
         AccessIdentity("install-legacy", ("chat.read", "chat.write"), 1e12, 1)
@@ -112,6 +116,7 @@ async def test_owner_standard_mutation_writes_actor_audit() -> None:
 
     stub = SimpleNamespace(
         owner_audit_client=_Audit(),
+        mobile_revalidator=allow_mobile_revalidation,
         authorize_webui_mutation=lambda *_args: None,
         _webui_mutation_path=GatewayHTTPHandler._webui_mutation_path,
         _connection_headers=lambda _connection: Headers(),
@@ -166,6 +171,7 @@ async def test_owner_standard_mutation_fails_closed_when_audit_unavailable() -> 
 
     stub = SimpleNamespace(
         owner_audit_client=_Audit(),
+        mobile_revalidator=allow_mobile_revalidation,
         authorize_webui_mutation=lambda *_args: None,
         _webui_mutation_path=GatewayHTTPHandler._webui_mutation_path,
         _connection_headers=lambda _connection: Headers(),
@@ -225,6 +231,7 @@ async def test_workspace_owner_action_calls_permission_adapter() -> None:
 
     stub = SimpleNamespace(
         owner_permission_adapter=_Adapter(),
+        mobile_revalidator=allow_mobile_revalidation,
         authorize_webui_mutation=lambda *_args: None,
         _webui_mutation_path=GatewayHTTPHandler._webui_mutation_path,
         _connection_headers=lambda _connection: Headers(),
@@ -272,6 +279,7 @@ async def test_owner_standard_mutation_records_failed_audit() -> None:
 
     stub = SimpleNamespace(
         owner_audit_client=_Audit(),
+        mobile_revalidator=allow_mobile_revalidation,
         authorize_webui_mutation=lambda *_args: None,
         _webui_mutation_path=GatewayHTTPHandler._webui_mutation_path,
         _connection_headers=lambda _connection: Headers(),
@@ -311,6 +319,7 @@ async def test_owner_standard_mutation_records_cancelled_audit() -> None:
 
     stub = SimpleNamespace(
         owner_audit_client=_Audit(),
+        mobile_revalidator=allow_mobile_revalidation,
         authorize_webui_mutation=lambda *_args: None,
         _webui_mutation_path=GatewayHTTPHandler._webui_mutation_path,
         _connection_headers=lambda _connection: Headers(),

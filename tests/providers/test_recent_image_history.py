@@ -1,20 +1,31 @@
 """Recent images are a detached model view, not edits to conversation history."""
 
 import asyncio
+from base64 import b64decode
 from copy import deepcopy
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
 
 from nanobot.events import EventSink
 from nanobot.providers.base import (
+    GenerationSettings,
     LLMProvider,
     LLMResponse,
     ProviderCallContext,
     ProviderConversationState,
+    ToolCallRequest,
 )
-from nanobot.providers.image_history import IMAGE_HISTORY_OMISSION, recent_image_messages
+from nanobot.providers.fallback_provider import FallbackProvider
+from nanobot.providers.image_history import (
+    IMAGE_HISTORY_DEFERRED,
+    IMAGE_HISTORY_OMISSION,
+    recent_image_messages,
+)
+from nanobot.providers.openai_compat_provider import OpenAICompatProvider
 from nanobot.providers.pooled_provider import PooledProvider
+from nanobot.providers.provider_policy import ESTIMATED_COMPAT_POLICY
 from nanobot.providers.request_budget import ProviderRequestLimits
 
 
@@ -35,6 +46,65 @@ def history():
 def images(messages):
     return [block for message in messages if isinstance(message.get("content"), list)
             for block in message["content"] if isinstance(block, dict) and block.get("type") == "image_url"]
+
+
+def image_urls(messages):
+    return [block["image_url"]["url"] for block in images(messages)]
+
+
+async def saved_tool_image_batch(tmp_path, *, payloads=None):
+    from nanobot.agent.tools.filesystem import ReadFileTool
+
+    reader = ReadFileTool(workspace=tmp_path, restrict_to_workspace=True)
+    if payloads is None:
+        payloads = [b"\x89PNG\r\n\x1a\n" + bytes([index]) + b"candidate" for index in range(4)]
+    calls = [
+        ToolCallRequest(
+            id=f"read-{index}",
+            name="read_file",
+            arguments={"path": f"candidate-{index}.png"},
+        )
+        for index in range(len(payloads))
+    ]
+    messages = [{
+        "role": "assistant",
+        "content": None,
+        "tool_calls": [call.to_openai_tool_call() for call in calls],
+    }]
+    urls = []
+    for index, (call, payload) in enumerate(zip(calls, payloads, strict=True)):
+        (tmp_path / f"candidate-{index}.png").write_bytes(payload)
+        result = await reader.execute(path=f"candidate-{index}.png")
+        assert isinstance(result, list)
+        urls.append(result[0]["image_url"]["url"])
+        messages.append({
+            "role": "tool",
+            "tool_call_id": call.id,
+            "name": call.name,
+            "content": result,
+        })
+    return reader, messages, calls, urls
+
+
+def _capturing_local_provider(api_base):
+    provider = OpenAICompatProvider(
+        api_key="fixture",
+        api_base=api_base,
+        default_model="fixture-model",
+        provider_name="vision-fixture",
+        policy=ESTIMATED_COMPAT_POLICY,
+    )
+    requests = []
+
+    async def create(**kwargs):
+        requests.append(kwargs)
+        return object()
+
+    provider._client = SimpleNamespace(
+        chat=SimpleNamespace(completions=SimpleNamespace(create=create)),
+    )
+    provider._parse = lambda _response: LLMResponse(content="ok")
+    return provider, requests
 
 
 def test_window_is_message_scoped_detached_and_idempotent():
@@ -204,3 +274,152 @@ async def test_failed_image_fallback_never_restores_old_images_or_mutates_histor
     assert images(provider.calls[1][0]) == []
     assert "old-a" not in str(provider.calls) and "old-b" not in str(provider.calls)
     assert messages == before
+
+
+async def test_local_provider_preview_dispatch_and_later_read_share_image_projection(tmp_path):
+    reader, messages, calls, expected_urls = await saved_tool_image_batch(tmp_path)
+    original = deepcopy(messages)
+    local, local_requests = _capturing_local_provider("http://127.0.0.1:11434/v1")
+    context = ProviderCallContext(
+        request_limits=ProviderRequestLimits(8192, 128, safety_buffer_tokens=0),
+    )
+    generation = GenerationSettings(max_tokens=128, temperature=0.2, reasoning_effort="none")
+
+    preview = local.preview_request_budget(
+        messages=messages,
+        tools=None,
+        model="fixture-model",
+        generation=generation,
+        provider_context=context,
+        stream=False,
+    )
+
+    assert preview is not None
+    assert image_urls(list(preview.converted_messages)) == expected_urls[:1]
+    assert IMAGE_HISTORY_DEFERRED in str(preview.converted_messages)
+    assert len([message for message in preview.converted_messages if message.get("role") == "tool"]) == 4
+    assert [message.get("tool_call_id") for message in preview.converted_messages
+            if message.get("role") == "tool"] == [call.id for call in calls]
+
+    response = await local.chat_with_retry(
+        messages=messages,
+        model="fixture-model",
+        max_tokens=128,
+        temperature=0.2,
+        reasoning_effort="none",
+        provider_context=context,
+    )
+
+    assert response.content == "ok"
+    assert image_urls(local_requests[0]["messages"]) == expected_urls[:1]
+    assert tuple(local_requests[0]["messages"]) == preview.converted_messages
+
+    next_call = ToolCallRequest(
+        id="read-next",
+        name="read_file",
+        arguments={"path": "candidate-2.png"},
+    )
+    reread_result = await reader.execute(path="candidate-2.png")
+    later_messages = [
+        *messages,
+        {
+            "role": "assistant",
+            "content": None,
+            "tool_calls": [next_call.to_openai_tool_call()],
+        },
+        {
+            "role": "tool",
+            "tool_call_id": next_call.id,
+            "name": next_call.name,
+            "content": reread_result,
+        },
+    ]
+    await local.chat_with_retry(
+        messages=later_messages,
+        model="fixture-model",
+        max_tokens=128,
+        temperature=0.2,
+        reasoning_effort="none",
+        provider_context=context,
+    )
+    assert image_urls(local_requests[1]["messages"]) == [expected_urls[2]]
+
+    user_uploads = [{
+        "role": "user",
+        "content": [
+            {"type": "image_url", "image_url": {"url": url}}
+            for url in expected_urls
+        ],
+    }]
+    await local.chat_with_retry(
+        messages=user_uploads,
+        model="fixture-model",
+        max_tokens=128,
+        temperature=0.2,
+        reasoning_effort="none",
+        provider_context=context,
+    )
+    assert image_urls(local_requests[2]["messages"]) == expected_urls
+
+    cloud, cloud_requests = _capturing_local_provider("https://images.example/v1")
+    await cloud.chat_with_retry(
+        messages=messages,
+        model="fixture-model",
+        max_tokens=128,
+        temperature=0.2,
+        reasoning_effort="none",
+        provider_context=context,
+    )
+    assert image_urls(cloud_requests[0]["messages"]) == expected_urls
+    assert messages == original
+
+
+async def test_local_provider_can_review_three_small_images_together(tmp_path):
+    png = b64decode(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a/wEAAAAASUVORK5CYII="
+    )
+    _reader, messages, _calls, expected_urls = await saved_tool_image_batch(
+        tmp_path, payloads=[png, png, png],
+    )
+    local, requests = _capturing_local_provider("http://127.0.0.1:11434/v1")
+    response = await local.chat_with_retry(messages=messages, model="fixture-model", max_tokens=128)
+
+    assert response.content == "ok"
+    assert image_urls(requests[0]["messages"]) == expected_urls
+    assert len(expected_urls) == 3
+
+
+async def test_local_fallback_leaf_applies_tool_image_cap(tmp_path):
+    _reader, messages, _calls, expected_urls = await saved_tool_image_batch(tmp_path)
+    primary = CapturingProvider([
+        LLMResponse(
+            content="temporary failure",
+            finish_reason="error",
+            error_status_code=503,
+        ),
+    ])
+    local, local_requests = _capturing_local_provider("http://127.0.0.1:11434/v1")
+    preset = SimpleNamespace(
+        model="local-fallback-model",
+        max_tokens=128,
+        temperature=0.2,
+        reasoning_effort="none",
+        context_window_tokens=8192,
+        provider="vision-fixture",
+    )
+    provider = FallbackProvider(primary, [preset], lambda _preset: local)
+
+    response = await provider.chat(
+        messages=messages,
+        model="external-model",
+        max_tokens=128,
+        temperature=0.2,
+        reasoning_effort="none",
+        provider_context=ProviderCallContext(
+            request_limits=ProviderRequestLimits(8192, 128, safety_buffer_tokens=0),
+        ),
+    )
+
+    assert response.content == "ok"
+    assert len(primary.calls) == 1
+    assert image_urls(local_requests[0]["messages"]) == expected_urls[:1]

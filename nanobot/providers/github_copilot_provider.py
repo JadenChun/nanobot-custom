@@ -21,6 +21,7 @@ from nanobot.providers.copilot_auth import (
     get_copilot_bearer_view,
     get_copilot_identity,
 )
+from nanobot.providers.oauth_credentials import CredentialOwner
 from nanobot.providers.oauth_credentials import OAuthToken as CanonicalToken
 from nanobot.providers.oauth_model_catalog import (
     OAuthModelCatalog,
@@ -83,10 +84,12 @@ def get_github_copilot_login_status() -> OAuthToken | None:
 def login_github_copilot(
     print_fn: Callable[[str], None] | None = None,
     prompt_fn: Callable[[str], str] | None = None,
+    *,
+    owner: CredentialOwner | None = None,
 ) -> OAuthToken:
     """Run GitHub device flow and persist the GitHub OAuth token used for Copilot."""
     del prompt_fn
-    authority = get_copilot_authority()
+    authority = get_copilot_authority(owner)
     generation = authority.begin_login()
     printer = print_fn or print
     timeout = httpx.Timeout(20.0, connect=20.0)
@@ -199,6 +202,7 @@ class GitHubCopilotProvider(OpenAICompatProvider):
         default_model: str = "github-copilot/gpt-4.1",
         *,
         provider_name: str = "github_copilot",
+        credential_owner: CredentialOwner | None = None,
     ):
         super().__init__(
             api_key="no-key",
@@ -212,9 +216,12 @@ class GitHubCopilotProvider(OpenAICompatProvider):
             spec=find_by_name("github_copilot"),
             provider_name=provider_name,
         )
+        self._credential_owner = credential_owner
 
     async def _get_copilot_access_token(self) -> str:
-        return (await __import__("asyncio").to_thread(get_copilot_bearer_view)).bearer
+        return (await __import__("asyncio").to_thread(
+            get_copilot_bearer_view, owner=self._credential_owner,
+        )).bearer
 
     async def _refresh_client_api_key(self) -> str:
         token = await self._get_copilot_access_token()
@@ -278,8 +285,11 @@ class GitHubCopilotProvider(OpenAICompatProvider):
 
 def get_github_copilot_model_catalog(
     proxy: str | None = None,
+    *,
+    owner: CredentialOwner | None = None,
 ) -> OAuthModelCatalogSnapshot:
-    view = get_copilot_authority().get_view_or_import()
+    authority = get_copilot_authority(owner)
+    view = authority.get_view_or_import()
     account_key = _catalog_account_key(None if view is None else view.token.account_id)
     generation = "absent" if view is None else view.generation
     cache_key = (
@@ -289,30 +299,33 @@ def get_github_copilot_model_catalog(
 
     def generation_is_current() -> bool:
         try:
-            latest = get_copilot_authority().get_view_or_import()
+            latest = authority.get_view_or_import()
         except Exception:
             return False
         return latest is not None and latest.generation == generation
 
     return _GITHUB_COPILOT_MODEL_CATALOG.get(
         cache_key=cache_key,
+        owner=owner,
         proxy=proxy,
         fetch=lambda selected_proxy: _fetch_github_copilot_models(
             selected_proxy,
             expected_generation=generation,
+            owner=owner,
         ),
         generation_check=generation_is_current,
     )
 
 
-def invalidate_github_copilot_model_catalog() -> None:
-    _GITHUB_COPILOT_MODEL_CATALOG.invalidate()
+def invalidate_github_copilot_model_catalog(owner: CredentialOwner | None = None) -> None:
+    _GITHUB_COPILOT_MODEL_CATALOG.invalidate(owner=owner)
 
 
 def _fetch_github_copilot_models(
     proxy: str | None,
     *,
     expected_generation: str | None = None,
+    owner: CredentialOwner | None = None,
 ) -> tuple[ProviderModelSpec, ...]:
     common_headers = {
         "Accept": "application/json",
@@ -323,7 +336,7 @@ def _fetch_github_copilot_models(
     client_kwargs: dict[str, Any] = {"timeout": 20.0, "follow_redirects": True}
     if proxy:
         client_kwargs.update(proxy=proxy, trust_env=False)
-    bearer_view = get_copilot_bearer_view(expected_generation=expected_generation)
+    bearer_view = get_copilot_bearer_view(expected_generation=expected_generation, owner=owner)
     with httpx.Client(**client_kwargs) as client:
         base_url = bearer_view.endpoint or _resolve(
             "NANOBOT_COPILOT_BASE_URL",

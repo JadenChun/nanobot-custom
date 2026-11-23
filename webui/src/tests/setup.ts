@@ -2,6 +2,8 @@ import "@testing-library/jest-dom/vitest";
 import { beforeAll, beforeEach } from "vitest";
 
 import i18n, { initializeI18n, loadAllLocaleResources } from "@/i18n";
+import { resetComposerDraftsForTests } from "@/lib/composer-drafts";
+import { resetSessionPageCache } from "@/lib/session-page-cache";
 
 function createTestStorage(): Storage {
   const store = new Map<string, string>();
@@ -61,6 +63,10 @@ beforeAll(async () => {
 beforeEach(async () => {
   await i18n.changeLanguage("en");
   document.documentElement.lang = "en";
-  document.title = "nanobot";
+  document.title = "Kohaku";
   localStorage.setItem("nanobot.locale", "en");
+  // The renderer page cache is module-level state. Reset it per test so a
+  // cached window from one case cannot paint into another.
+  resetSessionPageCache();
+  resetComposerDraftsForTests();
 });

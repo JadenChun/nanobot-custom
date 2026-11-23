@@ -23,10 +23,10 @@ path = Path(sys.argv[1])
 text = path.read_text(encoding="utf-8")
 tag = '<script src="./mobile-bootstrap.js"></script>'
 if tag not in text:
-    marker = '<script type="module"'
-    if marker not in text:
-        raise SystemExit("shared index has no module script")
-    text = text.replace(marker, tag + "\n    " + marker, 1)
+    if "</body>" not in text or '<script type="module"' not in text:
+        raise SystemExit("shared index must have a body and a module script")
+    # Run after the splash markup exists. The module script runs after parsing.
+    text = text.replace("</body>", f"  {tag}\n  </body>", 1)
     path.write_text(text, encoding="utf-8")
 PY
 echo "shared mobile web assets: ${output}"

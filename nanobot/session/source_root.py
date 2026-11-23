@@ -13,11 +13,12 @@ import errno
 import os
 import stat
 from collections.abc import Iterator as _Iterator
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from typing import TYPE_CHECKING, Generator, NoReturn, cast
 
 if TYPE_CHECKING:
     from nanobot.session.manager import JsonlSessionStore
+    from nanobot.session.mode_storage import PrivateFileVersion
 
 try:  # pragma: no cover - import availability is platform dependent.
     import fcntl
@@ -373,15 +374,23 @@ class SourceRootAuthority:
         require_namespace_write_access(self._backend)
         os.fsync(self._fd)
 
-    def write_text_atomic(self, name: str, text: str, *, mode: int = 0o600) -> None:
+    def write_text_atomic(
+        self, name: str, text: str, *, mode: int = 0o600,
+    ) -> PrivateFileVersion | None:
         self._require_backend(self._backend)
-        from nanobot.session.mode_storage import require_namespace_write_access
+        from nanobot.session.mode_storage import (
+            installed_file_version,
+            private_file_version,
+            require_namespace_write_access,
+        )
 
         require_namespace_write_access(self._backend)
         if not isinstance(cast(object, text), str) or not name or "/" in name:
             raise SourceRootAuthorityError("invalid source replacement")
         temporary = f".{name}.{os.urandom(8).hex()}.tmp"
         descriptor: int | None = None
+        witness: int | None = None
+        version: PrivateFileVersion | None = None
         try:
             descriptor = self._open_relative(
                 temporary,
@@ -393,13 +402,26 @@ class SourceRootAuthority:
             while offset < len(payload):
                 offset += os.write(descriptor, payload[offset:])
             os.fsync(descriptor)
+            if name.endswith(".jsonl"):
+                with suppress(OSError):
+                    version = private_file_version(os.fstat(descriptor))
+                    if version is not None:
+                        witness = os.dup(descriptor)
             os.close(descriptor)
             descriptor = None
             os.replace(temporary, name, src_dir_fd=self._fd, dst_dir_fd=self._fd)
+            installed = (
+                installed_file_version(witness, version)
+                if witness is not None and version is not None else None
+            )
             self.fsync_directory()
+            return installed
         finally:
             if descriptor is not None:
                 os.close(descriptor)
+            if witness is not None:
+                with suppress(OSError):
+                    os.close(witness)
             try:
                 os.unlink(temporary, dir_fd=self._fd)
             except FileNotFoundError:

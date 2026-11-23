@@ -39,7 +39,7 @@ from nanobot.cli.webui_support import (
 from nanobot.config.paths import get_default_sessions_root, is_default_workspace
 from nanobot.config.schema import Config
 from nanobot.gateway.runtime import GatewayInstance
-from nanobot.runtime_errors import RuntimeOwnedWorkError
+from nanobot.runtime_errors import has_owned_work_error
 from nanobot.security.network import is_loopback_host
 from nanobot.utils.helpers import sync_workspace_templates
 from nanobot.webui.build import BuildMode
@@ -179,15 +179,6 @@ def _gateway_failure_group(message: str, errors: Sequence[BaseException]) -> Bas
     return BaseExceptionGroup(message, list(errors))
 
 
-def _has_owned_work_error(error: BaseException) -> bool:
-    if isinstance(error, RuntimeOwnedWorkError):
-        return True
-    if isinstance(error, BaseExceptionGroup):
-        group = cast(BaseExceptionGroup[BaseException], error)
-        return any(_has_owned_work_error(item) for item in group.exceptions)
-    return False
-
-
 def _print_gateway_health_endpoint(host: str, port: int) -> None:
     console.print(
         f"[green]✓[/green] Health endpoint: {_gateway_health_url(host, port)}"
@@ -276,6 +267,31 @@ async def _health_server(
         await server.serve_forever()
 
 
+async def _publish_gateway_identity_when_ready(
+    channels: Any,
+    shutdown: asyncio.Event,
+    publish: Callable[[], None],
+    *,
+    poll_interval_s: float = 0.025,
+) -> None:
+    """Publish desktop gateway identity only once required channels are ready.
+
+    Publishing owner ports while the WebSocket listener is still starting clears
+    the provisional starting state prematurely, causing the desktop adapter's
+    status poll to observe ``ready=False`` and flash a transient
+    ``gateway_unavailable`` error right before opening chat.
+    """
+    while not shutdown.is_set():
+        ready, _payload = _gateway_readiness_payload(channels)
+        if ready:
+            publish()
+            return
+        try:
+            await asyncio.wait_for(shutdown.wait(), timeout=poll_interval_s)
+        except asyncio.TimeoutError:
+            pass
+
+
 async def _close_gateway_runtime(
     handle: RuntimeHandle,
     composition: RuntimeComposition,
@@ -299,7 +315,7 @@ async def _close_gateway_runtime(
         await composition.aclose()
     except BaseException as exc:
         errors.append(exc)
-        if _has_owned_work_error(exc):
+        if has_owned_work_error(exc):
             try:
                 restore()
             except BaseException as restore_error:
@@ -415,6 +431,8 @@ def _run_gateway(
             webui_mcp_reload=gateway_mcp.reload,
             webui_skill_state_action=update_skill_state,
             webui_recovery_action=recovery.handle_action,
+            webui_child_control=agent.control_delegated_child,
+            webui_stop_target_for_key=agent.stop_target_for_key,
             config_path=Path(config_path),
         )
 
@@ -425,7 +443,9 @@ def _run_gateway(
         fallback_model_observer = build_webui_fallback_model_observer(bus)
 
         def observe_provider(snapshot: ProviderSnapshot) -> ProviderSnapshot:
-            snapshot.provider.set_llm_call_observer(record_llm_call)
+            snapshot.provider.set_llm_call_observer(
+                lambda call: record_llm_call(call, data_dir=config.runtime_data_dir)
+            )
             if isinstance(snapshot.provider, FallbackProvider):
                 snapshot.provider.set_fallback_model_observer(fallback_model_observer)
             return snapshot
@@ -501,6 +521,7 @@ def _run_gateway(
         assert channels is not None
         tasks: list[asyncio.Task[Any]] = []
         local_trigger_task: asyncio.Task[None] | None = None
+        identity_publish_task: asyncio.Task[None] | None = None
         shutdown = asyncio.Event()
         processes = None
         cron_gateway = None
@@ -532,7 +553,7 @@ def _run_gateway(
 
         def record_cleanup_error(error: BaseException) -> None:
             cleanup_errors.append(error)
-            if _has_owned_work_error(error):
+            if has_owned_work_error(error):
                 errors = ([primary_error] if primary_error is not None else []) + cleanup_errors
                 try:
                     restore()
@@ -654,14 +675,32 @@ def _run_gateway(
                     ):
                         websocket_ports = (websocket_port,)
                 def publish_gateway_identity(actual_port: int) -> None:
-                    if isinstance(gateway_id, str) and gateway_id and websocket_ports:
+                    nonlocal identity_publish_task
+                    if not (isinstance(gateway_id, str) and gateway_id and websocket_ports):
+                        return
+                    resolved_gateway_id = gateway_id
+
+                    def _publish() -> None:
                         gateway_runtime.publish_desktop_gateway_identity(
-                            gateway_id,
+                            resolved_gateway_id,
                             __version__,
                             "managed-gateway-v1",
                             sys.executable,
                             actual_port,
                             websocket_ports,
+                        )
+
+                    ready, _payload = _gateway_readiness_payload(channels)
+                    if ready:
+                        _publish()
+                        return
+                    if identity_publish_task is None or identity_publish_task.done():
+                        identity_publish_task = asyncio.create_task(
+                            _publish_gateway_identity_when_ready(
+                                channels,
+                                shutdown,
+                                _publish,
+                            )
                         )
                 tasks.extend([
                     asyncio.create_task(
@@ -675,7 +714,7 @@ def _run_gateway(
                     asyncio.create_task(monitor_clients()),
                 ])
                 if processes is not None:
-                    processes.start()
+                    await processes.astart()
                 if cron_gateway is not None:
                     tasks.append(asyncio.create_task(cron_gateway.run()))
                 if config.gateway.local_triggers:
@@ -722,6 +761,14 @@ def _run_gateway(
             primary_error = exc
             raise
         finally:
+            if identity_publish_task is not None and not identity_publish_task.done():
+                identity_publish_task.cancel()
+                try:
+                    await identity_publish_task
+                except asyncio.CancelledError:
+                    pass
+                except BaseException as exc:
+                    record_cleanup_error(exc)
             if local_trigger_task is not None and not local_trigger_task.done():
                 # Stop queue admission before waiting for other runtime owners.
                 local_trigger_task.cancel()

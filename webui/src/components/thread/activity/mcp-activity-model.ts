@@ -46,6 +46,55 @@ export function describeMcpActivity(
   if (matches(name, "search", "web_search")) {
     return describe(status, "Searching", "Searched", "Could not search", value(args, ["query", "q"]));
   }
+  if (matches(name, "generate_video", "generate_videos", "text_to_video")) {
+    return describe(
+      status,
+      "Generating video",
+      "Generated video",
+      "Video generation failed",
+      value(args, ["workflow", "mode"]),
+    );
+  }
+  if (matches(name, "generate_image", "generate_images", "text_to_image", "create_image")) {
+    return describe(
+      status,
+      "Generating image",
+      "Generated image",
+      "Image generation failed",
+      value(args, ["workflow", "mode"]),
+    );
+  }
+  if (matches(name, "edit_image", "edit_images", "image_edit")) {
+    return describe(
+      status,
+      "Editing image",
+      "Edited image",
+      "Image edit failed",
+      value(args, ["workflow", "mode"]),
+    );
+  }
+  if (matches(name, "comfy_status", "comfyui_status", "media_status")) {
+    return describe(status, "Checking ComfyUI status", "Checked ComfyUI status", "Could not check ComfyUI status");
+  }
+  if (matches(name, "media_workflow_catalog", "image_workflow_catalog")) {
+    return describe(
+      status,
+      "Checking media workflows",
+      "Checked media workflows",
+      "Could not check media workflows",
+    );
+  }
+  if (matches(name, "image_lora_catalog", "lora_catalog")) {
+    return describe(
+      status,
+      "Checking LoRA catalog",
+      "Checked LoRA catalog",
+      "Could not check LoRA catalog",
+    );
+  }
+  if (matches(name, "cancel_kohaku_media_call", "cancel_media_call")) {
+    return describe(status, "Stopping media generation", "Stopped media generation", "Could not stop media generation");
+  }
 
   const action = humanizeToolName(toolName);
   if (status === "running") return { action: `Running ${action}` };

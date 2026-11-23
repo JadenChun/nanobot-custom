@@ -1,0 +1,27 @@
+{
+  "productName": "Kohaku",
+  "app": {
+    "windows": [
+      {
+        "label": "chat",
+        "title": "Kohaku",
+        "width": 650,
+        "height": 720,
+        "minWidth": 520,
+        "minHeight": 620,
+        "resizable": true,
+        "create": false,
+        "incognito": true
+      }
+    ]
+  },
+  "bundle": {
+    "targets": ["app"],
+    "icon": ["icons/icon.icns", "icons/icon.png"],
+    "macOS": {
+      "minimumSystemVersion": "13.0",
+      "entitlements": "microphone.entitlements.plist",
+      "signingIdentity": "-"
+    }
+  }
+}

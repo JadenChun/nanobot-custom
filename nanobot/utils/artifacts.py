@@ -14,6 +14,8 @@ from datetime import datetime
 from pathlib import Path, PurePosixPath
 from typing import Any, cast
 
+from nanobot.attachments._media import atomic_write_bytes
+from nanobot.attachments.store import AttachmentStore
 from nanobot.config.paths import get_media_dir
 from nanobot.utils.helpers import detect_image_mime, ensure_dir
 
@@ -59,11 +61,11 @@ def _safe_relative_dir(save_dir: str) -> Path:
     return Path(*rel.parts)
 
 
-def _artifact_root(save_dir: str) -> Path:
-    media_root = get_media_dir().resolve()
-    root = (media_root / _safe_relative_dir(save_dir)).resolve()
+def _artifact_root(save_dir: str, media_root: Path | None = None) -> Path:
+    root_base = (media_root if media_root is not None else get_media_dir()).resolve()
+    root = (root_base / _safe_relative_dir(save_dir)).resolve()
     try:
-        root.relative_to(media_root)
+        root.relative_to(root_base)
     except ValueError as exc:
         raise ArtifactError("artifact directory escapes media root") from exc
     return root
@@ -78,6 +80,7 @@ def store_generated_image_artifact(
     save_dir: str = "generated",
     provider: str = "openrouter",
     created_at: datetime | None = None,
+    media_root: Path | None = None,
 ) -> dict[str, Any]:
     """Persist a generated image and sidecar metadata under the media root."""
     raw, mime = decode_image_data_url(data_url)
@@ -86,12 +89,11 @@ def store_generated_image_artifact(
         raise ArtifactError(f"unsupported image MIME type: {mime}")
 
     now = created_at or datetime.now().astimezone()
-    day_dir = ensure_dir(_artifact_root(save_dir) / now.strftime("%Y-%m-%d"))
+    day_dir = ensure_dir(_artifact_root(save_dir, media_root) / now.strftime("%Y-%m-%d"))
     artifact_id = f"img_{uuid.uuid4().hex[:12]}"
     image_path = day_dir / f"{artifact_id}{ext}"
     metadata_path = day_dir / f"{artifact_id}.json"
 
-    image_path.write_bytes(raw)
     metadata: dict[str, Any] = {
         "id": artifact_id,
         "kind": "image",
@@ -106,10 +108,13 @@ def store_generated_image_artifact(
         "source_images": list(source_images or []),
         "created_at": now.isoformat(),
     }
-    metadata_path.write_text(
-        json.dumps(metadata, ensure_ascii=False, indent=2),
-        encoding="utf-8",
-    )
+    base = (media_root if media_root is not None else get_media_dir()).resolve()
+    store = AttachmentStore(base / "attachments", media_root=base)
+    store.custody.declare("generated", _artifact_root(save_dir, base))
+    with store.custody.fence(create=True) as gate:
+        store.custody.pin(gate, publication_id=artifact_id, path=image_path, sha256=metadata["sha256"])
+        atomic_write_bytes(image_path, raw)
+        atomic_write_bytes(metadata_path, json.dumps(metadata, ensure_ascii=False, indent=2).encode())
     return metadata
 
 
@@ -148,33 +153,30 @@ def store_generated_file_artifact(
     target = day_dir / f"{artifact_id}{extension}"
     metadata_path = day_dir / f"{artifact_id}.json"
 
-    digest = hashlib.sha256()
-    try:
-        with source.open("rb") as src, target.open("wb") as dst:
-            while chunk := src.read(1024 * 1024):
-                digest.update(chunk)
-                dst.write(chunk)
-    except OSError:
-        target.unlink(missing_ok=True)
-        raise
+    base = get_media_dir().resolve()
+    store = AttachmentStore(base / "attachments", media_root=base)
+    staged = store.stage_path(source, mime=mime, name=source.name, source=provider)
     metadata: dict[str, Any] = {
         "id": artifact_id,
         "kind": kind,
         "name": target.name,
         "path": str(target),
         "mime": mime,
-        "bytes": target.stat().st_size,
-        "sha256": digest.hexdigest(),
+        "bytes": staged.bytes,
+        "sha256": staged.sha256,
         "prompt": prompt,
         "model": model,
         "provider": provider,
         "source_images": [],
         "created_at": now.isoformat(),
     }
-    metadata_path.write_text(
-        json.dumps(metadata, ensure_ascii=False, indent=2),
-        encoding="utf-8",
-    )
+    store.custody.declare("generated", _artifact_root(save_dir, base))
+    with store.custody.fence(create=True) as gate:
+        store.custody.pin(gate, publication_id=artifact_id, path=target, sha256=staged.sha256,
+                          token=staged.token)
+        atomic_write_bytes(target, staged.temp_path.read_bytes())
+        atomic_write_bytes(metadata_path, json.dumps(metadata, ensure_ascii=False, indent=2).encode())
+        store.discard(staged)
     return metadata
 
 
@@ -233,31 +235,34 @@ def parse_embedded_text_payload(value: Any) -> Mapping[str, Any] | None:
     return cast(Mapping[str, Any], parsed) if isinstance(parsed, Mapping) else None
 
 
+def candidate_artifact_count(payload: Mapping[str, Any] | None) -> int | None:
+    """Read the declared size of a media candidate batch."""
+    count = payload.get("candidate_count") if payload is not None else None
+    if isinstance(count, int) and not isinstance(count, bool):
+        return count if count > 0 else None
+    candidates = payload.get("candidates") if payload is not None else None
+    if isinstance(candidates, list) and candidates:
+        return len(cast(list[object], candidates))
+    return None
+
+
 def select_candidate_artifacts(
-    artifacts: list[dict[str, Any]],
+    artifacts: Sequence[dict[str, Any] | None],
     payload: Mapping[str, Any] | None,
 ) -> list[dict[str, Any]]:
-    """Keep generated candidates, not the reference/critic image blocks.
-
-    MCP image batches put critic/reference images before the generated
-    candidates. The payload reports ``candidate_count``, so the trailing items
-    are the generated candidates. If the count is unavailable, keep every item.
-    """
-    clean = [item for item in artifacts if item]
-    if not clean:
-        return []
-    candidate_count = payload.get("candidate_count") if payload is not None else None
-    if isinstance(candidate_count, bool) or not isinstance(candidate_count, int):
-        candidate_count = None
+    """Select trailing candidates, preserving the positions of failed stores."""
+    slots = [item for item in artifacts if item is None or item]
+    candidate_count = candidate_artifact_count(payload)
+    if candidate_count is None or candidate_count > len(slots):
+        return [item for item in slots if item is not None]
     raw_candidates = payload.get("candidates") if payload is not None else None
     candidates = cast(list[Any], raw_candidates) if isinstance(raw_candidates, list) else []
-    if candidate_count is None and candidates:
-        candidate_count = len(candidates)
-    if candidate_count is None or not 0 < candidate_count <= len(clean):
-        return clean
 
-    selected = [dict(item) for item in clean[-candidate_count:]]
-    for index, item in enumerate(selected):
+    selected: list[dict[str, Any]] = []
+    for index, artifact in enumerate(slots[-candidate_count:]):
+        if artifact is None:
+            continue
+        item = dict(artifact)
         candidate = candidates[index] if index < len(candidates) else None
         if isinstance(candidate, Mapping):
             candidate_map = cast(Mapping[str, Any], candidate)
@@ -267,4 +272,5 @@ def select_candidate_artifacts(
                 item["prompt"] = candidate_prompt
         else:
             item.setdefault("candidate", index + 1)
+        selected.append(item)
     return selected

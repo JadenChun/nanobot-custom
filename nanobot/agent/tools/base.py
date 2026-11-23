@@ -28,6 +28,100 @@ _JSON_TYPE_MAP: dict[str, type | tuple[type, ...]] = {
     "object": dict,
 }
 
+# Keywords that :meth:`Schema.validate_json_schema_value` enforces. Any other
+# keyword would be advertised to the model but silently ignored before dispatch.
+_ENFORCED_JSON_SCHEMA_KEYS = frozenset({
+    "type", "properties", "required", "additionalProperties", "items",
+    "enum", "minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum",
+    "multipleOf", "minLength", "maxLength", "minItems", "maxItems",
+    "nullable",
+})
+_JSON_SCHEMA_ANNOTATION_KEYS = frozenset({"description", "title", "default", "$schema"})
+_SUPPORTED_JSON_SCHEMA_TYPES = frozenset({*_JSON_TYPE_MAP, "null"})
+_NUMERIC_LIMIT_KEYS = ("multipleOf", "exclusiveMinimum", "exclusiveMaximum")
+
+
+def numeric_limit_value(value: Any) -> int | float | None:
+    """Return ``value`` as a numeric JSON Schema limit, or ``None`` when it is not one.
+
+    Booleans are excluded because ``bool`` is an ``int`` subclass in Python.
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    if isinstance(value, int):
+        return value
+    return value if math.isfinite(value) else None
+
+
+def invalid_numeric_limit(
+    mapping: dict[str, Any],
+    key: str,
+    *,
+    path: str = "",
+) -> str | None:
+    """Return an error when a numeric constraint keyword carries an unusable limit."""
+    if key not in mapping:
+        return None
+    if numeric_limit_value(mapping[key]) is None:
+        return f"{path or 'schema'} requires a numeric {key!r}"
+    if key == "multipleOf" and cast(int | float, mapping[key]) <= 0:
+        return f"{path or 'schema'} requires a positive {key!r}"
+    return None
+
+
+def unsupported_json_schema_constraint(schema: Any, *, path: str = "") -> str | None:
+    """Return the first advertised keyword or type the local validator cannot enforce.
+
+    External or raw schemas may declare constraints such as ``pattern`` or ``$ref``
+    that :meth:`Schema.validate_json_schema_value` would ignore. Publishers call this
+    before the schema becomes model-visible. Annotation-only keywords (``description``,
+    ``title``, ``default``) are accepted because they promise no enforcement.
+    """
+    if not isinstance(schema, dict):
+        return f"{path or 'schema'} must be an object"
+    mapping = cast(dict[str, Any], schema)
+    for key in mapping:
+        if key not in _ENFORCED_JSON_SCHEMA_KEYS and key not in _JSON_SCHEMA_ANNOTATION_KEYS:
+            return f"{path or 'schema'} uses unsupported keyword {key!r}"
+    if "$schema" in mapping:
+        dialect = mapping["$schema"]
+        if not isinstance(dialect, str) or not dialect.strip():
+            return f"{path or 'schema'} requires a non-empty string '$schema'"
+    for key in _NUMERIC_LIMIT_KEYS:
+        error = invalid_numeric_limit(mapping, key, path=path)
+        if error:
+            return error
+    raw_type = mapping.get("type")
+    if raw_type is not None:
+        types: list[Any] = (
+            list(cast(list[Any], raw_type)) if isinstance(raw_type, list) else [raw_type]
+        )
+        if any(item not in _SUPPORTED_JSON_SCHEMA_TYPES for item in types):
+            return f"{path or 'schema'} uses an unsupported type"
+        if len([item for item in types if item != "null"]) > 1:
+            return f"{path or 'schema'} uses an unsupported type union"
+    properties = mapping.get("properties")
+    if isinstance(properties, dict):
+        for name, child in cast(dict[str, Any], properties).items():
+            error = unsupported_json_schema_constraint(
+                child, path=f"{path}.{name}" if path else name
+            )
+            if error:
+                return error
+    items = mapping.get("items")
+    if isinstance(items, dict):
+        error = unsupported_json_schema_constraint(items, path=f"{path}[]" if path else "[]")
+        if error:
+            return error
+    additional = mapping.get("additionalProperties")
+    if isinstance(additional, dict):
+        error = unsupported_json_schema_constraint(
+            additional, path=f"{path}.*" if path else "*"
+        )
+        if error:
+            return error
+    return None
+
 
 class Schema(ABC):
     """Abstract base for JSON Schema fragments describing tool parameters.
@@ -81,6 +175,28 @@ class Schema(ABC):
                 errors.append(f"{label} must be >= {schema['minimum']}")
             if "maximum" in schema and val > schema["maximum"]:
                 errors.append(f"{label} must be <= {schema['maximum']}")
+            number_value = cast(int | float, val)
+            multiple_of = numeric_limit_value(schema.get("multipleOf"))
+            if multiple_of is not None and multiple_of > 0:
+                if isinstance(number_value, int) and isinstance(multiple_of, int):
+                    is_multiple = number_value % multiple_of == 0
+                else:
+                    try:
+                        quotient = number_value / multiple_of
+                    except OverflowError:
+                        is_multiple = False
+                    else:
+                        is_multiple = math.isclose(
+                            quotient, round(quotient), rel_tol=1e-9, abs_tol=1e-9
+                        )
+                if not is_multiple:
+                    errors.append(f"{label} must be a multiple of {multiple_of}")
+            exclusive_minimum = numeric_limit_value(schema.get("exclusiveMinimum"))
+            if exclusive_minimum is not None and number_value <= exclusive_minimum:
+                errors.append(f"{label} must be > {exclusive_minimum}")
+            exclusive_maximum = numeric_limit_value(schema.get("exclusiveMaximum"))
+            if exclusive_maximum is not None and number_value >= exclusive_maximum:
+                errors.append(f"{label} must be < {exclusive_maximum}")
         if t == "string":
             string_value = cast(str, val)
             if "minLength" in schema and len(string_value) < schema["minLength"]:
@@ -180,6 +296,7 @@ class ToolDenialKind(StrEnum):
 
     PRIVATE_NETWORK = "private_network"
     MANAGED_UNAVAILABLE = "managed_unavailable"
+    WRITE_PERMISSION = "write_permission"
 
 
 PRIVATE_NETWORK_DENIAL_NOTE = (
@@ -313,6 +430,16 @@ class Tool(ABC):
     @classmethod
     def create(cls, ctx: ToolContext) -> Tool:
         return cls()
+
+    def dispose(self) -> None:
+        """Release resources acquired during ``create()``.
+
+        The loader calls this when a constructed plugin is never published, for
+        example after a duplicate-name, name, or schema rejection. Tools that own
+        a resource override it; the default is a no-op. Publication keeps the
+        resource, so the loader does not call this after a successful load.
+        """
+        return None
 
     def runtime_context_provider(self) -> RuntimeContextProvider | None:
         """Return optional per-turn prompt context owned by this tool."""

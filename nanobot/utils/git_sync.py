@@ -276,12 +276,16 @@ def sync_context_repo(
     include_paths: list[str] | None = None,
     exclude_paths: list[str] | None = None,
     message: str = "nanobot: auto-sync context updates",
+    push: bool = True,
 ) -> bool:
     """Save selected changes and synchronize under a shared Git-directory lock.
 
     A conflict retains local commits and upstream history for reconciliation.
     Unrelated index/worktree changes are never stashed or committed. Callers
     must opt in only designated knowledge repositories to automatic sync.
+
+    ``push=False`` keeps the local commit and never reads or writes the remote.
+    A later call with ``push=True`` pushes that retained commit unchanged.
     """
     try:
         if not is_git_repo(repo):
@@ -290,7 +294,9 @@ def sync_context_repo(
         if common.returncode != 0 or not common.stdout.strip():
             return False
         with FileLock(str(Path(common.stdout.strip()) / "nanobot-sync.lock"), timeout=0):
-            return _sync_context_repo_locked(repo, include_paths, exclude_paths, message)
+            return _sync_context_repo_locked(
+                repo, include_paths, exclude_paths, message, push=push,
+            )
     except Timeout:
         logger.warning("Context repo sync already in progress: {}", repo)
     except (subprocess.TimeoutExpired, OSError):
@@ -300,6 +306,7 @@ def sync_context_repo(
 
 def _sync_context_repo_locked(
     repo: Path, include_paths: list[str] | None, exclude_paths: list[str] | None, message: str,
+    *, push: bool = True,
 ) -> bool:
     if has_unmerged_paths(repo):
         return False
@@ -312,6 +319,10 @@ def _sync_context_repo_locked(
     selected = _select_changed_paths(repo, include_paths, exclude_paths)
     if selected and not _commit_selected_paths(repo, selected, message):
         return False
+    if not push:
+        # autoPush is off: keep the retained local commit and never contact the
+        # remote. A later push=True sync audits and pushes the same commit.
+        return True
     # Commit before integrating upstream: a conflict can be aborted without
     # losing the saved knowledge or altering unrelated dirty/staged versions.
     for attempt in range(4):
@@ -329,11 +340,11 @@ def _sync_context_repo_locked(
             return False
         if not _ahead_commit_summaries(repo, upstream):
             return True
-        push = _run_git(repo, "push", timeout=60)
-        if push.returncode == 0:
+        pushed = _run_git(repo, "push", timeout=60)
+        if pushed.returncode == 0:
             logger.info("Context repo synced successfully: {}", repo)
             return True
-        logger.warning("Context repo push attempt {} failed: {}", attempt + 1, _git_output(push))
+        logger.warning("Context repo push attempt {} failed: {}", attempt + 1, _git_output(pushed))
     logger.error("Context repo push failed after 4 attempts; local commits retained")
     return False
 
@@ -344,10 +355,12 @@ async def async_sync_context_repo(
     include_paths: list[str] | None = None,
     exclude_paths: list[str] | None = None,
     message: str = "nanobot: auto-sync context updates",
+    push: bool = True,
 ) -> bool:
     """Run sync_context_repo in a thread pool to avoid blocking the event loop."""
     work = asyncio.create_task(asyncio.to_thread(
-        sync_context_repo, repo, include_paths=include_paths, exclude_paths=exclude_paths, message=message,
+        sync_context_repo, repo, include_paths=include_paths, exclude_paths=exclude_paths,
+        message=message, push=push,
     ))
     cancelled = False
     while not work.done():

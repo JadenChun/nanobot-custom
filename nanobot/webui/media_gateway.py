@@ -21,8 +21,10 @@ from nanobot.webui.attachment_ingress import AttachmentIngressResult
 from nanobot.webui.ingress_policy import AttachmentIngressLimits
 from nanobot.webui.media_api import (
     serve_signed_media,
+    sign_existing_media_path,
     sign_or_stage_media_path,
     signed_media_attachments,
+    stage_managed_media_path,
 )
 from nanobot.webui.transcript import rewrite_local_markdown_images
 
@@ -98,12 +100,14 @@ class WebUIMediaGateway:
         payload: str,
         *,
         request: WsRequest | None = None,
+        max_response_bytes: int | None = None,
     ) -> Response:
         return serve_signed_media(
             sig,
             payload,
             secret=self.secret,
             request=request,
+            max_response_bytes=max_response_bytes,
             media_dir=self._media_dir,
         )
 
@@ -130,11 +134,12 @@ class WebUIMediaGateway:
         *,
         workspace_path: Path | None = None,
         allow_folder_grants: bool = False,
+        publication: bool = True,
     ) -> str:
         return rewrite_local_markdown_images(
             text,
             workspace_path=workspace_path or self.workspace_path,
-            sign_path=lambda path: self.sign_or_stage_media_path(
+            sign_path=lambda path: (self.sign_or_stage_media_path if publication else self.sign_media_read)(
                 path,
                 allow_folder_grants=allow_folder_grants,
             ),
@@ -145,6 +150,18 @@ class WebUIMediaGateway:
             ),
         )
 
+    def sign_media_read(
+        self, path: Path, *, allow_folder_grants: bool = False,
+    ) -> dict[str, str] | None:
+        """Sign retained managed bytes purely; newly staged bytes keep custody."""
+        try:
+            managed = path.resolve(strict=True).is_relative_to(self._media_dir(None).resolve(strict=True))
+        except OSError:
+            return None
+        if managed:
+            return sign_existing_media_path(path, secret=self.secret, media_dir=self._media_dir)
+        return self.sign_or_stage_media_path(path, allow_folder_grants=allow_folder_grants)
+
     def augment_transcript_media(
         self,
         paths: list[str],
@@ -153,11 +170,36 @@ class WebUIMediaGateway:
     ) -> list[dict[str, Any]]:
         return signed_media_attachments(
             paths,
-            sign_path=lambda path: self.sign_or_stage_media_path(
+            sign_path=lambda path: self.sign_transcript_media_read(
                 path,
                 allow_folder_grants=allow_folder_grants,
             ),
         )
+
+    def sign_transcript_media_read(
+        self, path: Path, *, allow_folder_grants: bool = False,
+    ) -> dict[str, str] | None:
+        """Sign media for a transcript read without creating custody records.
+
+        A transcript projection is read-only: the same bytes are signed again on
+        every open, so minting a publication record per read accumulated one
+        permanent custody entry per media file per load (measured here: over
+        1,200 leaked records, and every pending scan costs ~80 ms because it
+        parses each record). Stage the bytes once if the source is unmanaged,
+        then sign the managed path directly so a transcript read never grows
+        custody state.
+        """
+        managed = stage_managed_media_path(
+            path,
+            media_dir=self._media_dir,
+            authorize_source=lambda source: self._authorize_managed_source(
+                source,
+                allow_folder_grants=allow_folder_grants,
+            ),
+        )
+        if managed is None:
+            return None
+        return sign_existing_media_path(managed, secret=self.secret, media_dir=self._media_dir)
 
     def augment_transcript_user_media(self, paths: list[str]) -> list[dict[str, Any]]:
         return self.augment_transcript_media(paths)

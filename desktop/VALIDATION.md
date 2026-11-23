@@ -46,14 +46,12 @@ data.
 
 ## Voice input
 
-Microphone capture relies on WebKitGTK granting the page's media request. The
-desktop shell does not grant microphone access. On the qualified release, the
-actual Voice input control displayed: “Allow microphone access in the address
-bar, then retry.” No recording started. That browser-oriented error is the
-existing chat fallback; this release does not provide native microphone
-capture. Text chat remains available.
-The release-window observation is recorded in
-`native-microphone-denied.json`.
+Kohaku asks for microphone access after it opens chat for the first time.
+If you select **Not now**, Kohaku asks again when you select **Voice input**.
+The shell grants microphone requests from the selected local gateway after
+you allow access. Kohaku starts recording when you use **Voice input**.
+
+`native-microphone-denied.json` records the behavior of an earlier release.
 
 ## Build and validation
 

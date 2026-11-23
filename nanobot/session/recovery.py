@@ -487,14 +487,17 @@ class RecoveryCoordinator:
     async def scan(self) -> None:
         """Recover every interrupted WebUI session once at gateway startup."""
         for key in self._recovery_candidates():
-            metadata_payload = self.sessions.read_session_metadata(key)
+            # Classification needs header facts only (follow-up journal and
+            # recovery markers). A settled canonical session must not pay for a
+            # full body validation at startup; unresolved sessions still load
+            # the owner-validated snapshot below.
+            metadata_payload = self.sessions.read_startup_header_metadata(key)
             raw_metadata = metadata_payload.get("metadata") if metadata_payload else None
             metadata = cast(dict[str, Any], raw_metadata) if isinstance(raw_metadata, dict) else {}
             route = self._websocket_route_for(key, metadata)
             if route is None:
                 continue
-            unfinished = self._has_unfinished_webui_transcript(key)
-            if not self._needs_recovery(metadata) and not unfinished:
+            if not self._needs_recovery(metadata) and not self._has_unfinished_webui_transcript(key):
                 continue
             session = self.sessions.get_or_create(key)
             if self.sessions.source_backend(key) is not None:
@@ -828,6 +831,7 @@ class RecoveryCoordinator:
             metadata = snapshot.header["metadata"]
             messages = decode_pending_followups(
                 metadata.get(SOURCE_PENDING_FOLLOWUPS_METADATA_KEY, []), session.key,
+                source_state=snapshot.state,
             )
             checkpoint = backend.get_runtime_checkpoint_path(session.key)
             if (

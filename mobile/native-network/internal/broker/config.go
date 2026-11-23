@@ -14,6 +14,7 @@ const (
 	defaultRespLimit  = 8 << 20
 	defaultFrameLimit = 37_748_736
 	defaultSendQueue  = 16
+	defaultRequests   = 64
 	maxRequestTimeout = 120_000
 )
 
@@ -46,6 +47,7 @@ type Config struct {
 	QueueSize        int `json:"queue_size,omitempty"`
 	MaxResponseBytes int `json:"max_response_bytes,omitempty"`
 	MaxWSFrameBytes  int `json:"max_ws_frame_bytes,omitempty"`
+	MaxRequests      int `json:"max_requests,omitempty"`
 
 	// Test-only; never populated from the C ABI or Capacitor config.
 	AllowTestRoutes       bool `json:"-"`
@@ -88,10 +90,13 @@ func (c *Config) normalize() error {
 	if c.MaxWSFrameBytes <= 0 {
 		c.MaxWSFrameBytes = defaultFrameLimit
 	}
+	if c.MaxRequests <= 0 {
+		c.MaxRequests = defaultRequests
+	}
 	if c.QueueSize > 1024 {
 		return fmt.Errorf("%w: queue_size is too large", ErrInvalid)
 	}
-	if c.MaxResponseBytes > 16<<20 || c.MaxWSFrameBytes > 41_943_040 {
+	if c.MaxResponseBytes > 16<<20 || c.MaxWSFrameBytes > 41_943_040 || c.MaxRequests > 256 {
 		return fmt.Errorf("%w: configured limit is too large", ErrInvalid)
 	}
 	return nil

@@ -1,10 +1,11 @@
 """Document text extraction utilities for nanobot."""
 
 import mimetypes
+import zlib
 from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from zipfile import BadZipFile, ZipFile
 
 from loguru import logger
@@ -21,6 +22,9 @@ _MAX_DOCX_TABLE_CELLS = 100_000
 _MAX_DOCX_TABLE_DEPTH = 8
 _MAX_PDF_CONTENT_STREAM_SIZE = 32 * 1024 * 1024  # 32 MB per page
 _MAX_PDF_ATTACHMENT_PAGES = 100
+# Content stream filters the parser can bound before decoding. A filter that
+# cannot be bounded without materializing its output is refused instead.
+_MAX_PDF_BOUNDED_CONTENT_FILTERS = frozenset({"/FlateDecode", "/Fl"})
 
 
 class _TextCollector:
@@ -172,6 +176,142 @@ def _check_office_archive(path: Path) -> None:
         raise DocumentExtractionError(_clean_extraction_error(error))
 
 
+def _pdf_object_value(value: Any) -> Any:
+    """Resolve one indirect PDF object without materializing stream data."""
+    get_object = getattr(value, "get_object", None)
+    return get_object() if callable(get_object) else value
+
+
+def _pdf_stream_filter_names(stream: Any) -> list[str]:
+    """Return the declared filter names of one raw PDF stream object."""
+    getter = getattr(stream, "get", None)
+    declared = _pdf_object_value(getter("/Filter")) if callable(getter) else None
+    if isinstance(declared, str):
+        return [declared]
+    if isinstance(declared, (list, tuple)):
+        return [
+            str(_pdf_object_value(name))
+            for name in cast("list[object] | tuple[object, ...]", declared)
+        ]
+    return []
+
+
+def _pdf_page_content_streams(page: Any) -> list[Any]:
+    """Return a page's raw content stream objects when the page exposes them."""
+    getter = getattr(page, "get", None)
+    if not callable(getter):
+        return []
+    contents = _pdf_object_value(getter("/Contents"))
+    if isinstance(contents, (list, tuple)):
+        return [
+            _pdf_object_value(entry)
+            for entry in cast("list[object] | tuple[object, ...]", contents)
+        ]
+    if contents is None:
+        return []
+    return [contents]
+
+
+def _bounded_flate_output_length(raw: bytes, limit: int) -> int | None:
+    """Return the decoded length of a Flate stream, or None when it exceeds ``limit``."""
+    for wbits in (zlib.MAX_WBITS, -zlib.MAX_WBITS):
+        try:
+            decoder = zlib.decompressobj(wbits)
+            decoded = decoder.decompress(raw, limit + 1)
+        except zlib.error:
+            continue
+        if len(decoded) > limit or decoder.unconsumed_tail:
+            return None
+        return len(decoded)
+    return None
+
+
+def _check_pdf_encoded_stream(stream: Any, page_number: int) -> None:
+    """Refuse an over-expansion content stream from its encoded bytes only."""
+    raw = getattr(stream, "_data", b"")
+    if not isinstance(raw, (bytes, bytearray)):
+        return
+    limit_mb = _MAX_PDF_CONTENT_STREAM_SIZE // (1024 * 1024)
+    if len(raw) > _MAX_PDF_CONTENT_STREAM_SIZE:
+        raise PdfSafetyError(
+            f"page {page_number} compressed content stream exceeds {limit_mb} MB limit"
+        )
+    filters = _pdf_stream_filter_names(stream)
+    if not filters:
+        return
+    if len(filters) != 1 or filters[0] not in _MAX_PDF_BOUNDED_CONTENT_FILTERS:
+        raise PdfSafetyError(
+            f"page {page_number} content stream filter {'/'.join(filters)} is not "
+            f"supported within the {limit_mb} MB expansion budget"
+        )
+    expanded = _bounded_flate_output_length(bytes(raw), _MAX_PDF_CONTENT_STREAM_SIZE)
+    if expanded is None:
+        raise PdfSafetyError(
+            f"page {page_number} content stream cannot be decoded within the "
+            f"{limit_mb} MB expansion budget"
+        )
+
+
+def _check_pdf_page_content_streams(page: Any, page_number: int) -> None:
+    """Bound every encoded content stream before pypdf decodes the page.
+
+    ``pypdf`` materializes a page's content stream inside
+    ``PageObject.get_contents()``, so the expansion limit has to be applied to
+    the raw stream objects first. A page object that does not expose its
+    dictionary keeps the previous post-decode guard only.
+    """
+    for stream in _pdf_page_content_streams(page):
+        _check_pdf_encoded_stream(stream, page_number)
+
+
+def _check_pdf_stream_bound(contents: Any, page_number: int) -> None:
+    """Bound a page content stream before full decoded materialization."""
+    raw = getattr(contents, "_data", None)
+    if isinstance(raw, (bytes, bytearray)) and len(raw) > _MAX_PDF_CONTENT_STREAM_SIZE:
+        raise PdfSafetyError(
+            f"page {page_number} compressed content stream exceeds "
+            f"{_MAX_PDF_CONTENT_STREAM_SIZE // (1024 * 1024)} MB limit"
+        )
+    getter = getattr(contents, "get", None)
+    raw_filters: object = getter("/Filter") if callable(getter) else None
+    if isinstance(raw_filters, str):
+        filter_names: list[str] = [raw_filters]
+    elif isinstance(raw_filters, (list, tuple)):
+        filter_names = [
+            str(name)
+            for name in cast("list[object] | tuple[object, ...]", raw_filters)
+        ]
+    else:
+        filter_names = []
+    if any(name == "/FlateDecode" for name in filter_names) and isinstance(
+        raw, (bytes, bytearray)
+    ):
+        exceeded = False
+        try:
+            decoder = zlib.decompressobj()
+            decoded = decoder.decompress(
+                bytes(raw),
+                _MAX_PDF_CONTENT_STREAM_SIZE + 1,
+            )
+            exceeded = (
+                len(decoded) > _MAX_PDF_CONTENT_STREAM_SIZE
+                or bool(decoder.unconsumed_tail)
+            )
+        except zlib.error:
+            exceeded = False
+        if exceeded:
+            raise PdfSafetyError(
+                f"page {page_number} decoded content stream exceeds "
+                f"{_MAX_PDF_CONTENT_STREAM_SIZE // (1024 * 1024)} MB limit"
+            )
+    decoded = contents.get_data()
+    if len(decoded) > _MAX_PDF_CONTENT_STREAM_SIZE:
+        raise PdfSafetyError(
+            f"page {page_number} content stream exceeds "
+            f"{_MAX_PDF_CONTENT_STREAM_SIZE // (1024 * 1024)} MB limit"
+        )
+
+
 def _open_pdf_line_source(path: Path, pages: str | None) -> DocumentLineSource:
     try:
         from pypdf import PdfReader
@@ -198,14 +338,10 @@ def _open_pdf_line_source(path: Path, pages: str | None) -> DocumentLineSource:
         wrote_page = False
         for index in range(start, end + 1):
             page = reader.pages[index]
+            _check_pdf_page_content_streams(page, index + 1)
             contents = page.get_contents()
             if contents is not None:
-                stream_size = len(contents.get_data())
-                if stream_size > _MAX_PDF_CONTENT_STREAM_SIZE:
-                    raise PdfSafetyError(
-                        f"page {index + 1} content stream exceeds "
-                        f"{_MAX_PDF_CONTENT_STREAM_SIZE // (1024 * 1024)} MB limit"
-                    )
+                _check_pdf_stream_bound(contents, index + 1)
             text = (page.extract_text() or "").strip()
             if not text:
                 continue
@@ -467,14 +603,10 @@ def extract_pdf_pages(
     collector = _TextCollector(max_chars)
     for index in range(start, end + 1):
         page = reader.pages[index]
+        _check_pdf_page_content_streams(page, index + 1)
         contents = page.get_contents()
         if contents is not None:
-            stream_size = len(contents.get_data())
-            if stream_size > _MAX_PDF_CONTENT_STREAM_SIZE:
-                raise PdfSafetyError(
-                    f"page {index + 1} content stream exceeds "
-                    f"{_MAX_PDF_CONTENT_STREAM_SIZE // (1024 * 1024)} MB limit"
-                )
+            _check_pdf_stream_bound(contents, index + 1)
         text = (page.extract_text() or "").strip()
         if text and not collector.add(f"--- Page {index + 1} ---\n{text}", separator="\n\n"):
             end = index

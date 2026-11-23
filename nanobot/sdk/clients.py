@@ -55,10 +55,8 @@ class SessionClient:
             raise ValueError("ingested messages must include a session key")
         if save and self._loop.sessions.has_managed_authority:
             raise RuntimeError("managed session import is unsupported")
-        session = self._loop.sessions.get_or_create(session_key) if save else Session(session_key)
-        if metadata:
-            session.metadata.update(deepcopy(dict(metadata)))
-
+        prepared_metadata = deepcopy(dict(metadata)) if metadata else {}
+        prepared_messages: list[tuple[str, Any, dict[str, Any]]] = []
         for raw in messages:
             if "role" not in raw:
                 raise ValueError("ingested messages must include a role")
@@ -74,10 +72,25 @@ class SessionClient:
             }
             if source is not None and "source" not in extra:
                 extra["source"] = source
-            session.add_message(role, deepcopy(raw["content"]), **extra)
+            prepared_messages.append((role, deepcopy(raw["content"]), extra))
 
-        if save:
-            self._loop.sessions.save(session)
+        session = self._loop.sessions.get_or_create(session_key) if save else Session(session_key)
+        original_metadata = dict(session.metadata)
+        original_message_count = len(session.messages)
+        try:
+            if prepared_metadata:
+                session.metadata.update(prepared_metadata)
+            for role, content, extra in prepared_messages:
+                session.add_message(role, content, **extra)
+            if save:
+                self._loop.sessions.save(session)
+        except BaseException:
+            session.metadata.clear()
+            session.metadata.update(original_metadata)
+            del session.messages[original_message_count:]
+            if save:
+                self._loop.sessions.invalidate(session_key)
+            raise
         return snapshot_from_session(session)
 
     def get(self, session_key: str) -> SessionSnapshot | None:

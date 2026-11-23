@@ -6,6 +6,7 @@ import json
 import socket
 from unittest.mock import patch
 
+import httpx
 import pytest
 
 from nanobot.agent.tools import web as web_module
@@ -18,6 +19,17 @@ from nanobot.agent.tools.web import (
 
 def _fake_resolve_public(hostname, port, family=0, type_=0):
     return [(socket.AF_INET, socket.SOCK_STREAM, 0, "", ("93.184.216.34", 0))]
+
+
+class _Stream:
+    def __init__(self, response):
+        self.response = response
+
+    async def __aenter__(self):
+        return self.response
+
+    async def __aexit__(self, *args):
+        return False
 
 
 class _RecordingJinaClient:
@@ -34,19 +46,13 @@ class _RecordingJinaClient:
     async def __aexit__(self, *args):
         return False
 
-    async def get(self, url, **kwargs):
+    def stream(self, method, url, **kwargs):
         _RecordingJinaClient.requested.append(url)
-
-        class _Response:
-            status_code = 200
-
-            def raise_for_status(self):
-                pass
-
-            def json(self):
-                return {"data": {"title": "T", "content": "body", "url": url}}
-
-        return _Response()
+        return _Stream(httpx.Response(
+            200,
+            json={"data": {"title": "T", "content": "body", "url": url}},
+            request=httpx.Request(method, url),
+        ))
 
 
 @pytest.fixture
@@ -167,12 +173,16 @@ async def test_execute_fetches_credential_urls_locally(monkeypatch) -> None:
         status_code = 200
         headers = {"content-type": "text/html"}
         url = "https://example.com/download"
+        request = httpx.Request("GET", "https://example.com/download")
 
         async def __aenter__(self):
             return self
 
         async def __aexit__(self, exc_type, exc, tb):
             return False
+
+        async def aiter_bytes(self):
+            yield FakeResponse.text.encode()
 
     class FakeResponse:
         status_code = 200
@@ -231,12 +241,16 @@ async def test_execute_does_not_send_redirected_credential_url_to_jina(monkeypat
                 if url == short_url
                 else {"content-type": "text/html"}
             )
+            self.request = httpx.Request("GET", url)
 
         async def __aenter__(self):
             return self
 
         async def __aexit__(self, exc_type, exc, tb):
             return False
+
+        async def aiter_bytes(self):
+            yield FakeResponse.text.encode()
 
     class FakeResponse:
         status_code = 200

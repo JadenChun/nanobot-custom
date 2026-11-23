@@ -117,6 +117,8 @@ def build_generated_assets_payload_from_groups(
     sign_path: Callable[[Path], Mapping[str, str] | None],
     cursor: int = 0,
     limit: int | None = None,
+    next_session_cursor: int | None = None,
+    newest_first: bool = False,
 ) -> dict[str, Any]:
     """Finalize indexed raw groups and return one page of signed asset groups."""
     root = media_root.resolve()
@@ -137,6 +139,9 @@ def build_generated_assets_payload_from_groups(
         group["artifacts"] = artifacts
         groups.append(group)
 
+    if newest_first:
+        groups.sort(key=_group_recency, reverse=True)
+
     start = max(0, cursor)
     page = groups[start:] if limit is None else groups[start:start + max(0, limit)]
     next_cursor = start + len(page)
@@ -146,7 +151,19 @@ def build_generated_assets_payload_from_groups(
         "total": total,
         "groups": page,
         "next": str(next_cursor) if next_cursor < len(groups) else None,
+        "nextSessionCursor": (
+            str(next_session_cursor) if next_session_cursor is not None else None
+        ),
+        "truncated": next_session_cursor is not None,
     }
+
+
+def _group_recency(group: Mapping[str, Any]) -> tuple[int, int, int]:
+    started_at = _created_at_ms(group.get("startedAt")) or 0
+    artifacts = cast(list[Mapping[str, Any]], group["artifacts"])
+    latest = max(_created_at_ms(artifact.get("createdAt")) or started_at for artifact in artifacts)
+    sequence = group["sequence"]
+    return latest, started_at, sequence if isinstance(sequence, int) else 0
 
 
 def _event_artifacts(event: Mapping[str, Any]) -> list[dict[str, Any]]:

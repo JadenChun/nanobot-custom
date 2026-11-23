@@ -1,7 +1,9 @@
 """A process wakes the same assistant once; uncertain work never replays."""
 
 import asyncio
+import json
 import re
+import sqlite3
 from dataclasses import replace
 
 import pytest
@@ -38,6 +40,10 @@ def setup(tmp_path):
     project = tmp_path / "project-a"
     project.mkdir()
     assistant = Assistant(tmp_path / "agent")
+    source = assistant.sessions._jsonl_store.source
+    session = assistant.sessions.get_cached("telegram:42")
+    snapshot = source.upgrade_source_session(session.key, expected_revision=session.revision,
+        expected_generation=session.generation, expected_incarnation=session.incarnation)
     runtime = ProcessCompletionRuntime(tmp_path / "runtime", assistant)
     runtime.start()
     manager = ExecSessionManager()
@@ -46,7 +52,8 @@ def setup(tmp_path):
     origin = RequestContext(channel="telegram", chat_id="42", session_key="telegram:42",
                             original_user_text="Run project A's check", turn_id="source-turn-a",
                             metadata={"message_thread_id": 7}, workspace=project,
-                            workspace_scope=build_workspace_scope(project, "restricted"))
+                            workspace_scope=build_workspace_scope(project, "restricted"),
+                            source_state=snapshot.state)
     return project, assistant, runtime, manager, tool, origin
 
 
@@ -78,6 +85,7 @@ async def test_process_exit_continues_original_owner_route_and_project_once(tmp_
         assert message.metadata["message_thread_id"] == 7
         assert message.workspace_scope.project_path == project
         assert "source-turn-a" in message.content and str(project) in message.content
+        assert '"source_state"' not in message.content
         runtime.finished(identity, ExecCompletion("duplicate", exit_code))
         await asyncio.sleep(0)
         assert len(assistant.messages) == 1
@@ -117,7 +125,7 @@ async def test_restart_preserves_unsubmitted_completion_and_marks_process_surviv
     reopened.start()
     await settled(reopened, "finished", "done")
     assert reopened.get("interrupted").state == "unknown"
-    assert reopened.result("interrupted", origin.session_key).state == "unknown"
+    assert reopened.result("interrupted", origin.session_key, source_state=origin.source_state).state == "unknown"
     assert len(assistant.messages) == 1
     await reopened.aclose()
     await manager.close_all()
@@ -159,3 +167,55 @@ async def test_no_process_is_started_without_completion_owner(tmp_path):
     tool = ExecTool(working_dir=str(tmp_path), session_manager=ExecSessionManager())
     refused = await tool.execute(command="echo should-not-run", notify_on_exit=True)
     assert refused.is_error and "enabled gateway" in refused
+
+
+@pytest.mark.asyncio
+async def test_originless_start_refuses_before_creating_a_record(tmp_path):
+    _project, _assistant, runtime, manager, _tool, origin = setup(tmp_path)
+    try:
+        with pytest.raises(ValueError, match="source"):
+            runtime.started("originless", "command", str(origin.workspace), replace(origin, source_state=None))
+        assert not runtime.records()
+    finally:
+        await runtime.aclose()
+        await manager.close_all()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("state", ["waiting", "ready"])
+async def test_old_json_without_origin_is_inspectable_and_not_replayed(tmp_path, state):
+    _project, assistant, runtime, manager, _tool, origin = setup(tmp_path)
+    runtime.started("old", "command", str(origin.workspace), origin)
+    await runtime.aclose()
+    with sqlite3.connect(runtime.path) as db:
+        data = json.loads(db.execute("SELECT data FROM processes WHERE id='old'").fetchone()[0])
+        data.pop("source_state", None)
+        data["state"] = state
+        # The bytes deliberately differ from Pydantic's default serialization.
+        db.execute("UPDATE processes SET data=? WHERE id='old'", (json.dumps(data, indent=2),))
+    reopened = ProcessCompletionRuntime(tmp_path / "runtime", assistant)
+    try:
+        reopened.start()
+        await settled(reopened, "old", "unknown" if state == "waiting" else "cancelled")
+        assert reopened.result("old", origin.session_key, source_state=origin.source_state) is None
+        assert not assistant.messages
+    finally:
+        await reopened.aclose()
+        await manager.close_all()
+
+
+@pytest.mark.asyncio
+async def test_reused_session_key_cannot_receive_completion_or_read_retained_result(tmp_path):
+    _project, assistant, runtime, manager, _tool, origin = setup(tmp_path)
+    try:
+        runtime.started("stale", "command", str(origin.workspace), origin)
+        assistant.sessions.reset_session(origin.session_key)
+        runtime.finished("stale", ExecCompletion("private old result", 0))
+        await settled(runtime, "stale", "cancelled")
+        assert runtime.get("stale").reason == "source_changed"
+        current = assistant.sessions.read_existing_canonical_source(origin.session_key)[1].state
+        assert runtime.result("stale", origin.session_key, source_state=current) is None
+        assert not assistant.messages
+    finally:
+        await runtime.aclose()
+        await manager.close_all()

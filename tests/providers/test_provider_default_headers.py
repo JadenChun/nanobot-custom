@@ -1,5 +1,5 @@
 from nanobot.config.schema import Config, ProviderConfig
-from nanobot.providers.factory import _provider_extra_headers, provider_signature
+from nanobot.providers.factory import provider_extra_headers, provider_signature
 from nanobot.providers.registry import find_by_name
 
 
@@ -7,7 +7,7 @@ def test_kimi_coding_uses_default_user_agent_header() -> None:
     spec = find_by_name("kimi_coding")
 
     assert spec is not None
-    assert _provider_extra_headers(spec, ProviderConfig()) == {
+    assert provider_extra_headers(spec, ProviderConfig()) == {
         "User-Agent": "claude-code/0.1.0",
     }
 
@@ -21,7 +21,7 @@ def test_provider_config_extra_headers_override_defaults() -> None:
         },
     })
 
-    assert _provider_extra_headers(spec, provider) == {
+    assert provider_extra_headers(spec, provider) == {
         "User-Agent": "custom-client/1.0",
         "X-Test": "1",
     }

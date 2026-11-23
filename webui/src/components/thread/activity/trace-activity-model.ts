@@ -16,6 +16,7 @@ export function describeTraceLine(
   line: string,
   status: GenericToolStatus,
   result?: unknown,
+  toolArgs?: unknown,
 ): TraceDescription {
   const trimmed = line.trim();
   const functionMatch = /^([a-zA-Z0-9_.-]+)\((.*)\)$/.exec(trimmed);
@@ -47,7 +48,7 @@ export function describeTraceLine(
       host: parsedUrl ? displayWebHost(parsedUrl.hostname) : undefined,
     };
   }
-  if (isShellTraceName(name)) return describeShellTrace(args, trimmed, status);
+  if (isShellTraceName(name)) return describeShellTrace(args, trimmed, status, toolArgs);
   if (name === "write_file") {
     return describeFileMutationTrace(args, status, "Writing file", "Wrote file", "Could not write file");
   }
@@ -91,8 +92,25 @@ function describeShellTrace(
   args: string,
   fallback: string,
   status: GenericToolStatus,
+  toolArgs?: unknown,
 ): TraceDescription {
-  const command = shellCommandFromArgs(args) || fallback;
+  const description =
+    shellFieldFromToolArgs(toolArgs, ["description", "summary"])
+    || traceFieldFromArgs(args, ["description", "summary"]);
+  if (description) {
+    const cleaned = formatShellIntentPhrase(safeActivityDetail(description, 84));
+    if (cleaned) {
+      return {
+        kind: "tool",
+        label: statusCopy(status, "Running", "Ran", "Failed"),
+        detail: cleaned,
+      };
+    }
+  }
+  const command =
+    shellFieldFromToolArgs(toolArgs, ["command", "cmd", "script"])
+    || shellCommandFromArgs(args)
+    || fallback;
   if (/^(?:\/(?:usr\/)?bin\/)?date(?:\s|$)/i.test(command.trim())) {
     return {
       kind: "tool",
@@ -106,11 +124,139 @@ function describeShellTrace(
       icon: "clock",
     };
   }
+  const inferred = inferShellIntent(command, status);
+  if (inferred) return inferred;
   return {
     kind: "tool",
     label: statusCopy(status, "Running command", "Ran command", "Command failed"),
     detail: summarizeShellCommand(command),
   };
+}
+
+function shellFieldFromToolArgs(toolArgs: unknown, keys: string[]): string {
+  if (!toolArgs || typeof toolArgs !== "object" || Array.isArray(toolArgs)) return "";
+  const record = toolArgs as Record<string, unknown>;
+  for (const key of keys) {
+    const value = record[key];
+    if (typeof value === "string" && value.trim()) return value.trim();
+  }
+  return "";
+}
+
+function formatShellIntentPhrase(phrase: string): string {
+  const trimmed = phrase.trim().replace(/\.+$/, "");
+  if (!trimmed) return "";
+  const firstWord = trimmed.split(/\s+/, 1)[0] ?? "";
+  // Lowercase leading sentence-case word ("Check image size" -> "check image size")
+  // while preserving acronyms ("MCP", "API") and CamelCase proper nouns ("WebUI", "ComfyUI").
+  if (/^[A-Z][a-z]+$/.test(firstWord)) {
+    return trimmed[0].toLowerCase() + trimmed.slice(1);
+  }
+  return trimmed;
+}
+
+function inferShellIntent(command: string, status: GenericToolStatus): TraceDescription | null {
+  const normalized = command.replace(/\r\n/g, "\n").trim();
+  const lines = normalized.split("\n").map((l) => l.trim()).filter(Boolean);
+  const firstLine = lines[0] ?? "";
+  // Strip leading `cd <dir> &&` chains so we inspect the actual command.
+  const coreFirst = firstLine
+    .replace(/^(?:cd\s+(?:"[^"]*"|'[^']*'|[^\s;&|]+)\s*&&\s*)+/i, "")
+    .trim();
+  if (!coreFirst) return null;
+
+  // Python inline heredoc / -c script (e.g. `cd ... && python3 - <<'EOF'`)
+  if (/\bpython3?\s+(?:-\s*<<|-c\b)/i.test(coreFirst)) {
+    const body = normalized;
+    if (/\b(?:PIL|Image\.open|cv2|luminance|contact.?sheet|montage|crop|resize|review_)\b/i.test(body)) {
+      return {
+        kind: "tool",
+        label: statusCopy(status, "Analyzing images", "Analyzed images", "Image analysis failed"),
+        detail: lines.length > 1 ? `Python · ${lines.length} lines` : "",
+      };
+    }
+    if (/\b(?:ffmpeg|ffprobe|moviepy|video)\b/i.test(body)) {
+      return {
+        kind: "tool",
+        label: statusCopy(status, "Processing media", "Processed media", "Media processing failed"),
+        detail: lines.length > 1 ? `Python · ${lines.length} lines` : "",
+      };
+    }
+    return {
+      kind: "tool",
+      label: statusCopy(status, "Running Python script", "Ran Python script", "Python script failed"),
+      detail: lines.length > 1 ? `${lines.length} lines` : "",
+    };
+  }
+
+  // Only infer single-line CLI intents when there are no leading env-var assignments.
+  if (lines.length === 1 && !/^[A-Z0-9_]+=/i.test(coreFirst)) {
+    if (/^(?:\.?\.?\/?[\w./-]*\/)?(?:pytest|vitest|jest)\b|^(?:bun|npm|pnpm|yarn)\s+(?:run\s+)?test\b|^(?:cargo|go)\s+test\b/i.test(coreFirst)) {
+      return {
+        kind: "tool",
+        label: statusCopy(status, "Running tests", "Ran tests", "Tests failed"),
+        detail: "",
+      };
+    }
+    if (/^(?:\.?\.?\/?[\w./-]*\/)?(?:ruff|eslint|flake8)\b/i.test(coreFirst)) {
+      return {
+        kind: "tool",
+        label: statusCopy(status, "Running linter", "Ran linter", "Linter failed"),
+        detail: "",
+      };
+    }
+    if (/^(?:\.?\.?\/?[\w./-]*\/)?(?:tsc|basedpyright|pyright|mypy)\b/i.test(coreFirst)) {
+      return {
+        kind: "tool",
+        label: statusCopy(status, "Checking types", "Checked types", "Type check failed"),
+        detail: "",
+      };
+    }
+    if (/^(?:bun|npm|pnpm|yarn)\s+(?:run\s+)?build\b|^(?:vite|hatchling|cargo)\s+build\b/i.test(coreFirst)) {
+      return {
+        kind: "tool",
+        label: statusCopy(status, "Building project", "Built project", "Build failed"),
+        detail: "",
+      };
+    }
+    if (/^git\s+status\b/i.test(coreFirst)) {
+      return {
+        kind: "tool",
+        label: statusCopy(status, "Checking git status", "Checked git status", "Git status failed"),
+        detail: "",
+      };
+    }
+    if (/^git\s+diff\b/i.test(coreFirst)) {
+      return {
+        kind: "tool",
+        label: statusCopy(status, "Inspecting git diff", "Inspected git diff", "Git diff failed"),
+        detail: "",
+      };
+    }
+    if (/^git\s+log\b/i.test(coreFirst)) {
+      return {
+        kind: "tool",
+        label: statusCopy(status, "Checking git history", "Checked git history", "Git log failed"),
+        detail: "",
+      };
+    }
+    if (/^ffprobe\b/i.test(coreFirst)) {
+      return {
+        kind: "tool",
+        label: statusCopy(status, "Inspecting media", "Inspected media", "Media inspection failed"),
+        detail: "",
+      };
+    }
+    if (/^ffmpeg\b/i.test(coreFirst)) {
+      return {
+        kind: "tool",
+        label: statusCopy(status, "Processing media", "Processed media", "Media processing failed"),
+        detail: "",
+      };
+    }
+  }
+
+  return null;
 }
 
 function describeFileMutationTrace(

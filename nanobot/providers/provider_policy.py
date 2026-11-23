@@ -77,6 +77,15 @@ ESTIMATED_COMPAT_POLICY = ProviderPolicy(
     image_pricing="local_generic",
 )
 
+OPENAI_COMPAT_DEFAULT_POLICY = ProviderPolicy(
+    request_accounting=RequestAccountingPolicy.ESTIMATED_COMPAT,
+    max_request_bytes=DEFAULT_ESTIMATED_COMPAT_MAX_REQUEST_BYTES,
+    supports_usage_anchor=True,
+    supports_source_summary=True,
+    overflow_detection="compat_400",
+    image_pricing="auto",
+)
+
 
 def resolve_provider_policy(
     default: ProviderPolicy | None = None,
@@ -126,6 +135,7 @@ __all__ = [
     "DEFAULT_ESTIMATED_COMPAT_MAX_REQUEST_BYTES",
     "ESTIMATED_COMPAT_POLICY",
     "ImagePricingMode",
+    "OPENAI_COMPAT_DEFAULT_POLICY",
     "OverflowDetectionPolicy",
     "ProviderPolicy",
     "RequestAccountingPolicy",

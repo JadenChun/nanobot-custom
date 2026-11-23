@@ -33,6 +33,7 @@ import type {
   SessionGeneratedAssetsPayload,
   SessionHandle,
   SessionAutomationsPayload,
+  SessionTurnIndexPayload,
   SettingsPayload,
   SidebarStatePayload,
   SkillDetail,
@@ -56,6 +57,8 @@ import type {
   WorkspaceOnceActionResult,
   WorkspaceOnceReceipt,
   WorkspacePermissionProjection,
+  WebuiDelegatedChildrenPayload,
+  WebuiThreadControlsPayload,
   WebuiThreadPersistedPayload,
   WorkspaceScopePayload,
 } from "./types";
@@ -735,6 +738,7 @@ export async function listSessions(
     title?: string;
     preview?: string;
     model_preset?: string | null;
+    reasoning_effort?: string | null;
     run_started_at?: number | null;
     recovery_state?: RecoveryState | null;
     workspace_scope?: WorkspaceScopePayload | null;
@@ -756,6 +760,7 @@ export async function listSessions(
       title: s.title ?? "",
       preview: s.preview ?? "",
       modelPreset: s.model_preset ?? null,
+      ...(typeof s.reasoning_effort === "string" ? { reasoningEffort: s.reasoning_effort } : {}),
       runStartedAt: s.run_started_at ?? null,
       recoveryState: s.recovery_state ?? null,
       workspaceScope: s.workspace_scope ?? null,
@@ -767,8 +772,11 @@ export async function listSessions(
 /** Disk-backed WebUI display thread snapshot (separate from agent session). */
 export interface FetchWebuiThreadOptions {
   limit?: number;
-  direction?: "latest";
+  direction?: "latest" | "before" | "after" | "around";
   before?: string | null;
+  after?: string | null;
+  around?: string | null;
+  promptId?: string | null;
   signal?: AbortSignal;
 }
 
@@ -784,28 +792,135 @@ export async function fetchWebuiThread(
   if (options?.limit !== undefined) params.set("limit", String(options.limit));
   if (options?.direction) params.set("direction", options.direction);
   if (options?.before) params.set("before", options.before);
-  const query = params.toString();
-  const suffix = query ? `?${query}` : "";
-  const url = `${resolvedBase}/api/sessions/${encodeURIComponent(key)}/webui-thread${suffix}`;
+  if (options?.after) params.set("after", options.after);
+  if (options?.around) params.set("around", options.around);
+  if (options?.promptId) params.set("prompt_id", options.promptId);
+  params.set("view", "history");
+  const payload = await fetchThreadView(token, key, params.toString(), options?.signal, resolvedBase);
+  if (payload?.view === "history" && payload.sessionKey !== key) {
+    throw new ApiError(403, "session history identity mismatch");
+  }
+  return payload as unknown as WebuiThreadPersistedPayload | null;
+}
+
+export async function fetchWebuiThreadControls(
+  token: string,
+  key: string,
+  signal?: AbortSignal,
+): Promise<WebuiThreadControlsPayload> {
+  const payload = await fetchThreadView(token, key, "view=controls", signal, "");
+  if (!payload || (payload.sessionKey !== undefined && payload.sessionKey !== key)) {
+    throw new ApiError(503, "permission_state_unavailable");
+  }
+  // A compatible older gateway may return the combined payload. Use only
+  // explicitly supplied control fields from it, never infer them from rows.
+  return payload as WebuiThreadControlsPayload;
+}
+
+async function readApiErrorDetail(res: Response): Promise<string | null> {
+  try {
+    if (typeof res.json !== "function") return null;
+    const body: unknown = await res.json();
+    if (isObjectRecord(body) && typeof body.error === "string" && body.error) {
+      return body.error;
+    }
+  } catch {
+    // Non-JSON or empty error response body.
+  }
+  return null;
+}
+
+async function fetchThreadView(
+  token: string,
+  key: string,
+  query: string,
+  signal: AbortSignal | undefined,
+  base: string,
+): Promise<Record<string, unknown> | null> {
+  const url = `${base}/api/sessions/${encodeURIComponent(key)}/webui-thread?${query}`;
   const res = await fetchWithTimeout(url, {
     headers: { Authorization: `Bearer ${token}` },
     credentials: "same-origin",
     cache: "no-store",
-    signal: options?.signal,
+    signal,
   });
-  if (res.status === 404) return null;
-  if (!res.ok) throw new ApiError(res.status, `HTTP ${res.status}`);
+  if (res.status === 404) {
+    const detail = await readApiErrorDetail(res);
+    if (detail === "prompt_not_found") {
+      throw new ApiError(404, detail);
+    }
+    return null;
+  }
+  if (!res.ok) {
+    const detail = res.status === 409 ? await readApiErrorDetail(res) : null;
+    throw new ApiError(res.status, detail ?? `HTTP ${res.status}`);
+  }
   const payload: unknown = await res.json();
   if (!isObjectRecord(payload)) return null;
-  if (payload.workspace_permissions === undefined) {
-    return payload as unknown as WebuiThreadPersistedPayload;
-  }
+  if (payload.workspace_permissions === undefined) return payload;
   return {
     ...payload,
     workspace_permissions: payload.workspace_permissions === null
       ? null
       : normalizeWorkspacePermissionProjection(payload.workspace_permissions),
-  } as unknown as WebuiThreadPersistedPayload;
+  };
+}
+
+/** Canonical child references for one parent chat, used after reconnect. */
+export async function fetchDelegatedChildren(
+  token: string,
+  key: string,
+  options: { signal?: AbortSignal; base?: string; limit?: number; before?: string | null } = {},
+): Promise<WebuiDelegatedChildrenPayload | null> {
+  const base = options.base ?? "";
+  const params = new URLSearchParams();
+  if (options.limit !== undefined) params.set("limit", String(options.limit));
+  if (options.before) params.set("before", options.before);
+  const query = params.toString();
+  const suffix = query ? `?${query}` : "";
+  const url = `${base}/api/sessions/${encodeURIComponent(key)}/delegated-children${suffix}`;
+  const res = await fetchWithTimeout(url, {
+    headers: { Authorization: `Bearer ${token}` },
+    credentials: "same-origin",
+    cache: "no-store",
+    signal: options.signal,
+  });
+  if (res.status === 404) return null;
+  if (!res.ok) {
+    const detail = res.status === 409 ? await readApiErrorDetail(res) : null;
+    throw new ApiError(res.status, detail ?? `HTTP ${res.status}`);
+  }
+  const payload: unknown = await res.json();
+  if (!isObjectRecord(payload)) return null;
+  return payload as unknown as WebuiDelegatedChildrenPayload;
+}
+
+export async function fetchSessionTurns(
+  token: string,
+  key: string,
+  options: { signal?: AbortSignal; base?: string; limit?: number; before?: string | null } = {},
+): Promise<SessionTurnIndexPayload | null> {
+  const base = options.base ?? "";
+  const params = new URLSearchParams();
+  if (options.limit !== undefined) params.set("limit", String(options.limit));
+  if (options.before) params.set("before", options.before);
+  const query = params.toString();
+  const suffix = query ? `?${query}` : "";
+  const url = `${base}/api/sessions/${encodeURIComponent(key)}/turns${suffix}`;
+  const res = await fetchWithTimeout(url, {
+    headers: { Authorization: `Bearer ${token}` },
+    credentials: "same-origin",
+    cache: "no-store",
+    signal: options.signal,
+  });
+  if (res.status === 404) return null;
+  if (!res.ok) {
+    const detail = res.status === 409 ? await readApiErrorDetail(res) : null;
+    throw new ApiError(res.status, detail ?? `HTTP ${res.status}`);
+  }
+  const payload: unknown = await res.json();
+  if (!isObjectRecord(payload)) return null;
+  return payload as unknown as SessionTurnIndexPayload;
 }
 
 export async function fetchFilePreview(
@@ -858,6 +973,7 @@ export async function fetchSessionAutomations(
 export interface FetchSessionGeneratedAssetsOptions {
   cursor?: string | null;
   limit?: number;
+  sessionCursor?: string | null;
 }
 
 export async function fetchSessionGeneratedAssets(
@@ -869,6 +985,7 @@ export async function fetchSessionGeneratedAssets(
   const query = new URLSearchParams();
   if (options.limit !== undefined) query.set("limit", String(options.limit));
   if (options.cursor) query.set("cursor", options.cursor);
+  query.set("order", "newest");
   const suffix = query.toString() ? `?${query.toString()}` : "";
   return request<SessionGeneratedAssetsPayload>(
     `${base}/api/sessions/${encodeURIComponent(key)}/generated-assets${suffix}`,
@@ -886,6 +1003,8 @@ export async function fetchAllGeneratedAssets(
   const query = new URLSearchParams();
   if (options.limit !== undefined) query.set("limit", String(options.limit));
   if (options.cursor) query.set("cursor", options.cursor);
+  if (options.sessionCursor) query.set("sessionCursor", options.sessionCursor);
+  query.set("order", "newest");
   const suffix = query.toString() ? `?${query.toString()}` : "";
   return request<SessionGeneratedAssetsPayload>(
     `${base}/api/generated-assets${suffix}`,

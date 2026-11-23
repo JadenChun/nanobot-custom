@@ -8,45 +8,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from nanobot.bus.outbound_events import StreamDeltaEvent, StreamEndEvent
-from nanobot.providers.base import LLMProvider, LLMResponse
+from nanobot.providers.base import LLMResponse, ToolCallRequest
+from tests.agent import test_migration_engine as engine_fixtures
+from tests.agent.test_migration_engine import ScriptedProvider
+from tests.agent.test_migration_source_engine import upgrade
 
-
-class _ScriptedProvider(LLMProvider):
-    """Deterministic provider used to exercise the complete foreground route."""
-
-    def __init__(self, responses: list[LLMResponse]) -> None:
-        super().__init__(provider_name="scripted-test")
-        self._responses = list(responses)
-        self.calls: list[dict[str, object]] = []
-
-    async def chat(
-        self,
-        messages: list[dict[str, object]],
-        tools: list[dict[str, object]] | None = None,
-        model: str | None = None,
-        max_tokens: int = 4096,
-        temperature: float = 0.7,
-        reasoning_effort: str | None = None,
-        tool_choice: str | dict[str, object] | None = None,
-    ) -> LLMResponse:
-        from nanobot.agent.tools.context import current_request_context
-
-        self.calls.append({
-            "messages": messages,
-            "tools": tools or [],
-            "model": model,
-            "max_tokens": max_tokens,
-            "temperature": temperature,
-            "reasoning_effort": reasoning_effort,
-            "tool_choice": tool_choice,
-            "request_context": current_request_context(),
-        })
-        if not self._responses:
-            raise AssertionError("scripted provider received an unexpected call")
-        return self._responses.pop(0)
-
-    def get_default_model(self) -> str:
-        return "scripted-model"
+engine_config = engine_fixtures.engine_config
 
 
 def _make_loop(tmp_path, *, tools_config=None, provider=None):
@@ -207,11 +174,10 @@ class TestHandleStop:
         from nanobot.command.router import CommandContext
 
         loop, _bus = _make_loop(tmp_path)
-        manager = loop._fork_dependencies.foreground_manager
         started = asyncio.Event()
         cancelled = asyncio.Event()
 
-        async def blocked_run(_spec):
+        async def blocked_task():
             started.set()
             try:
                 await asyncio.Future()
@@ -219,10 +185,9 @@ class TestHandleStop:
                 cancelled.set()
                 raise
 
-        manager.runner.run = blocked_run
         loop.subagents.cancel_by_session = AsyncMock(return_value=0)
         loop._exec_session_manager.terminate_by_owner = AsyncMock(return_value=0)
-        task = asyncio.create_task(manager.run_plan(objective="Inspect the report"))
+        task = asyncio.create_task(blocked_task())
         await asyncio.wait_for(started.wait(), timeout=1.0)
         loop._track_active_task("test:c1", task)
 
@@ -454,98 +419,49 @@ class TestRetiredBackgroundRoutes:
         )
         assert {"spawn", "spawn_pipeline"}.isdisjoint(loop.tools.tool_names)
 
-    @pytest.mark.asyncio
-    async def test_foreground_delegation_returns_direct_result(self, tmp_path):
-        from nanobot.agent.delegation import ForegroundAgentManager
-        from nanobot.agent.runner import AgentRunResult
+    # `test_foreground_delegation_returns_direct_result` is retired. It injected the
+    # retired inline `manager.runner` and called `run_plan` outside a canonical turn.
+    # The planner-result routing is asserted by
+    # `tests/agent/test_migration_engine.py::test_real_main_runner_delegates_to_real_planner_runner`.
 
-        provider = MagicMock()
-        provider.get_default_model.return_value = "test-model"
-        manager = ForegroundAgentManager(provider=provider, workspace=tmp_path)
-        manager.runner.run = AsyncMock(return_value=AgentRunResult(
-            final_content="complete",
-            messages=[],
-        ))
-
-        result = await manager.run_plan(objective="Inspect the report")
-
-        assert result == "complete"
-        manager.runner.run.assert_awaited_once()
-        spec = manager.runner.run.await_args.args[0]
-        assert spec.tools.get("spawn") is None
-        assert spec.tools.get("delegate_task") is None
-
-    @pytest.mark.asyncio
-    async def test_foreground_parent_cancellation_reaches_runner(self, tmp_path):
-        from nanobot.agent.delegation import ForegroundAgentManager
-
-        provider = MagicMock()
-        provider.get_default_model.return_value = "test-model"
-        manager = ForegroundAgentManager(provider=provider, workspace=tmp_path)
-        started = asyncio.Event()
-        cancelled = asyncio.Event()
-
-        async def blocked_run(_spec):
-            started.set()
-            try:
-                await asyncio.Future()
-            except asyncio.CancelledError:
-                cancelled.set()
-                raise
-
-        manager.runner.run = blocked_run
-        task = asyncio.create_task(manager.run_plan(objective="Inspect the report"))
-        await asyncio.wait_for(started.wait(), timeout=1.0)
-        task.cancel()
-
-        with pytest.raises(asyncio.CancelledError):
-            await task
-        assert cancelled.is_set()
+    # `test_foreground_parent_cancellation_reaches_runner` is retired. It injected the
+    # retired inline `manager.runner` and cancelled `run_plan` directly. Canonical Stop
+    # cancellation is asserted by
+    # `tests/agent/test_delegation_child_authority.py::test_original_stop_keeps_root_fence_until_resistant_root_settles`.
 
 
 class TestForegroundResultRouting:
     """Foreground roles return to the parent turn instead of publishing background messages."""
 
     @pytest.mark.asyncio
-    async def test_foreground_plan_uses_parent_result(self, tmp_path):
-        from nanobot.agent.delegation import ForegroundAgentManager
-        from nanobot.agent.runner import AgentRunner
-        from nanobot.agent.tools.context import RequestContext, request_context
-        from nanobot.agent.tools.delegation import PlanTaskTool
-        from nanobot.bus.queue import MessageBus
-        from nanobot.utils.llm_runtime import LLMRuntime
+    async def test_foreground_plan_uses_parent_result(self, engine_config):
+        from nanobot.agent.loop import AgentLoop
+        from nanobot.agent.tools.registry import ToolRegistry
+        from nanobot.agent.turn import TurnRequest
 
-        provider = _ScriptedProvider([
-            LLMResponse(content="Planner result", finish_reason="stop"),
+        provider = ScriptedProvider([
+            LLMResponse(content=None, tool_calls=[ToolCallRequest(
+                id="plan", name="plan_task", arguments={"objective": "Inspect the report"},
+            )]),
+            LLMResponse(content="Planner result"),
+            LLMResponse(content="planned"),
         ])
-        runtime = LLMRuntime.capture(provider, "scripted-model", context_window_tokens=128_000)
-        manager = ForegroundAgentManager(
-            provider=provider,
-            workspace=tmp_path,
-            runtime=runtime,
-        )
-        bus = MessageBus()
-        with request_context(RequestContext(
-            channel="cli",
-            chat_id="direct",
-            session_key="cli:foreground-e2e",
-            runtime=runtime,
-            workspace=tmp_path,
-        )):
-            result = await PlanTaskTool(manager).execute(objective="Inspect the report")
-
-        assert result == "Planner result"
-        assert bus.outbound_size == 0
-        assert getattr(manager, "_background_tasks", set()) == set()
-        assert isinstance(manager.runner, AgentRunner)
-        assert manager._baseline_runtime is runtime
-        assert len(provider.calls) == 1
-        context = provider.calls[0]["request_context"]
-        assert context is not None
-        assert context.runtime is runtime
-        assert context.runtime.provider is provider
-        assert context.workspace == tmp_path
-        assert "# Planning Role" in provider.calls[0]["messages"][0]["content"]
+        loop = AgentLoop.from_config(engine_config, tool_registry=ToolRegistry(), provider=provider)
+        upgrade(loop, "cli:source")
+        try:
+            result = await loop.execute_turn(TurnRequest(
+                content="inspect the report", session_key="cli:source",
+            ))
+            assert result.content == "planned"
+            assert result.tools_used == ["plan_task"]
+            assert "# Planning Role" in provider.calls[1][0][0]["content"]
+            assert "Planner result" in str(provider.calls[2][0])
+            outbound = []
+            while loop.bus.outbound_size:
+                outbound.append(await loop.bus.consume_outbound())
+            assert "Planner result" not in {message.content for message in outbound}
+        finally:
+            await loop.aclose()
 
     def test_read_only_foreground_roles_have_no_background_tools(self, tmp_path):
         from nanobot.agent.delegation import ForegroundAgentManager
@@ -571,22 +487,33 @@ class TestForegroundResultRouting:
         assert registry.tool_names == []
 
     @pytest.mark.asyncio
-    async def test_foreground_worker_result_stays_in_parent_turn(self, tmp_path):
-        from nanobot.agent.delegation import ForegroundAgentManager
-        from nanobot.agent.runner import AgentRunResult
+    async def test_foreground_worker_result_stays_in_parent_turn(self, engine_config):
+        from nanobot.agent.loop import AgentLoop
+        from nanobot.agent.tools.registry import ToolRegistry
+        from nanobot.agent.turn import TurnRequest
 
-        provider = MagicMock()
-        provider.get_default_model.return_value = "test-model"
-        manager = ForegroundAgentManager(provider=provider, workspace=tmp_path)
-        manager.runner.run = AsyncMock(return_value=AgentRunResult(
-            final_content="worker result",
-            messages=[],
-        ))
-
-        result = await manager.run_worker(
-            contract="# Contract\nUpdate the report and validate it.",
-            write_scope=["reports/"],
-        )
-
-        assert result == "worker result"
-        manager.runner.run.assert_awaited_once()
+        provider = ScriptedProvider([
+            LLMResponse(content=None, tool_calls=[ToolCallRequest(
+                id="delegate", name="delegate_task", arguments={
+                    "contract": "Update the report and validate it.",
+                    "write_scope": ["reports/"],
+                },
+            )]),
+            LLMResponse(content="worker result"),
+            LLMResponse(content="main complete"),
+        ])
+        loop = AgentLoop.from_config(engine_config, tool_registry=ToolRegistry(), provider=provider)
+        upgrade(loop, "cli:source")
+        try:
+            result = await loop.execute_turn(TurnRequest(
+                content="delegate the report work", session_key="cli:source",
+            ))
+            assert result.content == "main complete"
+            assert result.tools_used == ["delegate_task"]
+            assert "worker result" in str(provider.calls[2][0])
+            outbound = []
+            while loop.bus.outbound_size:
+                outbound.append(await loop.bus.consume_outbound())
+            assert "worker result" not in {message.content for message in outbound}
+        finally:
+            await loop.aclose()

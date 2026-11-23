@@ -3,6 +3,7 @@ import { act, fireEvent, render, screen, waitFor, within } from "@testing-librar
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { PromptNavigator } from "@/components/thread/PromptNavigator";
+import { ThreadComposer } from "@/components/thread/ThreadComposer";
 import {
   HISTORY_WINDOW_INCREMENT,
   INITIAL_HISTORY_WINDOW,
@@ -321,6 +322,107 @@ describe("ThreadViewport", () => {
     expect(screen.getByTestId("thread-composer-dock")).not.toHaveClass("mt-auto");
   });
 
+  it("does not render a working bar above the composer", () => {
+    render(
+      <ThreadViewport
+        messages={messages}
+        isStreaming
+        runStartedAt={Date.now() / 1000 - 12}
+        composer={<div>composer</div>}
+      />,
+    );
+
+    // Live progress belongs to the in-chat activity fold only.
+    expect(screen.queryByTestId("thread-working-bar")).toBeNull();
+    expect(screen.queryByTestId("thread-working-bar-slot")).toBeNull();
+  });
+
+  it("counts the live in-chat duration from the server run start, not the send time", () => {
+    vi.useFakeTimers();
+    try {
+      const sentAtMs = 1_800_000_000_000;
+      const serverRunStart = (sentAtMs + 48_000) / 1000;
+      vi.setSystemTime(sentAtMs + 60_000);
+
+      render(
+        <ThreadViewport
+          messages={[
+            {
+              id: "u-sent",
+              role: "user",
+              content: "do the task",
+              createdAt: sentAtMs,
+              turnId: "t-timer",
+              turnPhase: "user",
+              promptId: "p-timer",
+            },
+            {
+              id: "trace-timer",
+              role: "tool",
+              kind: "trace",
+              content: "search()",
+              traces: ["search()"],
+              createdAt: sentAtMs + 2_000,
+              turnId: "t-timer",
+              turnPhase: "activity",
+            },
+          ]}
+          isStreaming
+          activeTurnId="t-timer"
+          runStartedAt={serverRunStart}
+          composer={<div />}
+        />,
+      );
+
+      // 12s of model work elapsed; the user sent 60s ago.
+      expect(screen.getByText("Working · 12s")).toBeInTheDocument();
+      expect(screen.queryByText("Working · 60s")).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("names the running MCP step and its live progress in the working bar", () => {
+    const streaming: UIMessage[] = [
+      ...messages,
+      {
+        id: "tool-row",
+        role: "tool",
+        kind: "trace",
+        content: 'mcp_comfy_generate_video({"workflow":"wan"})',
+        traces: ['mcp_comfy_generate_video({"workflow":"wan"})'],
+        createdAt: Date.now(),
+        toolEvents: [{
+          phase: "start",
+          call_id: "call-1",
+          name: "mcp_comfy_generate_video",
+          arguments: { workflow: "wan" },
+        }, {
+          phase: "progress",
+          call_id: "call-1",
+          name: "mcp_comfy_generate_video",
+          arguments: { workflow: "wan" },
+          progress: 62,
+          total: 100,
+          message: "ComfyUI is generating prompt...",
+        }],
+      },
+    ];
+    // MCP progress now lives in the in-chat activity fold, not a composer bar.
+    const { container } = render(
+      <ThreadViewport
+        messages={streaming}
+        isStreaming
+        runStartedAt={Date.now() / 1000}
+        mcpPresets={[{ name: "comfy", display_name: "ComfyUI" }]}
+        composer={<div>composer</div>}
+      />,
+    );
+
+    expect(container).toHaveTextContent("ComfyUI is generating prompt...");
+    expect(container).toHaveTextContent("62%");
+  });
+
   it("keeps the docked composer outside the message scrollport", () => {
     const { container } = render(
       <ThreadViewport
@@ -341,6 +443,60 @@ describe("ThreadViewport", () => {
     expect(composerDock).not.toHaveClass("sticky");
     expect(scroller.querySelector(".thread-message-end-gap")).toBeInTheDocument();
     expect(scroller.lastElementChild).toHaveClass("h-px", "shrink-0");
+  });
+
+  it("collapses mobile composer controls while scrolling up and restores them before the tail", () => {
+    const matchMedia = window.matchMedia.bind(window);
+    vi.spyOn(window, "matchMedia").mockImplementation((query) => {
+      const media = matchMedia(query);
+      if (query === "(max-width: 639px)") {
+        Object.defineProperty(media, "matches", { value: true });
+      }
+      return media;
+    });
+    const { container } = render(
+      <ThreadViewport
+        messages={messages}
+        isStreaming={false}
+        composer={<ThreadComposer
+          onSend={vi.fn()}
+          hasConfiguredModel
+          contextUsage={{ contextTokens: 1_000, contextWindowTokens: 10_000 }}
+        />}
+      />,
+    );
+    const scroller = getScroller(container);
+    Object.defineProperties(scroller, {
+      scrollHeight: { configurable: true, value: 2_400 },
+      clientHeight: { configurable: true, value: 600 },
+      scrollTop: { configurable: true, writable: true, value: 1_800 },
+    });
+    const row = () => container.querySelector(".thread-composer-mobile-workspace-row");
+    const input = screen.getByRole("textbox");
+    fireEvent.change(input, { target: { value: "Keep my draft" } });
+    expect(row()).toBeInTheDocument();
+
+    fireEvent.touchStart(scroller, { touches: [{ clientY: 250 }] });
+    act(() => {
+      fireEvent.touchMove(scroller, { touches: [{ clientY: 400 }] });
+      scroller.scrollTop = 1_350;
+      scroller.dispatchEvent(new Event("scroll"));
+    });
+    expect(row()).not.toBeInTheDocument();
+
+    // A layout/anchor adjustment is not a downward scroll gesture.
+    act(() => {
+      scroller.scrollTop = 1_400;
+      scroller.dispatchEvent(new Event("scroll"));
+    });
+    expect(row()).not.toBeInTheDocument();
+
+    fireEvent.touchMove(scroller, { touches: [{ clientY: 350 }] });
+    fireEvent.touchEnd(scroller);
+    expect(row()).toBeInTheDocument();
+    expect(screen.getByRole("textbox")).toBe(input);
+    expect(input).toHaveValue("Keep my draft");
+    expect(screen.getByRole("button", { name: "Scroll to bottom" })).toBeInTheDocument();
   });
 
   it("pins a waiting prompt to the exact lower scroll boundary", async () => {
@@ -1199,8 +1355,13 @@ describe("ThreadViewport", () => {
     expect(scroller.scrollTop).toBe(700);
   });
 
-  it("keeps the thread scrollport above a mobile soft keyboard", async () => {
-    const visualViewport = stubVisualViewport({ innerHeight: 800, height: 480 });
+  it.each([
+    { name: "visual viewport", layoutHeight: 800, inset: "320px" },
+    { name: "layout viewport", layoutHeight: 480, inset: "" },
+  ])("keeps the chat position when the mobile keyboard shrinks the $name", async ({
+    layoutHeight, inset,
+  }) => {
+    const visualViewport = stubVisualViewport({ innerHeight: 800, height: 800 });
     try {
       const { container } = render(
         <ThreadViewport
@@ -1210,31 +1371,36 @@ describe("ThreadViewport", () => {
         />,
       );
       const scroller = getScroller(container);
-      const viewportFrame = container.querySelector(".thread-viewport-frame");
-      expect(viewportFrame).not.toBeNull();
+      const viewportFrame = container.querySelector<HTMLElement>(".thread-viewport-frame");
       Object.defineProperties(scroller, {
         scrollHeight: { configurable: true, value: 2400 },
         clientHeight: { configurable: true, value: 600 },
-        scrollTop: { configurable: true, value: 0 },
+        scrollTop: { configurable: true, writable: true, value: 700 },
       });
 
       act(() => {
         dispatchUserScroll(scroller);
       });
+      const previousScrollTop = scroller.scrollTop;
 
       const input = screen.getByLabelText("Message input");
       act(() => {
         input.focus();
-        fireEvent.focusIn(input);
       });
-
-      await waitFor(() => expect(viewportFrame).toHaveStyle({ bottom: "320px" }));
-      expect(screen.queryByRole("button", { name: "Scroll to bottom" })).not.toBeInTheDocument();
+      expect(scroller.scrollTop).toBe(previousScrollTop);
 
       act(() => {
+        Object.defineProperty(window, "innerHeight", { configurable: true, value: layoutHeight });
+        Object.defineProperty(visualViewport.viewport, "height", { value: 480 });
+        Object.defineProperty(scroller, "clientHeight", { value: 280 });
         visualViewport.viewport.dispatchEvent(new Event("resize"));
+        if (layoutHeight !== 800) window.dispatchEvent(new Event("resize"));
       });
-      expect(viewportFrame).toHaveStyle({ bottom: "320px" });
+      await flushAnimationFrame();
+
+      expect(scroller.scrollTop).toBe(previousScrollTop);
+      expect(input).toHaveFocus();
+      expect(viewportFrame?.style.bottom).toBe(inset);
     } finally {
       visualViewport.restore();
     }
@@ -1358,8 +1524,7 @@ describe("ThreadViewport", () => {
     );
   });
 
-  it("scrolls recent messages into view when the composer receives focus", async () => {
-    const scrollTo = vi.fn();
+  it("keeps the chat position when the composer receives focus", async () => {
     const { container } = render(
       <ThreadViewport
         messages={messages}
@@ -1371,60 +1536,21 @@ describe("ThreadViewport", () => {
     Object.defineProperties(scroller, {
       scrollHeight: { configurable: true, value: 2400 },
       clientHeight: { configurable: true, value: 600 },
-      scrollTop: { configurable: true, writable: true, value: 0 },
-      scrollTo: { configurable: true, value: scrollTo },
+      scrollTop: { configurable: true, writable: true, value: 700 },
     });
 
     act(() => {
       dispatchUserScroll(scroller);
     });
-    scrollTo.mockClear();
+    const previousScrollTop = scroller.scrollTop;
 
     const input = screen.getByLabelText("Message input");
     act(() => {
       input.focus();
-      fireEvent.focusIn(input);
     });
+    await flushAnimationFrame();
 
-    await waitFor(() => expect(scroller.scrollTop).toBe(1800));
-  });
-
-  it("scrolls recent messages into view when the focused composer resizes the visual viewport without an inset", async () => {
-    const visualViewport = stubVisualViewport({ innerHeight: 500, height: 500 });
-    const scrollTo = vi.fn();
-
-    try {
-      const { container } = render(
-        <ThreadViewport
-          messages={messages}
-          isStreaming={false}
-          composer={<textarea aria-label="Message input" />}
-        />,
-      );
-      const scroller = getScroller(container);
-      Object.defineProperties(scroller, {
-        scrollHeight: { configurable: true, value: 2400 },
-        clientHeight: { configurable: true, value: 600 },
-        scrollTop: { configurable: true, writable: true, value: 0 },
-        scrollTo: { configurable: true, value: scrollTo },
-      });
-
-      const input = screen.getByLabelText("Message input");
-      Object.defineProperty(document, "activeElement", {
-        configurable: true,
-        get: () => input,
-      });
-
-      act(() => {
-        visualViewport.viewport.dispatchEvent(new Event("resize"));
-      });
-
-      await waitFor(() => expect(scroller.scrollTop).toBe(1800));
-      expect(scroller).not.toHaveStyle({ bottom: "320px" });
-    } finally {
-      Reflect.deleteProperty(document, "activeElement");
-      visualViewport.restore();
-    }
+    expect(scroller.scrollTop).toBe(previousScrollTop);
   });
 
   it("hides the scroll-to-bottom button when disabled for the welcome view", () => {
@@ -1500,7 +1626,7 @@ describe("ThreadViewport", () => {
     expect(screen.getAllByText("message 299").length).toBeGreaterThan(0);
   });
 
-  it("prefetches earlier history within half a viewport of the top", () => {
+  it("prefetches earlier history several viewports before the top", () => {
     const { container } = render(
       <ThreadViewport
         messages={makeLongMessages(300)}
@@ -1511,9 +1637,9 @@ describe("ThreadViewport", () => {
 
     const scroller = getScroller(container);
     Object.defineProperties(scroller, {
-      scrollHeight: { configurable: true, value: 2400 },
+      scrollHeight: { configurable: true, value: 6000 },
       clientHeight: { configurable: true, value: 600 },
-      scrollTop: { configurable: true, writable: true, value: 301 },
+      scrollTop: { configurable: true, writable: true, value: 1501 },
     });
 
     act(() => {
@@ -1521,12 +1647,41 @@ describe("ThreadViewport", () => {
     });
     expect(screen.queryByText("message 139")).not.toBeInTheDocument();
 
-    scroller.scrollTop = 250;
+    scroller.scrollTop = 1400;
     act(() => {
       dispatchUserScroll(scroller);
     });
     expect(screen.getByText("message 20")).toBeInTheDocument();
     expect(screen.queryByText("message 19")).not.toBeInTheDocument();
+  });
+
+  it("requests the next older page after one lands while still near the top", async () => {
+    const onLoadOlder = vi.fn();
+    const props = {
+      isStreaming: false,
+      composer: <div />,
+      hasMoreBefore: true,
+      onLoadOlder,
+    };
+    const { container, rerender } = render(
+      <ThreadViewport {...props} messages={makeLongMessages(40)} />,
+    );
+    const scroller = getScroller(container);
+    Object.defineProperties(scroller, {
+      scrollHeight: { configurable: true, value: 6000 },
+      clientHeight: { configurable: true, value: 600 },
+      scrollTop: { configurable: true, writable: true, value: 100 },
+    });
+    act(() => {
+      dispatchUserScroll(scroller);
+    });
+    expect(onLoadOlder).toHaveBeenCalledTimes(1);
+
+    // The page lands (messages grow) and the viewport is still in the
+    // prefetch zone: the next page must be requested without another scroll.
+    rerender(<ThreadViewport {...props} loadingOlder messages={makeLongMessages(60)} />);
+    rerender(<ThreadViewport {...props} messages={makeLongMessages(80)} />);
+    await waitFor(() => expect(onLoadOlder).toHaveBeenCalledTimes(2));
   });
 
   it("keeps the first visible history item fixed while deferred rows materialize", () => {
@@ -1602,6 +1757,168 @@ describe("ThreadViewport", () => {
     }
   });
 
+  it("does not snap scrollTop backward when ResizeObserver fires mid-scroll", () => {
+    const resizeObserver = stubResizeObserver();
+    let hitTarget: Element | null = null;
+    const hitTest = stubElementsFromPoint(() => hitTarget ? [hitTarget] : []);
+    try {
+      const { container } = render(
+        <ThreadViewport
+          messages={makeLongMessages(300)}
+          isStreaming={false}
+          composer={<div />}
+        />,
+      );
+
+      const scroller = getScroller(container);
+      let scrollHeight = 6_000;
+      Object.defineProperties(scroller, {
+        scrollHeight: { configurable: true, get: () => scrollHeight },
+        clientHeight: { configurable: true, value: 600 },
+        scrollTop: { configurable: true, writable: true, value: 2_000 },
+        getBoundingClientRect: {
+          configurable: true,
+          value: () => DOMRect.fromRect({ y: 0, width: 800, height: 600 }),
+        },
+      });
+
+      const anchor = screen.getByText("message 200")
+        .closest<HTMLElement>("[data-thread-display-unit]");
+      expect(anchor).not.toBeNull();
+      hitTarget = anchor;
+      let anchorDocumentTop = 2_120;
+      Object.defineProperty(anchor, "getBoundingClientRect", {
+        configurable: true,
+        value: () => DOMRect.fromRect({
+          y: anchorDocumentTop - scroller.scrollTop,
+          width: 800,
+          height: 40,
+        }),
+      });
+
+      act(() => {
+        dispatchUserScroll(scroller);
+      });
+
+      // Compositor moves scrollTop upward before the next JS scroll event fires.
+      scroller.scrollTop = 1_940;
+      const content = screen.getByTestId("thread-message-region").firstElementChild;
+      const observer = resizeObserver.observers.find((candidate) =>
+        content ? candidate.elements.includes(content) : false,
+      );
+      expect(observer).toBeDefined();
+
+      // ResizeObserver fires without layout shift above anchor: must NOT snap back to 2000.
+      act(() => {
+        observer?.callback([], observer as unknown as ResizeObserver);
+      });
+      expect(scroller.scrollTop).toBe(1_940);
+
+      // Now older content above anchor grows by +180px while user scrolled another -20px.
+      scroller.scrollTop = 1_920;
+      anchorDocumentTop += 180;
+      scrollHeight += 180;
+      act(() => {
+        observer?.callback([], observer as unknown as ResizeObserver);
+      });
+      // Compensates the +180px shift while preserving the user's -20px scroll.
+      expect(scroller.scrollTop).toBe(2_100);
+    } finally {
+      hitTest.restore();
+      resizeObserver.restore();
+    }
+  });
+
+  it("does not chain another older-page request when loadingOlder finishes without new messages", async () => {
+    const onLoadOlder = vi.fn();
+    const initialMessages = makeLongMessages(40);
+    const props = {
+      isStreaming: false,
+      composer: <div />,
+      hasMoreBefore: true,
+      onLoadOlder,
+    };
+    const { container, rerender } = render(
+      <ThreadViewport {...props} messages={initialMessages} />,
+    );
+    const scroller = getScroller(container);
+    Object.defineProperties(scroller, {
+      scrollHeight: { configurable: true, value: 6000 },
+      clientHeight: { configurable: true, value: 600 },
+      scrollTop: { configurable: true, writable: true, value: 100 },
+    });
+
+    act(() => {
+      dispatchUserScroll(scroller);
+    });
+    expect(onLoadOlder).toHaveBeenCalledTimes(1);
+
+    // loadingOlder toggles true -> false without messages growing (e.g. error or
+    // intermediate commit before ThreadShell adopts historical): must not re-fire.
+    rerender(<ThreadViewport {...props} loadingOlder messages={initialMessages} />);
+    rerender(<ThreadViewport {...props} loadingOlder={false} messages={initialMessages} />);
+    await new Promise((resolve) => window.requestAnimationFrame(() => resolve(undefined)));
+    expect(onLoadOlder).toHaveBeenCalledTimes(1);
+  });
+
+  it("renders an entire turn-aligned older server page without splitting it", () => {
+    const initialTail = makeLongMessages(160).map((m, i) => ({
+      ...m,
+      id: `tail-${i}`,
+      content: `tail ${i}`,
+    }));
+    const onLoadOlder = vi.fn();
+    const { container, rerender } = render(
+      <ThreadViewport
+        messages={initialTail}
+        isStreaming={false}
+        composer={<div />}
+        hasMoreBefore
+        onLoadOlder={onLoadOlder}
+      />,
+    );
+    const scroller = getScroller(container);
+    Object.defineProperties(scroller, {
+      scrollHeight: { configurable: true, value: 6000 },
+      clientHeight: { configurable: true, value: 600 },
+      scrollTop: { configurable: true, writable: true, value: 100 },
+    });
+
+    act(() => {
+      dispatchUserScroll(scroller);
+    });
+    expect(onLoadOlder).toHaveBeenCalledTimes(1);
+
+    // Backend returns a turn-aligned page larger than HISTORY_WINDOW_INCREMENT (145 messages).
+    const olderPage = makeLongMessages(145).map((m, i) => ({
+      ...m,
+      id: `older-${i}`,
+      content: `older ${i}`,
+    }));
+    rerender(
+      <ThreadViewport
+        messages={[...olderPage, ...initialTail]}
+        isStreaming={false}
+        composer={<div />}
+        hasMoreBefore={false}
+        onLoadOlder={onLoadOlder}
+      />,
+    );
+
+    expect(screen.getByText("older 0")).toBeInTheDocument();
+    expect(screen.getByText("tail 159")).toBeInTheDocument();
+  });
+
+  it("keeps messages from the same turn together when windowing history", () => {
+    const messages = makeLongMessages(INITIAL_HISTORY_WINDOW + 10);
+    messages[8] = { ...messages[8], turnId: "shared-turn", role: "user" };
+    messages[9] = { ...messages[9], turnId: "shared-turn", role: "assistant" };
+    messages[10] = { ...messages[10], turnId: "shared-turn", role: "assistant" };
+
+    const visible = windowMessages(messages, INITIAL_HISTORY_WINDOW);
+    expect(visible[0].id).toBe(messages[8].id);
+  });
+
   it("automatically requests older transcript pages near the top", () => {
     const onLoadOlder = vi.fn();
 
@@ -1624,6 +1941,33 @@ describe("ThreadViewport", () => {
 
     act(() => {
       dispatchUserScroll(scroller);
+    });
+
+    expect(onLoadOlder).toHaveBeenCalledTimes(1);
+  });
+
+  it("loads older transcript pages on upward wheel even when already at scrollTop 0", () => {
+    const onLoadOlder = vi.fn();
+
+    const { container } = render(
+      <ThreadViewport
+        messages={makeLongMessages(4)}
+        isStreaming={false}
+        composer={<div />}
+        hasMoreBefore
+        onLoadOlder={onLoadOlder}
+      />,
+    );
+
+    const scroller = getScroller(container);
+    Object.defineProperties(scroller, {
+      scrollHeight: { configurable: true, value: 400 },
+      clientHeight: { configurable: true, value: 600 },
+      scrollTop: { configurable: true, writable: true, value: 0 },
+    });
+
+    act(() => {
+      scroller.dispatchEvent(new WheelEvent("wheel", { deltaY: -120, bubbles: true }));
     });
 
     expect(onLoadOlder).toHaveBeenCalledTimes(1);
@@ -1669,6 +2013,98 @@ describe("ThreadViewport", () => {
     fireEvent.click(targetPrompt);
 
     expect(navigateTo).toHaveBeenCalledWith(1064);
+  });
+
+  it("reserves top inset for load-older button and clamps preview vertically", async () => {
+    const prompts = Array.from({ length: 25 }, (_, i) => ({
+      prompt_id: `p-${i + 1}`,
+      turn_ordinal: i + 1,
+      label: `Prompt ${i + 1}`,
+      created_at: 1000 + i,
+      locator: `loc-${i + 1}`,
+    }));
+    const onLoadMorePrompts = vi.fn();
+    render(
+      <ThreadViewport
+        messages={makePromptExchangeMessages(5)}
+        isStreaming={false}
+        composer={<div />}
+        sessionPrompts={prompts}
+        sessionPromptTotal={40}
+        hasMoreBefore
+        hasMorePromptsBefore
+        onLoadMorePrompts={onLoadMorePrompts}
+      />,
+    );
+    await act(async () => {
+      await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
+      await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
+    });
+
+    expect(screen.getByTestId("prompt-rail-load-older")).toBeInTheDocument();
+    const markerButtons = screen.getAllByRole("button", { name: /Jump to prompt:/ });
+    const firstTop = Number.parseFloat(markerButtons[0].style.top);
+    // 28px inset on 300px fallback rail height is > 9%, keeping markers clear of the top `…` button.
+    expect(firstTop).toBeGreaterThanOrEqual(9);
+
+    fireEvent.pointerEnter(markerButtons[0]);
+    const topPreview = screen.getByTestId("prompt-rail-preview");
+    expect(Number.parseFloat(topPreview.style.top)).toBeGreaterThanOrEqual(14);
+
+    fireEvent.pointerEnter(markerButtons[markerButtons.length - 1]);
+    const bottomPreview = screen.getByTestId("prompt-rail-preview");
+    expect(Number.parseFloat(bottomPreview.style.top)).toBeLessThanOrEqual(86);
+  });
+
+  it("shows one marker per turn in the whole session, not just the loaded window", async () => {
+    // Five turns are rendered; the session has twenty. The rail must report the
+    // real conversation length, because the left navigator is the only place a
+    // reader can see how much history exists.
+    const messages = makePromptExchangeMessages(5);
+    const sessionTurns = Array.from({ length: 20 }, (_, ordinal) => ({
+      ordinal,
+      label: `Prompt ${ordinal + 1}`,
+      created_at: null,
+      cursor: `cursor-${ordinal}`,
+    }));
+
+    const onJumpToTurn = vi.fn();
+    const { container } = render(
+      <ThreadViewport
+        messages={messages}
+        isStreaming={false}
+        composer={<div />}
+        sessionTurns={sessionTurns}
+        sessionTurnTotal={20}
+        onNeedSessionTurns={() => {}}
+        onJumpToTurn={onJumpToTurn}
+      />,
+    );
+
+    const scroller = getScroller(container);
+    Object.defineProperties(scroller, {
+      scrollHeight: { configurable: true, value: 1800 },
+      clientHeight: { configurable: true, value: 600 },
+      scrollTop: { configurable: true, writable: true, value: 0 },
+    });
+    Array.from(container.querySelectorAll<HTMLElement>("[data-user-prompt-id]"))
+      .forEach((el, index) => {
+        Object.defineProperty(el, "offsetTop", { configurable: true, value: index * 360 });
+      });
+
+    await act(async () => {
+      window.dispatchEvent(new Event("resize"));
+      await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
+    });
+
+    // One rail, and it carries every turn in the session.
+    expect(screen.getAllByLabelText("User prompt navigation")).toHaveLength(1);
+    const markers = screen.getAllByTestId("prompt-rail-marker");
+    expect(markers).toHaveLength(20);
+
+    // A turn outside the rendered window jumps by its cursor.
+    fireEvent.click(screen.getByLabelText("Jump to prompt: Prompt 1"));
+    expect(onJumpToTurn).toHaveBeenCalledWith("cursor-0");
   });
 
   it("does not render or measure the prompt rail below the desktop breakpoint", async () => {
@@ -2215,16 +2651,7 @@ describe("ThreadViewport", () => {
     expect(jumpTo.mock.calls).toEqual([[2400]]);
     expect(followTo).toHaveBeenCalledWith(2400);
     expect(handoffAnimation.cancel).toHaveBeenCalled();
-    expect(animate).toHaveBeenCalledWith(
-      [{ opacity: 0.82 }, { opacity: 1 }],
-      {
-        duration: 140,
-        easing: "cubic-bezier(0.2, 0, 0, 1)",
-      },
-    );
-    expect(jumpTo.mock.invocationCallOrder[0]).toBeLessThan(
-      animate.mock.invocationCallOrder[1],
-    );
+    expect(animate).toHaveBeenCalledTimes(1);
   });
 
   it("waits for hydrated messages before fulfilling open-chat bottom scroll", async () => {
@@ -2320,5 +2747,360 @@ describe("ThreadViewport", () => {
     );
 
     await waitFor(() => expect(scroller.scrollTop).toBe(1800));
+  });
+
+  it("keeps the prompt rail visible for a short latest window in a long chat and reveals by prompt id", async () => {
+    const shortLatestWindow: UIMessage[] = [
+      { id: "u-latest", promptId: "evt-20", role: "user", content: "Latest prompt", createdAt: 20 },
+      { id: "a-latest", role: "assistant", content: "Latest reply", createdAt: 21 },
+    ];
+    const sessionPrompts = Array.from({ length: 10 }, (_, idx) => ({
+      prompt_id: `evt-${idx + 11}`,
+      turn_ordinal: idx + 10,
+      prompt_ordinal: idx + 10,
+      label: `Prompt ${idx + 11}`,
+      created_at: 100 + idx,
+      locator: `loc-${idx + 11}`,
+    }));
+    const onRevealPrompt = vi.fn();
+    const onLoadMorePrompts = vi.fn();
+    const { container } = render(
+      <ThreadViewport
+        messages={shortLatestWindow}
+        isStreaming={false}
+        composer={<div />}
+        hasMoreBefore
+        sessionPrompts={sessionPrompts}
+        sessionPromptTotal={20}
+        hasMorePromptsBefore
+        onLoadMorePrompts={onLoadMorePrompts}
+        onRevealPrompt={onRevealPrompt}
+      />,
+    );
+
+    const scroller = getScroller(container);
+    Object.defineProperties(scroller, {
+      scrollHeight: { configurable: true, value: 400 },
+      clientHeight: { configurable: true, value: 600 },
+      scrollTop: { configurable: true, writable: true, value: 0 },
+    });
+
+    await act(async () => {
+      window.dispatchEvent(new Event("resize"));
+      await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
+    });
+
+    expect(screen.getByLabelText("User prompt navigation")).toBeInTheDocument();
+    expect(screen.getAllByTestId("prompt-rail-marker")).toHaveLength(10);
+    fireEvent.click(screen.getByTestId("prompt-rail-load-older"));
+    expect(onLoadMorePrompts).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(screen.getByLabelText("Jump to prompt: Prompt 11"));
+    expect(onRevealPrompt).toHaveBeenCalledWith({
+      promptId: "evt-11",
+      locator: "loc-11",
+      cursor: null,
+    });
+  });
+
+  it("scrolls and highlights the exact Steer prompt on pendingReveal ready and triggers loadNewer / goToLatest", async () => {
+    const navigateTo = vi.spyOn(ThreadCameraController.prototype, "navigateTo");
+    const steerWindow: UIMessage[] = [
+      { id: "u15a", promptId: "evt-u-15", role: "user", content: "Prompt 15", createdAt: 15 },
+      { id: "a15a", role: "assistant", content: "Before steer", createdAt: 16 },
+      { id: "u15b", promptId: "evt-steer-15", role: "user", content: "Steer 15", createdAt: 17 },
+      { id: "a15b", role: "assistant", content: "After steer with turn_end text", createdAt: 18 },
+    ];
+    const onPendingRevealHandled = vi.fn();
+    const onLoadNewer = vi.fn();
+    const onGoToLatest = vi.fn();
+    const { container } = render(
+      <ThreadViewport
+        messages={steerWindow}
+        isStreaming={false}
+        composer={<div />}
+        hasMoreBefore
+        hasMoreAfter
+        tailActivityPending
+        onLoadNewer={onLoadNewer}
+        onGoToLatest={onGoToLatest}
+        pendingReveal={{
+          requestId: 7,
+          promptId: "evt-steer-15",
+          locator: "loc-steer-15",
+          status: "ready",
+        }}
+        onPendingRevealHandled={onPendingRevealHandled}
+      />,
+    );
+
+    const scroller = getScroller(container);
+    Object.defineProperties(scroller, {
+      scrollHeight: { configurable: true, value: 2400 },
+      clientHeight: { configurable: true, value: 600 },
+      scrollTop: { configurable: true, writable: true, value: 0 },
+    });
+    const steerEl = container.querySelector<HTMLElement>('[data-prompt-key="evt-steer-15"]');
+    const firstEl = container.querySelector<HTMLElement>('[data-prompt-key="evt-u-15"]');
+    expect(steerEl).toBeTruthy();
+    expect(firstEl).toBeTruthy();
+    Object.defineProperty(firstEl!, "offsetTop", { configurable: true, value: 120 });
+    Object.defineProperty(steerEl!, "offsetTop", { configurable: true, value: 940 });
+
+    await waitFor(() => expect(onPendingRevealHandled).toHaveBeenCalledWith(7));
+    expect(steerEl?.dataset.promptHighlighted).toBe("true");
+    expect(firstEl?.dataset.promptHighlighted).toBeUndefined();
+    expect(navigateTo).toHaveBeenCalled();
+
+    // Scrolling near the bottom of an older window triggers forward paging.
+    scroller.scrollTop = 1750;
+    fireEvent.scroll(scroller);
+    expect(onLoadNewer).toHaveBeenCalledTimes(1);
+
+    // Go to latest button shows tail activity and calls onGoToLatest.
+    const latestBtn = screen.getByRole("button", { name: "Go to latest" });
+    expect(latestBtn).toHaveAttribute("data-tail-activity", "true");
+    fireEvent.click(latestBtn);
+    expect(onGoToLatest).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows loading feedback on an unloaded prompt rail marker while revealing and allows loading older history without a turn index", async () => {
+    const onLoadOlder = vi.fn();
+    const onRevealPrompt = vi.fn();
+    const tailMessages: UIMessage[] = [
+      { id: "u3", promptId: "evt-3", role: "user", content: "Prompt 3", createdAt: 3 },
+      { id: "a3", role: "assistant", content: "Answer 3", createdAt: 4 },
+      { id: "u4", promptId: "evt-4", role: "user", content: "Prompt 4", createdAt: 5 },
+      { id: "a4", role: "assistant", content: "Answer 4", createdAt: 6 },
+      { id: "u5", promptId: "evt-5", role: "user", content: "Prompt 5", createdAt: 7 },
+      { id: "a5", role: "assistant", content: "Answer 5", createdAt: 8 },
+    ];
+
+    const { container, rerender } = render(
+      <ThreadViewport
+        messages={tailMessages}
+        isStreaming={false}
+        composer={<div />}
+        hasMoreBefore
+        onLoadOlder={onLoadOlder}
+        onRevealPrompt={onRevealPrompt}
+      />,
+    );
+
+    const scroller = getScroller(container);
+    Object.defineProperties(scroller, {
+      scrollHeight: { configurable: true, value: 1800 },
+      clientHeight: { configurable: true, value: 600 },
+      scrollTop: { configurable: true, writable: true, value: 1200 },
+    });
+
+    // Without a prompt/turn index, the rail's top "…" button loads older transcript pages directly.
+    const loadOlderBtn = await screen.findByTestId("prompt-rail-load-older");
+    fireEvent.click(loadOlderBtn);
+    expect(onLoadOlder).toHaveBeenCalledTimes(1);
+
+    // With a prompt index, clicking an unloaded marker triggers reveal and shows loading pulse.
+    rerender(
+      <ThreadViewport
+        messages={tailMessages}
+        isStreaming={false}
+        composer={<div />}
+        hasMoreBefore
+        onLoadOlder={onLoadOlder}
+        onRevealPrompt={onRevealPrompt}
+        sessionPrompts={[
+          { prompt_id: "evt-1", turn_ordinal: 0, prompt_ordinal: 0, label: "Older prompt 1", locator: "loc-1", created_at: 1 },
+          { prompt_id: "evt-3", turn_ordinal: 2, prompt_ordinal: 2, label: "Prompt 3", locator: "loc-3", created_at: 3 },
+          { prompt_id: "evt-4", turn_ordinal: 3, prompt_ordinal: 3, label: "Prompt 4", locator: "loc-4", created_at: 5 },
+          { prompt_id: "evt-5", turn_ordinal: 4, prompt_ordinal: 4, label: "Prompt 5", locator: "loc-5", created_at: 7 },
+        ]}
+        sessionPromptTotal={4}
+        pendingReveal={{
+          requestId: 9,
+          promptId: "evt-1",
+          locator: "loc-1",
+          status: "loading",
+        }}
+      />,
+    );
+
+    const olderMarkerBtn = await screen.findByRole("button", { name: /Older prompt 1/ });
+    expect(olderMarkerBtn).toHaveAttribute("aria-busy", "true");
+    expect(olderMarkerBtn.querySelector('[data-revealing="true"]')).not.toBeNull();
+    fireEvent.click(olderMarkerBtn);
+    expect(onRevealPrompt).toHaveBeenCalledWith({
+      promptId: "evt-1",
+      locator: "loc-1",
+      cursor: null,
+    });
+  });
+
+  it("virtualizes long transcripts with TanStack Virtual instead of mounting every message", () => {
+    const longMessages = makeLongMessages(200);
+    const { container } = render(
+      <ThreadViewport
+        messages={longMessages}
+        isStreaming={false}
+        composer={<div />}
+        virtualize
+      />,
+    );
+
+    const scroller = getScroller(container);
+    Object.defineProperties(scroller, {
+      clientHeight: { configurable: true, value: 600 },
+      scrollTop: { configurable: true, writable: true, value: 0 },
+    });
+
+    const virtualList = screen.getByTestId("thread-virtual-list");
+    expect(virtualList).toBeInTheDocument();
+    const mountedUnits = virtualList.querySelectorAll("[data-thread-display-unit]");
+    expect(mountedUnits.length).toBeLessThan(longMessages.length);
+  });
+
+  it("enables native CSS scroll anchoring when browsing history and skips redundant JS scrollTop writes when native anchoring already compensated", () => {
+    const resizeObserver = stubResizeObserver();
+    let hitTarget: Element | null = null;
+    const hitTest = stubElementsFromPoint(() => (hitTarget ? [hitTarget] : []));
+    const jumpTo = vi.spyOn(ThreadCameraController.prototype, "jumpTo");
+    try {
+      const { container } = render(
+        <ThreadViewport
+          messages={makeLongMessages(300)}
+          isStreaming={false}
+          composer={<div />}
+        />,
+      );
+
+      const scroller = getScroller(container);
+      expect(scroller).toHaveClass("[overflow-anchor:none]");
+
+      let scrollHeight = 6_000;
+      Object.defineProperties(scroller, {
+        scrollHeight: { configurable: true, get: () => scrollHeight },
+        clientHeight: { configurable: true, value: 600 },
+        scrollTop: { configurable: true, writable: true, value: 2_000 },
+        getBoundingClientRect: {
+          configurable: true,
+          value: () => DOMRect.fromRect({ y: 0, width: 800, height: 600 }),
+        },
+      });
+
+      const anchor = screen.getByText("message 200")
+        .closest<HTMLElement>("[data-thread-display-unit]");
+      expect(anchor).not.toBeNull();
+      hitTarget = anchor;
+      let anchorDocumentTop = 2_120;
+      Object.defineProperty(anchor, "getBoundingClientRect", {
+        configurable: true,
+        value: () => DOMRect.fromRect({
+          y: anchorDocumentTop - scroller.scrollTop,
+          width: 800,
+          height: 40,
+        }),
+      });
+
+      act(() => {
+        dispatchUserScroll(scroller);
+      });
+      expect(scroller).toHaveClass("[overflow-anchor:auto]");
+      jumpTo.mockClear();
+
+      // Simulate native CSS overflow-anchor:auto compensating a +180px growth
+      // above the anchor during layout before ResizeObserver fires.
+      anchorDocumentTop += 180;
+      scrollHeight += 180;
+      scroller.scrollTop += 180;
+      const content = screen.getByTestId("thread-message-region").firstElementChild;
+      const observer = resizeObserver.observers.find((candidate) =>
+        content ? candidate.elements.includes(content) : false,
+      );
+      expect(observer).toBeDefined();
+      act(() => {
+        observer?.callback([], observer as unknown as ResizeObserver);
+      });
+
+      // Must NOT double-add +180 or emit a programmatic scrollTop write.
+      expect(scroller.scrollTop).toBe(2_180);
+      expect(jumpTo).not.toHaveBeenCalled();
+    } finally {
+      hitTest.restore();
+      resizeObserver.restore();
+    }
+  });
+
+  it("anchors on the clicked disclosure display unit and does not prematurely expand history on wheel when scrollTop > 0", () => {
+    const resizeObserver = stubResizeObserver();
+    try {
+      const longMessages = makeLongMessages(300);
+      longMessages[220] = {
+        id: "t-220",
+        role: "tool",
+        kind: "trace",
+        content: 'exec({"cmd":"ls"})',
+        traces: ['exec({"cmd":"ls"})'],
+        turnId: "turn-220",
+        createdAt: 220,
+      };
+      const { container } = render(
+        <ThreadViewport
+          messages={longMessages}
+          isStreaming={false}
+          composer={<div />}
+        />,
+      );
+
+      const scroller = getScroller(container);
+      let scrollHeight = 6_000;
+      Object.defineProperties(scroller, {
+        scrollHeight: { configurable: true, get: () => scrollHeight },
+        clientHeight: { configurable: true, value: 600 },
+        scrollTop: { configurable: true, writable: true, value: 800 },
+        getBoundingClientRect: {
+          configurable: true,
+          value: () => DOMRect.fromRect({ y: 0, width: 800, height: 600 }),
+        },
+      });
+
+      // Backward wheel while scrollTop > 0 yields camera to user but waits for
+      // the browser's resulting scroll event to expand the window.
+      act(() => {
+        scroller.dispatchEvent(new WheelEvent("wheel", { deltaY: -120, bubbles: true }));
+      });
+      expect(screen.queryByText("message 139")).not.toBeInTheDocument();
+
+      // Clicking a disclosure pins its enclosing display unit as the scroll anchor.
+      const disclosure = container.querySelector<HTMLElement>("[data-thread-disclosure]");
+      expect(disclosure).not.toBeNull();
+      const disclosureUnit = disclosure!.closest<HTMLElement>("[data-thread-display-unit]");
+      expect(disclosureUnit).not.toBeNull();
+      let unitDocumentTop = 960;
+      Object.defineProperty(disclosureUnit, "getBoundingClientRect", {
+        configurable: true,
+        value: () => DOMRect.fromRect({
+          y: unitDocumentTop - scroller.scrollTop,
+          width: 800,
+          height: 40,
+        }),
+      });
+
+      act(() => {
+        fireEvent.pointerDown(disclosure!, { button: 0 });
+      });
+
+      // Layout above the clicked disclosure unit shifts by +140px without native anchor:
+      unitDocumentTop += 140;
+      scrollHeight += 140;
+      const content = screen.getByTestId("thread-message-region").firstElementChild;
+      const observer = resizeObserver.observers.find((candidate) =>
+        content ? candidate.elements.includes(content) : false,
+      );
+      act(() => {
+        observer?.callback([], observer as unknown as ResizeObserver);
+      });
+      expect(scroller.scrollTop).toBe(940);
+    } finally {
+      resizeObserver.restore();
+    }
   });
 });

@@ -126,7 +126,10 @@ def system_settings_payload(
             },
             "unified_session": defaults.unified_session,
         },
-        "usage": llm_usage_payload(timezone_name=defaults.timezone),
+        "usage": llm_usage_payload(
+            timezone_name=defaults.timezone,
+            data_dir=config.runtime_data_dir,
+        ),
         "advanced": {
             "restrict_to_workspace": config.tools.restrict_to_workspace,
             "workspace_sandbox": sandbox_status.as_dict(),
@@ -144,7 +147,10 @@ def system_settings_payload(
 
 def settings_usage_payload(config: Config) -> dict[str, Any]:
     """Return the lightweight token usage slice for Overview refreshes."""
-    return llm_usage_payload(timezone_name=config.agents.defaults.timezone)
+    return llm_usage_payload(
+        timezone_name=config.agents.defaults.timezone,
+        data_dir=config.runtime_data_dir,
+    )
 
 
 def update_agent_system_settings(config: Config, query: QueryParams) -> tuple[bool, bool]:

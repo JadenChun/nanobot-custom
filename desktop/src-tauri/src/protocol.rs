@@ -138,6 +138,21 @@ impl PipeAdapter {
         })
     }
 
+    pub fn prepare_default_config(&mut self, expected: &Path) -> Result<(), AdapterFailure> {
+        let response = self.request("prepare_default_config", json!({}), Duration::from_secs(5))
+            .map_err(|error| {
+                if error.0 == "operation_unsupported" {
+                    AdapterFailure::new("default_config_backend_unsupported")
+                } else {
+                    error
+                }
+            })?;
+        if response.get("config_path").and_then(Value::as_str).map(Path::new) != Some(expected) {
+            return Err(AdapterFailure::new("config_invalid"));
+        }
+        Ok(())
+    }
+
     pub fn hello(
         &mut self,
         config_path: &str,
@@ -160,6 +175,10 @@ impl PipeAdapter {
             return Err(AdapterFailure::new("interpreter_mismatch"));
         }
         if !value.capabilities.iter().any(|capability| capability == BACKEND_CAPABILITY) {
+            return Err(AdapterFailure::new("backend_capability_unsupported"));
+        }
+        #[cfg(target_os = "macos")]
+        if !value.capabilities.iter().any(|capability| capability == "darwin-identity-stop-v1") {
             return Err(AdapterFailure::new("backend_capability_unsupported"));
         }
         if !Path::new(&value.config_path).is_absolute() || !Path::new(&value.workspace).is_absolute() {

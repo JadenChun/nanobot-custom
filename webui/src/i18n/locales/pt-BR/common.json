@@ -1,12 +1,12 @@
 {
   "app": {
-    "brand": "nanobot",
+    "brand": "Kohaku",
     "loading": {
-      "connecting": "Conectando-se ao nanobot…",
-      "boot": "Carregando nanobot…"
+      "connecting": "Conectando-se ao Kohaku…",
+      "boot": "Carregando Kohaku…"
     },
     "error": {
-      "title": "Não foi possível conectar-se com o nanobot",
+      "title": "Não foi possível conectar-se com o Kohaku",
       "gatewayHint": "Verifique se o gateway está em execução (`nanobot gateway`) e se esta página está aberta na mesma máquina."
     },
     "auth": {
@@ -24,9 +24,9 @@
     },
     "system": {
       "section": "Sistema",
-      "restartHint": "Reinicie o nanobot para aplicar as alterações de tempo de execução.",
-      "restart": "Reiniciar nanobot",
-      "restarting": "Reiniciando nanobot...",
+      "restartHint": "Reinicie o Kohaku para aplicar as alterações de tempo de execução.",
+      "restart": "Reiniciar Kohaku",
+      "restarting": "Reiniciando Kohaku...",
       "restartEngine": "Reiniciar motor",
       "restartingEngine": "Reiniciando motor..."
     },
@@ -34,11 +34,11 @@
       "completed": "Reinício concluído em {{seconds}}s."
     },
     "documentTitle": {
-      "base": "nanobot",
-      "chat": "{{title}} · nanobot"
+      "base": "Kohaku",
+      "chat": "{{title}} · Kohaku"
     },
     "meta": {
-      "description": "Interface web do nanobot — converse com o seu espaço de trabalho do nanobot."
+      "description": "Interface web do Kohaku — converse com o seu espaço de trabalho do Kohaku."
     },
     "pairing": {
       "title": "Vincular usuário do chat",
@@ -189,7 +189,7 @@
       "language": "Idioma",
       "provider": "Provedor",
       "model": "Modelo",
-      "restart": "Reiniciar nanobot",
+      "restart": "Reiniciar Kohaku",
       "configPath": "Caminho da configuração",
       "activePreset": "Predefinição ativa",
       "gateway": "Gateway",
@@ -203,6 +203,13 @@
       "fileEditDisplay": "Exibição de edição de arquivo",
       "codeWrap": "Quebra de linha no código",
       "brandLogos": "Logos de marca",
+      "notificationSound": "Som de notificação",
+      "notificationTest": "Teste de entrega",
+      "testNotificationBody": "As notificações estão funcionando.",
+      "testNotification": "Enviar notificação de teste",
+      "permissionDenied": "Permita notificações nas configurações do dispositivo ou navegador.",
+      "notifierUnavailable": "Notificações indisponíveis. Verifique as configurações do sistema.",
+      "notificationSent": "Notificação de teste enviada.",
       "browserNotifications": "Notificações de tarefas",
       "maxResults": "Máx. de resultados",
       "timeout": "Tempo limite",
@@ -278,7 +285,7 @@
       "maxImagesPerTurn": "Limite superior para uma requisição de generate_image.",
       "comfyMcp": "A geração local de imagens, a edição e o vídeo são feitos pelas ferramentas MCP do Comfy.",
       "timezone": "Usado para agendamentos e respostas sensíveis ao horário.",
-      "cliAppsCatalog": "Instale apenas os adaptadores CLI de aplicativos que o nanobot pode executar localmente; aplicativos nativos permanecem intactos.",
+      "cliAppsCatalog": "Instale apenas os adaptadores CLI de aplicativos que o Kohaku pode executar localmente; aplicativos nativos permanecem intactos.",
       "cliAppsFilter": "Busque por aplicativo, categoria ou capacidade.",
       "localServiceAccess": "Permite que verificações de configuração de canais alcancem serviços localhost.",
       "webuiDefaultAccess": "Usado por chats web sem permissão específica de projeto.",
@@ -325,7 +332,7 @@
       "readyStatus": "Pronto",
       "readyTry": "Experimentar @{{name}}",
       "readyCopied": "Copiado",
-      "readyPrompt": "Peça ao nanobot para usar @{{name}} nesta tarefa.",
+      "readyPrompt": "Peça ao Kohaku para usar @{{name}} nesta tarefa.",
       "openChat": "Abrir conversa",
       "unsupported": "Não compatível",
       "unavailable": "Indisponível",
@@ -369,7 +376,7 @@
       "saveCustom": "Salvar MCP",
       "configImport": "Importar mcp.json",
       "importConfig": "Importar",
-      "restartRequired": "Reinicie o nanobot para conectar as ferramentas MCP atualizadas.",
+      "restartRequired": "Reinicie o Kohaku para conectar as ferramentas MCP atualizadas.",
       "toolsFound": "{{count}} ferramentas",
       "loading": "Carregando predefinições MCP...",
       "empty": "Nenhuma predefinição MCP corresponde a este filtro.",
@@ -397,14 +404,14 @@
       "preparingSignIn": "Preparando login seguro…",
       "openSignInToContinue": "Abra a página de login para continuar.",
       "finishSignInInBrowser": "Conclua o login na janela do navegador.",
-      "manualCallbackRequired": "Conclua o login e cole a URL de callback no nanobot.",
+      "manualCallbackRequired": "Conclua o login e cole a URL de callback no Kohaku.",
       "manualCallbackHelp": "Depois de autorizar o acesso, a página localhost não será carregada. Copie a URL completa da barra de endereços e cole-a aqui.",
       "finishingConnection": "Finalizando conexão…",
       "activatingTools": "Ativando ferramentas…",
       "connected": "Conectado.",
       "connectionFailed": "Falha na conexão.",
       "connectionCancelled": "Conexão cancelada.",
-      "reloadFailed": "Login concluído, mas o nanobot não conseguiu conectar as ferramentas. Tente reiniciar o nanobot.",
+      "reloadFailed": "Login concluído, mas o Kohaku não conseguiu conectar as ferramentas. Tente reiniciar o Kohaku.",
       "oauthFailed": "Não foi possível conectar. Tente fazer login novamente.",
       "statusMissingDependency": "Precisa de dependência",
       "statusComingSoon": "Em breve",
@@ -494,11 +501,11 @@
       "loadError": "Não foi possível carregar as configurações",
       "unsaved": "Alterações não salvas.",
       "upToDate": "Atualizado.",
-      "savedRestart": "Salvo. Reinicie o nanobot para aplicar.",
+      "savedRestart": "Salvo. Reinicie o Kohaku para aplicar.",
       "restartAfterSaving": "Salve as alterações e reinicie quando estiver pronto.",
       "savedRestartApply": "Salvo. Reinicie quando estiver pronto.",
       "imageProviderRestart": "Alterações do provedor de imagem salvas. Reinicie quando estiver pronto.",
-      "hostRestartAfterSaving": "Ao salvar, o nanobot reiniciará o motor.",
+      "hostRestartAfterSaving": "Ao salvar, o Kohaku reiniciará o motor.",
       "hostRestartPending": "Salvo. O motor será reiniciado quando estiver pronto.",
       "hostApiUnavailable": "As ações do host só estão disponíveis dentro do app nativo.",
       "logsOpened": "Pasta de logs aberta.",
@@ -522,7 +529,7 @@
       "exporting": "Exportando..."
     },
     "byok": {
-      "description": "Traga suas próprias chaves de provedor. O nanobot lê esses valores da configuração atual e apenas provedores configurados podem ser usados nas predefinições de modelo.",
+      "description": "Traga suas próprias chaves de provedor. O Kohaku lê esses valores da configuração atual e apenas provedores configurados podem ser usados nas predefinições de modelo.",
       "configured": "Configurado",
       "notConfigured": "Não configurado",
       "configuredSection": "Configurados",
@@ -669,12 +676,12 @@
     },
     "observability": {
       "title": "Observabilidade",
-      "configured": "Credenciais de tracing estão disponíveis para o nanobot.",
-      "environment": "Defina LANGFUSE_SECRET_KEY e LANGFUSE_PUBLIC_KEY e reinicie o nanobot.",
+      "configured": "Credenciais de tracing estão disponíveis para o Kohaku.",
+      "environment": "Defina LANGFUSE_SECRET_KEY e LANGFUSE_PUBLIC_KEY e reinicie o Kohaku.",
       "enable": "Habilitar suporte a tracing"
     },
     "apps": {
-      "description": "Adicione ferramentas ao nanobot e mencione-as com @ na conversa.",
+      "description": "Adicione ferramentas ao Kohaku e mencione-as com @ na conversa.",
       "cliLabel": "Aplicativo",
       "mcpLabel": "MCP",
       "channelLabel": "Canal",
@@ -697,21 +704,21 @@
       "browseApps": "Explorar aplicativos",
       "browseIntegrations": "Explorar ferramentas MCP",
       "emptyIntegrationsHint": "Adicione um servidor MCP personalizado abaixo.",
-      "restartRequired": "Reinicie o nanobot para aplicar os aplicativos e ferramentas MCP atualizados."
+      "restartRequired": "Reinicie o Kohaku para aplicar os aplicativos e ferramentas MCP atualizados."
     },
     "channels": {
-      "description": "Conecte aplicativos de chat, e-mail e WebUI ao nanobot.",
+      "description": "Conecte aplicativos de chat, e-mail e WebUI ao Kohaku.",
       "caption": "{{enabled}} habilitados · {{total}} canais",
       "searchPlaceholder": "Buscar canais",
       "backToChannels": "Todos os canais",
       "catalog": "Canais",
       "loading": "Carregando canais...",
       "empty": "Nenhum canal corresponde a este filtro.",
-      "restartRequired": "Reinicie o nanobot para aplicar o suporte de canais atualizado.",
+      "restartRequired": "Reinicie o Kohaku para aplicar o suporte de canais atualizado.",
       "requires": "Requer: {{requirements}}",
       "setUp": "Configurar",
       "setupGuide": "Guia de configuração",
-      "setupSummary": "Habilitar apenas ativa o suporte no nanobot. Adicione as credenciais da plataforma e reinicie o nanobot.",
+      "setupSummary": "Habilitar apenas ativa o suporte no Kohaku. Adicione as credenciais da plataforma e reinicie o Kohaku.",
       "configKeys": "Chaves de configuração",
       "enable": "Habilitar canal",
       "disable": "Desabilitar canal",
@@ -774,7 +781,7 @@
       "missingDependency": "Suporte ausente",
       "installSupport": "Instalar suporte",
       "installConfirmTitle": "Instalar suporte para {{name}}?",
-      "installConfirmDescription": "O nanobot adicionará o que {{name}} precisa e depois o ativará. Continuar?",
+      "installConfirmDescription": "O Kohaku adicionará o que {{name}} precisa e depois o ativará. Continuar?",
       "installConfirmAction": "Instalar e habilitar",
       "websocketRequired": "Necessário para a WebUI",
       "channelDisabled": "Canal desabilitado",
@@ -918,7 +925,7 @@
       "signedInAs": "Conectado como {{account}}",
       "signInHelp": "Entre por este dispositivo; nenhuma chave de API é armazenada em config.",
       "remoteSignInHelp": "Selecione Entrar para abrir a xAI no seu computador e depois cole o código de autorização exibido após o login.",
-      "codexRemoteSignInHelp": "Entre por este navegador e cole no nanobot a URL completa de callback do localhost.",
+      "codexRemoteSignInHelp": "Entre por este navegador e cole no Kohaku a URL completa de callback do localhost.",
       "signInRequired": "Login necessário",
       "signInBeforeSaving": "Entre neste provedor antes de salvar a predefinição.",
       "signedIn": "Conectado",
@@ -926,9 +933,9 @@
       "proxyLabel": "Proxy de rede",
       "proxySaveBeforeSignIn": "Salve as alterações do proxy antes de entrar.",
       "saveProxy": "Salvar proxy",
-      "localCodeHelp": "Conclua o login no navegador. O nanobot geralmente termina automaticamente; caso contrário, cole o código de autorização abaixo.",
+      "localCodeHelp": "Conclua o login no navegador. O Kohaku geralmente termina automaticamente; caso contrário, cole o código de autorização abaixo.",
       "remoteCodeHelp": "Selecione Entrar para abrir a xAI no seu computador. Após o login, cole abaixo o código de autorização exibido pela xAI.",
-      "localCallbackHelp": "Conclua o login no navegador. O nanobot geralmente termina automaticamente; caso contrário, copie da barra de endereço a URL completa de callback do localhost e cole abaixo.",
+      "localCallbackHelp": "Conclua o login no navegador. O Kohaku geralmente termina automaticamente; caso contrário, copie da barra de endereço a URL completa de callback do localhost e cole abaixo.",
       "remoteCallbackHelp": "Abra o ChatGPT neste navegador e conclua o login. Quando a página localhost não carregar, copie a URL completa da barra de endereço e cole abaixo.",
       "authorizationCode": "Código de autorização",
       "callbackUrl": "URL completa de callback",
@@ -971,7 +978,7 @@
       "deleteConfirmAction": "Excluir habilidade",
       "instructionsTitle": "Instruções da habilidade",
       "setupRequired": "Requer configuração",
-      "setupDescription": "Instale a dependência ausente na máquina que executa o nanobot e verifique novamente.",
+      "setupDescription": "Instale a dependência ausente na máquina que executa o Kohaku e verifique novamente.",
       "copySetupCommand": "Copiar comando de configuração",
       "checkAgain": "Verificar novamente",
       "marketplaceSearchFailed": "Não foi possível pesquisar nos mercados de habilidades.",
@@ -1030,7 +1037,7 @@
     },
     "agentHome": {
       "change": "Alterar a pasta do agente",
-      "changeHint": "Altere agents.defaults.workspace no arquivo de configuração indicado acima e reinicie o Nanobot. Os arquivos existentes do agente não são movidos automaticamente.",
+      "changeHint": "Altere agents.defaults.workspace no arquivo de configuração indicado acima e reinicie o Kohaku. Os arquivos existentes do agente não são movidos automaticamente.",
       "description": "Armazena instruções, memória, habilidades e saídas padrão do agente.",
       "summary": "Instruções, memória e habilidades",
       "title": "Pasta do agente"
@@ -1161,7 +1168,7 @@
       "imageQuickActions": {
         "icon": {
           "title": "Desenhar um ícone de aplicativo",
-          "prompt": "Gere um ícone de aplicativo 1:1 limpo para o nanobot: robô amigável, estilo vetorial simples, paleta suave em azul e branco, sem texto."
+          "prompt": "Gere um ícone de aplicativo 1:1 limpo para o Kohaku: robô amigável, estilo vetorial simples, paleta suave em azul e branco, sem texto."
         },
         "sticker": {
           "title": "Criar um sticker",
@@ -1221,8 +1228,10 @@
       "placeholderThread": "Digite sua mensagem…",
       "placeholderHero": "Pergunte qualquer coisa...",
       "placeholderOpening": "Abrindo um novo tópico…",
-      "placeholderStreaming": "O modelo está respondendo…",
+      "queueGuidance": "Adicionar à fila",
+      "queuePersistenceError": "Não foi possível salvar com segurança as mensagens da fila. Tente novamente antes de enviar.",
       "inputAria": "Campo de mensagem",
+      "inputAriaFor": "Mensagem para {{title}}",
       "sendHint": "Enter para enviar · Shift+Enter para nova linha",
       "runRuntimeTitle": "Executando · {{elapsed}}",
       "goalStateStrip": "Objetivo · {{label}}",
@@ -1238,12 +1247,19 @@
       "configureModel": "Configurar modelo",
       "chooseAI": "Escolha sua IA",
       "switchModel": "Alternar o modelo desta conversa",
+      "back": "Voltar",
+      "backToQuickModels": "Voltar aos modelos rápidos",
+      "searchModels": "Pesquisar modelos",
+      "noMatchingModels": "Nenhum modelo correspondente",
+      "moreModels": "Mais modelos ({{count}})",
       "manageModels": "Gerenciar modelos",
       "context": {
         "tooltip": "Contexto {{percent}}%",
         "detailsLabel": "Abrir uso do contexto",
         "panelTitle": "Uso do contexto",
         "contextTitle": "Contexto",
+        "usageUnavailable": "Uso indisponível",
+        "lastKnownRequest": "Última solicitação conhecida",
         "recentRounds": "Rodadas recentes",
         "inputTrend": "Tokens de entrada",
         "input": "Tokens de entrada",
@@ -1253,6 +1269,7 @@
       },
       "queued": {
         "label": "Guia em fila",
+        "awaitingConfirmation": "Aguardando confirmação",
         "guide": "Guiar",
         "delete": "Excluir guia",
         "edit": "Editar guia",
@@ -1290,6 +1307,7 @@
         "insecureContext": "Por segurança, o Chrome e outros navegadores bloqueiam o acesso ao microfone em páginas HTTP remotas. Abra esta WebUI por HTTPS para usar a entrada de voz.",
         "unsupported": "A entrada de voz não é compatível com este navegador.",
         "permission": "Permita o microfone na barra de endereço e tente novamente.",
+        "nativePermission": "Permita que o Kohaku acesse o microfone e tente novamente. Se o acesso estiver bloqueado, verifique os ajustes do sistema.",
         "notConfigured": "Configure primeiro um provedor de transcrição.",
         "tooLong": "A gravação é longa demais.",
         "tooShort": "Segure um pouco mais para gravar voz.",
@@ -1327,7 +1345,7 @@
             "description": "Cancela o turno ativo do agente nesta conversa."
           },
           "restart": {
-            "title": "Reiniciar nanobot",
+            "title": "Reiniciar Kohaku",
             "description": "Reinicia o processo do bot no mesmo lugar."
           },
           "status": {
@@ -1381,14 +1399,14 @@
         "label": "Aplicativos",
         "cliGroup": "Aplicativos CLI",
         "mcpGroup": "Serviços MCP",
-        "sessionGroup": "Conversas do Nanobot",
+        "sessionGroup": "Conversas do Kohaku",
         "cliBadge": "CLI",
         "mcpBadge": "MCP",
         "cliDescription": "Usar @{{name}} como aplicativo CLI local",
         "mcpDescription": "Usar @{{name}} como servidor MCP",
         "cliTitle": "Aplicativo CLI: {{name}}",
         "mcpTitle": "Servidor MCP: {{name}}",
-        "sessionBadge": "Conversa do Nanobot",
+        "sessionBadge": "Conversa do Kohaku",
         "sessionDescription": "Referenciar @{{name}} como chat anterior"
       },
       "encoding": "Codificando…",
@@ -1422,12 +1440,13 @@
     "forkedFromHistory": "Bifurcado a partir do histórico",
     "generatedAssets": {
       "open": "Abrir recursos gerados",
+      "close": "Fechar recursos gerados",
       "title": "Recursos gerados",
       "refresh": "Atualizar recursos gerados",
       "view": "Visualização de recursos",
       "byCall": "Por chamada de ferramenta",
       "all": "Recursos da sessão",
-      "total": "Imagens: {{count}}",
+      "total": "Recursos: {{count}}",
       "candidates": "Candidatos: {{count}}",
       "loading": "Carregando recursos gerados…",
       "loadFailed": "Não foi possível carregar os recursos gerados.",
@@ -1450,14 +1469,16 @@
       "search": "Buscar instruções",
       "noResults": "Nenhuma instrução correspondente.",
       "jumpTo": "Ir para a instrução: {{label}}",
-      "railAria": "Navegação pelas instruções do usuário"
+      "railAria": "Navegação pelas instruções do usuário",
+      "sessionRailAria": "Session turn navigation"
     }
   },
   "message": {
     "streaming": "transmitindo",
     "delivery": {
       "sending": "Enviando…",
-      "failed": "Não enviada"
+      "failed": "Não enviada",
+      "awaitingConfirmation": "Aguardando confirmação"
     },
     "assistantTyping": "Assistente está digitando",
     "toolSingle": "Usando uma ferramenta",
@@ -1476,7 +1497,9 @@
     "activityThinkingFor": "Pensando por {{duration}}",
     "activityThought": "Pensamento",
     "activityThoughtFor": "Pensou por {{duration}}",
-    "activityWorkingFor": "Trabalhando por {{duration}}",
+    "activityGroup": "Atividade",
+    "activityWorking": "Trabalhando",
+    "activityWorkingFor": "Trabalhando · {{duration}}",
     "activityWorked": "Trabalhou",
     "activityWorkedFor": "Trabalhou por {{duration}}",
     "retryConnection": "Falha na conexão",
@@ -1563,39 +1586,6 @@
     "copy": "Copiar",
     "copied": "Copiado"
   },
-  "workbench": {
-    "aria": "Área de conversas",
-    "panes": "Painéis",
-    "tabAria": "Grupo: {{title}}",
-    "panesInTab": "Painéis em {{title}}",
-    "collapseTabGroup": "Recolher os painéis em {{title}}",
-    "expandTabGroup": "Expandir os painéis em {{title}}",
-    "dropPane": "Mover {{pane}} para {{tab}}",
-    "createGroup": "Criar grupo",
-    "moveTo": "Mover para",
-    "renameGroupTitle": "Renomear grupo",
-    "renameGroupDescription": "Dê um nome a este grupo.",
-    "renameGroupPlaceholder": "Nome do grupo",
-    "dissolveTab": "Desfazer grupo",
-    "layout": "Layout de painéis",
-    "addPane": "Adicionar painel",
-    "paneLimit": "Máximo de {{count}} painéis",
-    "deleteConversations": "Excluir tudo",
-    "movePane": "Mover painel {{title}}",
-    "movePaneHint": "Arraste para mover · As setas também funcionam",
-    "resizePaneBoundary": "Redimensionar limite do painel {{index}}",
-    "promotePane": "Tornar {{title}} o painel principal",
-    "paneActions": "Ações do painel {{title}}",
-    "detachPane": "Remover",
-    "composerAria": "Mensagem para {{title}}",
-    "layouts": {
-      "columns": "Colunas",
-      "rows": "Linhas",
-      "grid": "Grade",
-      "bsp": "BSP",
-      "main-stack": "Principal e pilha"
-    }
-  },
   "common": {
     "dismiss": "Descartar",
     "close": "Fechar",
@@ -1603,6 +1593,10 @@
     "cancel": "Cancelar"
   },
   "errors": {
+    "approvalRejected": {
+      "title": "A aprovação não está mais ativa",
+      "body": "Esta solicitação de aprovação não está mais ativa no gateway, por exemplo, após uma reinicialização. Envie uma nova mensagem para continuar."
+    },
     "messageTooBig": {
       "title": "Mensagem grande demais",
       "body": "O servidor rejeitou sua última mensagem porque ela excedeu o limite de tamanho. Remova algumas imagens ou tente arquivos menores e envie novamente."
@@ -1614,6 +1608,10 @@
     "turnRejected": {
       "title": "A mensagem não foi enviada",
       "body": "O gateway rejeitou esta mensagem. Revise o texto ou os anexos e tente novamente."
+    },
+    "sessionRecoveryRequired": {
+      "title": "A conversa precisa de recuperação",
+      "body": "O Kohaku pausou esta conversa após um turno interrompido. Inicie uma nova conversa para continuar."
     },
     "modelRequestFailed": {
       "billingTitle": "A cota do provedor do modelo está indisponível",
@@ -1629,8 +1627,8 @@
       "body": "Verifique a configuração ou o status do provedor e tente novamente."
     },
     "connectionClosed": {
-      "title": "A mensagem não foi enviada",
-      "body": "A conexão foi encerrada antes que o gateway aceitasse esta mensagem. Verifique se este dispositivo continua conectado e envie novamente."
+      "title": "Aguardando confirmação",
+      "body": "A conexão foi encerrada antes da confirmação. O servidor pode já ter recebido esta mensagem. Reconecte e verifique o status; não a envie novamente apenas por causa da desconexão."
     }
   },
   "workspace": {
@@ -1654,7 +1652,7 @@
       "permissionRefreshing": "Verificando o acesso atual…",
       "onceNotActive": "O acesso pontual não está mais ativo. Revise a pasta antes de continuar.",
       "onceRetiringActive": "Um comando ainda está em execução com o acesso anterior. Aguarde ou pare o comando e tente novamente.",
-      "onceRetiringUnknown": "O Nanobot ainda não consegue confirmar se os comandos anteriores terminaram. As alterações de acesso estão pendentes.",
+      "onceRetiringUnknown": "O Kohaku ainda não consegue confirmar se os comandos anteriores terminaram. As alterações de acesso estão pendentes.",
       "onceRetiringFinished": "O trabalho anterior terminou. O acesso pontual ainda está sendo encerrado.",
       "onceExpired": "O acesso pontual terminou. Revise a pasta novamente antes de continuar.",
       "readyOnce": "Acesso permitido para esta tarefa. Pronto para continuar em {{path}}.",
@@ -1664,16 +1662,16 @@
       "allowForTask": "Permitir para esta tarefa",
       "changed": "Esta tarefa ou as permissões da pasta mudaram. Atualize e revise as permissões antes de tentar novamente.",
       "chooseAnotherFolder": "Escolher outra pasta",
-      "chooseNarrowerFolder": "Esta pasta contém arquivos privados de execução do Nanobot. Escolha uma pasta de projeto mais específica.",
+      "chooseNarrowerFolder": "Esta pasta contém arquivos privados de execução do Kohaku. Escolha uma pasta de projeto mais específica.",
       "commandsRequested": "Execução de comandos solicitada",
       "directoryTarget": "Pasta solicitada: {{path}}",
       "fileTarget": "Arquivo bloqueado: {{path}}. Escolha explicitamente a pasta que o contém.",
       "fileTargetWithFolder": "Arquivo bloqueado: {{path}}. Pasta a autorizar: {{folder}}",
       "folderMissing": "Esta pasta não existe ou não é um diretório. Escolha uma pasta existente e tente novamente.",
       "folderToAuthorizeLabel": "Pasta a autorizar",
-      "folderUnavailable": "O Nanobot não pode usar esta pasta com as permissões atuais. Escolha outra pasta ou revise suas permissões.",
+      "folderUnavailable": "O Kohaku não pode usar esta pasta com as permissões atuais. Escolha outra pasta ou revise suas permissões.",
       "insufficientCapabilities": "As permissões selecionadas não atendem à solicitação. {{required}} Ajuste-as antes de autorizar a pasta.",
-      "invalidFolder": "O Nanobot não conseguiu verificar esta pasta. Escolha uma pasta existente e tente novamente.",
+      "invalidFolder": "O Kohaku não conseguiu verificar esta pasta. Escolha uma pasta existente e tente novamente.",
       "purpose": "Finalidade: {{purpose}}",
       "readyInsufficient": "As permissões selecionadas para {{path}} não atendem à solicitação. Escolha outra pasta ou revise suas permissões.",
       "requestedFileLabel": "Arquivo solicitado",
@@ -1687,18 +1685,18 @@
       "reviewAccess": "Revisar permissões",
       "selectedCapabilities": "Permissões selecionadas: {{fileAccess}} · {{commands}}",
       "selectedFolderScope": "Escopo da pasta selecionada: {{path}}",
-      "unknownTarget": "O Nanobot ainda não identificou a pasta exata. Escolha uma pasta explicitamente."
+      "unknownTarget": "O Kohaku ainda não identificou a pasta exata. Escolha uma pasta explicitamente."
     },
     "permissionV2": {
       "actionFailed": "Não foi possível atualizar o acesso. Atualize este chat antes de tentar novamente.",
       "confirmTitle": "Ativar acesso completo?",
-      "confirmDescription": "O Nanobot poderá ler e alterar arquivos e executar comandos além da pasta selecionada, conforme as permissões da sua conta do sistema operacional. O diretório e o contexto atuais de Working in serão mantidos. Novos chats começam no modo Sandbox.",
+      "confirmDescription": "O Kohaku poderá ler e alterar arquivos e executar comandos além da pasta selecionada, conforme as permissões da sua conta do sistema operacional. O diretório e o contexto atuais de Working in serão mantidos. Novos chats começam no modo Sandbox.",
       "enableFull": "Ativar acesso completo",
       "fullEnding": "O acesso completo está terminando",
       "fullIndicator": "Acesso completo",
       "fullReach": "Arquivos e comandos neste dispositivo, conforme as permissões da sua conta do sistema operacional.",
       "retiringActive": "Um comando ainda está em execução com o acesso anterior. Aguarde ou pare o comando e tente novamente.",
-      "retiringUnknown": "O Nanobot ainda não consegue confirmar se os comandos anteriores terminaram. As alterações de acesso estão pendentes.",
+      "retiringUnknown": "O Kohaku ainda não consegue confirmar se os comandos anteriores terminaram. As alterações de acesso estão pendentes.",
       "retiringFinished": "O trabalho anterior terminou. Tente novamente para confirmar o acesso Sandbox.",
       "retryRestricted": "Tentar novamente retornar ao modo Sandbox",
       "returnRestricted": "Retornar ao modo Sandbox",
@@ -1709,7 +1707,7 @@
         "controls_unavailable": "O acesso completo não está disponível com os controles locais atuais.",
         "session_required": "Envie uma mensagem para criar este chat antes de ativar o acesso completo.",
         "configured_sandbox": "O acesso completo não está disponível enquanto houver confinamento de comandos configurado.",
-        "supervisor_unavailable": "O acesso completo não está disponível porque o Nanobot não consegue supervisionar comandos com segurança.",
+        "supervisor_unavailable": "O acesso completo não está disponível porque o Kohaku não consegue supervisionar comandos com segurança.",
         "permission_state_unavailable": "As permissões atuais não estão disponíveis. Atualize este chat antes de tentar novamente.",
         "permission_retiring": "Não é possível ativar o acesso completo enquanto o trabalho anterior está terminando."
       }
@@ -1719,7 +1717,12 @@
     },
     "picker": {
       "chooseProject": "Escolher pasta do projeto",
-      "clearProject": "Limpar pasta do projeto"
+      "clearProject": "Limpar pasta do projeto",
+      "nextTurn": "Próximo turno: {{folder}}",
+      "nextTurnLabel": "Próximo turno",
+      "nextTurnHint": "O turno em execução mantém a pasta. Esta escolha vale para o próximo turno.",
+      "nextTurnPending": "Salvando a próxima pasta…",
+      "nextTurnFailed": "A alteração de pasta não foi salva. A escolha anterior continua valendo; seu rascunho está intacto."
     },
     "folders": {
       "saved": "Folder saved. The map and Sandbox rules are up to date.",

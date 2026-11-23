@@ -91,6 +91,31 @@ class CustodyStoreInstrumentedTest {
     }
 
     @Test
+    fun cancelledAttemptStaysFencedAfterStoreReopens() {
+        val generation = store.beginPairing(
+            "https://fixture.example:8443",
+            "install-phone-1",
+            challenge = "fixture-challenge",
+        )
+        assertNotNull(store.loadPendingPairing())
+
+        store.cancelPairing()
+        assertNull(store.loadPendingPairing())
+        var lateWriteRan = false
+        assertThrows(IllegalStateException::class.java) {
+            store.withPairing(generation) { lateWriteRan = true }
+        }
+        assertFalse(lateWriteRan)
+
+        val reopened = CustodyStore(context)
+        assertNull(reopened.loadPendingPairing())
+        assertThrows(IllegalStateException::class.java) {
+            reopened.withPairing(generation) { lateWriteRan = true }
+        }
+        assertFalse(lateWriteRan)
+    }
+
+    @Test
     fun originAndInstallationMismatchFailClosed() {
         val created = store.loadOrCreate("https://fixture.example:8443", null)
         assertThrows(CustodyMismatchException::class.java) {

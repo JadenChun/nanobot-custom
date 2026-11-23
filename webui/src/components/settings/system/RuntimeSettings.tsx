@@ -398,7 +398,7 @@ export function RuntimeSettings({
                   {tx("settings.agentHome.change", "Change agent home")}
                 </summary>
                 <p className="mt-2 text-left text-[12px] leading-5">
-                  {tx("settings.agentHome.changeHint", "Update agents.defaults.workspace in the configuration file shown above, then restart Nanobot. Existing agent files are not moved automatically.")}
+                  {tx("settings.agentHome.changeHint", "Update agents.defaults.workspace in the configuration file shown above, then restart Kohaku. Existing agent files are not moved automatically.")}
                 </p>
               </details>
             </div>

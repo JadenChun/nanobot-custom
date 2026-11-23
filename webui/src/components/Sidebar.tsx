@@ -19,7 +19,6 @@ import { useTranslation } from "react-i18next";
 import {
   ChatList,
   type SidebarDeleteItem,
-  type SidebarPaneGroup,
 } from "@/components/ChatList";
 import { ConnectionBadge } from "@/components/ConnectionBadge";
 import {
@@ -46,17 +45,7 @@ interface SidebarProps {
   onRequestDeleteMany?: (items: SidebarDeleteItem[]) => void;
   onTogglePin: (key: string) => void;
   onRequestRename: (key: string, label: string) => void;
-  onRequestRenameTab?: (key: string, label: string) => void;
   onToggleArchive: (key: string) => void;
-  paneGroups?: Record<string, SidebarPaneGroup>;
-  onSelectPane?: (tabKey: string, paneKey: string) => void;
-  onCreateTab?: (paneKey: string) => void;
-  onDetachPane?: (tabKey: string, paneKey: string) => void;
-  onDissolveTab?: (tabKey: string) => void;
-  onAttachPane?: (
-    paneKey: string,
-    tabKey: string,
-  ) => void;
   onToggleGroup: (groupId: string) => void;
   onRequestRenameProject: (projectKey: string, label: string) => void;
   onNewChatInProject: (projectPath: string, projectName: string) => void;
@@ -76,8 +65,6 @@ interface SidebarProps {
   collapsed?: boolean;
   pinnedKeys?: string[];
   archivedKeys?: string[];
-  pinnedPaneKeys?: string[];
-  archivedPaneKeys?: string[];
   sessionOrder?: string[];
   titleOverrides?: Record<string, string>;
   projectNameOverrides?: Record<string, string>;
@@ -155,7 +142,7 @@ export function Sidebar(props: SidebarProps) {
           )}
         >
           <img
-            src="/brand/nanobot_mark.svg"
+            src="/brand/nanobot_icon_192.png"
             alt=""
             className="h-8 w-8 select-none object-contain"
             draggable={false}
@@ -258,21 +245,12 @@ export function Sidebar(props: SidebarProps) {
             onRequestDeleteMany={props.onRequestDeleteMany}
             onTogglePin={props.onTogglePin}
             onRequestRename={props.onRequestRename}
-            onRequestRenameTab={props.onRequestRenameTab}
             onToggleArchive={props.onToggleArchive}
-            paneGroups={props.paneGroups}
-            onSelectPane={props.onSelectPane}
-            onCreateTab={props.onCreateTab}
-            onDetachPane={props.onDetachPane}
-            onDissolveTab={props.onDissolveTab}
-            onAttachPane={props.onAttachPane}
             onToggleGroup={props.onToggleGroup}
             onRequestRenameProject={props.onRequestRenameProject}
             onNewChatInProject={props.onNewChatInProject}
             pinnedKeys={props.pinnedKeys}
             archivedKeys={props.archivedKeys}
-            pinnedPaneKeys={props.pinnedPaneKeys}
-            archivedPaneKeys={props.archivedPaneKeys}
             sessionOrder={props.sessionOrder}
             titleOverrides={props.titleOverrides}
             projectNameOverrides={props.projectNameOverrides}

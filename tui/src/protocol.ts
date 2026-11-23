@@ -1,6 +1,23 @@
 import { decodeNotification, isCompactionPhase, isRecoveryState } from "../../packages/client-events/notifications"
 import type { ContextCompaction, NotificationEvent, RecoveryState } from "../../packages/client-events/notifications"
+import {
+  parseDelegatedChildActivity,
+  parseDelegatedChildSummary,
+  parseSourceOrigin,
+  parseStopExpectation,
+  type DelegatedChildActivity,
+  type DelegatedChildReference,
+  type SourceOrigin,
+  type StopExpectation,
+} from "./delegated-children"
 export type { ContextCompaction, RecoveryState, RecoveryStatus, RetryStatus } from "../../packages/client-events/notifications"
+export type {
+  DelegatedChildActivity,
+  DelegatedChildReference,
+  DelegatedChildSummary,
+  SourceOrigin,
+  StopExpectation,
+} from "./delegated-children"
 
 export type ConnectionStatus =
   | "starting"
@@ -88,6 +105,7 @@ export type InboundEvent =
       model_preset?: string | null
       usage?: TokenUsage
       recovery_state?: RecoveryState
+      stop_target?: StopExpectation | null
     }
   | {
       event: "message_accepted"
@@ -97,6 +115,18 @@ export type InboundEvent =
       active_turn_id?: string
       started_at?: number
     }
+  | {
+      event: "message_admitted"
+      chat_id: string
+      turn_id?: string
+      attempt_id?: string
+      session_key?: string
+      session_incarnation?: string
+      active_turn_id?: string
+      starts_turn: boolean
+    }
+  | ({ event: "delegated_child"; chat_id: string } & DelegatedChildActivity)
+  | { event: "stop_target"; chat_id: string; stop_target: StopExpectation | null }
   | {
       event: "user_message"
       chat_id: string
@@ -184,11 +214,12 @@ type OutboundEvent =
       content: string
       turn_id: string
       webui: true
-      workspace_scope?: WorkspaceScopePayload
       media?: OutboundMedia[]
       cli_apps?: Array<{ name: string }>
       mcp_presets?: Array<{ name: string }>
       session_mentions?: SessionMention[]
+      approval_decision?: ApprovalDecision
+      stop_expectation?: StopExpectation
     }
 
 export interface ClientOptions {
@@ -237,6 +268,7 @@ export interface HistoryMessage {
   fileEdits?: FileEditEvent[]
   compaction?: ContextCompaction
   forkIndex?: number
+  delegatedChild?: DelegatedChildActivity
 }
 
 export interface HistorySnapshot {
@@ -244,6 +276,18 @@ export interface HistorySnapshot {
   hasMoreBefore: boolean
   beforeCursor: string | null
   userMessageOffset: number
+  activeTurnId?: string
+  completedTurnIds?: string[]
+  stopTargetSnapshotAvailable?: boolean
+  stopTargetSnapshotValid?: boolean
+  stopTarget?: StopExpectation | null
+  readOnly?: boolean
+  historyKind?: "canonical" | "summary"
+  parentSessionKey?: string
+  rootKey?: string
+  source?: SourceOrigin | null
+  sourceSnapshotValid?: boolean
+  pageSnapshotValid?: boolean
 }
 
 export interface TokenUsage {
@@ -302,6 +346,21 @@ export interface MessageOptions {
   mcpPresets?: Array<{ name: string }>
   sessionMentions?: SessionMention[]
   userShell?: boolean
+  requestIntent?: "new" | "steer"
+  targetTurnId?: string
+  approvalDecision?: ApprovalDecision
+  stopExpectation?: StopExpectation
+}
+
+export interface ApprovalDecision {
+  approval_id: string
+  decision: "approve" | "deny"
+  session_key?: string
+  session_incarnation?: string
+  run_id?: string
+  turn_id?: string
+  effect_id?: string
+  generation?: number
 }
 
 export interface SlashCommand {
@@ -346,7 +405,10 @@ const SLASH_COMMAND_LIFECYCLES = new Set([
 
 const CHAT_EVENTS = new Set([
   "attached",
+  "delegated_child",
+  "stop_target",
   "message_accepted",
+  "message_admitted",
   "user_message",
   "message",
   "file_edit",
@@ -369,8 +431,16 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value)
 }
 
+function hasOwn(value: Record<string, unknown>, key: string): boolean {
+  return Object.prototype.hasOwnProperty.call(value, key)
+}
+
 function optional(value: unknown, type: "boolean" | "number" | "string"): boolean {
   return value === undefined || typeof value === type
+}
+
+function nonNegativeSafeInteger(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0
 }
 
 function isToolEvent(value: unknown): value is ToolProgressEvent {
@@ -493,8 +563,24 @@ function decodeInboundEvent(value: unknown): InboundEvent | null | undefined {
       && record.model_preset !== null
       && typeof record.model_preset !== "string")
       || (record.usage !== undefined && !isTokenUsage(record.usage))
-      || (record.recovery_state !== undefined && !isRecoveryState(record.recovery_state)))
+      || (record.recovery_state !== undefined && !isRecoveryState(record.recovery_state))
+      || (hasOwn(record, "stop_target")
+        && record.stop_target !== null
+        && !parseStopExpectation(record.stop_target)))
   ) return null
+  if (name === "delegated_child") {
+    const child = parseDelegatedChildActivity(record)
+    return child ? { event: "delegated_child", chat_id: record.chat_id as string, ...child } : null
+  }
+  if (name === "stop_target") {
+    if (!hasOwn(record, "stop_target")) return null
+    const stopTarget = record.stop_target === null
+      ? null
+      : parseStopExpectation(record.stop_target)
+    return record.stop_target === null || stopTarget
+      ? { event: "stop_target", chat_id: record.chat_id as string, stop_target: stopTarget }
+      : null
+  }
   if (
     ["user_message", "message", "delta", "reasoning_delta"].includes(name)
     && typeof record.text !== "string"
@@ -508,6 +594,17 @@ function decodeInboundEvent(value: unknown): InboundEvent | null | undefined {
       || !optional(record.starts_turn, "boolean")
       || !optional(record.active_turn_id, "string")
       || !optional(record.started_at, "number")
+    )
+  ) return null
+  if (
+    name === "message_admitted"
+    && (
+      typeof record.starts_turn !== "boolean"
+      || !optional(record.turn_id, "string")
+      || !optional(record.attempt_id, "string")
+      || !optional(record.session_key, "string")
+      || !optional(record.session_incarnation, "string")
+      || !optional(record.active_turn_id, "string")
     )
   ) return null
   if (
@@ -584,11 +681,18 @@ export async function fetchHistory(
   chatId: string,
   beforeCursor?: string | null,
   reauthenticate?: ApiReauthenticator,
+  sessionKey?: string,
 ): Promise<HistorySnapshot> {
   if (!apiUrl || !apiToken) {
-    return { messages: [], hasMoreBefore: false, beforeCursor: null, userMessageOffset: 0 }
+    return {
+      messages: [],
+      hasMoreBefore: false,
+      beforeCursor: null,
+      userMessageOffset: 0,
+      completedTurnIds: [],
+    }
   }
-  const key = encodeURIComponent(`websocket:${chatId}`)
+  const key = encodeURIComponent(sessionKey ?? `websocket:${chatId}`)
   const params = new URLSearchParams({ limit: "120", direction: "latest" })
   if (beforeCursor) params.set("before", beforeCursor)
   const response = await fetchApi(
@@ -601,17 +705,24 @@ export async function fetchHistory(
     return { messages: [], hasMoreBefore: false, beforeCursor: null, userMessageOffset: 0 }
   }
   if (!response.ok) throw new Error(`history request failed: HTTP ${response.status}`)
-  const payload = (await response.json()) as {
-    messages?: Array<Record<string, unknown>>
-    page?: { has_more_before?: boolean; before_cursor?: string; user_message_offset?: number }
-  }
-  let userIndex = typeof payload.page?.user_message_offset === "number"
-    ? Math.max(0, payload.page.user_message_offset)
+  const payloadValue: unknown = await response.json()
+  const payload = isRecord(payloadValue) ? payloadValue : {}
+  const page = isRecord(payload.page) ? payload.page : null
+  const rawMessages = Array.isArray(payload.messages)
+    ? payload.messages.filter(isRecord)
+    : []
+  let userIndex = typeof page?.user_message_offset === "number"
+    ? Math.max(0, page.user_message_offset)
     : 0
   const messages: HistoryMessage[] = []
-  for (const message of payload.messages || []) {
+  for (const message of rawMessages) {
     const role = message.role
     const content = message.content
+    if (message.kind === "delegated_child") {
+      const child = parseDelegatedChildActivity(message.delegatedChild)
+      if (child) messages.push({ role: "activity", content: "", delegatedChild: child })
+      continue
+    }
     if (message.kind === "compaction") {
       const compaction = message.compaction
       if (isRecord(compaction)
@@ -668,14 +779,227 @@ export async function fetchHistory(
   }
   return {
     messages,
-    hasMoreBefore: payload.page?.has_more_before === true,
-    beforeCursor: typeof payload.page?.before_cursor === "string"
-      ? payload.page.before_cursor
+    hasMoreBefore: page?.has_more_before === true,
+    beforeCursor: typeof page?.before_cursor === "string"
+      ? page.before_cursor
       : null,
-    userMessageOffset: typeof payload.page?.user_message_offset === "number"
-      ? Math.max(0, payload.page.user_message_offset)
+    userMessageOffset: typeof page?.user_message_offset === "number"
+      ? Math.max(0, page.user_message_offset)
       : 0,
+    ...(typeof payload.active_turn_id === "string" ? { activeTurnId: payload.active_turn_id } : {}),
+    completedTurnIds: Array.isArray(payload.completed_turn_ids)
+      ? payload.completed_turn_ids.filter((value): value is string => typeof value === "string")
+      : [],
+    ...(hasOwn(payload, "stop_target") ? {
+      stopTargetSnapshotAvailable: true,
+      stopTargetSnapshotValid: payload.stop_target === null
+        || parseStopExpectation(payload.stop_target) !== null,
+      stopTarget: payload.stop_target === null
+        ? null
+        : parseStopExpectation(payload.stop_target),
+    } : {}),
+    ...(typeof payload.read_only === "boolean" ? { readOnly: payload.read_only } : {}),
+    ...(payload.history_kind === "canonical" || payload.history_kind === "summary"
+      ? { historyKind: payload.history_kind }
+      : {}),
+    ...(typeof payload.parent_session_key === "string"
+      ? { parentSessionKey: payload.parent_session_key }
+      : {}),
+    ...(typeof payload.root_key === "string" ? { rootKey: payload.root_key } : {}),
+    ...(hasOwn(payload, "source") ? {
+      source: payload.source === null ? null : parseSourceOrigin(payload.source),
+      sourceSnapshotValid: payload.source === null || parseSourceOrigin(payload.source) !== null,
+    } : {}),
+    ...(page && sessionKey ? {
+      pageSnapshotValid: typeof page.has_more_before === "boolean"
+        && (page.before_cursor === null || typeof page.before_cursor === "string")
+        && nonNegativeSafeInteger(page.loaded_message_count),
+    } : {}),
   }
+}
+
+export interface DelegatedChildrenSnapshot {
+  parentSessionKey: string
+  children: DelegatedChildReference[]
+  stopTargetSnapshotAvailable: boolean
+  stopTargetSnapshotValid: boolean
+  stopTarget?: StopExpectation | null
+}
+
+/** Load every child page before replacing the client projection. */
+export async function fetchDelegatedChildren(
+  apiUrl: string,
+  apiToken: string,
+  parentSessionKey: string,
+  reauthenticate?: ApiReauthenticator,
+): Promise<DelegatedChildrenSnapshot | null> {
+  if (!apiUrl || !apiToken) return null
+  const children: DelegatedChildReference[] = []
+  const seenCursors = new Set<string>()
+  let cursor: string | null = null
+  let stopTargetSnapshotAvailable = false
+  let stopTargetSnapshotValid = true
+  let stopTarget: StopExpectation | null | undefined
+  let schemaVersion: number | null = null
+
+  for (let pageIndex = 0; pageIndex < 1_000; pageIndex += 1) {
+    const params = new URLSearchParams({ limit: "120" })
+    if (cursor) params.set("before", cursor)
+    const key = encodeURIComponent(parentSessionKey)
+    const response = await fetchApi(
+      apiUrl,
+      apiToken,
+      `/api/sessions/${key}/delegated-children?${params}`,
+      reauthenticate,
+    )
+    if (response.status === 404) return null
+    if (!response.ok) throw new Error(`delegated child hydration failed: HTTP ${response.status}`)
+    const value: unknown = await response.json()
+    if (!isRecord(value) || !isRecord(value.page)) {
+      throw new Error("gateway returned invalid delegated child hydration")
+    }
+    const page = value.page
+    const version = value.schemaVersion
+    if (
+      !nonNegativeSafeInteger(version)
+      || (schemaVersion !== null && version !== schemaVersion)
+      || value.parentSessionKey !== parentSessionKey
+      || !Array.isArray(value.children)
+      || typeof page.has_more_before !== "boolean"
+      || !(page.before_cursor === null || typeof page.before_cursor === "string")
+      || !nonNegativeSafeInteger(page.loaded_message_count)
+    ) throw new Error("gateway returned invalid delegated child hydration")
+    schemaVersion = version
+    const parsedChildren = value.children.map((child: unknown) => (
+      isRecord(child) && child.history_kind === "summary"
+        ? parseDelegatedChildSummary(child)
+        : parseDelegatedChildActivity(child)
+    ))
+    if (parsedChildren.some((child) => child === null)) {
+      throw new Error("gateway returned malformed delegated child activity")
+    }
+    children.push(...parsedChildren.filter(
+      (child): child is DelegatedChildReference => child !== null,
+    ))
+    if (hasOwn(value, "stop_target")) {
+      stopTargetSnapshotAvailable = true
+      const parsedTarget = value.stop_target === null
+        ? null
+        : parseStopExpectation(value.stop_target)
+      if (value.stop_target !== null && !parsedTarget) stopTargetSnapshotValid = false
+      stopTarget = parsedTarget
+    }
+    if (!page.has_more_before) {
+      return {
+        parentSessionKey,
+        children,
+        stopTargetSnapshotAvailable,
+        stopTargetSnapshotValid,
+        ...(stopTargetSnapshotAvailable ? { stopTarget: stopTarget ?? null } : {}),
+      }
+    }
+    const nextCursor = page.before_cursor
+    if (typeof nextCursor !== "string" || !nextCursor || seenCursors.has(nextCursor)) {
+      throw new Error("delegated child hydration page cursor did not advance")
+    }
+    seenCursors.add(nextCursor)
+    cursor = nextCursor
+  }
+  throw new Error("delegated child hydration exceeded its page limit")
+}
+
+/** Read a complete child conversation while verifying its exact read-only source. */
+export async function fetchDelegatedChildHistory(
+  apiUrl: string,
+  apiToken: string,
+  chatId: string,
+  child: DelegatedChildReference,
+  reauthenticate?: ApiReauthenticator,
+): Promise<HistorySnapshot & { readOnly: true; historyKind: "canonical" | "summary" }> {
+  const summaryChild = child.history_kind === "summary"
+    ? parseDelegatedChildSummary(child)
+    : null
+  if (child.history_kind === "summary" && !summaryChild) {
+    throw new Error("summary child detail is not a valid source-less reference")
+  }
+  const pages: HistorySnapshot[] = []
+  const seenCursors = new Set<string>()
+  let cursor: string | null = null
+  let kind: "canonical" | "summary" | null = null
+  let origin: SourceOrigin | null = null
+
+  for (let pageIndex = 0; pageIndex < 1_000; pageIndex += 1) {
+    const page = await fetchHistory(
+      apiUrl,
+      apiToken,
+      chatId,
+      cursor,
+      reauthenticate,
+      child.child_session_key,
+    )
+    if (
+      page.readOnly !== true
+      || (page.historyKind !== "canonical" && page.historyKind !== "summary")
+      || !page.pageSnapshotValid
+      || !page.sourceSnapshotValid
+      || page.parentSessionKey !== child.parent_session_key
+      || page.rootKey !== child.root_key
+    ) throw new Error("child detail is unavailable because its read-only history could not be verified")
+    if (kind !== null && page.historyKind !== kind) {
+      throw new Error("child history kind changed while loading detail")
+    }
+    kind = page.historyKind
+    if (kind === "canonical") {
+      if (summaryChild) {
+        throw new Error("summary child history cannot claim canonical activity")
+      }
+      const current = page.source
+      if (
+        !current
+        || current.store_identity !== child.child_store_identity
+        || current.session_key !== child.child_session_key
+        || current.incarnation !== child.child_incarnation
+        || current.generation !== child.child_generation
+      ) throw new Error("child history source changed; detail was not opened")
+      if (origin && !sameSourceOrigin(origin, current)) {
+        throw new Error("child history source changed while loading detail")
+      }
+      origin = current
+    } else {
+      if (!summaryChild || page.source !== null) {
+        throw new Error("summary child history must be explicitly source-less")
+      }
+    }
+    if (page.stopTargetSnapshotAvailable) {
+      // A child history response is read-only and never supplies Stop authority.
+    }
+    pages.push(page)
+    if (!page.hasMoreBefore) {
+      const ordered = [...pages].reverse()
+      return {
+        ...page,
+        messages: ordered.flatMap((item) => item.messages),
+        hasMoreBefore: false,
+        beforeCursor: null,
+        readOnly: true,
+        historyKind: kind,
+      }
+    }
+    const nextCursor = page.beforeCursor
+    if (!nextCursor || seenCursors.has(nextCursor)) {
+      throw new Error("child history page cursor did not advance")
+    }
+    seenCursors.add(nextCursor)
+    cursor = nextCursor
+  }
+  throw new Error("child history exceeded its page limit")
+}
+
+function sameSourceOrigin(left: SourceOrigin, right: SourceOrigin): boolean {
+  return left.store_identity === right.store_identity
+    && left.session_key === right.session_key
+    && left.incarnation === right.incarnation
+    && left.generation === right.generation
 }
 
 export async function fetchSessionContext(
@@ -1078,7 +1402,6 @@ export class NanobotClient {
   private handshakeTimer: ReturnType<typeof setTimeout> | null = null
   private socket: WebSocket | null = null
   private chatId = ""
-  private workspaceScope?: WorkspaceScopePayload
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null
   private reconnectAttempt = 0
   private closedByClient = false
@@ -1226,7 +1549,16 @@ export class NanobotClient {
       content,
       turn_id: turnId,
       webui: true,
-      ...(this.workspaceScope ? { workspace_scope: this.workspaceScope } : {}),
+      ...(options.requestIntent || options.targetTurnId
+        || options.stopExpectation || options.approvalDecision
+        ? {
+            request_settings_version: 1,
+            request_intent: options.requestIntent ?? "new",
+            ...(options.targetTurnId ? { target_turn_id: options.targetTurnId } : {}),
+          }
+        : {}),
+      ...(options.approvalDecision ? { approval_decision: options.approvalDecision } : {}),
+      ...(options.stopExpectation ? { stop_expectation: options.stopExpectation } : {}),
       ...(options.userShell ? { user_shell: true } : {}),
       ...(options.media?.length ? { media: options.media } : {}),
       ...(options.cliApps?.length ? { cli_apps: options.cliApps } : {}),
@@ -1240,12 +1572,10 @@ export class NanobotClient {
 
   attach(chatId: string): void {
     if (!chatId) throw new Error("chat id is required")
-    this.workspaceScope = undefined
     this.write({ type: "attach", chat_id: chatId })
   }
 
   newChat(scope?: WorkspaceScopePayload): void {
-    this.workspaceScope = scope
     this.write({ type: "new_chat", ...(scope ? { workspace_scope: scope } : {}) })
   }
 
@@ -1260,7 +1590,6 @@ export class NanobotClient {
 
   setWorkspaceScope(scope: WorkspaceScopePayload): void {
     if (!this.chatId) throw new Error("chat is not ready")
-    this.workspaceScope = scope
     this.write({ type: "set_workspace_scope", chat_id: this.chatId, workspace_scope: scope })
   }
 
@@ -1376,8 +1705,6 @@ export class NanobotClient {
       }
     } else if (event.event === "attached") {
       this.chatId = event.chat_id
-    } else if (event.event === "session_updated" && event.workspace_scope) {
-      this.workspaceScope = event.workspace_scope
     }
     this.options.onEvent(event)
   }

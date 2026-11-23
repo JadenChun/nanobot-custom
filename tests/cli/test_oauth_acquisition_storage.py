@@ -43,11 +43,11 @@ def test_interactive_login_uses_acquisition_only_storage(monkeypatch, entrypoint
             account_id="test-account",
         )
 
-    monkeypatch.setattr(codex_auth, "get_codex_authority", Authority)
+    monkeypatch.setattr(codex_auth, "get_codex_authority", lambda _owner=None: Authority())
     monkeypatch.setattr(oauth_cli_kit, "login_oauth_interactive", login)
     monkeypatch.setattr("nanobot.config.loader.load_config", lambda: Config())
     monkeypatch.setattr(oauth_model_catalog, "invalidate_oauth_model_catalog",
-                        lambda name: events.append(("invalidate", name)))
+                        lambda name, **_kwargs: events.append(("invalidate", name)))
 
     if entrypoint == "provider":
         provider._login_openai_codex()
