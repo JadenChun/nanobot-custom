@@ -94,7 +94,11 @@ async def test_actual_run_stage_retains_runner_outcome_and_plain_tool_ledger(con
     # Exercise the real stage with injected collaborators; never construct a runtime.
     loop = object.__new__(AgentLoop)
     loop._run_agent_loop = run
-    delivery = SimpleNamespace(running=AsyncMock(), record_usage=lambda usage: None)
+    delivery = SimpleNamespace(
+        running=AsyncMock(),
+        record_usage=lambda usage: None,
+        context_usage_hook=lambda: None,
+    )
     ctx = StageContext(msg=InboundMessage(channel='telegram', chat_id='42', sender_id='cron', content='task'),
                        session_key='cron:test', turn_id='test', runtime=object(),
                        kind=TurnKind.SYSTEM, delivery=delivery)

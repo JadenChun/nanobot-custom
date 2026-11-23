@@ -7,6 +7,7 @@ from nanobot.agent.loop import AgentLoop, TurnKind
 from nanobot.agent.loop import TurnContext as StageContext
 from nanobot.agent.turn import TurnContext, TurnRequest
 from nanobot.bus.events import InboundMessage, OutboundMessage
+from nanobot.config.schema import ToolsConfig
 from nanobot.session.manager import Session
 from nanobot.session.summary import SessionSummaryCheckpoint
 
@@ -14,7 +15,12 @@ from nanobot.session.summary import SessionSummaryCheckpoint
 def host():
     loop = object.__new__(AgentLoop)
     loop.auto_compact = None
-    loop.sessions = SimpleNamespace(save=Mock(), source_backend=lambda key: None)
+    loop.sessions = SimpleNamespace(
+        save=Mock(),
+        source_backend=lambda key: None,
+        read_next_turn_preferences=lambda _key: None,
+    )
+    loop.tools_config = ToolsConfig()
     loop.runtime_event_publisher = SimpleNamespace(session_turn_persisted=AsyncMock())
     return loop
 

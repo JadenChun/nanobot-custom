@@ -2120,6 +2120,7 @@ async def test_remote_access_reduction_applies_to_in_flight_message(
                 asyncio.gather(message_task, return_exceptions=True),
                 timeout=5,
             )
+            raise
 
     assert sessions.read_session_file(f"websocket:{chat_id}") is not None
     assert channel.gateway.workspaces.scope_for_session_key(

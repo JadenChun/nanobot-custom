@@ -47,8 +47,8 @@ def stage_host(tmp_path, *, fail=False):
     loop.sessions.save = Mock()
     loop.runtime_event_publisher = SimpleNamespace(session_turn_persisted=AsyncMock())
     delivery = SimpleNamespace(session_key=session.key, streaming=False, events=NO_EVENTS,
-                               record_latency=Mock())
-    loop.turn_delivery_factory = SimpleNamespace(create=lambda *args: delivery)
+                               record_latency=Mock(), context_usage_hook=lambda: None)
+    loop.turn_delivery_factory = SimpleNamespace(create=lambda *args, **kwargs: delivery)
     loop._process_turn = AgentLoop._process_turn.__get__(loop)
     async def restore(ctx):
         ctx.session = session

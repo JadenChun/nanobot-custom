@@ -17,7 +17,7 @@
  * integrated behavior a Linux host can prove. macOS/Android/Go checks remain
  * external.
  */
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useState } from "react";
@@ -25,7 +25,7 @@ import { useState } from "react";
 import { ThreadComposer } from "@/components/thread/ThreadComposer";
 import { ThreadViewport } from "@/components/thread/ThreadViewport";
 import { resetComposerDraftsForTests } from "@/lib/composer-drafts";
-import type { UIMessage, WorkspaceScopePayload } from "@/lib/types";
+import type { UIMessage, WorkspaceScopePayload, WorkspacesPayload } from "@/lib/types";
 
 const NS = "pkg6-ns";
 
@@ -48,13 +48,55 @@ const HOME: WorkspaceScopePayload = {
   restrict_to_workspace: true,
 };
 
-function workspacesFixture() {
+function workspacesFixture(): WorkspacesPayload {
+  const effectiveAccess = {
+    policy: "legacy" as const,
+    source: "configured" as const,
+    grant_root: null,
+    exists: true,
+    read: true,
+    write: true,
+    boundary: "folder" as const,
+    commands: {
+      requested: true,
+      available: true,
+      backend: "native" as const,
+      reason: null,
+    },
+  };
   return {
     schema_version: 2 as const,
     default_access_mode: "restricted" as const,
     default_scope: HOME,
     managed_access: false,
-    management: null,
+    management: {
+      grants_revision: 1,
+      grants: [],
+      repositories: [
+        {
+          name: "alpha",
+          path: FOLDER_A.project_path,
+          purpose: "",
+          kind: "project" as const,
+          knowledge_repos: [],
+          auto_sync: false,
+          sync_paths: [],
+          exists: true,
+          effective_access: effectiveAccess,
+        },
+        {
+          name: "beta",
+          path: FOLDER_B.project_path,
+          purpose: "",
+          kind: "project" as const,
+          knowledge_repos: [],
+          auto_sync: false,
+          sync_paths: [],
+          exists: true,
+          effective_access: effectiveAccess,
+        },
+      ],
+    },
     controls: {
       can_change_project: true,
       can_use_full_access: true,
@@ -256,40 +298,96 @@ describe("Package 6 integrated chat-page qualification", () => {
   it("keeps the next-folder picker and editor usable while turn A runs", async () => {
     const user = userEvent.setup();
     const onWorkspaceScopeChange = vi.fn();
-    const onSend = vi.fn();
+    const onSend = vi.fn((content: string) => content !== "");
     const workspaces = workspacesFixture();
+    let finishTurnA!: () => void;
+    let acknowledgeSettings!: () => void;
+    let submittedNextScope: WorkspaceScopePayload | null = null;
+    let resolveSettingsAcknowledgement!: () => void;
+    const settingsAcknowledgement = new Promise<void>((resolve) => {
+      resolveSettingsAcknowledgement = resolve;
+    });
+    const onBeforeNewTurnSend = vi.fn(() => settingsAcknowledgement);
 
-    render(
-      <ThreadComposer
-        onSend={onSend}
-        placeholder="Ask anything..."
-        pendingQueueKey="pkg6-chat"
-        isStreaming
-        workspaceScope={FOLDER_A}
-        workspaceDefaultScope={HOME}
-        workspaceControls={workspaces.controls}
-        workspaces={workspaces}
-        nextWorkspaceScope={FOLDER_B}
-        nextTurnSettingsPending
-        onWorkspaceScopeChange={onWorkspaceScopeChange}
-      />,
-    );
+    function Harness() {
+      const [isStreaming, setIsStreaming] = useState(true);
+      const [nextWorkspaceScope, setNextWorkspaceScope] =
+        useState<WorkspaceScopePayload | null>(null);
+      const [settingsPending, setSettingsPending] = useState(false);
+      finishTurnA = () => setIsStreaming(false);
+      acknowledgeSettings = () => {
+        setSettingsPending(false);
+        resolveSettingsAcknowledgement();
+      };
 
-    // The next-folder picker stays enabled while turn A runs and shows B
-    // separately from the admitted folder A.
-    const trigger = screen.getByRole("button", { name: "Next turn: beta" });
+      return (
+        <ThreadComposer
+          onSend={(content) => {
+            submittedNextScope = nextWorkspaceScope;
+            return onSend(content);
+          }}
+          onBeforeNewTurnSend={onBeforeNewTurnSend}
+          placeholder="Ask anything..."
+          pendingQueueKey="pkg6-chat"
+          isStreaming={isStreaming}
+          queueCompletionTurnId={isStreaming ? null : "turn-a"}
+          workspaceScope={FOLDER_A}
+          workspaceDefaultScope={HOME}
+          workspaceControls={workspaces.controls}
+          workspaces={workspaces}
+          nextWorkspaceScope={nextWorkspaceScope}
+          nextTurnSettingsPending={settingsPending}
+          onWorkspaceScopeChange={(scope) => {
+            onWorkspaceScopeChange(scope);
+            setNextWorkspaceScope(scope);
+            setSettingsPending(true);
+          }}
+        />
+      );
+    }
+
+    render(<Harness />);
+
+    // Select configured Beta while turn A still owns Alpha.
+    const trigger = screen.getByRole("button", { name: "Working in: alpha" });
     expect(trigger).toBeEnabled();
     await user.click(trigger);
-    expect(await screen.findByText(FOLDER_B.project_path)).toBeInTheDocument();
-    expect(screen.getByText(FOLDER_A.project_path)).toBeInTheDocument();
+    const picker = await screen.findByRole("dialog");
+    await user.click(within(picker).getByRole("button", { name: /beta/i }));
+    expect(onWorkspaceScopeChange).toHaveBeenCalledWith(
+      expect.objectContaining({ project_path: FOLDER_B.project_path }),
+    );
 
-    // The editor stays usable. Enter during a run queues a follow-up instead
-    // of starting a second turn, so nothing is admitted under a pending choice.
+    // Beta is visible immediately while its settings acknowledgement is held.
+    const nextTurnTrigger = screen.getByRole("button", { name: "Next turn: beta" });
+    expect(nextTurnTrigger).toBeEnabled();
+    expect(nextTurnTrigger).toHaveAttribute(
+      "title",
+      expect.stringContaining("The running turn keeps its folder."),
+    );
+    await user.click(nextTurnTrigger);
+    const updatedPicker = await screen.findByRole("dialog");
+    expect(within(updatedPicker).getByRole("button", { name: /beta/i }))
+      .toHaveAttribute("aria-current", "true");
+    expect(within(updatedPicker).getByRole("button", { name: /alpha/i }))
+      .not.toHaveAttribute("aria-current");
+
+    // Plain Enter queues and clears the draft without sending during turn A.
     await typeInto("follow-up for turn A");
     fireEvent.keyDown(input(), { key: "Enter" });
     expect(onSend).not.toHaveBeenCalled();
     expect(input()).toHaveValue("");
     expect(screen.getByText("follow-up for turn A")).toBeInTheDocument();
+
+    // Turn A ends, but the queued send waits for the held Beta acknowledgement.
+    await act(async () => finishTurnA());
+    await waitFor(() => expect(onBeforeNewTurnSend).toHaveBeenCalledTimes(1));
+    expect(onSend).not.toHaveBeenCalled();
+
+    await act(async () => acknowledgeSettings());
+    await waitFor(() => expect(onSend).toHaveBeenCalledTimes(1));
+    expect(onSend.mock.calls[0]?.[0]).toBe("follow-up for turn A");
+    expect(submittedNextScope).toEqual(FOLDER_B);
   });
 
   it("does not run the model or fetch history to change the next folder", async () => {
@@ -298,30 +396,55 @@ describe("Package 6 integrated chat-page qualification", () => {
     vi.stubGlobal("fetch", fetchMock);
     const workspaces = workspacesFixture();
     const onWorkspaceScopeChange = vi.fn();
+    const onSend = vi.fn();
+    let acknowledgeSettings!: () => void;
 
-    render(
-      <ThreadComposer
-        onSend={vi.fn()}
-        placeholder="Ask anything..."
-        pendingQueueKey="pkg6-chat"
-        isStreaming
-        workspaceScope={FOLDER_A}
-        workspaceDefaultScope={HOME}
-        workspaceControls={workspaces.controls}
-        workspaces={workspaces}
-        onWorkspaceScopeChange={onWorkspaceScopeChange}
-      />,
-    );
+    function Harness() {
+      const [nextWorkspaceScope, setNextWorkspaceScope] =
+        useState<WorkspaceScopePayload | null>(null);
+      const [settingsPending, setSettingsPending] = useState(false);
+      acknowledgeSettings = () => setSettingsPending(false);
+
+      return (
+        <ThreadComposer
+          onSend={onSend}
+          placeholder="Ask anything..."
+          pendingQueueKey="pkg6-chat"
+          isStreaming
+          workspaceScope={FOLDER_A}
+          workspaceDefaultScope={HOME}
+          workspaceControls={workspaces.controls}
+          workspaces={workspaces}
+          nextWorkspaceScope={nextWorkspaceScope}
+          nextTurnSettingsPending={settingsPending}
+          onWorkspaceScopeChange={(scope) => {
+            onWorkspaceScopeChange(scope);
+            setNextWorkspaceScope(scope);
+            setSettingsPending(true);
+          }}
+        />
+      );
+    }
+
+    render(<Harness />);
 
     await user.click(screen.getByRole("button", { name: "Working in: alpha" }));
-    fireEvent.change(await screen.findByLabelText("Paste path"), {
-      target: { value: FOLDER_B.project_path },
-    });
-    await user.click(screen.getByRole("button", { name: "Use folder" }));
+    const picker = await screen.findByRole("dialog");
+    await user.click(within(picker).getByRole("button", { name: /beta/i }));
 
     expect(onWorkspaceScopeChange).toHaveBeenCalledWith(
       expect.objectContaining({ project_path: FOLDER_B.project_path }),
     );
+    const nextTurnTrigger = screen.getByRole("button", { name: "Next turn: beta" });
+    expect(nextTurnTrigger).toHaveAttribute(
+      "title",
+      expect.stringContaining("This choice applies to the next turn."),
+    );
+    expect(onSend).not.toHaveBeenCalled();
+
+    await act(async () => acknowledgeSettings());
+    expect(screen.getByRole("button", { name: "Next turn: beta" })).toBeEnabled();
     expect(fetchMock).not.toHaveBeenCalled();
+    expect(onSend).not.toHaveBeenCalled();
   });
 });

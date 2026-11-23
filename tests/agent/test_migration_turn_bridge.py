@@ -9,6 +9,7 @@ from nanobot.agent.runner import AgentRunResult
 from nanobot.agent.tools.file_state import FileStateStore
 from nanobot.agent.tools.registry import ToolRegistry
 from nanobot.agent.turn import HistoryMode, RunPolicyContext, TurnContext, TurnRequest
+from nanobot.config.schema import ToolsConfig
 from nanobot.context_repo import ContextRepoManager
 
 
@@ -28,6 +29,7 @@ async def test_loop_forwards_same_context_and_mandatory_policy(tmp_path, monkeyp
     loop._fork_dependencies = SimpleNamespace(
         resource_policy=SimpleNamespace(folder_grants=None),
     )
+    loop.tools_config = ToolsConfig()
     loop._sync_subagent_runtime_limits = lambda: None
     loop.workspace_scopes = SimpleNamespace(for_turn=lambda **kwargs: SimpleNamespace(project_path=tmp_path))
     loop.context = SimpleNamespace(build_transcript=lambda *args, **kwargs: None)

@@ -35,6 +35,11 @@ async def test_fresh_build_excludes_prior_state_but_appends_detail_history():
     ctx = stage()
     session = ctx.session
     ctx.pending_summary = object()
+    loop.sessions = SimpleNamespace(
+        read_next_turn_preferences=lambda _key: None,
+        save=lambda _session: None,
+    )
+    loop.tools_config = ToolsConfig()
     loop.auto_compact = SimpleNamespace(prepare_session=lambda *args: pytest.fail('old compaction used'))
     loop._request_context_for_turn = lambda ctx: None
     loop._resolve_runtime_context_for_turn = AsyncMock(return_value=[])

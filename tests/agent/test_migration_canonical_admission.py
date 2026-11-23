@@ -17,6 +17,7 @@ from nanobot.agent.turn import (
     TurnRequest,
 )
 from nanobot.agent.turn_admission import ApprovalAdmission
+from nanobot.config.schema import ToolsConfig
 from nanobot.session.manager import SessionManager
 
 
@@ -28,6 +29,7 @@ def host(tmp_path):
     loop.approval_admission = ApprovalAdmission()
     loop.sessions = SessionManager(tmp_path / "workspace", sessions_root=tmp_path / "sessions")
     loop.run_store = RunStore(tmp_path, session_manager=loop.sessions)
+    loop.tools_config = ToolsConfig()
     loop._session_locks = weakref.WeakValueDictionary()
     loop._bus_cleanup_tasks = {}
     loop._pending_republish = {}
