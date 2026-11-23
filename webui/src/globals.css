@@ -417,6 +417,10 @@
     .thread-layout[data-layout="hero"] {
       grid-template-rows: minmax(min-content, 1fr) auto 1fr;
     }
+
+    .thread-layout {
+      --thread-composer-fade-cover: 0.5rem;
+    }
   }
 
   /**
@@ -433,7 +437,8 @@
     height: var(--thread-composer-fade-height);
     background: linear-gradient(
       to top,
-      hsl(var(--background)) 0%,
+      /* Fully cover text before it reaches the opaque desktop dock. */
+      hsl(var(--background)) var(--thread-composer-fade-cover, 0px),
       transparent 100%
     );
   }
