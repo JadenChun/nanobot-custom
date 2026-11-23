@@ -2983,12 +2983,8 @@ export function ThreadComposer({
           onChoose={chooseMentionCandidate}
         />
       ) : null}
-      {showMobileWorkspaceRow ? (
-        <div
-          className="thread-composer-mobile-workspace-row"
-          data-hidden={composerChromeHidden ? "true" : undefined}
-          aria-hidden={composerChromeHidden || undefined}
-        >
+      {showMobileWorkspaceRow && !composerChromeHidden ? (
+        <div className="thread-composer-mobile-workspace-row">
           {showMobileWorkspaceLine ? projectPickerLine : null}
           {hasMobileUsage ? (
             <div className="thread-composer-mobile-workspace-meta flex min-w-0 items-center">

@@ -303,22 +303,6 @@ html.mobile-runtime body {
   min-height: 1.75rem;
   margin: 0 auto 0.25rem;
   padding: 0 0.75rem;
-  visibility: visible;
-  transition:
-    opacity 180ms ease,
-    transform 180ms ease,
-    visibility 0s linear;
-}
-
-.thread-composer-mobile-workspace-row[data-hidden="true"] {
-  visibility: hidden;
-  opacity: 0;
-  transform: translateY(0.25rem);
-  pointer-events: none;
-  transition:
-    opacity 180ms ease,
-    transform 180ms ease,
-    visibility 0s linear 180ms;
 }
 
 .thread-composer-workspace-trigger::after,
@@ -340,12 +324,6 @@ html.mobile-runtime .thread-composer-mobile-workspace-row .thread-composer-conte
 
 html.mobile-runtime .thread-composer-mobile-workspace-row .thread-composer-context-usage::after {
   inset: -0.5rem -0.25rem;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .thread-composer-mobile-workspace-row {
-    transition: none;
-  }
 }
 
 html.mobile-runtime .thread-composer-footer-actions {

@@ -490,6 +490,7 @@ export const ThreadViewport = forwardRef<ThreadViewportHandle, ThreadViewportPro
   const composerInputScrollTopRef = useRef<number | null>(null);
   const composerDockHeightRef = useRef(0);
   const [atBottom, setAtBottom] = useState(true);
+  const [composerChromeHidden, setComposerChromeHidden] = useState(false);
   const [highlightedPromptId, setHighlightedPromptId] = useState<string | null>(null);
   const [composerDockHeight, setComposerDockHeight] = useState(0);
   const [keyboardInsetBottom, setKeyboardInsetBottom] = useState(0);
@@ -582,7 +583,10 @@ export const ThreadViewport = forwardRef<ThreadViewportHandle, ThreadViewportPro
           current === nextOverflow ? current : nextOverflow,
         );
       },
-      onAutoFollow: () => setAtBottom(true),
+      onAutoFollow: () => {
+        setAtBottom(true);
+        setComposerChromeHidden(false);
+      },
     });
   }
   const hasMessages = messages.length > 0;
@@ -760,6 +764,7 @@ export const ThreadViewport = forwardRef<ThreadViewportHandle, ThreadViewportPro
       marker.scrollIntoView({ block: "end", behavior });
     }
     setAtBottom(true);
+    setComposerChromeHidden(false);
   }, []);
 
   const scrollToBottom = useCallback(
@@ -1000,6 +1005,7 @@ export const ThreadViewport = forwardRef<ThreadViewportHandle, ThreadViewportPro
     }
     threadMotionRef.current?.reset();
     setAtBottom(true);
+    setComposerChromeHidden(false);
     setHighlightedPromptId(null);
     setVisibleMessageCount(INITIAL_HISTORY_WINDOW);
 
@@ -1286,11 +1292,12 @@ export const ThreadViewport = forwardRef<ThreadViewportHandle, ThreadViewportPro
     ) => {
       if (!direction) return;
       const canScroll = canScrollInDirection(el, direction);
-      threadMotionRef.current?.handleUserScrollIntent(
-        canScroll,
-        direction === "forward",
-      );
-      if (direction === "backward" && !canScroll) {
+      const towardLatest = direction === "forward";
+      // Respond to the user's direction, not scroll events emitted when the
+      // composer changes height or the transcript restores its anchor.
+      if (canScroll || towardLatest) setComposerChromeHidden(!towardLatest);
+      threadMotionRef.current?.handleUserScrollIntent(canScroll, towardLatest);
+      if (!towardLatest && !canScroll) {
         threadMotionRef.current?.takeUserControl();
         scrollHandlersRef.current.maybeLoadEarlierFromScroll();
       }
@@ -1526,7 +1533,7 @@ export const ThreadViewport = forwardRef<ThreadViewportHandle, ThreadViewportPro
                   data-testid="thread-composer-motion"
                   className="mx-auto w-full max-w-[58rem]"
                 >
-                  <ThreadComposerChromeHiddenProvider value={!atBottom || hasMoreAfter}>
+                  <ThreadComposerChromeHiddenProvider value={hasMessages && composerChromeHidden}>
                     {composer}
                   </ThreadComposerChromeHiddenProvider>
                 </div>

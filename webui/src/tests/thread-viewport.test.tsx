@@ -3,6 +3,7 @@ import { act, fireEvent, render, screen, waitFor, within } from "@testing-librar
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { PromptNavigator } from "@/components/thread/PromptNavigator";
+import { ThreadComposer } from "@/components/thread/ThreadComposer";
 import {
   HISTORY_WINDOW_INCREMENT,
   INITIAL_HISTORY_WINDOW,
@@ -442,6 +443,60 @@ describe("ThreadViewport", () => {
     expect(composerDock).not.toHaveClass("sticky");
     expect(scroller.querySelector(".thread-message-end-gap")).toBeInTheDocument();
     expect(scroller.lastElementChild).toHaveClass("h-px", "shrink-0");
+  });
+
+  it("collapses mobile composer controls while scrolling up and restores them before the tail", () => {
+    const matchMedia = window.matchMedia.bind(window);
+    vi.spyOn(window, "matchMedia").mockImplementation((query) => {
+      const media = matchMedia(query);
+      if (query === "(max-width: 639px)") {
+        Object.defineProperty(media, "matches", { value: true });
+      }
+      return media;
+    });
+    const { container } = render(
+      <ThreadViewport
+        messages={messages}
+        isStreaming={false}
+        composer={<ThreadComposer
+          onSend={vi.fn()}
+          hasConfiguredModel
+          contextUsage={{ contextTokens: 1_000, contextWindowTokens: 10_000 }}
+        />}
+      />,
+    );
+    const scroller = getScroller(container);
+    Object.defineProperties(scroller, {
+      scrollHeight: { configurable: true, value: 2_400 },
+      clientHeight: { configurable: true, value: 600 },
+      scrollTop: { configurable: true, writable: true, value: 1_800 },
+    });
+    const row = () => container.querySelector(".thread-composer-mobile-workspace-row");
+    const input = screen.getByRole("textbox");
+    fireEvent.change(input, { target: { value: "Keep my draft" } });
+    expect(row()).toBeInTheDocument();
+
+    fireEvent.touchStart(scroller, { touches: [{ clientY: 250 }] });
+    act(() => {
+      fireEvent.touchMove(scroller, { touches: [{ clientY: 400 }] });
+      scroller.scrollTop = 1_350;
+      scroller.dispatchEvent(new Event("scroll"));
+    });
+    expect(row()).not.toBeInTheDocument();
+
+    // A layout/anchor adjustment is not a downward scroll gesture.
+    act(() => {
+      scroller.scrollTop = 1_400;
+      scroller.dispatchEvent(new Event("scroll"));
+    });
+    expect(row()).not.toBeInTheDocument();
+
+    fireEvent.touchMove(scroller, { touches: [{ clientY: 350 }] });
+    fireEvent.touchEnd(scroller);
+    expect(row()).toBeInTheDocument();
+    expect(screen.getByRole("textbox")).toBe(input);
+    expect(input).toHaveValue("Keep my draft");
+    expect(screen.getByRole("button", { name: "Scroll to bottom" })).toBeInTheDocument();
   });
 
   it("pins a waiting prompt to the exact lower scroll boundary", async () => {
