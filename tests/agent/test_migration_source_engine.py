@@ -440,14 +440,18 @@ async def test_source_scoped_worker_records_child_effects_under_parent_owner(eng
 
 async def test_source_policy_terminal_persists_final_without_effect(engine_config):
     provider = ScriptedProvider([LLMResponse(content=None, tool_calls=[
-        ToolCallRequest(id='danger', name='exec', arguments={'command': "printf 'approval fixture'"})])])
-    engine_config.tools.permissions.rules['exec'] = 'ask'
+        ToolCallRequest(
+            id='danger', name='write_file', arguments={'path': 'approval.txt', 'content': 'fixture'},
+        ),
+    ])])
+    engine_config.tools.permissions.rules['write_file'] = 'ask'
     loop = AgentLoop.from_config(engine_config, tool_registry=ToolRegistry(), provider=provider)
     backend = upgrade(loop)
     try:
         result = await loop.execute_turn(TurnRequest(content='fixture', session_key='cli:source'))
         assert result.stop_reason == 'approval_required'
         assert result.tools_used == []
+        assert not (engine_config.workspace_path / 'approval.txt').exists()
         events = backend.source.load_source_snapshot('cli:source').events
         assert [e['role'] for e in events] == ['user', 'assistant', 'tool', 'assistant']
         assert events[2]['_dispatched'] is False

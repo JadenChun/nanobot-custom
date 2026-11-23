@@ -1064,7 +1064,9 @@ async def test_responses_callback_failure_closes_retained_sdk_response() -> None
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("outcome", ["success", "idle_timeout", "overall_timeout"])
-async def test_responses_sdk_stream_closes_on_completion_or_timeout(outcome: str) -> None:
+async def test_responses_sdk_stream_closes_on_completion_or_timeout(
+    outcome: str, monkeypatch: pytest.MonkeyPatch,
+) -> None:
     provider = _openai_responses_provider()
     delta = _responses_sse_payload([{
         "type": "response.output_text.delta",
@@ -1074,21 +1076,20 @@ async def test_responses_sdk_stream_closes_on_completion_or_timeout(outcome: str
         "type": "response.completed",
         "response": {"id": "resp-close", "status": "completed", "output": []},
     }])
-    if outcome == "success":
-        stream: httpx.AsyncByteStream = _TrackingStream(delta + completed)
-        idle_timeout = 1.0
-        deadline_seconds = 3.0
-    elif outcome == "idle_timeout":
-        stream = _DelayedEventStream([delta, completed], 0.08)
-        idle_timeout = 0.02
-        deadline_seconds = 1.0
-    else:
-        stream = _DelayedEventStream([delta, completed], 0.08)
-        idle_timeout = 0.2
-        deadline_seconds = 0.02
+    clock = asyncio.get_running_loop().time()
+    idle_timeout = 5.0
+    idle_deadline = clock + idle_timeout
+    deadline = clock + (3.0 if outcome == "overall_timeout" else 10.0)
+    monkeypatch.setattr(
+        "nanobot.providers.openai_compat_provider.time", SimpleNamespace(monotonic=lambda: clock),
+    )
+    stream = _TrackingStream(
+        delta + completed, block=None if outcome == "success" else asyncio.Event(),
+    )
     retained_responses: list[httpx.Response] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal clock
         response = httpx.Response(
             200,
             headers={"content-type": "text/event-stream"},
@@ -1096,13 +1097,16 @@ async def test_responses_sdk_stream_closes_on_completion_or_timeout(outcome: str
             request=request,
         )
         retained_responses.append(response)
+        # Leave a short real read timeout only after the SDK has a response to close.
+        if outcome == "idle_timeout":
+            clock = idle_deadline - 0.05
+        elif outcome == "overall_timeout":
+            clock = deadline - 0.05
         return response
 
     context = ProviderCallContext(
         stream_idle_timeout_seconds=idle_timeout,
-        request_deadline_monotonic=(
-            asyncio.get_running_loop().time() + deadline_seconds
-        ),
+        request_deadline_monotonic=deadline,
         source_summary_mode="canonical",
         single_attempt=True,
     )
@@ -1130,8 +1134,9 @@ async def test_responses_sdk_stream_closes_on_completion_or_timeout(outcome: str
             else "summary_overall_timeout"
         )
     assert len(retained_responses) == 1
+    assert stream.started.is_set()
     assert retained_responses[0].is_closed
-    assert getattr(stream, "closed", False) is True
+    assert stream.closed
 
 
 @pytest.mark.asyncio

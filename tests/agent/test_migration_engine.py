@@ -136,15 +136,18 @@ async def test_real_main_runner_delegates_to_real_planner_runner(engine_config):
 async def test_real_mixed_risky_batch_executes_no_tools(engine_config):
     provider = ScriptedProvider([LLMResponse(content=None, tool_calls=[
         ToolCallRequest(id='send', name='message', arguments={'content': 'must not send', 'channel': 'telegram', 'chat_id': '42'}),
-        ToolCallRequest(id='danger', name='exec', arguments={'command': "printf 'approval fixture'"}),
+        ToolCallRequest(
+            id='danger', name='write_file', arguments={'path': 'approval.txt', 'content': 'fixture'},
+        ),
     ])])
-    engine_config.tools.permissions.rules['exec'] = 'ask'
+    engine_config.tools.permissions.rules['write_file'] = 'ask'
     loop = AgentLoop.from_config(engine_config, tool_registry=ToolRegistry(), provider=provider)
     try:
         result = await loop.execute_turn(TurnRequest(content='fixture batch', session_key='cli:test'))
         assert result.stop_reason == 'approval_required'
         assert len(provider.calls) == 1 and result.sent_messages == ()
         assert result.tools_used == []
+        assert not (engine_config.workspace_path / 'approval.txt').exists()
         assert all(message.content != 'must not send' for message in list(loop.bus.outbound._queue))
     finally:
         await loop.aclose()
