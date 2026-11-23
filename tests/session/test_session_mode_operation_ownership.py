@@ -11,10 +11,10 @@ from pathlib import Path
 
 import pytest
 
-from nanobot.session import execution_owner
-from nanobot.session.execution_owner import ExecutionBusyError, acquire_execution
-from nanobot.session.runtime_authority import OfflineSessionOperator, SessionAuthorityLease
-from nanobot.session.session_mode import SessionModeError
+from kohaku.session import execution_owner
+from kohaku.session.execution_owner import ExecutionBusyError, acquire_execution
+from kohaku.session.runtime_authority import OfflineSessionOperator, SessionAuthorityLease
+from kohaku.session.session_mode import SessionModeError
 
 KEY = "cli:operation-ownership"
 

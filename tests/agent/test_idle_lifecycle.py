@@ -6,14 +6,14 @@ import asyncio
 
 import pytest
 
-from nanobot.agent.idle_compaction import IdleCompactionPolicy
-from nanobot.agent.idle_lifecycle import IdleLifecycleIntegration
-from nanobot.agent.idle_runtime import IdleRuntimeBindingRegistry
-from nanobot.agent.idle_scanner import IdleCompactionScanner
-from nanobot.providers.base import GenerationSettings
-from nanobot.session.manager import JsonlSessionStore
-from nanobot.session.source_store import SourceSessionStore
-from nanobot.utils.llm_runtime import LLMRuntime
+from kohaku.agent.idle_compaction import IdleCompactionPolicy
+from kohaku.agent.idle_lifecycle import IdleLifecycleIntegration
+from kohaku.agent.idle_runtime import IdleRuntimeBindingRegistry
+from kohaku.agent.idle_scanner import IdleCompactionScanner
+from kohaku.providers.base import GenerationSettings
+from kohaku.session.manager import JsonlSessionStore
+from kohaku.session.source_store import SourceSessionStore
+from kohaku.utils.llm_runtime import LLMRuntime
 from tests.agent import test_migration_engine as engine_fixtures
 from tests.agent.test_migration_engine import ScriptedProvider
 
@@ -134,8 +134,8 @@ def test_lifecycle_rejects_mismatched_source_pair(tmp_path):
 
 
 async def test_loop_run_self_close_and_external_close_share_teardown(engine_config):
-    from nanobot.agent.loop import AgentLoop
-    from nanobot.agent.tools.registry import ToolRegistry
+    from kohaku.agent.loop import AgentLoop
+    from kohaku.agent.tools.registry import ToolRegistry
 
     loop = AgentLoop.from_config(
         engine_config,
@@ -154,8 +154,8 @@ async def test_loop_run_self_close_and_external_close_share_teardown(engine_conf
 
 
 async def test_loop_bounded_waiter_can_leave_cooperative_close_owned(engine_config):
-    from nanobot.agent.loop import AgentLoop
-    from nanobot.agent.tools.registry import ToolRegistry
+    from kohaku.agent.loop import AgentLoop
+    from kohaku.agent.tools.registry import ToolRegistry
 
     loop = AgentLoop.from_config(
         engine_config,
@@ -186,8 +186,8 @@ async def test_loop_bounded_waiter_can_leave_cooperative_close_owned(engine_conf
 @pytest.mark.asyncio
 @pytest.mark.parametrize("kind", ["active", "background"])
 async def test_loop_close_drains_reentrant_task_without_deadlock(engine_config, kind):
-    from nanobot.agent.loop import AgentLoop
-    from nanobot.agent.tools.registry import ToolRegistry
+    from kohaku.agent.loop import AgentLoop
+    from kohaku.agent.tools.registry import ToolRegistry
 
     loop = AgentLoop.from_config(
         engine_config,
@@ -230,8 +230,8 @@ async def test_loop_close_drains_reentrant_task_without_deadlock(engine_config, 
 
 @pytest.mark.asyncio
 async def test_loop_close_failure_is_shared_with_later_waiters(engine_config):
-    from nanobot.agent.loop import AgentLoop
-    from nanobot.agent.tools.registry import ToolRegistry
+    from kohaku.agent.loop import AgentLoop
+    from kohaku.agent.tools.registry import ToolRegistry
 
     loop = AgentLoop.from_config(
         engine_config,

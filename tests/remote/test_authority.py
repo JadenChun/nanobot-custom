@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from nanobot.remote.authority import RemoteAuthorityCeiling
+from kohaku.remote.authority import RemoteAuthorityCeiling
 
 
 def projection(**overrides):

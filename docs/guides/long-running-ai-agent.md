@@ -1,6 +1,6 @@
-# How to Run a Long-Running AI Agent with nanobot
+# How to Run a Long-Running AI Agent with Kohaku
 
-nanobot can keep agent work alive across turns through sustained goals,
+Kohaku can keep agent work alive across turns through sustained goals,
 persistent sessions, scheduled automations, local triggers, and a gateway
 process that stays running.
 
@@ -20,9 +20,10 @@ from scripts and build jobs.
 ## Install
 
 ```bash
-python -m pip install nanobot-ai
-nanobot onboard --wizard
-nanobot agent -m "Hello!"
+# Run from the root of a clone of this repository
+python -m pip install -e .
+kohaku onboard --wizard
+kohaku agent -m "Hello!"
 ```
 
 ## Minimal working example
@@ -30,7 +31,7 @@ nanobot agent -m "Hello!"
 Start a gateway:
 
 ```bash
-nanobot gateway
+kohaku gateway
 ```
 
 From the WebUI or a chat session, start a sustained goal:
@@ -40,7 +41,7 @@ From the WebUI or a chat session, start a sustained goal:
 ```
 
 For scheduled or trigger-based runs, create the automation from the target chat
-so nanobot can link it to the correct session and workspace.
+so Kohaku can link it to the correct session and workspace.
 
 ## Production notes
 
@@ -64,7 +65,7 @@ so nanobot can link it to the correct session and workspace.
 - If a local trigger fails, check the command copied from the WebUI Automations
   view.
 
-## Related nanobot docs
+## Related Kohaku docs
 
 - [Automations](../automations.md)
 - [WebUI Automations](../webui.md#automations)

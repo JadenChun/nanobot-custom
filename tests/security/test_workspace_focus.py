@@ -5,15 +5,15 @@ from pathlib import Path
 
 import pytest
 
-from nanobot.agent.tools.base import ToolResult
-from nanobot.agent.tools.context import RequestContext, request_context
-from nanobot.agent.tools.filesystem import ReadFileTool, WriteFileTool
-from nanobot.agent.tools.shell import ExecTool
-from nanobot.agent.turn import ToolOutcome, TurnContext, TurnRequest, TurnSource
-from nanobot.context_repo import ContextRepoManager, ResourceAccessPolicy
-from nanobot.context_repo.catalog import RepositoryCatalog
-from nanobot.security.folder_grants import FolderGrantStore
-from nanobot.security.workspace_access import (
+from kohaku.agent.tools.base import ToolResult
+from kohaku.agent.tools.context import RequestContext, request_context
+from kohaku.agent.tools.filesystem import ReadFileTool, WriteFileTool
+from kohaku.agent.tools.shell import ExecTool
+from kohaku.agent.turn import ToolOutcome, TurnContext, TurnRequest, TurnSource
+from kohaku.context_repo import ContextRepoManager, ResourceAccessPolicy
+from kohaku.context_repo.catalog import RepositoryCatalog
+from kohaku.security.folder_grants import FolderGrantStore
+from kohaku.security.workspace_access import (
     WORKSPACE_SCOPE_METADATA_KEY,
     WorkspaceFocusCell,
     WorkspaceScopeResolver,
@@ -24,9 +24,9 @@ from nanobot.security.workspace_access import (
     default_workspace_scope,
     reset_workspace_scope,
 )
-from nanobot.session.execution_owner import acquire_execution
-from nanobot.session.manager import JsonlSessionStore, Session, SessionManager
-from nanobot.session.workspace_focus import WorkspaceFocusOwner
+from kohaku.session.execution_owner import acquire_execution
+from kohaku.session.manager import JsonlSessionStore, Session, SessionManager
+from kohaku.session.workspace_focus import WorkspaceFocusOwner
 
 
 def test_child_task_observes_parent_focus_cell_updates_without_cross_run_leakage(tmp_path):

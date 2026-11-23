@@ -60,7 +60,7 @@ def _running_gateway(instance: _Instance) -> Iterator[dict]:
     with log_path.open("wb") as log:
         process = subprocess.Popen(
             [
-                sys.executable, "-m", "nanobot", "gateway",
+                sys.executable, "-m", "kohaku", "gateway",
                 "--foreground", "--config", str(instance.config),
             ],
             stdout=log,
@@ -147,7 +147,7 @@ async def test_settings_start_and_stop_the_remote_listener(tmp_path: Path) -> No
 def test_gateway_reuses_an_independent_remote_owner(tmp_path: Path) -> None:
     instance = _instance(tmp_path, enabled=True)
     owner = subprocess.Popen([
-        sys.executable, "-m", "nanobot.remote.owner",
+        sys.executable, "-m", "kohaku.remote.owner",
         "--state-dir", str(instance.state_dir), "--listener-port", str(instance.remote_port),
     ])
     try:

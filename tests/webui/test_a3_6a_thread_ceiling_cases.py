@@ -14,11 +14,11 @@ import pytest
 from websockets.datastructures import Headers
 from websockets.http11 import Request
 
-from nanobot.webui.transcript import (
+from kohaku.webui.transcript import (
     append_transcript_object,
     build_webui_thread_response,
 )
-from nanobot.webui.ws_http import THREAD_PROJECTION_BUDGET_BYTES, GatewayHTTPHandler
+from kohaku.webui.ws_http import THREAD_PROJECTION_BUDGET_BYTES, GatewayHTTPHandler
 
 
 def _seed_turns(key: str, chat_id: str, turns: int) -> None:
@@ -69,7 +69,7 @@ def _handler(tmp_path: Path) -> GatewayHTTPHandler:
 def test_c5_no_query_thread_projection_stays_within_byte_ceiling(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr("nanobot.config.paths.get_data_dir", lambda: tmp_path)
+    monkeypatch.setattr("kohaku.config.paths.get_data_dir", lambda: tmp_path)
     key = "websocket:no-query-ceiling"
     chat_id = "no-query-ceiling"
     _seed_turns(key, chat_id, 320)

@@ -1,0 +1,10 @@
+[Desktop Entry]
+Categories=Utility;
+Comment=Icon association for the Kohaku desktop window
+Exec=kohaku-desktop
+StartupWMClass=kohaku-desktop
+Icon=kohaku-desktop
+Name=Kohaku
+NoDisplay=true
+Terminal=false
+Type=Application

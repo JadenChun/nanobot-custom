@@ -1,6 +1,6 @@
-"""Deterministic non-agent fixture for the Nanobot mobile client (M02).
+"""Deterministic non-agent fixture for the Kohaku mobile client (M02).
 
-This module intentionally imports no Nanobot agent, gateway, provider or session
+This module intentionally imports no Kohaku agent, gateway, provider or session
 code. It exists only to exercise transport, credential, media and replay behavior
 against synthetic data on loopback.
 """
@@ -174,7 +174,7 @@ def _bearer(authorization: str | None) -> str | None:
 
 def create_app(state: FixtureState | None = None) -> FastAPI:
     state = state or FixtureState()
-    app = FastAPI(title="Nanobot mobile fixture", version=FIXTURE_VERSION)
+    app = FastAPI(title="Kohaku mobile fixture", version=FIXTURE_VERSION)
     app.state.fixture = state
 
     def require_admin(token: str | None) -> None:

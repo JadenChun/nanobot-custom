@@ -2,7 +2,7 @@ from dataclasses import asdict
 
 import pytest
 
-from nanobot.cron.types import CronDestination, CronJob
+from kohaku.cron.types import CronDestination, CronJob
 
 
 def test_staging_fields_survive_store_and_action_decoding():
@@ -35,10 +35,10 @@ def test_service_serializer_preserves_identifiers_and_destinations(tmp_path, exe
     import json
     import os
 
-    from nanobot.cron.action_store import CronActionStore
-    from nanobot.cron.definition_store import CronDefinitionStore
-    from nanobot.cron.service import CronService
-    from nanobot.cron.types import CronJobState, CronPayload, CronRunRecord, CronSchedule
+    from kohaku.cron.action_store import CronActionStore
+    from kohaku.cron.definition_store import CronDefinitionStore
+    from kohaku.cron.service import CronService
+    from kohaku.cron.types import CronJobState, CronPayload, CronRunRecord, CronSchedule
     job = CronJob(id='job', name='fixture', schedule=CronSchedule(kind='every', every_ms=1000),
                   payload=CronPayload(kind='system_event', deliver=False, execution_mode=execution_mode,
                                       additional_destinations=[CronDestination('telegram', '42')]),
@@ -103,7 +103,7 @@ def test_service_serializer_preserves_identifiers_and_destinations(tmp_path, exe
 
 
 def test_staging_preparation_is_idempotent_and_preserves_delivery_and_state():
-    from nanobot.cron.migration import prepare_staging_job
+    from kohaku.cron.migration import prepare_staging_job
     data = {'id': 'job', 'name': 'fixture', 'enabled': False, 'createdAtMs': 7, 'updatedAtMs': 9,
             'schedule': {'kind': 'every', 'everyMs': 1000},
             'payload': {'deliver': False, 'additionalDestinations': [{'channel': 'telegram', 'to': '42'}]},
@@ -122,8 +122,8 @@ def test_staging_preparation_is_idempotent_and_preserves_delivery_and_state():
 
 
 def test_partial_binding_is_preserved_with_admission_diagnostic():
-    from nanobot.cron.migration import prepare_staging_job
-    from nanobot.cron.types import CronPayload
+    from kohaku.cron.migration import prepare_staging_job
+    from kohaku.cron.types import CronPayload
     job = CronJob(id='job', name='fixture', payload=CronPayload(session_key='telegram:42', channel='telegram', to='43'))
     result = prepare_staging_job(job)
     assert result.job == job
@@ -131,8 +131,8 @@ def test_partial_binding_is_preserved_with_admission_diagnostic():
 
 
 def test_complete_binding_does_not_infer_history_mode_from_session_name():
-    from nanobot.cron.migration import prepare_staging_job
-    from nanobot.cron.types import CronPayload
+    from kohaku.cron.migration import prepare_staging_job
+    from kohaku.cron.types import CronPayload
     job = CronJob(id='job', name='fixture', payload=CronPayload(
         session_key='cron:job', origin_channel='telegram', origin_chat_id='42'))
     result = prepare_staging_job(job)
@@ -140,7 +140,7 @@ def test_complete_binding_does_not_infer_history_mode_from_session_name():
 
 
 def test_prepared_history_mode_survives_store_and_action_roundtrip():
-    from nanobot.cron.migration import prepare_staging_job
+    from kohaku.cron.migration import prepare_staging_job
     original = CronJob(id='job', name='fixture')
     prepared = prepare_staging_job(original)
     decoded = CronJob.from_dict(asdict(prepared.job))
@@ -149,8 +149,8 @@ def test_prepared_history_mode_survives_store_and_action_roundtrip():
 
 
 def test_conflicting_complete_binding_is_preserved_and_nested_data_is_detached():
-    from nanobot.cron.migration import prepare_staging_job
-    from nanobot.cron.types import CronJobState, CronPayload, CronRunRecord
+    from kohaku.cron.migration import prepare_staging_job
+    from kohaku.cron.types import CronJobState, CronPayload, CronRunRecord
     job = CronJob(id='job', name='fixture', payload=CronPayload(
         channel='telegram', to='43', session_key='telegram:42',
         origin_channel='telegram', origin_chat_id='42', origin_metadata={'nested': {'value': 1}}),
@@ -164,7 +164,7 @@ def test_conflicting_complete_binding_is_preserved_and_nested_data_is_detached()
 
 
 def test_unknown_execution_mode_requires_reconciliation():
-    from nanobot.cron.migration import prepare_staging_job
+    from kohaku.cron.migration import prepare_staging_job
     job = CronJob(id='job', name='fixture')
     job.payload.execution_mode = 'unsupported'
     result = prepare_staging_job(job)

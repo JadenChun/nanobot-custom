@@ -9,13 +9,13 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from nanobot.agent.tools.social_crawl import (
+from kohaku.agent.tools.social_crawl import (
     SocialCrawlClient,
     SocialCrawlError,
     SocialCrawlTool,
     classify_crawler_action,
 )
-from nanobot.crawler.worker import BrowserSession, Crawl4AIWorker, WorkerRequestError
+from kohaku.crawler.worker import BrowserSession, Crawl4AIWorker, WorkerRequestError
 
 
 def test_browser_actions_are_machine_classified() -> None:

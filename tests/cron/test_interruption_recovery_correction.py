@@ -10,15 +10,15 @@ from types import SimpleNamespace
 
 import pytest
 
-import nanobot.cron.interruption_recovery as interruption_recovery
-from nanobot.config.schema import GatewayCronConfig
-from nanobot.cron.definition_store import CronDefinition, CronDefinitionAction
-from nanobot.cron.gateway import GatewayCron
-from nanobot.cron.job_hooks import CronHookOutcome
-from nanobot.cron.service import CronService
-from nanobot.session.runtime_authority import DurableSessionAuthority
-from nanobot.session.session_mode import SessionModeError, SessionModeRecordError
-from nanobot.session.source import new_source_event
+import kohaku.cron.interruption_recovery as interruption_recovery
+from kohaku.config.schema import GatewayCronConfig
+from kohaku.cron.definition_store import CronDefinition, CronDefinitionAction
+from kohaku.cron.gateway import GatewayCron
+from kohaku.cron.job_hooks import CronHookOutcome
+from kohaku.cron.service import CronService
+from kohaku.session.runtime_authority import DurableSessionAuthority
+from kohaku.session.session_mode import SessionModeError, SessionModeRecordError
+from kohaku.session.source import new_source_event
 from tests.cron.stage3_fixtures import FakeChannels, definition
 from tests.cron.test_interruption_recovery import _interrupted_gateway
 

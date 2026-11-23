@@ -3,8 +3,8 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
-from nanobot.utils import git_sync
-from nanobot.utils.git_sync import _select_changed_paths, sync_context_repo
+from kohaku.utils import git_sync
+from kohaku.utils.git_sync import _select_changed_paths, sync_context_repo
 
 
 def _git(repo: Path, *args: str) -> None:

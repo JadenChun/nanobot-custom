@@ -13,16 +13,16 @@ from pathlib import Path
 
 import pytest
 
-from nanobot.agent.loop import AgentLoop
-from nanobot.agent.tools.base import Tool
-from nanobot.agent.tools.registry import ToolRegistry
-from nanobot.bus.queue import MessageBus
-from nanobot.config.schema import Config
-from nanobot.cron.service import CronService
-from nanobot.providers.base import GenerationSettings, LLMProvider, LLMResponse
-from nanobot.runtime_composition import ChannelBuildOptions, RuntimeComposition, RuntimeFactories
-from nanobot.session.manager import Session, SessionManager
-from nanobot.session.runtime_authority import OfflineSessionOperator
+from kohaku.agent.loop import AgentLoop
+from kohaku.agent.tools.base import Tool
+from kohaku.agent.tools.registry import ToolRegistry
+from kohaku.bus.queue import MessageBus
+from kohaku.config.schema import Config
+from kohaku.cron.service import CronService
+from kohaku.providers.base import GenerationSettings, LLMProvider, LLMResponse
+from kohaku.runtime_composition import ChannelBuildOptions, RuntimeComposition, RuntimeFactories
+from kohaku.session.manager import Session, SessionManager
+from kohaku.session.runtime_authority import OfflineSessionOperator
 
 
 @pytest.fixture(autouse=True)
@@ -30,7 +30,7 @@ def offline_denial(monkeypatch):
     def denied(*_args, **_kwargs):
         raise AssertionError("external effects denied")
 
-    monkeypatch.setattr("nanobot.migration_guard.require_runtime_ready", lambda: None)
+    monkeypatch.setattr("kohaku.migration_guard.require_runtime_ready", lambda: None)
     for name in ("connect", "connect_ex", "bind", "sendto"):
         monkeypatch.setattr(socket.socket, name, denied)
     for name in ("getaddrinfo", "create_connection"):
@@ -114,7 +114,7 @@ class MCP:
 class Channels:
     """Exact fake Telegram receipt authority plus real authorized inbound adapter."""
     def __init__(self, config, bus, effects):
-        from nanobot.channels.telegram.runtime import TelegramChannel, TelegramConfig
+        from kohaku.channels.telegram.runtime import TelegramChannel, TelegramConfig
 
         self.telegram = TelegramChannel(TelegramConfig.model_validate(config.channels.telegram), bus)
         self.effects = effects
@@ -131,7 +131,7 @@ class Channels:
         return self if name == "telegram" else None
 
     async def send_text_with_receipt(self, target, messages, *, action_id, request_digest):
-        from nanobot.channels.delivery_contract import ChannelTextPartReceipt, ChannelTextReceipt
+        from kohaku.channels.delivery_contract import ChannelTextPartReceipt, ChannelTextReceipt
 
         self.effects.sends.append(target)
         if self.fail_send:
@@ -191,7 +191,7 @@ def define_graph(config: Config, provider: Provider, effects: Effects, *, cron=F
                                    definition_store=definition_store), agent)
     injection = None
     if cron:
-        from nanobot.cron.runtime import CronRuntimeInjection
+        from kohaku.cron.runtime import CronRuntimeInjection
 
         injection = CronRuntimeInjection(clock, lambda *_: True, 0.05)
     return RuntimeComposition.define(config, factories=factories,

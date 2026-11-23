@@ -6,10 +6,10 @@ from dataclasses import replace
 
 import pytest
 
-from nanobot.agent import idle_summary as summary
-from nanobot.agent.idle_runtime import IdleRuntimeBinding
-from nanobot.session import idle_checkpoint as idle
-from nanobot.session.source_store import SourceSessionStore
+from kohaku.agent import idle_summary as summary
+from kohaku.agent.idle_runtime import IdleRuntimeBinding
+from kohaku.session import idle_checkpoint as idle
+from kohaku.session.source_store import SourceSessionStore
 from tests.agent.test_idle_summary import _adapter, _Attempt, _authority
 from tests.session.test_idle_attestation_ownership import issued
 

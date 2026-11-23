@@ -18,18 +18,18 @@ from loguru import logger
 from rich.console import Console
 from typer.testing import CliRunner
 
-from nanobot.cli import log_control
-from nanobot.cli.gateway import create_gateway_app
-from nanobot.config.loader import load_config, set_config_path
-from nanobot.config.schema import Config
-from nanobot.gateway import GatewayRuntimePaths, GatewayStartOptions, GatewayStatus, RuntimeResult
-from nanobot.gateway.runtime import GatewayRuntime, build_gateway_command
-from nanobot.gateway.service import (
+from kohaku.cli import log_control
+from kohaku.cli.gateway import create_gateway_app
+from kohaku.config.loader import load_config, set_config_path
+from kohaku.config.schema import Config
+from kohaku.gateway import GatewayRuntimePaths, GatewayStartOptions, GatewayStatus, RuntimeResult
+from kohaku.gateway.runtime import GatewayRuntime, build_gateway_command
+from kohaku.gateway.service import (
     GatewayServiceInstaller,
     GatewayServiceOptions,
     GatewayServiceResult,
 )
-from nanobot.process_runtime import ProcessStartOptions
+from kohaku.process_runtime import ProcessStartOptions
 
 
 def _synthetic_runtime_config(tmp_path: Path, monkeypatch) -> Path:
@@ -46,7 +46,7 @@ def _synthetic_runtime_config(tmp_path: Path, monkeypatch) -> Path:
         }},
         "gateway": {"heartbeat": {"enabled": False}},
     }))
-    monkeypatch.setattr("nanobot.config.loader._current_config_path", None)
+    monkeypatch.setattr("kohaku.config.loader._current_config_path", None)
     monkeypatch.setattr(Path, "home", lambda: tmp_path / "synthetic-home")
     set_config_path(path)
     return path
@@ -58,7 +58,7 @@ def test_agent_and_gateway_help_accept_compatibility_log_file() -> None:
 
     for command in ("agent", "gateway"):
         result = subprocess.run(
-            [sys.executable, "-m", "nanobot", command, "--help"],
+            [sys.executable, "-m", "kohaku", command, "--help"],
             cwd=root,
             text=True,
             capture_output=True,
@@ -77,7 +77,7 @@ def test_file_only_agent_runtime_logging_does_not_write_to_stderr(tmp_path: Path
     script = "\n".join(
         (
             "from loguru import logger",
-            "from nanobot.cli.log_control import configure_agent_runtime_logs",
+            "from kohaku.cli.log_control import configure_agent_runtime_logs",
             (
                 "configure_agent_runtime_logs(show_console=False, "
                 f"log_file={str(log_path)!r})"
@@ -125,7 +125,7 @@ def test_cli_log_reconfiguration_replaces_only_owned_console_sink(
         ),
         name="gateway",
     )
-    monkeypatch.setattr("nanobot.migration_guard.require_runtime_ready", lambda: None)
+    monkeypatch.setattr("kohaku.migration_guard.require_runtime_ready", lambda: None)
 
     try:
         log_control.configure_agent_runtime_logs(
@@ -275,7 +275,7 @@ def test_foreground_gateway_releases_compatibility_file_sink_on_completion(
         ),
         name="gateway",
     )
-    monkeypatch.setattr("nanobot.migration_guard.require_runtime_ready", lambda: None)
+    monkeypatch.setattr("kohaku.migration_guard.require_runtime_ready", lambda: None)
 
     try:
         result = CliRunner().invoke(app, ["gateway", "--log-file", str(log_path)])
@@ -340,7 +340,7 @@ def test_gateway_runtime_accepts_legacy_process_start_options(tmp_path: Path) ->
     expected = [
         "/python",
         "-m",
-        "nanobot",
+        "kohaku",
         "gateway",
         "--foreground",
         "--port",
@@ -400,9 +400,9 @@ def test_gateway_commands_propagate_log_path_without_parent_file_sink(
         seen["foreground"] = kwargs
 
     add_log_file = Mock(return_value=1)
-    monkeypatch.setattr("nanobot.migration_guard.require_runtime_ready", lambda: None)
+    monkeypatch.setattr("kohaku.migration_guard.require_runtime_ready", lambda: None)
     monkeypatch.setattr(
-        "nanobot.cli.log_control.add_compatibility_log_file",
+        "kohaku.cli.log_control.add_compatibility_log_file",
         add_log_file,
     )
     app.add_typer(

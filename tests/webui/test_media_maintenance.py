@@ -6,9 +6,9 @@ import os
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from nanobot.config.loader import set_config_path
-from nanobot.session.manager import JsonlSessionStore
-from nanobot.webui.media_maintenance import (
+from kohaku.config.loader import set_config_path
+from kohaku.session.manager import JsonlSessionStore
+from kohaku.webui.media_maintenance import (
     collect_referenced_media_evidence,
     collect_referenced_media_paths,
     garbage_collect_generated_media,
@@ -144,7 +144,7 @@ def test_incomplete_reference_evidence_prevents_prune(
     webui.mkdir()
     (webui / "session.jsonl").write_text("{}\n", encoding="utf-8")
 
-    import nanobot.attachments._inventory as inventory
+    import kohaku.attachments._inventory as inventory
     original_read_text = inventory.read_bytes
 
     def failing_read_text(self: Path, *args, **kwargs):

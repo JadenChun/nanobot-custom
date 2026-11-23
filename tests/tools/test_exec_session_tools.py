@@ -12,9 +12,9 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from nanobot.agent.loop import AgentLoop
-from nanobot.agent.tools.context import RequestContext, bind_request_context, reset_request_context
-from nanobot.agent.tools.exec_session import (
+from kohaku.agent.loop import AgentLoop
+from kohaku.agent.tools.context import RequestContext, bind_request_context, reset_request_context
+from kohaku.agent.tools.exec_session import (
     MAX_OUTPUT_CHARS,
     ExecSessionManager,
     ExecSessionTool,
@@ -23,8 +23,8 @@ from nanobot.agent.tools.exec_session import (
     _SessionPoll,
     _truncate_output,
 )
-from nanobot.agent.tools.registry import is_tool_error_result
-from nanobot.agent.tools.shell import ExecTool
+from kohaku.agent.tools.registry import is_tool_error_result
+from kohaku.agent.tools.shell import ExecTool
 
 
 def _python_command(code: str) -> str:

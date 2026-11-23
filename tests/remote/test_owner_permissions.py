@@ -4,9 +4,9 @@ from pathlib import Path
 
 import pytest
 
-from nanobot.remote.client import RemoteAccessClient
-from nanobot.remote.owner import RemoteAccessOwner
-from nanobot.remote.permissions import (
+from kohaku.remote.client import RemoteAccessClient
+from kohaku.remote.owner import RemoteAccessOwner
+from kohaku.remote.permissions import (
     OwnerPermissionAdapter,
     PermissionAdapterError,
 )

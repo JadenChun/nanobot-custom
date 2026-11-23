@@ -14,11 +14,11 @@ from types import SimpleNamespace
 
 import pytest
 
-import nanobot.cron.action_store as action
-import nanobot.cron.definition_store as definitions
-import nanobot.cron.occurrence as occurrence
-import nanobot.cron.occurrence_store as ledger
-import nanobot.cron.scheduler_store as scheduler
+import kohaku.cron.action_store as action
+import kohaku.cron.definition_store as definitions
+import kohaku.cron.occurrence as occurrence
+import kohaku.cron.occurrence_store as ledger
+import kohaku.cron.scheduler_store as scheduler
 from tests.cron.stage3_fixtures import definition
 
 

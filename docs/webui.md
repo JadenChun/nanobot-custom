@@ -1,8 +1,8 @@
-# Nanobot WebUI: Browser Workbench for Self-Hosted AI Agents
+# Kohaku WebUI: Browser Workbench for Self-Hosted AI Agents
 
-<!-- Meta description: Run nanobot from a browser WebUI with persistent and temporary chats, visible tool activity, workspace controls, Apps, skill discovery, settings, and Automations. -->
+<!-- Meta description: Run Kohaku from a browser WebUI with persistent and temporary chats, visible tool activity, workspace controls, Apps, skill discovery, settings, and Automations. -->
 
-The WebUI is nanobot's browser workbench for persistent topics, temporary
+The WebUI is Kohaku's browser workbench for persistent topics, temporary
 chats, visible agent activity, workspace controls, Apps, skill discovery,
 settings, and Automations in one place. It shares the gateway and saved sessions
 with the native terminal client.
@@ -11,7 +11,7 @@ For a visual tour, see the [README feature gallery](../README.md#-webui).
 This guide follows the current source tree; some features are newer than the
 published release.
 
-The published `nanobot-ai` wheel already includes the WebUI bundle. You only need
+The Kohaku wheel already includes the WebUI bundle. You only need
 the `webui/` source directory when you are changing the frontend itself.
 
 ## Open the WebUI
@@ -19,10 +19,10 @@ the `webui/` source directory when you are changing the frontend itself.
 Use the launcher:
 
 ```bash
-nanobot webui
+kohaku webui
 ```
 
-`nanobot webui` creates the config/workspace when needed, enables the local
+`kohaku webui` creates the config/workspace when needed, enables the local
 WebSocket channel after confirmation, generates a WebUI bootstrap secret when
 one is missing, starts or joins the same on-demand gateway used by the native
 TUI, and opens the browser. With a fresh config,
@@ -35,16 +35,16 @@ terminal without replaying older logs.
 After model setup, explicitly promote the shared gateway when you do not want to keep a client open:
 
 ```bash
-nanobot gateway --background
+kohaku gateway --background
 ```
 
-`nanobot webui --background` is retained only to print migration guidance. This keeps one
+`kohaku webui --background` is retained only to print migration guidance. This keeps one
 unambiguous owner for persistent process lifecycle.
 
 Each foreground WebUI or TUI launcher releases only its own client. The last
-interactive launcher stops an on-demand gateway. `nanobot gateway --background` makes the
-gateway persistent; manage it with `nanobot gateway status`, `nanobot gateway
-logs`, `nanobot gateway restart`, and `nanobot gateway stop`.
+interactive launcher stops an on-demand gateway. `kohaku gateway --background` makes the
+gateway persistent; manage it with `kohaku gateway status`, `kohaku gateway
+logs`, `kohaku gateway restart`, and `kohaku gateway stop`.
 
 Manual config still works. Same-machine localhost WebUI access can run without
 a browser password. Set `tokenIssueSecret` when you intentionally expose the
@@ -140,13 +140,13 @@ a bar for input tokens, output tokens, generation time, and the KV cache hit
 rate when reported. Provider usage may be estimated or unavailable; these
 figures are not a billing statement.
 
-When nanobot compacts context, the timeline shows its progress and outcome.
+When Kohaku compacts context, the timeline shows its progress and outcome.
 The compacted summary keeps earlier work available while recent messages remain
 in context. See [Memory](./memory.md) for compaction and Dream consolidation.
 
 ## Temporary Chats
 
-Use a temporary chat for a conversation that should not be added to nanobot's
+Use a temporary chat for a conversation that should not be added to Kohaku's
 topic history or long-term memory:
 
 1. Select **New topic**.
@@ -216,7 +216,7 @@ You can select an already allowed project or review a folder path. A known
 directory may be prefilled; an unknown target starts empty, and a blocked file
 requires you to choose its containing folder explicitly. New access starts at
 **Read only**. Choose **Always** and **Save access and use folder** to save the
-folder and access for regular topics in this Nanobot instance. Choose **Once**
+folder and access for regular topics in this Kohaku instance. Choose **Once**
 and **Allow once and use folder** to give only the original paused task the
 selected folder capabilities. Once access is not saved, does not add a folder to
 management, and does not change the instance's saved grants. The task may
@@ -235,7 +235,7 @@ instead. A new message or a changed working folder can make an old request
 outdated, so refresh the task status before acting when asked. Remote and
 temporary chats do not offer this local recovery flow. Once access ends when the
 original task finishes or is cancelled; it does not carry over to a later task.
-Nanobot also waits for commands started with that access to finish before it
+Kohaku also waits for commands started with that access to finish before it
 confirms that access has ended. If it cannot verify that a command tree has
 stopped, the access change remains pending rather than being treated as
 complete.
@@ -247,17 +247,17 @@ storage. An explicit read-only folder overrides a writable parent. This boundary
 applies from the first message, before any folder has been saved. **Full
 access** is a separate, chat-specific choice; it lets that topic read and change
 files and run commands beyond those limits, subject to your operating-system
-account permissions. Nanobot asks for confirmation before enabling it. You can
-choose Full while composing a new topic: Nanobot creates that topic and enables
+account permissions. Kohaku asks for confirmation before enabling it. You can
+choose Full while composing a new topic: Kohaku creates that topic and enables
 Full before the first message runs. Otherwise new topics start in Sandbox. Full
 is available only when whole-process supervision is available and no explicit
 command sandbox is configured; if it cannot be enabled, the topic remains in
 Sandbox and the draft is not sent. Other topics remain in Sandbox.
 Returning to Sandbox fences new work immediately;
-Nanobot confirms the change only after previously started command trees are
+Kohaku confirms the change only after previously started command trees are
 verified stopped. If work is still running or cannot be verified, the topic
 shows that Full access is ending and keeps the change pending. Restarting
-Nanobot does not renew Full access.
+Kohaku does not renew Full access.
 
 Folder and Full-mode controls are available only from a trusted local WebUI
 connection. Remote connections may still show the active folder's effective
@@ -308,7 +308,7 @@ default **Ready** view shows only capabilities that can be used immediately:
 - **Agent Plugins** are local packages that can bundle skills, MCP servers, or
   both. A package under `<workspace>/plugins/` is installed but remains inactive
   until you enable it in Apps.
-- **CLI Apps** are local command-line adapters that nanobot runs on your
+- **CLI Apps** are local command-line adapters that Kohaku runs on your
   machine. Their installer manages the executable and exposes its adapter
   through the same plugin activation model. Installing an adapter does not
   modify the native desktop or web app it connects to.
@@ -320,24 +320,24 @@ default **Ready** view shows only capabilities that can be used immediately:
   localhost WebUIs return automatically; a remote plain-HTTP WebUI shows one
   field for pasting the complete localhost callback URL.
 
-Apps intentionally does not list nanobot runtime support packages such as
+Apps intentionally does not list Kohaku runtime support packages such as
 `api` or `bedrock`. Those packages enable providers, servers, or channels; they
 are not tools that can be attached to a turn with `@`. Manage them from
 **System**, **Models**, or **Web**. PDF and common Office document readers are
-included in nanobot and activate automatically when a file is attached. The
-equivalent CLI for optional integrations remains `nanobot plugins`. See
+included in Kohaku and activate automatically when a file is attached. The
+equivalent CLI for optional integrations remains `kohaku plugins`. See
 [`cli-reference.md`](./cli-reference.md#optional-features).
-That command manages nanobot runtime extras, not Agent Plugin packages.
+That command manages Kohaku runtime extras, not Agent Plugin packages.
 
 Some MCP presets connect to hosted keyless endpoints. For example, the Firecrawl
 preset uses Firecrawl's hosted MCP endpoint for search, scrape, crawl, and
-extraction tools without requiring an API key. This does not replace nanobot's
+extraction tools without requiring an API key. This does not replace Kohaku's
 built-in web search provider; mention the Firecrawl MCP preset with `@` when a
 turn needs Firecrawl's richer web data tools.
 
 The Parallel Search preset connects to the free, anonymous Parallel Search MCP
 endpoint and exposes `web_search` and `web_fetch` without requiring an API key.
-It is an optional integration and does not replace nanobot's built-in web search
+It is an optional integration and does not replace Kohaku's built-in web search
 provider; mention `@parallel-search` when a turn should use it.
 
 After a CLI App or MCP server is available, mention it from the composer with
@@ -376,7 +376,7 @@ There are two user-facing automation types:
 - Scheduled automations, created by the agent's cron tool, run at a time,
   interval, or cron expression when `gateway.cron.enabled` is true.
 - Local triggers, created with `/trigger <name>`, run when you call a local
-  command such as `nanobot trigger trg_8K4P2Q9X "Review PR #4502"` and the
+  command such as `kohaku trigger trg_8K4P2Q9X "Review PR #4502"` and the
   gateway has `localTriggers: true`.
 
 Periodic Heartbeat and Dream are inactive in the normal gateway. Editing
@@ -398,11 +398,11 @@ Search accepts plain text and field filters such as `name:backup`,
 `status:paused`.
 
 An automation without a linked topic cannot be enabled or run from the WebUI,
-because nanobot would not know where to deliver the scheduled turn. Recreate it
+because Kohaku would not know where to deliver the scheduled turn. Recreate it
 from the target topic or channel so the automation has complete context.
 
 Local triggers do not have a WebUI "Run now" action because each run needs a
-message. Use the copied `nanobot trigger ...` command and replace `"message"`
+message. Use the copied `kohaku trigger ...` command and replace `"message"`
 with the content that should be delivered.
 
 ## Settings
@@ -449,7 +449,7 @@ WebSocket channel and open `https://<your-host>:8765`, or terminate HTTPS at a
 reverse proxy and use that proxy's HTTPS URL.
 
 Remote WebUI clients with a valid token can view and use Apps and installed
-skills. Actions that install missing nanobot support packages or third-party
+skills. Actions that install missing Kohaku support packages or third-party
 marketplace skills are blocked by default. To let trusted remote administrators
 perform those installations through the WebUI, opt in explicitly:
 
@@ -462,7 +462,7 @@ perform those installations through the WebUI, opt in explicitly:
 ```
 
 Use this only for a private deployment where every authenticated WebUI user is
-trusted to change nanobot's Python environment and install workspace skill
+trusted to change Kohaku's Python environment and install workspace skill
 instructions or scripts. If you publish the WebUI through Nginx, Caddy,
 Cloudflare Tunnel, or a similar service, treat it as remote access and leave
 package and skill installs disabled unless that is intentional.
@@ -477,9 +477,9 @@ private, trusted network.
 
 If the page does not open, check these in order:
 
-1. `nanobot agent -m "Hello!"` works in the same Python environment.
-2. `~/.nanobot/config.json` does not explicitly set `channels.websocket.enabled` to `false`.
-3. `nanobot gateway` is still running.
+1. `kohaku agent -m "Hello!"` works in the same Python environment.
+2. `~/.kohaku/config.json` does not explicitly set `channels.websocket.enabled` to `false`.
+3. `kohaku gateway` is still running.
 4. You are opening port `8765`, not the gateway health port.
 5. LAN access uses `host: "0.0.0.0"` and a token or token issue secret.
 

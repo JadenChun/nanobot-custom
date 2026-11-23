@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
-PWSH = os.environ.get("NANOBOT_TEST_PWSH") or shutil.which("pwsh")
+PWSH = os.environ.get("KOHAKU_TEST_PWSH") or shutil.which("pwsh")
 
 pytestmark = pytest.mark.skipif(PWSH is None, reason="PowerShell 7 is required for script tests")
 
@@ -37,7 +37,7 @@ def _paths_block(tmp_path: Path, *, marker: bool) -> tuple[Path, Path, str]:
     logs = tmp_path / "logs"
     profile.mkdir()
     logs.mkdir()
-    marker_path = profile / ".nanobot-profile-ready"
+    marker_path = profile / ".kohaku-profile-ready"
     if marker:
         marker_path.touch()
     config = tmp_path / "config.json"
@@ -250,7 +250,7 @@ def test_profile_setup_cancellation_active_profile_and_ready_marker(tmp_path: Pa
     logs = tmp_path / "logs"
     profile.mkdir()
     logs.mkdir()
-    marker = profile / ".nanobot-profile-ready"
+    marker = profile / ".kohaku-profile-ready"
     marker.touch()
     path_block = f"""
 $testProfile = {_ps_string(profile)}

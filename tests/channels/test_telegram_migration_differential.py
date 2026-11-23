@@ -10,10 +10,10 @@ try:
 except ImportError:
     pytest.skip("Telegram dependencies not installed (python-telegram-bot)", allow_module_level=True)
 
-from nanobot.bus.events import OutboundMessage
-from nanobot.bus.outbound_events import ProgressEvent
-from nanobot.bus.queue import MessageBus
-from nanobot.channels.telegram.runtime import (
+from kohaku.bus.events import OutboundMessage
+from kohaku.bus.outbound_events import ProgressEvent
+from kohaku.bus.queue import MessageBus
+from kohaku.channels.telegram.runtime import (
     TELEGRAM_REPLY_CONTEXT_MAX_LEN,
     TelegramChannel,
     TelegramConfig,
@@ -197,9 +197,9 @@ async def test_start_creates_separate_pools_with_proxy(monkeypatch) -> None:
     app = _FakeApp(lambda: setattr(channel, "_running", False))
     builder = _FakeBuilder(app)
 
-    monkeypatch.setattr("nanobot.channels.telegram.runtime.HTTPXRequest", _FakeHTTPXRequest)
+    monkeypatch.setattr("kohaku.channels.telegram.runtime.HTTPXRequest", _FakeHTTPXRequest)
     monkeypatch.setattr(
-        "nanobot.channels.telegram.runtime.Application",
+        "kohaku.channels.telegram.runtime.Application",
         SimpleNamespace(builder=lambda: builder),
     )
 
@@ -238,9 +238,9 @@ async def test_start_respects_custom_pool_config(monkeypatch) -> None:
     app = _FakeApp(lambda: setattr(channel, "_running", False))
     builder = _FakeBuilder(app)
 
-    monkeypatch.setattr("nanobot.channels.telegram.runtime.HTTPXRequest", _FakeHTTPXRequest)
+    monkeypatch.setattr("kohaku.channels.telegram.runtime.HTTPXRequest", _FakeHTTPXRequest)
     monkeypatch.setattr(
-        "nanobot.channels.telegram.runtime.Application",
+        "kohaku.channels.telegram.runtime.Application",
         SimpleNamespace(builder=lambda: builder),
     )
 
@@ -277,7 +277,7 @@ async def test_send_text_retries_on_timeout() -> None:
 
     channel._app.bot.send_message = flaky_send
 
-    import nanobot.channels.telegram.runtime as tg_mod
+    import kohaku.channels.telegram.runtime as tg_mod
     orig_delay = tg_mod._SEND_RETRY_BASE_DELAY
     tg_mod._SEND_RETRY_BASE_DELAY = 0.01
     try:
@@ -306,7 +306,7 @@ async def test_send_text_gives_up_after_max_retries() -> None:
 
     channel._app.bot.send_message = always_timeout
 
-    import nanobot.channels.telegram.runtime as tg_mod
+    import kohaku.channels.telegram.runtime as tg_mod
     orig_delay = tg_mod._SEND_RETRY_BASE_DELAY
     tg_mod._SEND_RETRY_BASE_DELAY = 0.01
     try:
@@ -487,8 +487,8 @@ async def test_send_delta_rolls_over_into_new_message_when_stream_exceeds_limit(
     )
     channel._app = _FakeApp(lambda: None)
     channel._app_ready.set()
-    monkeypatch.setattr("nanobot.channels.telegram.runtime.TELEGRAM_MAX_MESSAGE_LEN", 10)
-    monkeypatch.setattr("nanobot.channels.telegram.runtime.TELEGRAM_HTML_MAX_LEN", 10)
+    monkeypatch.setattr("kohaku.channels.telegram.runtime.TELEGRAM_MAX_MESSAGE_LEN", 10)
+    monkeypatch.setattr("kohaku.channels.telegram.runtime.TELEGRAM_HTML_MAX_LEN", 10)
     channel.config.stream_edit_interval = 0
 
     await channel.send_delta('123', 'abcdefgh', {}, stream_id='s:0')
@@ -510,8 +510,8 @@ async def test_send_delta_large_initial_chunk_splits_into_multiple_messages(monk
     )
     channel._app = _FakeApp(lambda: None)
     channel._app_ready.set()
-    monkeypatch.setattr("nanobot.channels.telegram.runtime.TELEGRAM_MAX_MESSAGE_LEN", 10)
-    monkeypatch.setattr("nanobot.channels.telegram.runtime.TELEGRAM_HTML_MAX_LEN", 10)
+    monkeypatch.setattr("kohaku.channels.telegram.runtime.TELEGRAM_MAX_MESSAGE_LEN", 10)
+    monkeypatch.setattr("kohaku.channels.telegram.runtime.TELEGRAM_HTML_MAX_LEN", 10)
     channel.config.stream_edit_interval = 0
 
     await channel.send_delta('123', 'abcdefghijklmnop', {}, stream_id='s:0')
@@ -533,8 +533,8 @@ async def test_send_delta_stream_end_finalizes_only_active_tail_after_rollover(m
     )
     channel._app = _FakeApp(lambda: None)
     channel._app_ready.set()
-    monkeypatch.setattr("nanobot.channels.telegram.runtime.TELEGRAM_MAX_MESSAGE_LEN", 10)
-    monkeypatch.setattr("nanobot.channels.telegram.runtime.TELEGRAM_HTML_MAX_LEN", 10)
+    monkeypatch.setattr("kohaku.channels.telegram.runtime.TELEGRAM_MAX_MESSAGE_LEN", 10)
+    monkeypatch.setattr("kohaku.channels.telegram.runtime.TELEGRAM_HTML_MAX_LEN", 10)
     channel.config.stream_edit_interval = 0
 
     await channel.send_delta('123', 'abcdefgh', {}, stream_id='s:0')
@@ -673,7 +673,7 @@ async def test_send_remote_media_url_after_security_validation(monkeypatch) -> N
     )
     channel._app = _FakeApp(lambda: None)
     channel._app_ready.set()
-    monkeypatch.setattr("nanobot.channels.telegram.runtime.validate_url_target", lambda url: (True, ""))
+    monkeypatch.setattr("kohaku.channels.telegram.runtime.validate_url_target", lambda url: (True, ""))
 
     await channel.send(
         OutboundMessage(
@@ -757,7 +757,7 @@ async def test_send_blocks_unsafe_remote_media_url(monkeypatch) -> None:
     channel._app = _FakeApp(lambda: None)
     channel._app_ready.set()
     monkeypatch.setattr(
-        "nanobot.channels.telegram.runtime.validate_url_target",
+        "kohaku.channels.telegram.runtime.validate_url_target",
         lambda url: (False, "Blocked: example.com resolves to private/internal address 127.0.0.1"),
     )
 
@@ -1061,7 +1061,7 @@ async def test_download_message_media_returns_path_when_download_succeeds(
     media_dir = tmp_path / "media" / "telegram"
     media_dir.mkdir(parents=True)
     monkeypatch.setattr(
-        "nanobot.channels.telegram.runtime.get_media_dir",
+        "kohaku.channels.telegram.runtime.get_media_dir",
         lambda channel=None: media_dir if channel else tmp_path / "media",
     )
 
@@ -1098,7 +1098,7 @@ async def test_download_message_media_uses_file_unique_id_when_available(
     media_dir = tmp_path / "media" / "telegram"
     media_dir.mkdir(parents=True)
     monkeypatch.setattr(
-        "nanobot.channels.telegram.runtime.get_media_dir",
+        "kohaku.channels.telegram.runtime.get_media_dir",
         lambda channel=None: media_dir if channel else tmp_path / "media",
     )
 
@@ -1147,7 +1147,7 @@ async def test_on_message_attaches_reply_to_media_when_available(monkeypatch, tm
     media_dir = tmp_path / "media" / "telegram"
     media_dir.mkdir(parents=True)
     monkeypatch.setattr(
-        "nanobot.channels.telegram.runtime.get_media_dir",
+        "kohaku.channels.telegram.runtime.get_media_dir",
         lambda channel=None: media_dir if channel else tmp_path / "media",
     )
 
@@ -1231,7 +1231,7 @@ async def test_on_message_reply_to_caption_and_media(monkeypatch, tmp_path) -> N
     media_dir = tmp_path / "media" / "telegram"
     media_dir.mkdir(parents=True)
     monkeypatch.setattr(
-        "nanobot.channels.telegram.runtime.get_media_dir",
+        "kohaku.channels.telegram.runtime.get_media_dir",
         lambda channel=None: media_dir if channel else tmp_path / "media",
     )
 
@@ -1369,7 +1369,7 @@ async def test_forward_command_runs_configured_fast_command(monkeypatch) -> None
             b"Social connection status:\n- Meta: connected\n", b"")))
 
     channel._handle_message = capture_handle
-    monkeypatch.setattr("nanobot.channels.telegram.runtime.asyncio.create_subprocess_exec", fake_run)
+    monkeypatch.setattr("kohaku.channels.telegram.runtime.asyncio.create_subprocess_exec", fake_run)
 
     await channel._forward_command(_make_telegram_update(text="/connection_status@nanobot_test"), None)
 
@@ -1426,8 +1426,8 @@ async def test_rollover_retry_does_not_reappend_or_resend_completed_chunks(monke
     channel._app = _FakeApp(lambda: None)
     channel._app_ready.set()
     channel.config.stream_edit_interval = 0
-    monkeypatch.setattr('nanobot.channels.telegram.runtime.TELEGRAM_MAX_MESSAGE_LEN', 10)
-    monkeypatch.setattr('nanobot.channels.telegram.runtime.TELEGRAM_HTML_MAX_LEN', 10)
+    monkeypatch.setattr('kohaku.channels.telegram.runtime.TELEGRAM_MAX_MESSAGE_LEN', 10)
+    monkeypatch.setattr('kohaku.channels.telegram.runtime.TELEGRAM_HTML_MAX_LEN', 10)
     original = channel._app.bot.send_message
     failed = False
     async def send(**kwargs):
@@ -1457,8 +1457,8 @@ async def test_rollover_resumes_before_new_delta_after_failed_delivery(monkeypat
     channel._app = _FakeApp(lambda: None)
     channel._app_ready.set()
     channel.config.stream_edit_interval = 999
-    monkeypatch.setattr('nanobot.channels.telegram.runtime.TELEGRAM_MAX_MESSAGE_LEN', 10)
-    monkeypatch.setattr('nanobot.channels.telegram.runtime.TELEGRAM_HTML_MAX_LEN', 10)
+    monkeypatch.setattr('kohaku.channels.telegram.runtime.TELEGRAM_MAX_MESSAGE_LEN', 10)
+    monkeypatch.setattr('kohaku.channels.telegram.runtime.TELEGRAM_HTML_MAX_LEN', 10)
     bot = channel._app.bot
     original_send, original_edit = bot.send_message, bot.edit_message_text
     failed = False

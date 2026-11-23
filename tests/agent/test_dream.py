@@ -4,17 +4,17 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from nanobot.agent.hook import AgentHook, AgentHookContext
-from nanobot.agent.loop import AgentLoop
-from nanobot.agent.memory import MemoryStore
-from nanobot.config.schema import ModelPresetConfig
-from nanobot.providers.base import LLMResponse
-from nanobot.security.workspace_access import (
+from kohaku.agent.hook import AgentHook, AgentHookContext
+from kohaku.agent.loop import AgentLoop
+from kohaku.agent.memory import MemoryStore
+from kohaku.config.schema import ModelPresetConfig
+from kohaku.providers.base import LLMResponse
+from kohaku.security.workspace_access import (
     bind_workspace_scope,
     default_workspace_scope,
     reset_workspace_scope,
 )
-from nanobot.utils.prompt_templates import render_template
+from kohaku.utils.prompt_templates import render_template
 from tests.agent.p6_admitted_fixtures import AgentInputs
 from tests.agent.p6_admitted_fixtures import admitted_async as admitted_async
 from tests.agent.p6_admitted_fixtures import admitted_sync as admitted_sync
@@ -563,7 +563,7 @@ class TestEphemeralDirect:
         """Historical recovery-name lineage: a structured edit error is terminal."""
         from unittest.mock import AsyncMock
 
-        from nanobot.providers.base import ToolCallRequest
+        from kohaku.providers.base import ToolCallRequest
 
         loop, store = _make_loop_async
         before_soul = store.soul_file.read_bytes()
@@ -705,8 +705,8 @@ class TestEphemeralHooks:
         """Build an AgentLoop with a spy hook to verify hook firing behavior."""
         from unittest.mock import AsyncMock, MagicMock
 
-        from nanobot.agent.hook import AgentHook
-        from nanobot.providers.base import LLMResponse
+        from kohaku.agent.hook import AgentHook
+        from kohaku.providers.base import LLMResponse
 
         provider = MagicMock()
         provider.get_default_model.return_value = "test-model"
@@ -746,7 +746,7 @@ class TestEphemeralHooks:
         import json
         from unittest.mock import patch
 
-        from nanobot.session.manager import Session
+        from kohaku.session.manager import Session
 
         loop, spy = _make_loop_with_spy
         checkpoints = []

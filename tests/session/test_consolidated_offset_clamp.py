@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from nanobot.session.manager import Session, SessionManager, SessionStorageError
+from kohaku.session.manager import Session, SessionManager, SessionStorageError
 
 
 def _session(count: int, last_consolidated: object) -> Session:

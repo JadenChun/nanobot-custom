@@ -5,14 +5,14 @@ from dataclasses import replace
 
 import pytest
 
-from nanobot.session.artifact import ArtifactValidationError
-from nanobot.session.artifact_reader import ArtifactReader
-from nanobot.session.artifact_rematerialization import ArtifactRematerializer
-from nanobot.session.checkpoint_admission import CheckpointAdmission
-from nanobot.session.source import SourceValidationError
-from nanobot.session.source_compaction import SourceCompactionCandidate
-from nanobot.session.source_projection import CheckpointNode, RuntimeNode, SourceNode, source_nodes
-from nanobot.session.source_request import SourceRequestLedger, SourceTranscript
+from kohaku.session.artifact import ArtifactValidationError
+from kohaku.session.artifact_reader import ArtifactReader
+from kohaku.session.artifact_rematerialization import ArtifactRematerializer
+from kohaku.session.checkpoint_admission import CheckpointAdmission
+from kohaku.session.source import SourceValidationError
+from kohaku.session.source_compaction import SourceCompactionCandidate
+from kohaku.session.source_projection import CheckpointNode, RuntimeNode, SourceNode, source_nodes
+from kohaku.session.source_request import SourceRequestLedger, SourceTranscript
 from tests.session.test_artifact_reader import setup_read
 
 
@@ -142,16 +142,16 @@ async def test_capture_never_rediscovers_rejected_disk_checkpoint(tmp_path):
 
 @pytest.mark.parametrize('failure', ['missing', 'no_tools', 'revoked'])
 async def test_governor_recovery_updates_raw_payload_and_retains_retry_once(tmp_path, failure):
-    from nanobot.agent.context_governance import (
+    from kohaku.agent.context_governance import (
         ContextGovernanceConfig,
         ContextGovernor,
         ModelRequestState,
         SourceCompactionState,
     )
-    from nanobot.agent.tools.artifact import ReadArtifactTool
-    from nanobot.agent.tools.registry import ToolRegistry
-    from nanobot.providers.base import LLMResponse, LLMUsage
-    from nanobot.providers.conversation_state import ProviderConversationStateController
+    from kohaku.agent.tools.artifact import ReadArtifactTool
+    from kohaku.agent.tools.registry import ToolRegistry
+    from kohaku.providers.base import LLMResponse, LLMUsage
+    from kohaku.providers.conversation_state import ProviderConversationStateController
     from tests.agent.test_source_summary import SummaryProvider, runtime
 
     async with setup_read(tmp_path, 'evidence') as (writer, tool, store, descriptor, _):

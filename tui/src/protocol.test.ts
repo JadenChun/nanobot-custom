@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 
 import {
-  NanobotClient,
+  KohakuClient,
   GatewayConnectionError,
   connectionEndpoint,
   fetchAvailableSkills,
@@ -52,7 +52,7 @@ async function waitUntil(predicate: () => boolean, timeout = 1_000): Promise<voi
 
 describe("Desktop attach-only protocol", () => {
   const gatewayId = "4d7d6bea-6d4b-4da1-975f-3d835c986c50"
-  async function fixture(run: (client: NanobotClient, socket: FakeSocket, statuses: ConnectionStatus[], attempts: () => number) => Promise<void>) {
+  async function fixture(run: (client: KohakuClient, socket: FakeSocket, statuses: ConnectionStatus[], attempts: () => number) => Promise<void>) {
     const original = globalThis.WebSocket
     let socket: FakeSocket | undefined
     let attempts = 0
@@ -61,7 +61,7 @@ describe("Desktop attach-only protocol", () => {
       configurable: true,
       value: class extends FakeSocket { constructor() { super(); socket = this } },
     })
-    const client = new NanobotClient({
+    const client = new KohakuClient({
       expectedGatewayId: gatewayId, reconnect: false, reconnectDelayMs: 1,
       resolveConnection: async () => {
         attempts++
@@ -265,7 +265,7 @@ describe("gateway protocol", () => {
     try {
       const connections: string[] = []
       let healthChecks = 0
-      const client = new NanobotClient({
+      const client = new KohakuClient({
         resolveConnection: () => new Promise((resolve) => { resolveConnection = resolve }),
         checkHealth: async () => {
           healthChecks += 1
@@ -308,7 +308,7 @@ describe("gateway protocol", () => {
     })
 
     try {
-      const client = new NanobotClient({
+      const client = new KohakuClient({
         resolveConnection: async () => {
           attempts += 1
           if (attempts === 1) throw new Error("gateway is still starting")
@@ -351,7 +351,7 @@ describe("gateway protocol", () => {
       },
     )
     globalThis.fetch = (() => Promise.reject(refused)) as unknown as typeof fetch
-    const client = new NanobotClient({
+    const client = new KohakuClient({
       resolveConnection: () => fetchGatewayConnection(
         bootstrapUrl,
         bootstrapSecret,
@@ -407,7 +407,7 @@ describe("gateway protocol", () => {
         }
       },
     })
-    const client = new NanobotClient({
+    const client = new KohakuClient({
       resolveConnection: async () => {
         attempts += 1
         if (!available) {
@@ -462,7 +462,7 @@ describe("gateway protocol", () => {
   test("reports a permanent bootstrap rejection without retrying", async () => {
     let attempts = 0
     const statuses: string[] = []
-    const client = new NanobotClient({
+    const client = new KohakuClient({
       resolveConnection: async () => {
         attempts += 1
         throw new GatewayConnectionError("gateway bootstrap failed: HTTP 401", false)
@@ -516,7 +516,7 @@ describe("gateway protocol", () => {
 
     try {
       const events: InboundEvent[] = []
-      const client = new NanobotClient({
+      const client = new KohakuClient({
         url: "ws://nanobot.test/ws",
         chatId: "terminal",
         initialWorkspaceScope: {
@@ -606,7 +606,7 @@ describe("gateway protocol", () => {
     })
 
     try {
-      const client = new NanobotClient({
+      const client = new KohakuClient({
         url: "ws://nanobot.test/ws",
         initialWorkspaceScope: {
           project_path: "/tmp/launch-project",
@@ -726,7 +726,7 @@ describe("gateway protocol", () => {
     try {
       const statuses: string[] = []
       const events: InboundEvent[] = []
-      const client = new NanobotClient({
+      const client = new KohakuClient({
         url: "ws://nanobot.test/ws",
         onEvent: (event) => events.push(event),
         onStatus: (status, detail) => statuses.push(`${status}:${detail || ""}`),
@@ -815,7 +815,7 @@ describe("gateway protocol", () => {
     })
     const events: InboundEvent[] = []
     const statuses: string[] = []
-    const client = new NanobotClient({
+    const client = new KohakuClient({
       url: "ws://nanobot.test/ws",
       onEvent: (event) => events.push(event),
       onStatus: (status, detail) => statuses.push(`${status}:${detail || ""}`),
@@ -865,7 +865,7 @@ describe("gateway protocol", () => {
     try {
       const events: InboundEvent[] = []
       const statuses: string[] = []
-      const client = new NanobotClient({
+      const client = new KohakuClient({
         url: "ws://nanobot.test/ws",
         onEvent: (event) => events.push(event),
         onStatus: (status, detail) => statuses.push(`${status}:${detail || ""}`),
@@ -916,7 +916,7 @@ describe("gateway protocol", () => {
     try {
       const events: InboundEvent[] = []
       const statuses: string[] = []
-      const client = new NanobotClient({
+      const client = new KohakuClient({
         url: "ws://nanobot.test/ws",
         onEvent: (event) => events.push(event),
         onStatus: (status, detail) => statuses.push(`${status}:${detail || ""}`),
@@ -997,7 +997,7 @@ describe("gateway protocol", () => {
         detail?: string
         info?: ConnectionStatusInfo
       }> = []
-      const client = new NanobotClient({
+      const client = new KohakuClient({
         url: "ws://nanobot.test/ws",
         reconnectDelayMs: 1,
         onEvent: () => undefined,
@@ -1051,7 +1051,7 @@ describe("gateway protocol", () => {
 
     try {
       const statuses: string[] = []
-      const client = new NanobotClient({
+      const client = new KohakuClient({
         url: "ws://nanobot.test/ws",
         onEvent: () => undefined,
         onStatus: (status, detail) => statuses.push(`${status}:${detail || ""}`),

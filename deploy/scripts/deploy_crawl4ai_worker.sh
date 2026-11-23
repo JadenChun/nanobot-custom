@@ -2,7 +2,7 @@
 set -euo pipefail
 
 BASE_DIR="${MARKETING_AGENT_BASE_DIR:-/opt/marketing-agent}"
-NANOBOT_DIR="${MARKETING_AGENT_NANOBOT_DIR:-${BASE_DIR}/nanobot-custom}"
+KOHAKU_DIR="${MARKETING_AGENT_KOHAKU_DIR:-${BASE_DIR}/kohaku}"
 WORKER_DIR="${MARKETING_AGENT_CRAWLER_DIR:-${BASE_DIR}/crawl4ai-worker}"
 ENV_DIR="/etc/crawl4ai-worker"
 ENV_FILE="${ENV_DIR}/crawl4ai-worker.env"
@@ -12,8 +12,8 @@ if [[ "${EUID}" -ne 0 ]]; then
   echo "Run this script as root or with sudo." >&2
   exit 1
 fi
-if [[ ! -f "${NANOBOT_DIR}/pyproject.toml" ]]; then
-  echo "Nanobot checkout is missing: ${NANOBOT_DIR}" >&2
+if [[ ! -f "${KOHAKU_DIR}/pyproject.toml" ]]; then
+  echo "Kohaku checkout is missing: ${KOHAKU_DIR}" >&2
   exit 1
 fi
 if ! getent group marketing-agent >/dev/null; then
@@ -33,7 +33,7 @@ if [[ ! -x "${WORKER_DIR}/.venv/bin/python" ]]; then
 fi
 runuser -u crawl4ai-worker -- "${WORKER_DIR}/.venv/bin/pip" install --upgrade pip
 runuser -u crawl4ai-worker -- "${WORKER_DIR}/.venv/bin/pip" install \
-  "${NANOBOT_DIR}[crawler-worker]"
+  "${KOHAKU_DIR}[crawler-worker]"
 
 # Crawl4AI's setup command installs the Chromium browser used by Playwright.
 runuser -u crawl4ai-worker -- env \
@@ -43,11 +43,11 @@ runuser -u crawl4ai-worker -- env \
 
 if [[ ! -f "${ENV_FILE}" ]]; then
   install -m 0640 -o root -g marketing-agent \
-    "${NANOBOT_DIR}/deploy/crawl4ai-worker.env.example" "${ENV_FILE}"
+    "${KOHAKU_DIR}/deploy/crawl4ai-worker.env.example" "${ENV_FILE}"
   echo "Created ${ENV_FILE}; review the host allowlist before enabling the worker."
 fi
 
-install -m 0644 "${NANOBOT_DIR}/deploy/systemd/crawl4ai-worker.service" "${SERVICE_FILE}"
+install -m 0644 "${KOHAKU_DIR}/deploy/systemd/crawl4ai-worker.service" "${SERVICE_FILE}"
 systemctl daemon-reload
 systemctl enable --now crawl4ai-worker
 systemctl status crawl4ai-worker --no-pager

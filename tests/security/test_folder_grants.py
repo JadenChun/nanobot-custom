@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from nanobot.security.folder_grants import (
+from kohaku.security.folder_grants import (
     FolderGrant,
     FolderGrantStore,
     FolderGrantsUnavailableError,
@@ -20,7 +20,7 @@ from nanobot.security.folder_grants import (
 
 def _store(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> FolderGrantStore:
     webui = tmp_path / "instance" / "webui"
-    monkeypatch.setattr("nanobot.security.folder_grants.get_webui_dir", lambda: webui)
+    monkeypatch.setattr("kohaku.security.folder_grants.get_webui_dir", lambda: webui)
     return FolderGrantStore(agent_home=tmp_path / "agent", instance_root=tmp_path / "instance")
 
 
@@ -215,7 +215,7 @@ def test_store_deletion_after_activation_is_fail_closed_after_restart(tmp_path, 
 
 
 def test_first_activation_waits_for_owned_native_process_reservation(tmp_path, monkeypatch):
-    from nanobot.security import native_admission
+    from kohaku.security import native_admission
 
     monkeypatch.setattr(
         native_admission,
@@ -275,7 +275,7 @@ def test_command_grant_cannot_cover_host_control_trees(path):
 
 def test_workspace_factory_shares_committed_view_and_writer(tmp_path, monkeypatch):
     webui = tmp_path / "instance" / "webui"
-    monkeypatch.setattr("nanobot.security.folder_grants.get_webui_dir", lambda: webui)
+    monkeypatch.setattr("kohaku.security.folder_grants.get_webui_dir", lambda: webui)
     home = tmp_path / "agent"
     root = tmp_path / "project"
     home.mkdir()

@@ -5,8 +5,8 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from nanobot.providers.base import LLMProvider
-from nanobot.providers.openai_compat_provider import OpenAICompatProvider
+from kohaku.providers.base import LLMProvider
+from kohaku.providers.openai_compat_provider import OpenAICompatProvider
 
 XML_TOOL_CALL = (
     "<tool_call>\n<function=memory_search>\n<parameter=query>\n"

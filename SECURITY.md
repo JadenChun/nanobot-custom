@@ -1,276 +1,64 @@
-# Security Policy
+# Kohaku Security Policy
 
-## Reporting a Vulnerability
+## Report a Vulnerability
 
-If you discover a security vulnerability in nanobot, please report it by:
+Do not report a security vulnerability in a public issue. Create a private report through the [Kohaku Security Advisories page](https://github.com/JadenChun/nanobot-custom/security/advisories/new).
 
-1. **DO NOT** open a public GitHub issue
-2. Create a private security advisory on GitHub or contact the repository maintainers (xubinrencs@gmail.com)
-3. Include:
-   - Description of the vulnerability
-   - Steps to reproduce
-   - Potential impact
-   - Suggested fix (if any)
+Include the Kohaku version, operating system, affected feature, and steps that reproduce the problem. Remove API keys, bot tokens, passwords, private keys, and personal data from the report.
 
-We aim to respond to security reports within 48 hours.
+## Protect Credentials
 
-## Security Best Practices
+- Do not commit API keys, bot tokens, passwords, or private keys.
+- Store credentials in a protected secret manager or environment variable.
+- Use an environment reference in `~/.kohaku/config.json` when a setting accepts one, such as `${PROVIDER_API_KEY}`.
+- Restrict access to config files that contain credentials. On macOS and Linux, use `chmod 600 ~/.kohaku/config.json`.
+- Rotate a credential after you expose it in a log, issue, screenshot, or chat.
 
-### 1. API Key Management
+See [Configuration](./docs/configuration.md) for environment variables and secret settings.
 
-**CRITICAL**: Never commit API keys to version control.
+## Limit Access
 
-```bash
-# ✅ Best: Use environment variable references in config (never writes the key to disk)
-# In ~/.nanobot/config.json:
-#   "apiKey": "${ANTHROPIC_API_KEY}"
-# Then supply the key at runtime via env var or Docker secret.
+- Set channel allowlists or pairing controls before you connect a public chat.
+- Do not use `allowFrom: ["*"]` unless every sender can use the agent.
+- Keep test bots and production bots in separate configs and workspaces.
+- Review chat access and pairing requests before you approve them.
 
-# ✅ Good: Store in config file with restricted permissions
-chmod 600 ~/.nanobot/config.json
+See [Chat Apps](./docs/chat-apps.md) for channel access settings.
 
-# ❌ Bad: Hardcoding keys in code or committing them
-```
+## Limit Tool Access
 
-**Recommendations:**
-- **Prefer environment variable references** (`${VAR}`) in config — the config file stores the `${VAR}` placeholder, and the plaintext value only exists in memory at runtime. See [Configuration: Environment Variables for Secrets](https://nanobot.wiki/docs/latest/use-nanobot/configuration/#environment-variables-for-secrets) for details.
-- When plaintext keys are stored in `~/.nanobot/config.json`, set file permissions to `0600` (`chmod 600`)
-- Consider using an OS keyring/credential manager for production deployments
-- Rotate API keys regularly
-- Use separate API keys for development and production
+Kohaku tools can read and write files, run commands, and contact external services. Give the agent only the files and permissions that the task needs.
 
-### 2. Channel Access Control
+- Use a dedicated operating-system account with limited permissions.
+- Use workspace restrictions or the supported shell sandbox when the host supports it.
+- Do not run Kohaku as root or as an administrator.
+- Review commands and file changes before you approve them.
+- Keep credentials outside the agent workspace.
 
-**IMPORTANT**: Always configure `allowFrom` lists for production use.
+Read [Concepts](./docs/concepts.md) and [Sandbox Folders](./docs/sandbox-folders.md) before you enable broad file or shell access.
 
-```json
-{
-  "channels": {
-    "telegram": {
-      "enabled": true,
-      "token": "YOUR_BOT_TOKEN",
-      "allowFrom": ["123456789", "987654321"]
-    },
-    "whatsapp": {
-      "enabled": true,
-      "allowFrom": ["1234567890"]
-    }
-  }
-}
-```
+## Protect Network Endpoints
 
-**Security Notes:**
-- In `v0.1.4.post3` and earlier, an empty `allowFrom` allowed all users. Since `v0.1.4.post4`, empty `allowFrom` denies all access by default — set `["*"]` to explicitly allow everyone.
-- Get your Telegram user ID from `@userinfobot`
-- Use WhatsApp sender IDs as full phone numbers with country code and no leading `+`
-- Review access logs regularly for unauthorized access attempts
-
-### 3. Shell Command Execution
-
-The `exec` tool can execute shell commands. While dangerous command patterns are blocked, you should:
-
-- ✅ **Enable the bwrap sandbox** (`"tools.exec.sandbox": "bwrap"`) for kernel-level isolation (Linux only)
-- ✅ Review all tool usage in agent logs
-- ✅ Understand what commands the agent is running
-- ✅ Use a dedicated user account with limited privileges
-- ✅ Never run nanobot as root
-- ❌ Don't disable security checks
-- ❌ Don't run on systems with sensitive data without careful review
-
-**Exec sandbox (bwrap):**
-
-On Linux, set `"tools.exec.sandbox": "bwrap"` to wrap every shell command in a [bubblewrap](https://github.com/containers/bubblewrap) sandbox. This uses Linux kernel namespaces to restrict what the process can see:
-
-- Workspace directory → **read-write** (agent works normally)
-- Media directory → **read-only** (can read uploaded attachments)
-- System directories (`/usr`, `/bin`, `/lib`) → **read-only** (commands still work)
-- Config files and API keys (`~/.nanobot/config.json`) → **hidden** (masked by tmpfs)
-
-Requires `bwrap` installed (`apt install bubblewrap`). Pre-installed in the official Docker image. **Not available on macOS or Windows** — bubblewrap depends on Linux kernel namespaces.
-
-Enabling the sandbox also automatically activates `restrictToWorkspace` for file tools.
-
-**Blocked patterns:**
-- `rm -rf /` - Root filesystem deletion
-- Fork bombs
-- Filesystem formatting (`mkfs.*`)
-- Raw disk writes
-- Other destructive operations
-
-### 4. File System Access
-
-File operations have path traversal protection, but:
-
-- ✅ Enable `restrictToWorkspace` or the bwrap sandbox to confine file access
-- ✅ Run nanobot with a dedicated user account
-- ✅ Use filesystem permissions to protect sensitive directories
-- ✅ Regularly audit file operations in logs
-- ❌ Don't give unrestricted access to sensitive files
-
-### 5. Network Security
-
-**API Calls:**
-- All external API calls use HTTPS by default
-- Timeouts are configured to prevent hanging requests
-- The OpenAI-compatible API server must set `api.api_key` when binding to `0.0.0.0` or `::`; otherwise startup fails to prevent unauthenticated network access
-- Consider using a firewall to restrict outbound connections if needed
-
-**WhatsApp:**
-- Keep the neonize session database under `~/.nanobot/whatsapp-auth` secure (mode 0700).
-- Use `nanobot channels login whatsapp --force` to remove and recreate the local session database when rotating linked devices.
-
-### 6. Dependency Security
-
-**Critical**: Keep dependencies updated!
-
-```bash
-# Check for vulnerable dependencies
-pip install pip-audit
-pip-audit
-
-# Update to latest secure versions
-pip install --upgrade nanobot-ai
-```
-
-**Important Notes:**
-- Keep `litellm` updated to the latest version for security fixes
-- Run `pip-audit` regularly after enabling the channels used in production; their manifest-declared dependencies are installed into the same environment
-- Subscribe to security advisories for nanobot and its dependencies
-
-### 7. Production Deployment
-
-For production use:
-
-1. **Isolate the Environment**
-   ```bash
-   # Run in a container or VM
-   docker run --rm -it python:3.11
-   pip install nanobot-ai
-   ```
-
-2. **Use a Dedicated User**
-   ```bash
-   sudo useradd -m -s /bin/bash nanobot
-   sudo -u nanobot nanobot gateway
-   ```
-
-3. **Set Proper Permissions**
-   ```bash
-   chmod 700 ~/.nanobot
-   chmod 600 ~/.nanobot/config.json
-   chmod 700 ~/.nanobot/whatsapp-auth
-   ```
-
-4. **Enable Logging**
-   ```bash
-   # Configure log monitoring
-   tail -f ~/.nanobot/logs/nanobot.log
-   ```
-
-5. **Use Rate Limiting**
-   - Configure rate limits on your API providers
-   - Monitor usage for anomalies
-   - Set spending limits on LLM APIs
-
-6. **Regular Updates**
-   ```bash
-   # Check for updates weekly
-   pip install --upgrade nanobot-ai
-   ```
-
-### 8. Development vs Production
-
-**Development:**
-- Use separate API keys
-- Test with non-sensitive data
-- Enable verbose logging
-- Use a test Telegram bot
-
-**Production:**
-- Use dedicated API keys with spending limits
-- Restrict file system access
-- Enable audit logging
-- Regular security reviews
-- Monitor for unusual activity
-
-### 9. Data Privacy
-
-- **Logs may contain sensitive information** - secure log files appropriately
-- **LLM providers see your prompts** - review their privacy policies
-- **Chat history is stored locally** - protect the `~/.nanobot` directory
-- **API keys are in plain text** - use OS keyring for production
-
-### 10. Incident Response
-
-If you suspect a security breach:
-
-1. **Immediately revoke compromised API keys**
-2. **Review logs for unauthorized access**
-   ```bash
-   grep "Access denied" ~/.nanobot/logs/nanobot.log
-   ```
-3. **Check for unexpected file modifications**
-4. **Rotate all credentials**
-5. **Update to latest version**
-6. **Report the incident** to maintainers
-
-## Security Features
-
-### Built-in Security Controls
-
-✅ **Input Validation**
-- Path traversal protection on file operations
-- Dangerous command pattern detection
-- Input length limits on HTTP requests
-
-✅ **Authentication**
-- Allow-list based access control — in `v0.1.4.post3` and earlier empty `allowFrom` allowed all; since `v0.1.4.post4` it denies all (`["*"]` explicitly allows all)
-- Failed authentication attempt logging
-
-✅ **Resource Protection**
-- Command execution timeouts (60s default)
-- Output truncation (10KB limit)
-- HTTP request timeouts (10-30s)
-
-✅ **Secure Communication**
-- HTTPS for all external API calls
-- TLS for Telegram API
-- WhatsApp session secrets stay in the local session database
-
-## Known Limitations
-
-⚠️ **Current Security Limitations:**
-
-1. **No Rate Limiting** - Users can send unlimited messages (add your own if needed)
-2. **Plain Text Config** - API keys stored in plain text in `config.json` (prefer `${VAR}` env references when possible, or use keyring for production)
-3. **No Session Management** - No automatic session expiry
-4. **Limited Command Filtering** - Only blocks obvious dangerous patterns (enable the bwrap sandbox for kernel-level isolation on Linux)
-5. **No Audit Trail** - Limited security event logging (enhance as needed)
-
-## Security Checklist
-
-Before deploying nanobot:
-
-- [ ] API keys stored securely (not in code)
-- [ ] Config file permissions set to 0600
-- [ ] `allowFrom` lists configured for all channels
-- [ ] Running as non-root user
-- [ ] Exec sandbox enabled (`"tools.exec.sandbox": "bwrap"`) on Linux deployments
-- [ ] File system permissions properly restricted
-- [ ] Dependencies updated to latest secure versions
-- [ ] Logs monitored for security events
-- [ ] Rate limits configured on API providers
-- [ ] Backup and disaster recovery plan in place
-- [ ] Security review of custom skills/tools
-
-## Updates
-
-**Last Updated**: 2026-07-21
-
-For the latest security updates and announcements, check:
-- GitHub Security Advisories: https://github.com/HKUDS/nanobot/security/advisories
-- Release Notes: https://github.com/HKUDS/nanobot/releases
-
-## License
-
-See LICENSE file for details.
+- Keep local WebUI and API endpoints bound to loopback unless remote access is required.
+- Require the supported authentication settings before you expose an endpoint to a network.
+- Use HTTPS at a trusted reverse proxy for public access.
+- Restrict firewall access to the required clients.
+
+The OpenAI-compatible API requires an API key when it binds to a non-loopback address. Read [WebSocket](./docs/websocket.md) and [OpenAI-Compatible API](./docs/openai-api.md) before you expose either service.
+
+## Protect Local Data
+
+Kohaku stores config, sessions, logs, memory, and workspace files on the local system. New default data lives under `~/.kohaku/`.
+
+- Restrict access to the config, workspace, session, and log directories.
+- Protect backups with the same controls as the original data.
+- Review logs before you share them. Logs can contain prompts, file paths, and service responses.
+- Keep model-provider privacy and retention policies in mind when you send prompts.
+
+If you move from Nanobot to Kohaku, follow [Upgrade to Kohaku](./docs/upgrade-to-kohaku.md). The guide explains how to protect snapshots and preserve the original paths.
+
+## Update Kohaku
+
+Install and update Kohaku from a clone of this repository until a Kohaku package release is available. Use only shell and wheel builds that passed the same release checks. Do not mix files from different releases.
+
+For an existing profile, read [Upgrade to Kohaku](./docs/upgrade-to-kohaku.md) before you update. Keep a protected snapshot and know how to restore it to the original paths.

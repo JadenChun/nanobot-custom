@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
     [string]$PythonExecutable = "python",
-    [string]$ConfigPath = (Join-Path ([Environment]::GetFolderPath([Environment+SpecialFolder]::UserProfile)) ".nanobot\config.json"),
+    [string]$ConfigPath = (Join-Path ([Environment]::GetFolderPath([Environment+SpecialFolder]::UserProfile)) ".kohaku\config.json"),
     [ValidateRange(1, 65535)][int]$Port = 18791,
     [string[]]$AllowedHosts = @("facebook.com", "tiktok.com")
 )
@@ -29,13 +29,13 @@ function Get-LocalMarketingConfig {
     param([Parameter(Mandatory)][string]$ConfigPath)
 
     if (-not (Test-Path -LiteralPath $ConfigPath -PathType Leaf)) {
-        throw "Nanobot config was not found: $ConfigPath"
+        throw "Kohaku config was not found: $ConfigPath"
     }
     try {
         return Get-Content -LiteralPath $ConfigPath -Raw | ConvertFrom-Json
     }
     catch {
-        throw "Nanobot config is not valid JSON: $ConfigPath"
+        throw "Kohaku config is not valid JSON: $ConfigPath"
     }
 }
 
@@ -98,7 +98,7 @@ function Start-LocalCrawl4AiWorker {
     if ($null -eq $WorkerArguments) {
         $browserChannel = "msedge"
         $WorkerArguments = @(
-            "-m", "nanobot.crawler.worker",
+            "-m", "kohaku.crawler.worker",
             "--tcp-host", "127.0.0.1",
             "--tcp-port", $Port.ToString(),
             "--allowed-hosts", ($AllowedHosts -join ","),
@@ -155,7 +155,7 @@ function Invoke-LocalMarketingAgent {
         [Parameter(Mandatory)][string]$LogPath
     )
 
-    & $PythonExecutable -m nanobot agent --config $ConfigPath --session "egocat-marketing" --no-logs --log-file $LogPath | Out-Host
+    & $PythonExecutable -m kohaku agent --config $ConfigPath --session "egocat-marketing" --no-logs --log-file $LogPath | Out-Host
     return [int]$LASTEXITCODE
 }
 
@@ -163,7 +163,7 @@ function Start-LocalMarketingAgent {
     [CmdletBinding()]
     param(
         [string]$PythonExecutable = "python",
-        [string]$ConfigPath = (Join-Path ([Environment]::GetFolderPath([Environment+SpecialFolder]::UserProfile)) ".nanobot\config.json"),
+        [string]$ConfigPath = (Join-Path ([Environment]::GetFolderPath([Environment+SpecialFolder]::UserProfile)) ".kohaku\config.json"),
         [ValidateRange(1, 65535)][int]$Port = 18791,
         [string[]]$AllowedHosts = @("facebook.com", "tiktok.com")
     )
@@ -190,7 +190,7 @@ function Start-LocalMarketingAgent {
     }
 
     New-Item -ItemType Directory -Path $paths.LogDirectory -Force | Out-Null
-    $agentLogPath = Join-Path $paths.LogDirectory "nanobot-agent.log"
+    $agentLogPath = Join-Path $paths.LogDirectory "kohaku-agent.log"
     $environmentNames = @(
         "CRAWL4AI_WORKER_ENABLED", "CRAWL4AI_AUTH_PROFILE_ENABLED",
         "CRAWL4AI_WORKER_TCP_HOST", "CRAWL4AI_WORKER_TCP_PORT"

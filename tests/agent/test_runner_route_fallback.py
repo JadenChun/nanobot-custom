@@ -9,10 +9,10 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from nanobot.agent.runner import AgentRunner
-from nanobot.providers.base import LLMResponse, ProviderCallContext
-from nanobot.providers.fallback_provider import FallbackProvider
-from nanobot.providers.request_budget import ProviderRouteChanged
+from kohaku.agent.runner import AgentRunner
+from kohaku.providers.base import LLMResponse, ProviderCallContext
+from kohaku.providers.fallback_provider import FallbackProvider
+from kohaku.providers.request_budget import ProviderRouteChanged
 from tests.agent.runner_helpers import make_run_spec
 from tests.providers.test_route_preview_contract import (
     FALLBACK,
@@ -196,8 +196,8 @@ async def test_fallback_final_request_limits_reject_before_dispatch() -> None:
 @pytest.mark.parametrize("known_window", [False, True])
 @pytest.mark.parametrize("path", ["normal", "streaming", "no-tools"])
 async def test_context_snapshot_uses_consumed_fallback_receipt_not_primary_budget(known_window, path) -> None:
-    from nanobot.agent.hook import AgentHook
-    from nanobot.providers.base import ContextUsageSnapshot, LLMUsage
+    from kohaku.agent.hook import AgentHook
+    from kohaku.providers.base import ContextUsageSnapshot, LLMUsage
 
     primary = _CountingProxy(_leaf(PRIMARY, [_rate_limit_response()]))
     fallback = _CountingProxy(_leaf(FALLBACK, [LLMResponse(
@@ -243,7 +243,7 @@ def test_fallback_attribution_accessor_does_not_treat_inherited_budget_as_capaci
 
 
 async def test_fallback_wrapper_preserves_primary_context_window_without_budget_preview() -> None:
-    from nanobot.providers.base import ContextUsageSnapshot, LLMUsage
+    from kohaku.providers.base import ContextUsageSnapshot, LLMUsage
 
     response = LLMResponse(
         content="ok",

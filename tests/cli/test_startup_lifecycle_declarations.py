@@ -11,11 +11,11 @@ import pytest
 import typer
 from aiohttp import web
 
-from nanobot import migration_guard
-from nanobot.agent import memory_recovery_startup_admission as admission
-from nanobot.agent import memory_recovery_storage as storage
-from nanobot.cli import commands
-from nanobot.config.schema import Config
+from kohaku import migration_guard
+from kohaku.agent import memory_recovery_startup_admission as admission
+from kohaku.agent import memory_recovery_storage as storage
+from kohaku.cli import commands
+from kohaku.config.schema import Config
 
 
 @pytest.fixture
@@ -153,9 +153,9 @@ def _capture_api_app(admitted_cli, monkeypatch):
         assert api_app is app
         seen["run"] = kwargs
 
-    monkeypatch.setattr("nanobot.api.server.create_app", create_app)
+    monkeypatch.setattr("kohaku.api.server.create_app", create_app)
     monkeypatch.setattr(web, "run_app", run_app)
-    monkeypatch.setattr(commands, "_set_nanobot_logs", lambda *_: None)
+    monkeypatch.setattr(commands, "_set_kohaku_logs", lambda *_: None)
     commands.serve(
         port=18888, host="127.0.0.1", timeout=12.5, verbose=False,
         workspace=None, config=str(config_path),

@@ -1,21 +1,21 @@
 #!/usr/bin/env bash
 # Prove that an in-place APK update preserves encrypted custody and network-state files.
-# This targets the debuggable dev build (ai.nanobot.mobile.debug), so it can run alongside
+# This targets the debuggable dev build (ai.kohaku.mobile.debug), so it can run alongside
 # a release install without touching release data.
 set -euo pipefail
 
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 DEFAULT_APK_DIR="$(cd -- "${script_dir}/../android" && pwd)/app/build/outputs/apk"
-SEED_APK="${NANOBOT_UPDATE_SEED_APK:-}"
-CANDIDATE_APK="${NANOBOT_UPDATE_CANDIDATE_APK:-${DEFAULT_APK_DIR}/debug/app-debug.apk}"
-TEST_APK="${NANOBOT_UPDATE_TEST_APK:-${DEFAULT_APK_DIR}/androidTest/debug/app-debug-androidTest.apk}"
-DEBUG_PACKAGE="ai.nanobot.mobile.debug"
-SEED_CLASS="ai.nanobot.mobile.network.UpdatePersistenceSeedInstrumentedTest"
-VERIFY_CLASS="ai.nanobot.mobile.network.UpdatePersistenceVerifyInstrumentedTest"
-RECEIPT="${NANOBOT_UPDATE_RECEIPT:-/tmp/nanobot-update-receipt.txt}"
+SEED_APK="${KOHAKU_MOBILE_UPDATE_SEED_APK:-}"
+CANDIDATE_APK="${KOHAKU_MOBILE_UPDATE_CANDIDATE_APK:-${DEFAULT_APK_DIR}/debug/app-debug.apk}"
+TEST_APK="${KOHAKU_MOBILE_UPDATE_TEST_APK:-${DEFAULT_APK_DIR}/androidTest/debug/app-debug-androidTest.apk}"
+DEBUG_PACKAGE="ai.kohaku.mobile.debug"
+SEED_CLASS="ai.kohaku.mobile.network.UpdatePersistenceSeedInstrumentedTest"
+VERIFY_CLASS="ai.kohaku.mobile.network.UpdatePersistenceVerifyInstrumentedTest"
+RECEIPT="${KOHAKU_MOBILE_UPDATE_RECEIPT:-/tmp/kohaku-mobile-update-receipt.txt}"
 
 if [[ -z "${SEED_APK}" || ! -f "${SEED_APK}" ]]; then
-  echo "NANOBOT_UPDATE_SEED_APK must name the baseline APK" >&2
+  echo "KOHAKU_MOBILE_UPDATE_SEED_APK must name the baseline APK" >&2
   exit 2
 fi
 if [[ ! -f "${CANDIDATE_APK}" ]]; then
@@ -64,8 +64,8 @@ seed_version="$("${ADB[@]}" shell dumpsys package "${DEBUG_PACKAGE}" | awk '/ver
 
 echo "seeding custody and network state from baseline APK"
 "${ADB[@]}" shell am instrument -w -e class "${SEED_CLASS}" \
-  "${DEBUG_PACKAGE}.test/androidx.test.runner.AndroidJUnitRunner" | tee /tmp/nanobot-update-seed.txt
-grep -Eq 'OK \(1 test\)|OK \(1 test\)' /tmp/nanobot-update-seed.txt
+  "${DEBUG_PACKAGE}.test/androidx.test.runner.AndroidJUnitRunner" | tee /tmp/kohaku-mobile-update-seed.txt
+grep -Eq 'OK \(1 test\)|OK \(1 test\)' /tmp/kohaku-mobile-update-seed.txt
 
 echo "updating to candidate APK in place"
 "${ADB[@]}" install -r "${CANDIDATE_APK}" >/dev/null
@@ -73,8 +73,8 @@ candidate_version="$("${ADB[@]}" shell dumpsys package "${DEBUG_PACKAGE}" | awk 
 
 echo "verifying custody and network state"
 "${ADB[@]}" shell am instrument -w -e class "${VERIFY_CLASS}" \
-  "${DEBUG_PACKAGE}.test/androidx.test.runner.AndroidJUnitRunner" | tee /tmp/nanobot-update-verify.txt
-grep -Eq 'OK \(1 test\)|OK \(1 test\)' /tmp/nanobot-update-verify.txt
+  "${DEBUG_PACKAGE}.test/androidx.test.runner.AndroidJUnitRunner" | tee /tmp/kohaku-mobile-update-verify.txt
+grep -Eq 'OK \(1 test\)|OK \(1 test\)' /tmp/kohaku-mobile-update-verify.txt
 
 {
   echo "seed_apk=${SEED_APK}"

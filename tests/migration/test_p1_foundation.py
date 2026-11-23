@@ -7,15 +7,15 @@ from pathlib import Path
 
 import pytest
 
-from nanobot.config.loader import load_config, save_config
-from nanobot.config.schema import Config
-from nanobot.migration_guard import MigrationIncompleteError
+from kohaku.config.loader import load_config, save_config
+from kohaku.config.schema import Config
+from kohaku.migration_guard import MigrationIncompleteError
 
 
 @pytest.mark.parametrize('module', [
-    'nanobot.agent.loop', 'nanobot.agent.runner', 'nanobot.agent.turn',
-    'nanobot.agent.run_store', 'nanobot.config.schema', 'nanobot.cli.commands',
-    'nanobot.api.server', 'nanobot.context_repo.manager', 'nanobot.crawler.worker',
+    'kohaku.agent.loop', 'kohaku.agent.runner', 'kohaku.agent.turn',
+    'kohaku.agent.run_store', 'kohaku.config.schema', 'kohaku.cli.commands',
+    'kohaku.api.server', 'kohaku.context_repo.manager', 'kohaku.crawler.worker',
 ])
 def test_foundation_imports(module):
     importlib.import_module(module)
@@ -74,8 +74,8 @@ def test_legacy_capacity_precedence_is_preserved():
 
 
 def test_runtime_blocked_before_workspace_creation(tmp_path):
-    from nanobot.agent.loop import AgentLoop
-    from nanobot.agent.memory_recovery_startup_admission import StartupReceiptAdmissionError
+    from kohaku.agent.loop import AgentLoop
+    from kohaku.agent.memory_recovery_startup_admission import StartupReceiptAdmissionError
 
     workspace = tmp_path / 'workspace'
     pending = workspace / 'memory' / '.consolidation.pending.json'
@@ -92,8 +92,8 @@ def test_runtime_blocked_before_workspace_creation(tmp_path):
 
 
 def test_loader_blocks_before_discovery(monkeypatch):
-    from nanobot.agent.tools.loader import ToolLoader
-    from nanobot.agent.tools.registry import ToolRegistry
+    from kohaku.agent.tools.loader import ToolLoader
+    from kohaku.agent.tools.registry import ToolRegistry
     loader = ToolLoader()
     def forbidden():
         pytest.fail('unadapted tool/plugin discovery executed')
@@ -106,7 +106,7 @@ def test_loader_blocks_before_discovery(monkeypatch):
 def test_registry_rejects_duplicate_names():
     from types import SimpleNamespace
 
-    from nanobot.agent.tools.registry import ToolRegistry
+    from kohaku.agent.tools.registry import ToolRegistry
     registry = ToolRegistry()
     first = SimpleNamespace(name='read_file')
     registry.register(first)
@@ -121,7 +121,7 @@ def _cli(tmp_path, *args):
     env = {'HOME': str(home), 'PATH': str(Path(sys.executable).parent) + ':/usr/bin:/bin',
            'PYTHONPATH': str(Path(__file__).resolve().parents[2]),
            'PYTHONDONTWRITEBYTECODE': '1', 'PYTHONNOUSERSITE': '1', 'NO_COLOR': '1', 'TERM': 'dumb'}
-    return subprocess.run([sys.executable, '-m', 'nanobot', *args], env=env,
+    return subprocess.run([sys.executable, '-m', 'kohaku', *args], env=env,
                           text=True, capture_output=True, timeout=30)
 
 
@@ -157,14 +157,14 @@ def test_gateway_service_arguments_parse_before_configuration_rejection(tmp_path
 def test_classic_default():
     import inspect
 
-    from nanobot.cli.agent import agent
+    from kohaku.cli.agent import agent
     assert inspect.signature(agent).parameters['classic'].default.default is True
 
 
 def test_logfile_preserves_rotation_and_output(tmp_path, monkeypatch):
     from loguru import logger
 
-    from nanobot.cli.log_control import add_compatibility_log_file
+    from kohaku.cli.log_control import add_compatibility_log_file
     path = tmp_path / 'runtime.log'
     original = logger.add
     settings = {}
@@ -196,7 +196,7 @@ async def test_http_stream_rejected_before_execution():
     from types import SimpleNamespace
     from unittest.mock import AsyncMock
 
-    from nanobot.api.server import handle_chat_completions
+    from kohaku.api.server import handle_chat_completions
     loop = SimpleNamespace(process_direct=AsyncMock())
     request = SimpleNamespace(content_type="application/json", app={"agent_loop": loop},
                               json=AsyncMock(return_value={"stream": True, "messages": []}))
@@ -207,7 +207,7 @@ async def test_http_stream_rejected_before_execution():
 
 
 def test_mcp_missing_only_timeout_and_environment(tmp_path, monkeypatch):
-    monkeypatch.setenv("NANOBOT_AGENTS__DEFAULTS__MAX_TOKENS", "1234")
+    monkeypatch.setenv("KOHAKU_AGENTS__DEFAULTS__MAX_TOKENS", "1234")
     path = tmp_path / "config.json"
     path.write_text(json.dumps({"tools": {"mcpServers": {"ltx-desktop": {"command": "synthetic"}}}}))
     cfg = load_config(path)
@@ -252,10 +252,10 @@ def test_legacy_context_path_appends():
 
 
 def test_sdk_config_preflight_rejects_unsupported_idle_after_loading(monkeypatch, tmp_path):
-    import nanobot.config.loader as loader
-    from nanobot.config.schema import Config
-    from nanobot.nanobot import Nanobot
-    from nanobot.runtime_composition import RuntimePreflightError
+    import kohaku.config.loader as loader
+    from kohaku.config.schema import Config
+    from kohaku.kohaku import Kohaku
+    from kohaku.runtime_composition import RuntimePreflightError
 
     config = Config()
     config.bind_source_path(tmp_path / "config.json")
@@ -268,13 +268,13 @@ def test_sdk_config_preflight_rejects_unsupported_idle_after_loading(monkeypatch
 
     monkeypatch.setattr(loader, "load_config", load)
     with pytest.raises(RuntimePreflightError, match="idle"):
-        Nanobot.from_config()
+        Kohaku.from_config()
     assert loaded == [True]
     assert list(tmp_path.iterdir()) == []
 
 
 def test_desktop_entry_blocks_before_discovery(monkeypatch):
-    import nanobot.cli.desktop_tui as desktop
+    import kohaku.cli.desktop_tui as desktop
     def forbidden(*args, **kwargs):
         pytest.fail("desktop discovery happened before admission")
     monkeypatch.setattr(desktop, "discover_desktop_target", forbidden)

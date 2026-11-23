@@ -1,7 +1,7 @@
 from unittest.mock import MagicMock, patch
 
-from nanobot.agent.delegation import ForegroundAgentManager
-from nanobot.config.schema import AgentDeviceConfig, ToolsConfig
+from kohaku.agent.delegation import ForegroundAgentManager
+from kohaku.config.schema import AgentDeviceConfig, ToolsConfig
 
 
 def _provider():
@@ -11,12 +11,12 @@ def _provider():
 
 
 def test_loop_registers_agent_device_by_default(tmp_path) -> None:
-    from nanobot.agent.loop import AgentLoop
-    from nanobot.bus.queue import MessageBus
+    from kohaku.agent.loop import AgentLoop
+    from kohaku.bus.queue import MessageBus
 
     workspace = tmp_path / "workspace"
     workspace.mkdir()
-    with patch("nanobot.migration_guard.require_runtime_ready"):
+    with patch("kohaku.migration_guard.require_runtime_ready"):
         loop = AgentLoop(
             bus=MessageBus(), provider=_provider(), workspace=workspace,
             sessions_root=tmp_path / "sessions",
@@ -25,12 +25,12 @@ def test_loop_registers_agent_device_by_default(tmp_path) -> None:
 
 
 def test_loop_skips_agent_device_when_disabled(tmp_path) -> None:
-    from nanobot.agent.loop import AgentLoop
-    from nanobot.bus.queue import MessageBus
+    from kohaku.agent.loop import AgentLoop
+    from kohaku.bus.queue import MessageBus
 
     workspace = tmp_path / "workspace"
     workspace.mkdir()
-    with patch("nanobot.migration_guard.require_runtime_ready"):
+    with patch("kohaku.migration_guard.require_runtime_ready"):
         loop = AgentLoop(
             bus=MessageBus(),
             provider=_provider(),

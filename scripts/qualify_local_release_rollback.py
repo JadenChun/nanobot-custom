@@ -93,7 +93,7 @@ def _start(python: Path, config: Path, port: int, log: Path) -> subprocess.Popen
         [
             str(python),
             "-m",
-            "nanobot",
+            "kohaku",
             "gateway",
             "--foreground",
             "--port",
@@ -156,7 +156,7 @@ def main() -> int:
         if not python.is_file():
             raise SystemExit(f"{label} interpreter is missing: {python}")
 
-    work = Path(tempfile.mkdtemp(prefix="nanobot-local-rollback-"))
+    work = Path(tempfile.mkdtemp(prefix="kohaku-local-rollback-"))
     previous_config = work / "previous" / "config.json"
     candidate_config = work / "candidate" / "config.json"
     missing_config = work / "candidate-failing" / "missing.json"

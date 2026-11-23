@@ -8,8 +8,8 @@ from pathlib import Path
 
 import pytest
 
-import nanobot.session.checked_source as checked_source
-from nanobot.session.checked_source import (
+import kohaku.session.checked_source as checked_source
+from kohaku.session.checked_source import (
     CheckedSessionAuthorityError,
     open_checked_recovery_session,
     open_checked_recovery_session_for_replace,
@@ -191,7 +191,7 @@ def test_recovery_binding_drift_blocks_replace(tmp_path: Path, drift: str) -> No
 
 
 def test_lease_drift_blocks_replace(tmp_path: Path) -> None:
-    from nanobot.agent.memory_recovery_storage import WorkspaceMemoryAuthority
+    from kohaku.agent.memory_recovery_storage import WorkspaceMemoryAuthority
 
     workspace, root, source = _layout(tmp_path)
     candidate = _candidate(workspace, root)

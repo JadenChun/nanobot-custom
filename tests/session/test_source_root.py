@@ -9,9 +9,9 @@ from pathlib import Path
 
 import pytest
 
-import nanobot.session.source_root as source_root_module
-from nanobot.session.manager import JsonlSessionStore
-from nanobot.session.source_root import (
+import kohaku.session.source_root as source_root_module
+from kohaku.session.manager import JsonlSessionStore
+from kohaku.session.source_root import (
     SourceRootAuthority,
     SourceRootAuthorityError,
     SourceRootUnavailableError,

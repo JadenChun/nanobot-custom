@@ -3,9 +3,9 @@ from unittest.mock import patch
 
 import pytest
 
-from nanobot.config.schema import Config, InlineFallbackConfig, ProviderConfig
-from nanobot.providers.factory import make_provider, provider_signature, validate_provider_setup
-from nanobot.providers.openai_compat_provider import OpenAICompatProvider
+from kohaku.config.schema import Config, InlineFallbackConfig, ProviderConfig
+from kohaku.providers.factory import make_provider, provider_signature, validate_provider_setup
+from kohaku.providers.openai_compat_provider import OpenAICompatProvider
 
 
 def configured():
@@ -49,7 +49,7 @@ async def test_factory_timeout_reaches_lazy_sdk_client():
     provider = make_provider(config)
     for leaf in provider._leaves:
         assert leaf._configured_timeout == 17.0
-    with patch('nanobot.providers.openai_compat_provider.AsyncOpenAI') as constructor:
+    with patch('kohaku.providers.openai_compat_provider.AsyncOpenAI') as constructor:
         for leaf in provider._leaves:
             await leaf._ensure_client()
     assert constructor.call_count == 2
@@ -65,7 +65,7 @@ def test_invalid_explicit_timeout_is_rejected(timeout):
 
 
 def test_factory_default_timeout_precedes_upstream_environment(monkeypatch):
-    monkeypatch.setenv("NANOBOT_OPENAI_COMPAT_TIMEOUT_S", "300")
+    monkeypatch.setenv("KOHAKU_OPENAI_COMPAT_TIMEOUT_S", "300")
     assert all(leaf._configured_timeout == 60.0 for leaf in make_provider(configured())._leaves)
     config = configured()
     config.providers.openai.timeout = 1.0
@@ -90,7 +90,7 @@ def test_legacy_and_upstream_fallback_are_mutually_exclusive():
 
 
 def test_legacy_fallback_transport_and_policy_invalidate_signature():
-    from nanobot.config.schema import FallbackEntry
+    from kohaku.config.schema import FallbackEntry
     config = configured()
     config.agents.defaults.fallback = [FallbackEntry(provider='deepseek', model='deepseek-chat')]
     config.providers.deepseek.api_keys = ['fallback']

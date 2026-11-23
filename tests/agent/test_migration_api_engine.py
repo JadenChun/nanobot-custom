@@ -10,12 +10,12 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from nanobot.agent.loop import AgentLoop
-from nanobot.agent.tools.base import Tool
-from nanobot.agent.tools.registry import ToolRegistry
-from nanobot.api.server import handle_chat_completions
-from nanobot.providers.base import LLMResponse, ToolCallRequest
-from nanobot.utils.runtime import EMPTY_FINAL_RESPONSE_MESSAGE
+from kohaku.agent.loop import AgentLoop
+from kohaku.agent.tools.base import Tool
+from kohaku.agent.tools.registry import ToolRegistry
+from kohaku.api.server import handle_chat_completions
+from kohaku.providers.base import LLMResponse, ToolCallRequest
+from kohaku.utils.runtime import EMPTY_FINAL_RESPONSE_MESSAGE
 from tests.agent import test_migration_engine as engine_fixtures
 from tests.agent.test_migration_engine import ScriptedProvider
 

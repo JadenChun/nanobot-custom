@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from nanobot.utils.secret_scan import find_secrets, find_secrets_in_blob
+from kohaku.utils.secret_scan import find_secrets, find_secrets_in_blob
 
 
 @pytest.mark.parametrize("value", [None, 42, b"access_token=synthetic_only", {}, ""])

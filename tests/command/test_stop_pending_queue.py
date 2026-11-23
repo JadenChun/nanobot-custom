@@ -5,10 +5,10 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from nanobot.bus.events import OutboundMessage
-from nanobot.command.builtin import cmd_stop
-from nanobot.command.router import CommandContext
-from nanobot.webui.metadata import WEBUI_TARGET_TURN_METADATA_KEY
+from kohaku.bus.events import OutboundMessage
+from kohaku.command.builtin import cmd_stop
+from kohaku.command.router import CommandContext
+from kohaku.webui.metadata import WEBUI_TARGET_TURN_METADATA_KEY
 
 
 @pytest.mark.asyncio
@@ -95,7 +95,7 @@ async def test_cmd_stop_rejects_stale_target_without_cancelling(monkeypatch):
     """cmd_stop should ignore a target turn that is no longer active."""
     mock_loop = _make_loop_with_publisher()
     monkeypatch.setattr(
-        "nanobot.session.webui_turns.websocket_turn_id",
+        "kohaku.session.webui_turns.websocket_turn_id",
         lambda chat_id: "turn-new",
     )
 
@@ -123,7 +123,7 @@ async def test_cmd_stop_projects_stopping_and_interrupted_for_matching_target(mo
     """cmd_stop should project stopping then interrupted for the active target turn."""
     mock_loop = _make_loop_with_publisher()
     monkeypatch.setattr(
-        "nanobot.session.webui_turns.websocket_turn_id",
+        "kohaku.session.webui_turns.websocket_turn_id",
         lambda chat_id: "turn-a",
     )
 

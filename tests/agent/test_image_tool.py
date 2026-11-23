@@ -5,15 +5,15 @@ from pathlib import Path
 
 import pytest
 
-from nanobot.agent.tools import image as image_tool
-from nanobot.agent.tools.image import (
+from kohaku.agent.tools import image as image_tool
+from kohaku.agent.tools.image import (
     ImageGenerationTool,
     _extract_image_paths,
     image_generation_available,
     reset_current_user_image_request,
     set_current_user_image_request,
 )
-from nanobot.config.schema import ImageConfig
+from kohaku.config.schema import ImageConfig
 
 
 def test_image_config_defaults_to_codex_cli() -> None:

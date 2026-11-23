@@ -1,7 +1,7 @@
 import pytest
 from pydantic import ValidationError
 
-from nanobot.config.schema import Config, DelegationTreeConfig
+from kohaku.config.schema import Config, DelegationTreeConfig
 
 
 def test_delegation_tree_defaults_are_finite_and_distinct():

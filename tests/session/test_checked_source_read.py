@@ -11,12 +11,12 @@ from types import SimpleNamespace
 
 import pytest
 
-import nanobot.session.checked_source as checked_source
-from nanobot.session.checked_source import (
+import kohaku.session.checked_source as checked_source
+from kohaku.session.checked_source import (
     CheckedSessionAuthorityError,
     open_checked_session,
 )
-from nanobot.session.manager import JsonlSessionStore
+from kohaku.session.manager import JsonlSessionStore
 
 _MAX_SOURCE_BYTES = 64 * 1024 * 1024
 _READ_CHUNK = 64 * 1024

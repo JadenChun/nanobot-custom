@@ -18,7 +18,7 @@ if (!platform || !arch || !supportedTargets.has(target)) {
 const bunPlatform = platform === "win32" ? "windows" : platform
 const extension = platform === "win32" ? ".exe" : ""
 const outputDir = join(import.meta.dir, "..", "dist")
-const output = join(outputDir, `nanobot-tui-${platform}-${arch}${extension}`)
+const output = join(outputDir, `kohaku-tui-${platform}-${arch}${extension}`)
 
 await mkdir(outputDir, { recursive: true })
 const result = await Bun.build({

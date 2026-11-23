@@ -7,9 +7,9 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from nanobot.agent.context_governance import ContextWindowExceededError
-from nanobot.agent.runner import AgentRunner, AgentRunResult
-from nanobot.providers.base import LLMProvider, LLMResponse
+from kohaku.agent.context_governance import ContextWindowExceededError
+from kohaku.agent.runner import AgentRunner, AgentRunResult
+from kohaku.providers.base import LLMProvider, LLMResponse
 from tests.agent.runner_helpers import make_run_spec
 
 
@@ -71,7 +71,7 @@ async def test_under_budget_preserves_complete_model_context(monkeypatch) -> Non
     messages = _messages()
     original = deepcopy(messages)
     monkeypatch.setattr(
-        "nanobot.agent.context_governance.estimate_prompt_tokens_chain",
+        "kohaku.agent.context_governance.estimate_prompt_tokens_chain",
         lambda *_args: (100, "fixture"),
     )
 
@@ -86,11 +86,11 @@ async def test_pressure_trims_model_view_but_preserves_source_history(monkeypatc
     messages = _messages()
     original = deepcopy(messages)
     monkeypatch.setattr(
-        "nanobot.agent.context_governance.estimate_prompt_tokens_chain",
+        "kohaku.agent.context_governance.estimate_prompt_tokens_chain",
         _pressure_estimate,
     )
     monkeypatch.setattr(
-        "nanobot.agent.context_governance.estimate_message_tokens",
+        "kohaku.agent.context_governance.estimate_message_tokens",
         _message_tokens,
     )
 
@@ -108,11 +108,11 @@ async def test_intermediate_user_survives_removal_of_older_tool_group(monkeypatc
     messages.insert(4, followup)
     original = deepcopy(messages)
     monkeypatch.setattr(
-        "nanobot.agent.context_governance.estimate_prompt_tokens_chain",
+        "kohaku.agent.context_governance.estimate_prompt_tokens_chain",
         _pressure_estimate,
     )
     monkeypatch.setattr(
-        "nanobot.agent.context_governance.estimate_message_tokens",
+        "kohaku.agent.context_governance.estimate_message_tokens",
         lambda message: 300 if message.get("content") == "result-0" else 20,
     )
 
@@ -129,7 +129,7 @@ async def test_intermediate_user_survives_removal_of_older_tool_group(monkeypatc
 async def test_unconfigured_context_window_does_not_trim(monkeypatch) -> None:
     messages = _messages()
     monkeypatch.setattr(
-        "nanobot.agent.context_governance.estimate_prompt_tokens_chain",
+        "kohaku.agent.context_governance.estimate_prompt_tokens_chain",
         lambda *_args: (10000, "fixture"),
     )
 
@@ -144,7 +144,7 @@ async def test_irreducible_current_request_fails_before_provider(monkeypatch) ->
     tools = MagicMock()
     tools.get_definitions.return_value = []
     monkeypatch.setattr(
-        "nanobot.agent.context_governance.estimate_prompt_tokens_chain",
+        "kohaku.agent.context_governance.estimate_prompt_tokens_chain",
         lambda *_args: (2000, "fixture"),
     )
 

@@ -5,8 +5,8 @@ from types import SimpleNamespace
 
 import pytest
 
-import nanobot.agent.tools.trend_vpn as trend_vpn_module
-from nanobot.agent.tools.trend_vpn import (
+import kohaku.agent.tools.trend_vpn as trend_vpn_module
+from kohaku.agent.tools.trend_vpn import (
     TrendVpnBrowserFetchTool,
     TrendVpnFetchTool,
     TrendVpnSessionCloseTool,

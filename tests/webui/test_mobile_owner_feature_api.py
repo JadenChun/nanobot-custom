@@ -4,12 +4,12 @@ from pathlib import Path
 
 import pytest
 
-from nanobot.bus.queue import MessageBus
-from nanobot.channels.websocket.runtime import WebSocketConfig
-from nanobot.remote.edge import AccessIdentity
-from nanobot.security.workspace_access import default_workspace_scope
-from nanobot.session.manager import Session, SessionManager
-from nanobot.webui.gateway_services import build_gateway_services
+from kohaku.bus.queue import MessageBus
+from kohaku.channels.websocket.runtime import WebSocketConfig
+from kohaku.remote.edge import AccessIdentity
+from kohaku.security.workspace_access import default_workspace_scope
+from kohaku.session.manager import Session, SessionManager
+from kohaku.webui.gateway_services import build_gateway_services
 from tests.webui.mobile_mutation_helper import mobile_mutation_payload
 
 
@@ -19,7 +19,7 @@ def gateway(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     home = instance / "workspace"
     home.mkdir(parents=True)
     config_path = instance / "config.json"
-    monkeypatch.setattr("nanobot.config.loader._current_config_path", config_path)
+    monkeypatch.setattr("kohaku.config.loader._current_config_path", config_path)
     session_manager = SessionManager(home, sessions_root=instance / "sessions")
     config = WebSocketConfig.model_validate({
         "enabled": True,

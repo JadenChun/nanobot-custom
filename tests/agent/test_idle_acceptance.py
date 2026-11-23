@@ -9,15 +9,15 @@ from pathlib import Path
 
 import pytest
 
-from nanobot.agent.idle_compaction import IdleCompactionPolicy, IdleJobOutcome
-from nanobot.agent.idle_scanner import IdleCompactionScanner
-from nanobot.agent.loop import AgentLoop
-from nanobot.agent.tools.registry import ToolRegistry
-from nanobot.config.schema import Config
-from nanobot.migration_guard import MigrationIncompleteError
-from nanobot.session.context_checkpoint import validate_context_checkpoint
-from nanobot.session.manager import JsonlSessionStore
-from nanobot.session.source import prefix_digest, validate_closed_boundary
+from kohaku.agent.idle_compaction import IdleCompactionPolicy, IdleJobOutcome
+from kohaku.agent.idle_scanner import IdleCompactionScanner
+from kohaku.agent.loop import AgentLoop
+from kohaku.agent.tools.registry import ToolRegistry
+from kohaku.config.schema import Config
+from kohaku.migration_guard import MigrationIncompleteError
+from kohaku.session.context_checkpoint import validate_context_checkpoint
+from kohaku.session.manager import JsonlSessionStore
+from kohaku.session.source import prefix_digest, validate_closed_boundary
 from tests.agent.idle_acceptance_support import (
     AcceptanceProvider,
     NetworkDenial,
@@ -401,8 +401,8 @@ async def test_lifecycle_close_joins_transport_and_releases_request_owners(
 async def test_production_guard_and_unpatched_idle_factory_remain_closed(
     deny_external_io, tmp_path: Path
 ) -> None:
-    from nanobot.migration_guard import require_runtime_ready
-    from nanobot.runtime_composition import RuntimePreflightError
+    from kohaku.migration_guard import require_runtime_ready
+    from kohaku.runtime_composition import RuntimePreflightError
 
     with pytest.raises(MigrationIncompleteError):
         require_runtime_ready()

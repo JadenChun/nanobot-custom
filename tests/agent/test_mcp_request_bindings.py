@@ -12,20 +12,20 @@ from unittest.mock import patch
 import pytest
 from mcp.types import TextContent
 
-from nanobot.agent.hook import AgentHook
-from nanobot.agent.policy import RiskyActionPolicy
-from nanobot.agent.runner import AgentRunner
-from nanobot.agent.tools.filesystem import WriteFileTool
-from nanobot.agent.tools.mcp import MCPProvider, MCPToolWrapper
-from nanobot.agent.tools.registry import CapturedToolBindings, ToolRegistry
-from nanobot.agent.turn import TurnContext
-from nanobot.config.schema import MCPServerConfig
-from nanobot.providers.base import LLMProvider, LLMResponse, ToolCallRequest
-from nanobot.providers.request_budget import ProviderRouteChanged
-from nanobot.session.execution_owner import acquire_execution
-from nanobot.session.manager import JsonlSessionStore
-from nanobot.session.manager import Session as CanonicalSession
-from nanobot.session.turn_writer import SourceTurnWriter
+from kohaku.agent.hook import AgentHook
+from kohaku.agent.policy import RiskyActionPolicy
+from kohaku.agent.runner import AgentRunner
+from kohaku.agent.tools.filesystem import WriteFileTool
+from kohaku.agent.tools.mcp import MCPProvider, MCPToolWrapper
+from kohaku.agent.tools.registry import CapturedToolBindings, ToolRegistry
+from kohaku.agent.turn import TurnContext
+from kohaku.config.schema import MCPServerConfig
+from kohaku.providers.base import LLMProvider, LLMResponse, ToolCallRequest
+from kohaku.providers.request_budget import ProviderRouteChanged
+from kohaku.session.execution_owner import acquire_execution
+from kohaku.session.manager import JsonlSessionStore
+from kohaku.session.manager import Session as CanonicalSession
+from kohaku.session.turn_writer import SourceTurnWriter
 from tests.agent.runner_helpers import make_run_spec
 
 TOOL_NAME = "mcp_probe_probe"
@@ -127,7 +127,7 @@ class MCPFixture:
 @pytest.fixture
 async def connected_mcp():
     fixture = MCPFixture()
-    with patch("nanobot.agent.tools.mcp.connect_mcp_servers", new=fixture.connect):
+    with patch("kohaku.agent.tools.mcp.connect_mcp_servers", new=fixture.connect):
         await fixture.owner.connect()
         try:
             yield fixture
@@ -140,7 +140,7 @@ async def test_runner_never_dispatches_replacement_for_sampled_schema(view: str)
     fixture = MCPFixture()
     provider = OfflineProvider([tool_response(), LLMResponse(content="done")])
     task = None
-    with patch("nanobot.agent.tools.mcp.connect_mcp_servers", new=fixture.connect):
+    with patch("kohaku.agent.tools.mcp.connect_mcp_servers", new=fixture.connect):
         try:
             await fixture.owner.connect()
             registry = (fixture.registry.filtered([TOOL_NAME]) if view == "filtered"
@@ -236,7 +236,7 @@ async def test_multi_server_reload_owns_each_visible_replacement_until_settlemen
     capture = None
     provider = None
     reload_task = runner_task = active_call = closing = None
-    with patch("nanobot.agent.tools.mcp.connect_mcp_servers", new=connect):
+    with patch("kohaku.agent.tools.mcp.connect_mcp_servers", new=connect):
         try:
             await owner.connect()
             config.update({name: MCPServerConfig(type="stdio", command="new") for name in config})
@@ -415,7 +415,7 @@ async def test_live_revocation_refuses_sampled_and_prepared_calls(
         )
         fixture.owner._servers = dict(fixture.config)
         monkeypatch.setattr(
-            "nanobot.agent.tools.mcp_oauth.mcp_oauth_has_credentials",
+            "kohaku.agent.tools.mcp_oauth.mcp_oauth_has_credentials",
             lambda *_args, **_kwargs: authorized,
         )
     provider = OfflineProvider([tool_response(), LLMResponse(content="done")])
@@ -423,7 +423,7 @@ async def test_live_revocation_refuses_sampled_and_prepared_calls(
     if when == "prepared":
         provider.release.set()
     task = None
-    with patch("nanobot.agent.tools.mcp.connect_mcp_servers", new=fixture.connect):
+    with patch("kohaku.agent.tools.mcp.connect_mcp_servers", new=fixture.connect):
         try:
             await fixture.owner.connect()
             task = asyncio.create_task(AgentRunner().run(run_spec(
@@ -821,7 +821,7 @@ async def test_initial_readiness_never_publishes_unpinned_wrappers() -> None:
         await release.wait()
         return connections
 
-    with patch("nanobot.agent.tools.mcp.connect_mcp_servers", new=connect):
+    with patch("kohaku.agent.tools.mcp.connect_mcp_servers", new=connect):
         task = asyncio.create_task(fixture.owner.connect())
         try:
             await asyncio.wait_for(ready.wait(), 1)
@@ -847,7 +847,7 @@ async def test_readiness_publication_collision_closes_unpublished_connection() -
         name="probe", description="existing", inputSchema={"type": "object", "properties": {}},
     ))
     fixture.registry.register(existing)
-    with patch("nanobot.agent.tools.mcp.connect_mcp_servers", new=fixture.connect):
+    with patch("kohaku.agent.tools.mcp.connect_mcp_servers", new=fixture.connect):
         try:
             await fixture.owner.connect()
             assert fixture.registry.get(TOOL_NAME) is existing

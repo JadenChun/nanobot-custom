@@ -1,15 +1,15 @@
 import pytest
 
-from nanobot.providers.base import GenerationSettings, LLMProvider, LLMResponse, ToolCallRequest
-from nanobot.providers.request_budget import FinalizedRequestBudgetExceeded
-from nanobot.utils.evaluator import (
+from kohaku.providers.base import GenerationSettings, LLMProvider, LLMResponse, ToolCallRequest
+from kohaku.providers.request_budget import FinalizedRequestBudgetExceeded
+from kohaku.utils.evaluator import (
     EVALUATOR_PROMPT_MAX_CHARS,
     default_evaluator_prompt,
     evaluate_response,
     evaluator_prompt_file,
     resolve_evaluator_prompt,
 )
-from nanobot.utils.llm_runtime import LLMRuntime
+from kohaku.utils.llm_runtime import LLMRuntime
 
 
 class DummyProvider(LLMProvider):

@@ -5,7 +5,7 @@ from contextlib import suppress
 
 import pytest
 
-from nanobot.channels.manager import ChannelManager
+from kohaku.channels.manager import ChannelManager
 
 
 class _ChildFailure(BaseException):

@@ -22,11 +22,11 @@ import pytest
 from websockets.datastructures import Headers
 from websockets.http11 import Request as WsRequest
 
-from nanobot.bus.queue import MessageBus
-from nanobot.channels.websocket.runtime import WebSocketConfig
-from nanobot.config.loader import save_config
-from nanobot.config.schema import Config
-from nanobot.webui.gateway_services import build_gateway_services
+from kohaku.bus.queue import MessageBus
+from kohaku.channels.websocket.runtime import WebSocketConfig
+from kohaku.config.loader import save_config
+from kohaku.config.schema import Config
+from kohaku.webui.gateway_services import build_gateway_services
 
 
 class _Connection:
@@ -53,8 +53,8 @@ def gateway(tmp_path, monkeypatch):
     config_path = tmp_path / "config.json"
     save_config(Config(), config_path)
     spy = _NotifySpy()
-    monkeypatch.setattr("nanobot.webui.ws_http.shutil.which", lambda _name: "/usr/bin/notify-send")
-    monkeypatch.setattr("nanobot.webui.ws_http.subprocess.run", spy)
+    monkeypatch.setattr("kohaku.webui.ws_http.shutil.which", lambda _name: "/usr/bin/notify-send")
+    monkeypatch.setattr("kohaku.webui.ws_http.subprocess.run", spy)
     services = build_gateway_services(
         config=WebSocketConfig(host="127.0.0.1", port=8765),
         bus=MessageBus(),
@@ -148,7 +148,7 @@ def test_u6_same_origin_notification_passes_bundled_icon_as_one_argv_value(
 ) -> None:
     services, spy = gateway
     static_dist_path = tmp_path / "web ui dist with spaces"
-    icon_path = static_dist_path / "brand" / "nanobot_icon_192.png"
+    icon_path = static_dist_path / "brand" / "kohaku_icon_192.png"
     icon_path.parent.mkdir(parents=True)
     icon_path.write_bytes(b"bundled icon")
     services.http.static_dist_path = static_dist_path
@@ -205,7 +205,7 @@ def test_u6_remote_notification_fails_closed_without_side_effects(gateway) -> No
 
 def test_u6_missing_notify_send_keeps_existing_unavailable_response(gateway, monkeypatch) -> None:
     services, spy = gateway
-    monkeypatch.setattr("nanobot.webui.ws_http.shutil.which", lambda _name: None)
+    monkeypatch.setattr("kohaku.webui.ws_http.shutil.which", lambda _name: None)
 
     response = asyncio.run(
         services.http.dispatch_webui_mutation(
@@ -227,7 +227,7 @@ def test_u6_notify_send_failure_keeps_existing_error_response(gateway, monkeypat
         calls.append(list(command))
         return SimpleNamespace(returncode=1, stdout=b"", stderr=b"failed")
 
-    monkeypatch.setattr("nanobot.webui.ws_http.subprocess.run", fail)
+    monkeypatch.setattr("kohaku.webui.ws_http.subprocess.run", fail)
     response = asyncio.run(
         services.http.dispatch_webui_mutation(
             _Connection([("Origin", "http://127.0.0.1:8765")]),
@@ -262,7 +262,7 @@ def test_legacy_notify_send_delivers_tagged_notification(gateway, monkeypatch) -
             return SimpleNamespace(returncode=1, stderr=b"Unknown option", stdout=b"")
         return spy(command, **kwargs)
 
-    monkeypatch.setattr("nanobot.webui.ws_http.subprocess.run", legacy_notify)
+    monkeypatch.setattr("kohaku.webui.ws_http.subprocess.run", legacy_notify)
     response = asyncio.run(services.http.dispatch_webui_mutation(
         _Connection([("Origin", "http://127.0.0.1:8765")]),
         "desktop.notify", {"title": "Kohaku", "body": "Done", "tag": "chat-17", "sound": False},
@@ -276,8 +276,8 @@ def test_legacy_notify_send_delivers_tagged_notification(gateway, monkeypatch) -
 
 def test_darwin_fallback_preserves_notification_text(gateway, monkeypatch) -> None:
     services, spy = gateway
-    monkeypatch.setattr("nanobot.webui.ws_http.sys.platform", "darwin")
-    monkeypatch.setattr("nanobot.webui.ws_http.shutil.which", lambda name: "/usr/bin/osascript" if name == "osascript" else None)
+    monkeypatch.setattr("kohaku.webui.ws_http.sys.platform", "darwin")
+    monkeypatch.setattr("kohaku.webui.ws_http.shutil.which", lambda name: "/usr/bin/osascript" if name == "osascript" else None)
     body = 'Done — "release"; $(echo test)\nReady'
     response = asyncio.run(services.http.dispatch_webui_mutation(
         _Connection([("Origin", "http://127.0.0.1:8765")]),

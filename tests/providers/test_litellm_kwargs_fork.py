@@ -15,12 +15,12 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from nanobot.config.schema import Config, ModelPresetConfig
-from nanobot.providers.factory import make_provider
-from nanobot.providers.legacy_fallback_provider import LegacyFallbackProvider
-from nanobot.providers.openai_compat_provider import OpenAICompatProvider
-from nanobot.providers.pooled_provider import PooledProvider, _rotation_cooldown
-from nanobot.providers.registry import find_by_name
+from kohaku.config.schema import Config, ModelPresetConfig
+from kohaku.providers.factory import make_provider
+from kohaku.providers.legacy_fallback_provider import LegacyFallbackProvider
+from kohaku.providers.openai_compat_provider import OpenAICompatProvider
+from kohaku.providers.pooled_provider import PooledProvider, _rotation_cooldown
+from kohaku.providers.registry import find_by_name
 
 
 def _gemini_provider(*, api_keys, api_base, default_model, spec, timeout=None):
@@ -90,7 +90,7 @@ def test_openrouter_spec_is_gateway() -> None:
 
 def test_openrouter_sets_default_attribution_headers() -> None:
     spec = find_by_name("openrouter")
-    with patch("nanobot.providers.openai_compat_provider.AsyncOpenAI") as mock_client:
+    with patch("kohaku.providers.openai_compat_provider.AsyncOpenAI") as mock_client:
         provider = OpenAICompatProvider(
             api_key="sk-or-test-key",
             api_base="https://openrouter.ai/api/v1",
@@ -108,14 +108,14 @@ def test_openrouter_sets_default_attribution_headers() -> None:
 
 def test_openrouter_user_headers_override_default_attribution() -> None:
     spec = find_by_name("openrouter")
-    with patch("nanobot.providers.openai_compat_provider.AsyncOpenAI") as mock_client:
+    with patch("kohaku.providers.openai_compat_provider.AsyncOpenAI") as mock_client:
         provider = OpenAICompatProvider(
             api_key="sk-or-test-key",
             api_base="https://openrouter.ai/api/v1",
             default_model="anthropic/claude-sonnet-4-5",
             extra_headers={
                 "HTTP-Referer": "https://nanobot.ai",
-                "X-OpenRouter-Title": "Nanobot Pro",
+                "X-OpenRouter-Title": "Kohaku Pro",
                 "X-Custom-App": "enabled",
             },
             spec=spec,
@@ -124,7 +124,7 @@ def test_openrouter_user_headers_override_default_attribution() -> None:
 
     headers = mock_client.call_args.kwargs["default_headers"]
     assert headers["HTTP-Referer"] == "https://nanobot.ai"
-    assert headers["X-OpenRouter-Title"] == "Nanobot Pro"
+    assert headers["X-OpenRouter-Title"] == "Kohaku Pro"
     assert headers["X-OpenRouter-Categories"] == "cli-agent,personal-agent"
     assert headers["X-Custom-App"] == "enabled"
 
@@ -135,7 +135,7 @@ async def test_openrouter_keeps_model_name_intact() -> None:
     mock_create = AsyncMock(return_value=_fake_chat_response())
     spec = find_by_name("openrouter")
 
-    with patch("nanobot.providers.openai_compat_provider.AsyncOpenAI") as mock_client:
+    with patch("kohaku.providers.openai_compat_provider.AsyncOpenAI") as mock_client:
         client_instance = mock_client.return_value
         client_instance.chat.completions.create = mock_create
 
@@ -160,7 +160,7 @@ async def test_aihubmix_strips_model_prefix() -> None:
     mock_create = AsyncMock(return_value=_fake_chat_response())
     spec = find_by_name("aihubmix")
 
-    with patch("nanobot.providers.openai_compat_provider.AsyncOpenAI") as mock_client:
+    with patch("kohaku.providers.openai_compat_provider.AsyncOpenAI") as mock_client:
         client_instance = mock_client.return_value
         client_instance.chat.completions.create = mock_create
 
@@ -185,7 +185,7 @@ async def test_opencode_go_strips_model_prefix() -> None:
     mock_create = AsyncMock(return_value=_fake_chat_response())
     spec = find_by_name("opencode-go")
 
-    with patch("nanobot.providers.openai_compat_provider.AsyncOpenAI") as mock_client:
+    with patch("kohaku.providers.openai_compat_provider.AsyncOpenAI") as mock_client:
         client_instance = mock_client.return_value
         client_instance.chat.completions.create = mock_create
 
@@ -223,7 +223,7 @@ async def test_opencode_deepseek_fills_missing_tool_reasoning_history() -> None:
         {"role": "tool", "tool_call_id": "call_123", "content": "result"},
     ]
 
-    with patch("nanobot.providers.openai_compat_provider.AsyncOpenAI") as mock_client:
+    with patch("kohaku.providers.openai_compat_provider.AsyncOpenAI") as mock_client:
         mock_client.return_value.chat.completions.create = mock_create
         provider = OpenAICompatProvider(
             api_key="opencode-test-key",
@@ -244,7 +244,7 @@ async def test_non_deepseek_does_not_invent_tool_reasoning_history() -> None:
     mock_create = AsyncMock(return_value=_fake_chat_response())
     spec = find_by_name("opencode-go")
 
-    with patch("nanobot.providers.openai_compat_provider.AsyncOpenAI") as mock_client:
+    with patch("kohaku.providers.openai_compat_provider.AsyncOpenAI") as mock_client:
         mock_client.return_value.chat.completions.create = mock_create
         provider = OpenAICompatProvider(
             api_key="opencode-test-key",
@@ -277,7 +277,7 @@ async def test_non_deepseek_does_not_invent_tool_reasoning_history() -> None:
 async def test_opencode_go_minimax_returns_clear_error() -> None:
     spec = find_by_name("opencode-go")
 
-    with patch("nanobot.providers.openai_compat_provider.AsyncOpenAI"):
+    with patch("kohaku.providers.openai_compat_provider.AsyncOpenAI"):
         provider = OpenAICompatProvider(
             api_key="opencode-test-key",
             api_base="https://opencode.ai/zen/go/v1",
@@ -299,7 +299,7 @@ async def test_standard_provider_passes_model_through() -> None:
     mock_create = AsyncMock(return_value=_fake_chat_response())
     spec = find_by_name("deepseek")
 
-    with patch("nanobot.providers.openai_compat_provider.AsyncOpenAI") as mock_client:
+    with patch("kohaku.providers.openai_compat_provider.AsyncOpenAI") as mock_client:
         client_instance = mock_client.return_value
         client_instance.chat.completions.create = mock_create
 
@@ -323,7 +323,7 @@ async def test_openai_compat_preserves_extra_content_on_tool_calls() -> None:
     mock_create = AsyncMock(return_value=_fake_tool_call_response())
     spec = find_by_name("gemini")
 
-    with patch("nanobot.providers.openai_compat_provider.AsyncOpenAI") as mock_client:
+    with patch("kohaku.providers.openai_compat_provider.AsyncOpenAI") as mock_client:
         client_instance = mock_client.return_value
         client_instance.chat.completions.create = mock_create
 
@@ -351,7 +351,7 @@ async def test_openai_compat_preserves_extra_content_on_tool_calls() -> None:
 def test_openai_model_passthrough() -> None:
     """OpenAI models pass through unchanged."""
     spec = find_by_name("openai")
-    with patch("nanobot.providers.openai_compat_provider.AsyncOpenAI"):
+    with patch("kohaku.providers.openai_compat_provider.AsyncOpenAI"):
         provider = OpenAICompatProvider(
             api_key="sk-test-key",
             default_model="gpt-4o",
@@ -375,7 +375,7 @@ async def test_gemini_rotates_to_next_key_on_rate_limit() -> None:
         create=AsyncMock(return_value=_fake_chat_response("ok from backup key")),
     ))
 
-    with patch("nanobot.providers.openai_compat_provider.AsyncOpenAI", side_effect=[first, second]) as mock_client:
+    with patch("kohaku.providers.openai_compat_provider.AsyncOpenAI", side_effect=[first, second]) as mock_client:
         provider = _gemini_provider(
             api_keys=["gem-key-1", "gem-key-2"],
             api_base="https://generativelanguage.googleapis.com/v1beta/openai/",
@@ -409,7 +409,7 @@ async def test_gemini_rotation_does_not_mutate_process_env_key(monkeypatch: pyte
 
     monkeypatch.setenv("GEMINI_API_KEY", "stale-key")
 
-    with patch("nanobot.providers.openai_compat_provider.AsyncOpenAI", side_effect=[first, second]):
+    with patch("kohaku.providers.openai_compat_provider.AsyncOpenAI", side_effect=[first, second]):
         provider = _gemini_provider(
             api_keys=["gem-key-1", "gem-key-2"],
             api_base="https://generativelanguage.googleapis.com/v1beta/openai/",
@@ -437,7 +437,7 @@ async def test_gemini_does_not_rotate_on_non_rate_limit_error() -> None:
         create=AsyncMock(side_effect=_AuthError("unauthorized")),
     ))
 
-    with patch("nanobot.providers.openai_compat_provider.AsyncOpenAI", return_value=client) as mock_client:
+    with patch("kohaku.providers.openai_compat_provider.AsyncOpenAI", return_value=client) as mock_client:
         provider = _gemini_provider(
             api_keys=["gem-key-1", "gem-key-2"],
             api_base="https://generativelanguage.googleapis.com/v1beta/openai/",
@@ -469,7 +469,7 @@ async def test_gemini_reports_when_all_keys_are_exhausted() -> None:
         create=AsyncMock(side_effect=_RateLimitError("quota exceeded on key 2")),
     ))
 
-    with patch("nanobot.providers.openai_compat_provider.AsyncOpenAI", side_effect=[first, second]):
+    with patch("kohaku.providers.openai_compat_provider.AsyncOpenAI", side_effect=[first, second]):
         provider = _gemini_provider(
             api_keys=["gem-key-1", "gem-key-2"],
             api_base="https://generativelanguage.googleapis.com/v1beta/openai/",
@@ -523,7 +523,7 @@ async def test_gemini_concurrent_requests_keep_key_rotation_request_local() -> N
         client.chat = SimpleNamespace(completions=SimpleNamespace(create=_create))
         return client
 
-    with patch("nanobot.providers.openai_compat_provider.AsyncOpenAI", side_effect=_client_factory):
+    with patch("kohaku.providers.openai_compat_provider.AsyncOpenAI", side_effect=_client_factory):
         provider = _gemini_provider(
             api_keys=["gem-key-1", "gem-key-2"],
             api_base="https://generativelanguage.googleapis.com/v1beta/openai/",
@@ -571,7 +571,7 @@ async def test_gemini_prefers_last_successful_key_on_follow_up_request() -> None
         client.chat = SimpleNamespace(completions=SimpleNamespace(create=_create))
         return client
 
-    with patch("nanobot.providers.openai_compat_provider.AsyncOpenAI", side_effect=_client_factory):
+    with patch("kohaku.providers.openai_compat_provider.AsyncOpenAI", side_effect=_client_factory):
         provider = _gemini_provider(
             api_keys=["gem-key-1", "gem-key-2", "gem-key-3"],
             api_base="https://generativelanguage.googleapis.com/v1beta/openai/",
@@ -614,8 +614,8 @@ async def test_gemini_stream_timeout_retries_same_credential(monkeypatch) -> Non
     async def sleep(delay):
         delays.append(delay)
 
-    monkeypatch.setattr("nanobot.providers.base.asyncio.sleep", sleep)
-    with patch("nanobot.providers.openai_compat_provider.AsyncOpenAI", return_value=first) as client:
+    monkeypatch.setattr("kohaku.providers.base.asyncio.sleep", sleep)
+    with patch("kohaku.providers.openai_compat_provider.AsyncOpenAI", return_value=first) as client:
         provider = _gemini_provider(
             api_keys=["gem-key-1", "gem-key-2"],
             api_base="https://generativelanguage.googleapis.com/v1beta/openai/",
@@ -649,7 +649,7 @@ async def test_gemini_rotates_on_service_unavailable_503() -> None:
         create=AsyncMock(return_value=_fake_chat_response("ok after 503 rotate")),
     ))
 
-    with patch("nanobot.providers.openai_compat_provider.AsyncOpenAI", side_effect=[first, second]):
+    with patch("kohaku.providers.openai_compat_provider.AsyncOpenAI", side_effect=[first, second]):
         provider = _gemini_provider(
             api_keys=["gem-key-1", "gem-key-2"],
             api_base="https://generativelanguage.googleapis.com/v1beta/openai/",
@@ -671,12 +671,12 @@ async def test_single_key_structured_rate_limit_reaches_legacy_fallback(monkeypa
         status_code = 429
 
     sleep = AsyncMock()
-    monkeypatch.setattr("nanobot.providers.base.asyncio.sleep", sleep)
+    monkeypatch.setattr("kohaku.providers.base.asyncio.sleep", sleep)
     primary_create = AsyncMock(side_effect=_RateLimitError("429 Too Many Requests"))
     backup_create = AsyncMock(return_value=_fake_chat_response("fallback succeeded"))
     primary_client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=primary_create)))
     backup_client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=backup_create)))
-    with patch("nanobot.providers.openai_compat_provider.AsyncOpenAI", side_effect=[primary_client, backup_client]):
+    with patch("kohaku.providers.openai_compat_provider.AsyncOpenAI", side_effect=[primary_client, backup_client]):
         provider = _gemini_provider(
             api_keys=["only-key"],
             api_base="https://generativelanguage.googleapis.com/v1beta/openai/",
@@ -765,7 +765,7 @@ async def test_chat_stream_does_not_rotate_after_delivering_content(retry) -> No
     async def _on_delta(text: str) -> None:
         deltas.append(text)
 
-    with patch("nanobot.providers.openai_compat_provider.AsyncOpenAI", side_effect=[first, second]):
+    with patch("kohaku.providers.openai_compat_provider.AsyncOpenAI", side_effect=[first, second]):
         provider = _gemini_provider(
             api_keys=["gem-key-1", "gem-key-2"],
             api_base="https://generativelanguage.googleapis.com/v1beta/openai/",

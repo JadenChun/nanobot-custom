@@ -5,14 +5,14 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from nanobot.agent.hooks import FileEditActivityHook
-from nanobot.agent.progress_hook import AgentProgressHook
-from nanobot.agent.runner import AgentRunner
-from nanobot.agent.tools.filesystem import EditFileTool, WriteFileTool
-from nanobot.agent.tools.registry import ToolRegistry
-from nanobot.config.schema import AgentDefaults
-from nanobot.providers.base import LLMResponse, ToolCallRequest
-from nanobot.utils.progress_events import output_events
+from kohaku.agent.hooks import FileEditActivityHook
+from kohaku.agent.progress_hook import AgentProgressHook
+from kohaku.agent.runner import AgentRunner
+from kohaku.agent.tools.filesystem import EditFileTool, WriteFileTool
+from kohaku.agent.tools.registry import ToolRegistry
+from kohaku.config.schema import AgentDefaults
+from kohaku.providers.base import LLMResponse, ToolCallRequest
+from kohaku.utils.progress_events import output_events
 from tests.agent.runner_helpers import make_run_spec
 
 _MAX_TOOL_RESULT_CHARS = AgentDefaults().max_tool_result_chars

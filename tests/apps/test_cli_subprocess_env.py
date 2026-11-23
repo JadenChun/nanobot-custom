@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from nanobot.apps.cli.service import CliAppManager
+from kohaku.apps.cli.service import CliAppManager
 
 
 class _FakeProcess:
@@ -40,7 +40,7 @@ def test_subprocess_env_excludes_api_keys(monkeypatch, tmp_path) -> None:
 
 
 def test_subprocess_env_excludes_api_keys_on_windows(monkeypatch, tmp_path) -> None:
-    monkeypatch.setattr("nanobot.apps.cli.service.sys.platform", "win32")
+    monkeypatch.setattr("kohaku.apps.cli.service.sys.platform", "win32")
     monkeypatch.setenv("OPENAI_API_KEY", "sk-should-not-leak")
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-leak")
 
@@ -60,7 +60,7 @@ def test_run_passes_filtered_env(monkeypatch, tmp_path) -> None:
     captured: dict[str, object] = {}
 
     monkeypatch.setattr(
-        "nanobot.apps.cli.service.subprocess.Popen",
+        "kohaku.apps.cli.service.subprocess.Popen",
         _fake_popen(captured),
     )
     monkeypatch.setattr(manager, "get_app", lambda name: {"name": name, "entry_point": "echo"})
@@ -69,7 +69,7 @@ def test_run_passes_filtered_env(monkeypatch, tmp_path) -> None:
         "_load_installed",
         lambda: {"echo": {"entry_point": "echo"}},
     )
-    monkeypatch.setattr("nanobot.apps.cli.service.shutil.which", lambda entry: "/bin/echo")
+    monkeypatch.setattr("kohaku.apps.cli.service.shutil.which", lambda entry: "/bin/echo")
     monkeypatch.setattr(manager, "_resolve_cwd", lambda *a, **k: tmp_path)
     monkeypatch.setattr(manager, "_artifact_snapshot", lambda cwd: {})
     monkeypatch.setattr(manager, "_changed_artifacts", lambda cwd, snap: [])
@@ -86,7 +86,7 @@ def test_management_subprocesses_use_filtered_env(monkeypatch, tmp_path) -> None
     captured: dict[str, object] = {}
 
     monkeypatch.setattr(
-        "nanobot.apps.cli.service.subprocess.Popen",
+        "kohaku.apps.cli.service.subprocess.Popen",
         _fake_popen(captured),
     )
     manager = CliAppManager(workspace=tmp_path, data_dir=tmp_path / "cli-apps")

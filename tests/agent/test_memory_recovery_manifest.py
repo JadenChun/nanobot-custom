@@ -11,8 +11,8 @@ from typing import Any
 
 import pytest
 
-from nanobot.agent import memory_recovery_storage as storage
-from nanobot.agent.memory_recovery_manifest import (
+from kohaku.agent import memory_recovery_storage as storage
+from kohaku.agent.memory_recovery_manifest import (
     MAX_CHAIN_RECORDS,
     MemoryManifestError,
     MemoryRecoveryManifest,

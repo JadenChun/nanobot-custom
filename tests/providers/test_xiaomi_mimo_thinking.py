@@ -20,9 +20,9 @@ from __future__ import annotations
 
 from typing import Any
 
-from nanobot.config.schema import ProvidersConfig
-from nanobot.providers.openai_compat_provider import OpenAICompatProvider
-from nanobot.providers.registry import PROVIDERS
+from kohaku.config.schema import ProvidersConfig
+from kohaku.providers.openai_compat_provider import OpenAICompatProvider
+from kohaku.providers.registry import PROVIDERS
 
 
 def _mimo_spec():

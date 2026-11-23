@@ -10,9 +10,9 @@ from types import SimpleNamespace
 import pytest
 import typer
 
-from nanobot.agent.memory_recovery_startup_admission import StartupReceiptAdmissionError
-from nanobot.cli import commands
-from nanobot.config.schema import Config
+from kohaku.agent.memory_recovery_startup_admission import StartupReceiptAdmissionError
+from kohaku.cli import commands
+from kohaku.config.schema import Config
 from tests.agent.test_memory_recovery_quarantine_storage import _real_layout, _seal_real_receipt
 from tests.agent.test_memory_recovery_transaction_terminal import _transaction_chain
 
@@ -32,10 +32,10 @@ def test_real_seal_cli_denial_precedes_any_write(
     tmp_path, monkeypatch, capsys, entrypoint, damage,
 ):
     """A structural v2 seal does not admit corrupt history or another instance root."""
-    from nanobot import migration_guard
-    from nanobot.config import loader
-    from nanobot.gateway import GatewayInstance
-    from nanobot.session import manager as session_module
+    from kohaku import migration_guard
+    from kohaku.config import loader
+    from kohaku.gateway import GatewayInstance
+    from kohaku.session import manager as session_module
 
     workspace, sessions, receipt, binding = _real_layout(tmp_path)
     _seal_real_receipt(workspace, sessions, receipt, binding)
@@ -70,7 +70,7 @@ def test_real_seal_cli_denial_precedes_any_write(
                 non_interactive_refresh=False,
             )
     elif entrypoint == "webui":
-        webui_module = importlib.import_module("nanobot.cli.webui")
+        webui_module = importlib.import_module("kohaku.cli.webui")
         monkeypatch.setattr(webui_module.cli_terminal, "_ensure_interactive_tty_mode", lambda: None)
         monkeypatch.setattr(webui_module, "_load_webui_setup_config", lambda *_: config)
         monkeypatch.setattr(webui_module, "_ensure_local_webui_channel", lambda *a, **kw: (True, None))
@@ -103,9 +103,9 @@ def test_real_seal_cli_denial_precedes_any_write(
 
 
 def test_onboard_denial_precedes_config_save_and_plugins(tmp_path, monkeypatch):
-    from nanobot import migration_guard
-    from nanobot.agent import memory_recovery_startup_admission as admission
-    from nanobot.config import loader
+    from kohaku import migration_guard
+    from kohaku.agent import memory_recovery_startup_admission as admission
+    from kohaku.config import loader
 
     monkeypatch.setattr(migration_guard, "require_runtime_ready", lambda: None)
     monkeypatch.setattr(admission, "require_startup_receipt_admission", _deny)
@@ -123,8 +123,8 @@ def test_onboard_denial_precedes_config_save_and_plugins(tmp_path, monkeypatch):
 
 
 def test_onboard_real_pending_receipt_denies_without_revealing_name(tmp_path, monkeypatch, capsys):
-    from nanobot import migration_guard
-    from nanobot.config import loader
+    from kohaku import migration_guard
+    from kohaku.config import loader
 
     workspace = tmp_path / "selected"
     memory = workspace / "memory"
@@ -148,8 +148,8 @@ def test_onboard_real_pending_receipt_denies_without_revealing_name(tmp_path, mo
 
 
 def test_serve_denial_precedes_templates_and_session(tmp_path, monkeypatch):
-    from nanobot import migration_guard
-    from nanobot.agent import memory_recovery_startup_admission as admission
+    from kohaku import migration_guard
+    from kohaku.agent import memory_recovery_startup_admission as admission
 
     monkeypatch.setattr(migration_guard, "require_runtime_ready", lambda: None)
     monkeypatch.setattr(admission, "require_startup_receipt_admission", _deny)
@@ -168,9 +168,9 @@ def test_serve_denial_precedes_templates_and_session(tmp_path, monkeypatch):
 def test_serve_explicit_root_and_authority_outside_setup_lock(tmp_path, monkeypatch):
     from aiohttp import web
 
-    from nanobot import migration_guard
-    from nanobot.agent import memory_recovery_startup_admission as admission
-    from nanobot.runtime_composition import RuntimeComposition
+    from kohaku import migration_guard
+    from kohaku.agent import memory_recovery_startup_admission as admission
+    from kohaku.runtime_composition import RuntimeComposition
 
     monkeypatch.setattr(migration_guard, "require_runtime_ready", lambda: None)
     monkeypatch.setattr(commands, "_load_runtime_config", lambda *_: _configured(tmp_path))
@@ -238,11 +238,11 @@ def _configured(tmp_path: Path) -> Config:
 
 
 def test_webui_denial_precedes_config_save_templates_and_bundle(tmp_path, monkeypatch):
-    from nanobot import migration_guard
-    from nanobot.agent import memory_recovery_startup_admission as admission
-    from nanobot.config import loader
+    from kohaku import migration_guard
+    from kohaku.agent import memory_recovery_startup_admission as admission
+    from kohaku.config import loader
 
-    webui_module = importlib.import_module("nanobot.cli.webui")
+    webui_module = importlib.import_module("kohaku.cli.webui")
     monkeypatch.setattr(migration_guard, "require_runtime_ready", lambda: None)
     monkeypatch.setattr(admission, "require_startup_receipt_admission", _deny)
     monkeypatch.setattr(webui_module.cli_terminal, "_ensure_interactive_tty_mode", lambda: None)
@@ -265,10 +265,10 @@ def test_webui_denial_precedes_config_save_templates_and_bundle(tmp_path, monkey
 
 
 def test_onboard_declined_wizard_has_no_admission_or_mutation(tmp_path, monkeypatch):
-    from nanobot import migration_guard
-    from nanobot.agent import memory_recovery_startup_admission as admission
-    from nanobot.cli import onboard as onboard_module
-    from nanobot.config import loader
+    from kohaku import migration_guard
+    from kohaku.agent import memory_recovery_startup_admission as admission
+    from kohaku.cli import onboard as onboard_module
+    from kohaku.config import loader
 
     monkeypatch.setattr(migration_guard, "require_runtime_ready", lambda: None)
     monkeypatch.setattr(admission, "require_startup_receipt_admission", _unexpected)
@@ -286,10 +286,10 @@ def test_onboard_declined_wizard_has_no_admission_or_mutation(tmp_path, monkeypa
 
 
 def test_onboard_final_wizard_workspace_and_explicit_root(tmp_path, monkeypatch):
-    from nanobot import migration_guard
-    from nanobot.agent import memory_recovery_startup_admission as admission
-    from nanobot.cli import onboard as onboard_module
-    from nanobot.config import loader
+    from kohaku import migration_guard
+    from kohaku.agent import memory_recovery_startup_admission as admission
+    from kohaku.cli import onboard as onboard_module
+    from kohaku.config import loader
 
     monkeypatch.setattr(migration_guard, "require_runtime_ready", lambda: None)
     final = _configured(tmp_path)
@@ -328,9 +328,9 @@ def test_onboard_final_wizard_workspace_and_explicit_root(tmp_path, monkeypatch)
 
 @pytest.mark.parametrize("overwrite", [True, False])
 def test_onboard_existing_config_choice_admitted_before_save(tmp_path, monkeypatch, overwrite):
-    from nanobot import migration_guard
-    from nanobot.agent import memory_recovery_startup_admission as admission
-    from nanobot.config import loader
+    from kohaku import migration_guard
+    from kohaku.agent import memory_recovery_startup_admission as admission
+    from kohaku.config import loader
 
     config_path = tmp_path / "config.json"
     config_path.write_text("{}", encoding="utf-8")
@@ -360,11 +360,11 @@ def test_onboard_existing_config_choice_admitted_before_save(tmp_path, monkeypat
 
 
 def test_webui_rechecks_after_releasing_setup_lock_before_bundle(tmp_path, monkeypatch):
-    from nanobot import migration_guard
-    from nanobot.agent import memory_recovery_startup_admission as admission
-    from nanobot.config import loader
+    from kohaku import migration_guard
+    from kohaku.agent import memory_recovery_startup_admission as admission
+    from kohaku.config import loader
 
-    webui_module = importlib.import_module("nanobot.cli.webui")
+    webui_module = importlib.import_module("kohaku.cli.webui")
     monkeypatch.setattr(migration_guard, "require_runtime_ready", lambda: None)
     monkeypatch.setattr(webui_module.cli_terminal, "_ensure_interactive_tty_mode", lambda: None)
     monkeypatch.setattr(webui_module, "_load_webui_setup_config", lambda *_: _configured(tmp_path))
@@ -407,12 +407,12 @@ def test_webui_rechecks_after_releasing_setup_lock_before_bundle(tmp_path, monke
 
 
 def test_webui_rechecks_after_bundle_before_gateway_lifecycle(tmp_path, monkeypatch):
-    from nanobot import migration_guard
-    from nanobot.agent import memory_recovery_startup_admission as admission
-    from nanobot.config import loader
-    from nanobot.gateway import GatewayInstance
+    from kohaku import migration_guard
+    from kohaku.agent import memory_recovery_startup_admission as admission
+    from kohaku.config import loader
+    from kohaku.gateway import GatewayInstance
 
-    webui_module = importlib.import_module("nanobot.cli.webui")
+    webui_module = importlib.import_module("kohaku.cli.webui")
     monkeypatch.setattr(migration_guard, "require_runtime_ready", lambda: None)
     monkeypatch.setattr(webui_module.cli_terminal, "_ensure_interactive_tty_mode", lambda: None)
     monkeypatch.setattr(webui_module, "_load_webui_setup_config", lambda *_: _configured(tmp_path))

@@ -2,10 +2,10 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from nanobot.providers.base import LLMUsage
-from nanobot.session.model_selection import SESSION_MODEL_PRESET_METADATA_KEY
-from nanobot.session.recovery import RECOVERY_METADATA_KEY
-from nanobot.webui.session_projection import WebUISessionProjection
+from kohaku.providers.base import LLMUsage
+from kohaku.session.model_selection import SESSION_MODEL_PRESET_METADATA_KEY
+from kohaku.session.recovery import RECOVERY_METADATA_KEY
+from kohaku.webui.session_projection import WebUISessionProjection
 
 
 def test_attach_fields_restore_session_runtime_metadata() -> None:
@@ -65,11 +65,11 @@ def test_hydration_events_restore_goal_and_running_turn(
         }
     }
     monkeypatch.setattr(
-        "nanobot.webui.session_projection.websocket_turn_wall_started_at",
+        "kohaku.webui.session_projection.websocket_turn_wall_started_at",
         lambda _chat_id: 42.5,
     )
     monkeypatch.setattr(
-        "nanobot.webui.session_projection.websocket_turn_id",
+        "kohaku.webui.session_projection.websocket_turn_id",
         lambda _chat_id: "turn-1",
     )
 
@@ -105,7 +105,7 @@ def test_hydration_events_are_quiet_without_actionable_state(
     sessions = MagicMock()
     sessions.read_session_metadata.return_value = {"metadata": {}}
     monkeypatch.setattr(
-        "nanobot.webui.session_projection.websocket_turn_wall_started_at",
+        "kohaku.webui.session_projection.websocket_turn_wall_started_at",
         lambda _chat_id: None,
     )
 

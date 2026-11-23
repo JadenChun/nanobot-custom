@@ -7,12 +7,12 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from nanobot.channels.websocket.runtime import WebSocketConfig
-from nanobot.config.loader import load_config, save_config
-from nanobot.config.schema import Config
-from nanobot.webui.gateway_services import build_gateway_services
-from nanobot.webui.settings_api import settings_payload, update_agent_settings, update_api_settings
-from nanobot.webui.settings_services import (
+from kohaku.channels.websocket.runtime import WebSocketConfig
+from kohaku.config.loader import load_config, save_config
+from kohaku.config.schema import Config
+from kohaku.webui.gateway_services import build_gateway_services
+from kohaku.webui.settings_api import settings_payload, update_agent_settings, update_api_settings
+from kohaku.webui.settings_services import (
     WebUIOAuthFlowRegistry,
     WebUISettingsServices,
 )
@@ -104,7 +104,7 @@ def test_settings_mutations_serialize_read_modify_write(
     second_loaded = threading.Event()
     errors: list[BaseException] = []
 
-    from nanobot.webui import settings_api
+    from kohaku.webui import settings_api
 
     original_load = settings_api._load_settings_config
 
@@ -165,7 +165,7 @@ def test_distinct_gateways_serialize_mutations_for_the_same_config(
     second_loaded = threading.Event()
     errors: list[BaseException] = []
 
-    from nanobot.webui import settings_api
+    from kohaku.webui import settings_api
 
     original_load = settings_api._load_settings_config
 

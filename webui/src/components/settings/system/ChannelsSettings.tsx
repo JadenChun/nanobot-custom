@@ -17,7 +17,7 @@ import {
 } from "@/components/settings/shared/SettingsControls";
 import { Input } from "@/components/ui/input";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
-import type { NanobotFeaturesPayload } from "@/lib/types";
+import type { KohakuFeaturesPayload } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 export function ChannelsSettings({
@@ -38,7 +38,7 @@ export function ChannelsSettings({
   isRestarting,
 }: {
   token: string;
-  nanobotFeatures: NanobotFeaturesPayload | null;
+  nanobotFeatures: KohakuFeaturesPayload | null;
   loading: boolean;
   query: string;
   actionKey: string | null;
@@ -48,7 +48,7 @@ export function ChannelsSettings({
   requiresRestartPending: boolean;
   onQueryChange: (value: string) => void;
   onAction: (action: "enable" | "disable", name: string) => void;
-  onFeaturesUpdate: (payload: NanobotFeaturesPayload) => void;
+  onFeaturesUpdate: (payload: KohakuFeaturesPayload) => void;
   onDismissStatus: () => void;
   onRestart?: () => void;
   isRestarting?: boolean;
@@ -187,7 +187,7 @@ export function ChannelsSettings({
       {requiresRestartPending ? (
         <div className="mt-3 shrink-0">
           <RestartRequiredNotice
-            message={tx("settings.channels.restartRequired", "Restart nanobot to apply updated channel support.")}
+            message={tx("settings.channels.restartRequired", "Restart Kohaku to apply updated channel support.")}
             onRestart={onRestart}
             isRestarting={isRestarting}
           />

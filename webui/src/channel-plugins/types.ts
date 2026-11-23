@@ -2,26 +2,26 @@ import type { ComponentType } from "react";
 
 import type { ChannelPresentation } from "@/components/settings/channels/catalog";
 import type {
-  NanobotFeatureInfo,
-  NanobotFeaturesPayload,
+  KohakuFeatureInfo,
+  KohakuFeaturesPayload,
 } from "@/lib/types";
 
 export type ChannelPluginPanelProps = {
   token: string;
-  feature: NanobotFeatureInfo;
+  feature: KohakuFeatureInfo;
   actionKey: string | null;
   chatAppsDocsUrl?: string;
   showBrandLogos: boolean;
   onAction: (action: "enable" | "disable", name: string) => void;
-  onFeaturesUpdate: (payload: NanobotFeaturesPayload) => void;
+  onFeaturesUpdate: (payload: KohakuFeaturesPayload) => void;
 };
 
 export type ChannelPluginConnectFlowProps = {
   token: string;
-  feature: NanobotFeatureInfo;
+  feature: KohakuFeatureInfo;
   idleLabel?: string;
   connectRequestId?: number;
-  onFeaturesUpdate: (payload: NanobotFeaturesPayload) => void;
+  onFeaturesUpdate: (payload: KohakuFeaturesPayload) => void;
 };
 
 export type ChannelUiContribution = {

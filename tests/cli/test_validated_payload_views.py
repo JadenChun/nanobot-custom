@@ -10,13 +10,13 @@ from types import SimpleNamespace
 import pytest
 import typer
 
-import nanobot.cli.cron_delivery as cron_cli
-import nanobot.cron.delivery_reconciliation as reconciliation
-from nanobot.bus.queue import MessageBus
-from nanobot.channels.manager import ChannelManager
-from nanobot.cli.gateway_runtime import _gateway_readiness_payload
-from nanobot.config.loader import _migrate_config
-from nanobot.config.schema import Config
+import kohaku.cli.cron_delivery as cron_cli
+import kohaku.cron.delivery_reconciliation as reconciliation
+from kohaku.bus.queue import MessageBus
+from kohaku.channels.manager import ChannelManager
+from kohaku.cli.gateway_runtime import _gateway_readiness_payload
+from kohaku.config.loader import _migrate_config
+from kohaku.config.schema import Config
 
 
 @pytest.mark.parametrize("raw", [None, False, 1, "text", [], UserDict()])
@@ -219,15 +219,15 @@ async def test_legacy_channel_selection_preserves_mapping_receiver_and_strict_tr
     config = Config()
     section = Section(enabled=enabled)
     config.channels.model_extra.update({"external": section, "send_progress": Poison()})
-    monkeypatch.setattr("nanobot.channels.registry.packaged_channel_names", lambda: [])
-    monkeypatch.setattr("nanobot.channels.registry.discover_plugins", lambda: {})
+    monkeypatch.setattr("kohaku.channels.registry.packaged_channel_names", lambda: [])
+    monkeypatch.setattr("kohaku.channels.registry.discover_plugins", lambda: {})
     captured = []
 
     def capture(names, *, reserved_names):
         captured.append((names, reserved_names))
         raise failure
 
-    monkeypatch.setattr("nanobot.channels.registry.discover_legacy_plugins", capture)
+    monkeypatch.setattr("kohaku.channels.registry.discover_legacy_plugins", capture)
     manager = ChannelManager(config, MessageBus())
     with pytest.raises(LookupError) as caught:
         await manager.acquire()
@@ -241,16 +241,16 @@ async def test_legacy_channel_selection_preserves_mapping_receiver_and_strict_tr
 async def test_legacy_channel_selection_does_not_promote_non_mapping_sections(monkeypatch, section):
     config = Config()
     config.channels.model_extra["external"] = section
-    monkeypatch.setattr("nanobot.channels.registry.packaged_channel_names", lambda: [])
-    monkeypatch.setattr("nanobot.channels.registry.discover_plugins", lambda: {})
+    monkeypatch.setattr("kohaku.channels.registry.packaged_channel_names", lambda: [])
+    monkeypatch.setattr("kohaku.channels.registry.discover_plugins", lambda: {})
     captured = []
 
     def discover(names, *, reserved_names):
         captured.append((names, reserved_names))
         return {}
 
-    monkeypatch.setattr("nanobot.channels.registry.discover_legacy_plugins", discover)
-    monkeypatch.setattr("nanobot.optional_features.check_enabled_channel_dependencies",
+    monkeypatch.setattr("kohaku.channels.registry.discover_legacy_plugins", discover)
+    monkeypatch.setattr("kohaku.optional_features.check_enabled_channel_dependencies",
                         lambda _names, _plugins: {})
     manager = ChannelManager(config, MessageBus())
     assert await manager.acquire() is manager
@@ -267,9 +267,9 @@ async def test_legacy_channel_selection_keeps_mapping_fault_before_discovery(mon
 
     config = Config()
     config.channels.model_extra["external"] = Section()
-    monkeypatch.setattr("nanobot.channels.registry.packaged_channel_names", lambda: [])
-    monkeypatch.setattr("nanobot.channels.registry.discover_plugins", lambda: {})
-    monkeypatch.setattr("nanobot.channels.registry.discover_legacy_plugins",
+    monkeypatch.setattr("kohaku.channels.registry.packaged_channel_names", lambda: [])
+    monkeypatch.setattr("kohaku.channels.registry.discover_plugins", lambda: {})
+    monkeypatch.setattr("kohaku.channels.registry.discover_legacy_plugins",
                         lambda *_args, **_kwargs: pytest.fail("fault reached discovery"))
     manager = ChannelManager(config, MessageBus())
     with pytest.raises(RuntimeError) as caught:

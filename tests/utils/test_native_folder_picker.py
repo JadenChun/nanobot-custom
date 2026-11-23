@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from nanobot.webui import native_folder_picker as picker
+from kohaku.webui import native_folder_picker as picker
 
 
 def _picker_command(tmp_path: Path, body: str) -> picker._PickerCommand:

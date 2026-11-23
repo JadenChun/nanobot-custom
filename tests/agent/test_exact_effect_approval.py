@@ -6,13 +6,13 @@ from dataclasses import replace
 
 import pytest
 
-from nanobot.agent.hook import AgentHook, AgentHookContext
-from nanobot.agent.loop import AgentLoop
-from nanobot.agent.policy import RiskyActionPolicy
-from nanobot.agent.tools.base import Tool
-from nanobot.agent.tools.execution import execute_tool_calls
-from nanobot.agent.tools.registry import ToolRegistry
-from nanobot.agent.turn import (
+from kohaku.agent.hook import AgentHook, AgentHookContext
+from kohaku.agent.loop import AgentLoop
+from kohaku.agent.policy import RiskyActionPolicy
+from kohaku.agent.tools.base import Tool
+from kohaku.agent.tools.execution import execute_tool_calls
+from kohaku.agent.tools.registry import ToolRegistry
+from kohaku.agent.turn import (
     ApprovalDecision,
     ApprovalGrant,
     DeliveryTarget,
@@ -20,8 +20,8 @@ from nanobot.agent.turn import (
     TurnContext,
     TurnRequest,
 )
-from nanobot.agent.turn_admission import ApprovalAdmission, EffectApprovalAuthority
-from nanobot.providers.base import LLMResponse, ToolCallRequest
+from kohaku.agent.turn_admission import ApprovalAdmission, EffectApprovalAuthority
+from kohaku.providers.base import LLMResponse, ToolCallRequest
 from tests.agent import test_migration_engine as engine_fixtures
 from tests.agent.test_migration_engine import ScriptedProvider
 from tests.agent.test_migration_source_engine import upgrade
@@ -235,7 +235,7 @@ async def test_public_evidence_never_grants_effect_authority(engine_config, forg
 @pytest.mark.parametrize("invalidate", ["expiry", "revoke", "blocked_run", "source_reset", "source_deleted"])
 async def test_changed_pending_owner_refuses_before_provider(engine_config, monkeypatch, invalidate):
     if invalidate == "expiry":
-        monkeypatch.setattr("nanobot.agent.turn_admission.APPROVAL_TTL_SECONDS", 60.0)
+        monkeypatch.setattr("kohaku.agent.turn_admission.APPROVAL_TTL_SECONDS", 60.0)
     provider = ScriptedProvider([LLMResponse(content=None, tool_calls=[risky_call("blocked")])])
     loop = AgentLoop.from_config(engine_config, tool_registry=ToolRegistry(), provider=provider)
     backend = upgrade(loop)
@@ -248,7 +248,7 @@ async def test_changed_pending_owner_refuses_before_provider(engine_config, monk
         ))
         pending = (await loop.approval_admission.snapshot_decision("cli:original", None)).pending
         if invalidate == "expiry":
-            monkeypatch.setattr("nanobot.agent.turn_admission.time.time", lambda: pending.expires_at + 1)
+            monkeypatch.setattr("kohaku.agent.turn_admission.time.time", lambda: pending.expires_at + 1)
         elif invalidate == "revoke":
             await loop.approval_admission.revoke("cli:source")
         elif invalidate == "blocked_run":
@@ -462,7 +462,7 @@ async def test_concurrent_captured_policy_replacements_share_one_sealed_owner(tm
 @pytest.mark.parametrize("invalidate", ["revoke", "retire", "run", "cancel", "expiry"])
 async def test_issued_unspent_authority_refuses_stale_run(tmp_path, monkeypatch, invalidate):
     if invalidate == "expiry":
-        monkeypatch.setattr("nanobot.agent.turn_admission.APPROVAL_TTL_SECONDS", 60.0)
+        monkeypatch.setattr("kohaku.agent.turn_admission.APPROVAL_TTL_SECONDS", 60.0)
     admission, context, policy = await issued_policy(tmp_path)
     if invalidate == "revoke":
         await admission.revoke("cli:source")
@@ -473,7 +473,7 @@ async def test_issued_unspent_authority_refuses_stale_run(tmp_path, monkeypatch,
     elif invalidate == "cancel":
         context.cancelled = True
     else:
-        monkeypatch.setattr("nanobot.agent.turn_admission.time.time", lambda: float("inf"))
+        monkeypatch.setattr("kohaku.agent.turn_admission.time.time", lambda: float("inf"))
     decision = await policy.evaluate(messages=[], tool_calls=[risky_call("refused")])
     assert decision.stop_reason == "approval_required"
 
@@ -512,7 +512,7 @@ async def test_snapshot_expiring_while_waiting_cannot_issue_authority(tmp_path, 
         summary="push", effect_id=decision.metadata["effect_id"], run_id="blocked", ttl_seconds=60.0)
     snapshot = await admission.snapshot_decision("cli:original", ApprovalDecision(
         approval_id=pending.approval_id, decision="approve"))
-    monkeypatch.setattr("nanobot.agent.turn_admission.time.time", lambda: pending.expires_at + 1)
+    monkeypatch.setattr("kohaku.agent.turn_admission.time.time", lambda: pending.expires_at + 1)
     context = TurnContext(run_id="resume", session_key="cli:source")
     assert await admission.consume(snapshot, context=context) == "stale"
     assert context.policy.effect_authority is None

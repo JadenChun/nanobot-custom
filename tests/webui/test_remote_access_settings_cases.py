@@ -22,16 +22,16 @@ import pytest
 from websockets.datastructures import Headers
 from websockets.http11 import Request as WsRequest
 
-from nanobot.config.loader import save_config
-from nanobot.config.schema import Config
-from nanobot.remote.management import RemoteAccessManager
-from nanobot.remote.owner import RemoteAccessOwner
-from nanobot.webui.http_utils import http_error, http_json_response, parse_query
-from nanobot.webui.inbound_commands import WebUICommandRouter
-from nanobot.webui.replay_store import DurableWebUIReplay
-from nanobot.webui.settings_routes import WebUISettingsRouter
-from nanobot.webui.settings_services import WebUISettingsServices
-from nanobot.webui.ws_http import GatewayHTTPHandler
+from kohaku.config.loader import save_config
+from kohaku.config.schema import Config
+from kohaku.remote.management import RemoteAccessManager
+from kohaku.remote.owner import RemoteAccessOwner
+from kohaku.webui.http_utils import http_error, http_json_response, parse_query
+from kohaku.webui.inbound_commands import WebUICommandRouter
+from kohaku.webui.replay_store import DurableWebUIReplay
+from kohaku.webui.settings_routes import WebUISettingsRouter
+from kohaku.webui.settings_services import WebUISettingsServices
+from kohaku.webui.ws_http import GatewayHTTPHandler
 
 _ENABLE_ACTION = "settings.remote_access.enable"
 _RENEW_ACTION = "settings.remote_access.pairing.renew"

@@ -8,25 +8,25 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from nanobot.agent.context import ContextBuilder
-from nanobot.agent.loop import AgentLoop, TurnContext, TurnKind
-from nanobot.agent.tools.cli_apps import CliAppsTool
-from nanobot.agent.tools.context import RequestContext, ToolContext, request_context
-from nanobot.agent.tools.filesystem import ReadFileTool, WriteFileTool
-from nanobot.agent.tools.image_generation import ImageGenerationError, ImageGenerationTool
-from nanobot.agent.tools.message import MessageTool
-from nanobot.agent.tools.registry import ToolRegistry
-from nanobot.agent.tools.search import GrepTool
-from nanobot.agent.tools.shell import ExecTool
-from nanobot.agent.tools.spawn import SpawnTool
-from nanobot.agent.turn import TurnContext as RunTurnContext
-from nanobot.agent.turn import TurnRequest, TurnSource
-from nanobot.apps.cli.service import CliAppManager, CliAppsRuntimeConfig
-from nanobot.config.schema import ImageGenerationToolConfig, ProviderConfig, ToolsConfig
-from nanobot.context_repo import ContextRepoManager, ResourceAccessPolicy
-from nanobot.context_repo.catalog import RepositoryCatalog
-from nanobot.security.folder_grants import FolderGrantStore
-from nanobot.security.workspace_access import (
+from kohaku.agent.context import ContextBuilder
+from kohaku.agent.loop import AgentLoop, TurnContext, TurnKind
+from kohaku.agent.tools.cli_apps import CliAppsTool
+from kohaku.agent.tools.context import RequestContext, ToolContext, request_context
+from kohaku.agent.tools.filesystem import ReadFileTool, WriteFileTool
+from kohaku.agent.tools.image_generation import ImageGenerationError, ImageGenerationTool
+from kohaku.agent.tools.message import MessageTool
+from kohaku.agent.tools.registry import ToolRegistry
+from kohaku.agent.tools.search import GrepTool
+from kohaku.agent.tools.shell import ExecTool
+from kohaku.agent.tools.spawn import SpawnTool
+from kohaku.agent.turn import TurnContext as RunTurnContext
+from kohaku.agent.turn import TurnRequest, TurnSource
+from kohaku.apps.cli.service import CliAppManager, CliAppsRuntimeConfig
+from kohaku.config.schema import ImageGenerationToolConfig, ProviderConfig, ToolsConfig
+from kohaku.context_repo import ContextRepoManager, ResourceAccessPolicy
+from kohaku.context_repo.catalog import RepositoryCatalog
+from kohaku.security.folder_grants import FolderGrantStore
+from kohaku.security.workspace_access import (
     WORKSPACE_SCOPE_METADATA_KEY,
     WorkspaceScopeError,
     WorkspaceScopeResolver,
@@ -36,10 +36,10 @@ from nanobot.security.workspace_access import (
     validate_workspace_scope_payload,
     workspace_scope_from_metadata,
 )
-from nanobot.session.execution_owner import acquire_execution
-from nanobot.session.manager import JsonlSessionStore, Session, SessionManager
-from nanobot.session.turn_writer import SourceTurnWriter
-from nanobot.session.workspace_focus import WorkspaceFocusOwner
+from kohaku.session.execution_owner import acquire_execution
+from kohaku.session.manager import JsonlSessionStore, Session, SessionManager
+from kohaku.session.turn_writer import SourceTurnWriter
+from kohaku.session.workspace_focus import WorkspaceFocusOwner
 
 PNG_BYTES = (
     b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01"
@@ -600,9 +600,9 @@ async def test_cli_app_scope_controls_working_dir(
     CliAppManager(workspace=project, data_dir=data_dir)._save_installed(
         {"demo": {"entry_point": "demo-cli"}}
     )
-    monkeypatch.setattr("nanobot.apps.cli.service.get_runtime_subdir", lambda _name: data_dir)
+    monkeypatch.setattr("kohaku.apps.cli.service.get_runtime_subdir", lambda _name: data_dir)
     monkeypatch.setattr(
-        "nanobot.apps.cli.service.shutil.which",
+        "kohaku.apps.cli.service.shutil.which",
         lambda entry: "/usr/bin/demo-cli" if entry == "demo-cli" else None,
     )
 

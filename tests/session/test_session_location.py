@@ -12,8 +12,8 @@ from unittest.mock import patch
 
 import pytest
 
-from nanobot.config.loader import load_config
-from nanobot.session.manager import JsonlSessionStore, SessionManager
+from kohaku.config.loader import load_config
+from kohaku.session.manager import JsonlSessionStore, SessionManager
 
 
 def _write_legacy_session(

@@ -5,11 +5,11 @@ from types import SimpleNamespace
 
 import pytest
 
-from nanobot.bus.queue import MessageBus
-from nanobot.security.folder_grants import FolderGrantStore
-from nanobot.session.manager import SessionManager
-from nanobot.webui.temporary_chats import WebUITemporaryChats
-from nanobot.webui.workspaces import WebUIWorkspaceController
+from kohaku.bus.queue import MessageBus
+from kohaku.security.folder_grants import FolderGrantStore
+from kohaku.session.manager import SessionManager
+from kohaku.webui.temporary_chats import WebUITemporaryChats
+from kohaku.webui.workspaces import WebUIWorkspaceController
 
 
 def _fixture(tmp_path: Path):
@@ -145,9 +145,9 @@ def test_temporary_full_does_not_authorize_another_chat_or_source(tmp_path: Path
 async def test_ephemeral_full_execution_admits_without_a_canonical_source(
     tmp_path: Path,
 ) -> None:
-    from nanobot.agent.loop import _TurnExecutionOptions
-    from nanobot.agent.turn import TurnRequest, TurnSource
-    from nanobot.providers.base import LLMResponse
+    from kohaku.agent.loop import _TurnExecutionOptions
+    from kohaku.agent.turn import TurnRequest, TurnSource
+    from kohaku.providers.base import LLMResponse
     from tests.agent.conftest import make_loop
     from tests.agent.test_migration_engine import ScriptedProvider
 

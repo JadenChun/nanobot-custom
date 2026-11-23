@@ -9,10 +9,10 @@ from __future__ import annotations
 
 import pytest
 
-from nanobot.agent.tools.context import RequestContext, request_context
-from nanobot.agent.tools.cron import CronTool
-from nanobot.agent.turn import TurnContext
-from nanobot.cron.service import CronService
+from kohaku.agent.tools.context import RequestContext, request_context
+from kohaku.agent.tools.cron import CronTool
+from kohaku.agent.turn import TurnContext
+from kohaku.cron.service import CronService
 from tests.cron.stage3_fixtures import offline_denial  # noqa: F401
 
 ADMIN_SESSION = "websocket:admin"

@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from nanobot.providers.openai_responses.converters import convert_messages as _convert_messages
+from kohaku.providers.openai_responses.converters import convert_messages as _convert_messages
 
 
 def test_convert_messages_normalizes_long_tool_call_ids() -> None:
@@ -50,7 +50,7 @@ def test_normalize_codex_id_hashes_unsafe_values() -> None:
 
 @pytest.mark.asyncio
 async def test_consume_sse_path_stores_exact_native_ids() -> None:
-    from nanobot.providers.openai_responses.parsing import consume_sse
+    from kohaku.providers.openai_responses.parsing import consume_sse
 
     raw_call = "call_" + "x" * 90
     raw_item = "item_" + "y" * 90

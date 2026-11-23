@@ -8,9 +8,9 @@ from unittest.mock import Mock
 
 import pytest
 
-from nanobot.providers.base import ProviderConversationState
-from nanobot.session import manager as module
-from nanobot.session.manager import JsonlSessionStore, Session, SessionManager, SessionWriteConflict
+from kohaku.providers.base import ProviderConversationState
+from kohaku.session import manager as module
+from kohaku.session.manager import JsonlSessionStore, Session, SessionManager, SessionWriteConflict
 
 
 @pytest.fixture

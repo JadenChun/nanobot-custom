@@ -2,20 +2,20 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from nanobot.agent.goal_permission import goal_mutation_allowed
-from nanobot.agent.loop import AgentLoop
-from nanobot.bus.events import InboundMessage
-from nanobot.command.builtin import (
+from kohaku.agent.goal_permission import goal_mutation_allowed
+from kohaku.agent.loop import AgentLoop
+from kohaku.bus.events import InboundMessage
+from kohaku.command.builtin import (
     build_help_text,
     builtin_command_palette,
     cmd_goal,
     cmd_model,
     register_builtin_commands,
 )
-from nanobot.command.router import CommandContext, CommandRouter
-from nanobot.config.schema import ModelPresetConfig
-from nanobot.providers.base import GenerationSettings, LLMResponse
-from nanobot.session.model_selection import (
+from kohaku.command.router import CommandContext, CommandRouter
+from kohaku.config.schema import ModelPresetConfig
+from kohaku.providers.base import GenerationSettings, LLMResponse
+from kohaku.session.model_selection import (
     SESSION_MODEL_PRESET_METADATA_KEY,
     model_preset_from_metadata,
 )
@@ -348,7 +348,7 @@ def test_goal_command_in_help_and_palette() -> None:
 
 
 def test_model_command_rejects_pending_startup_receipt_before_effects(tmp_path) -> None:
-    from nanobot.agent.memory_recovery_startup_admission import StartupReceiptAdmissionError
+    from kohaku.agent.memory_recovery_startup_admission import StartupReceiptAdmissionError
 
     pending = tmp_path / "memory" / ".consolidation.pending.json"
     pending.parent.mkdir(parents=True)

@@ -2,10 +2,10 @@ from unittest.mock import patch
 
 import pytest
 
-from nanobot.agent.tools.base import Tool
-from nanobot.agent.tools.context import ToolContext
-from nanobot.agent.tools.loader import ToolLoader
-from nanobot.config.schema import ToolsConfig
+from kohaku.agent.tools.base import Tool
+from kohaku.agent.tools.context import ToolContext
+from kohaku.agent.tools.loader import ToolLoader
+from kohaku.config.schema import ToolsConfig
 
 
 class _CoreOnlyTool(Tool):
@@ -67,7 +67,7 @@ class _UniversalTool(Tool):
 
 @pytest.mark.asyncio
 async def test_loader_filters_by_scope():
-    from nanobot.agent.tools.registry import ToolRegistry
+    from kohaku.agent.tools.registry import ToolRegistry
 
     loader = ToolLoader(test_classes=[_CoreOnlyTool, _SubagentOnlyTool, _UniversalTool])
 
@@ -79,8 +79,8 @@ async def test_loader_filters_by_scope():
     }
     ctx = ToolContext(config=ToolsConfig(), workspace="/tmp")
     with (
-        patch("nanobot.migration_guard.require_runtime_ready"),
-        patch("nanobot.agent.tools.fork_factories.construct_core_tools", return_value=[]),
+        patch("kohaku.migration_guard.require_runtime_ready"),
+        patch("kohaku.agent.tools.fork_factories.construct_core_tools", return_value=[]),
     ):
         loader.load(ctx, registry, scope="core")
 

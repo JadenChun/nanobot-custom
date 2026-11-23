@@ -24,7 +24,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 ENTER_ALT_SCREEN = b"\x1b[?1049h"
 LEAVE_ALT_SCREEN = b"\x1b[?1049l"
-RESUME_COMMAND = b"Resume with: nanobot agent --session websocket:resume-chat"
+RESUME_COMMAND = b"Resume with: kohaku agent --session websocket:resume-chat"
 
 
 def _resize(fd: int, rows: int, columns: int) -> None:
@@ -80,17 +80,17 @@ def main() -> int:
         raise SystemExit("bun is required")
     env = {
         **os.environ,
-        "NANOBOT_TUI_WS_URL": "ws://127.0.0.1:9/ws",
-        "NANOBOT_TUI_API_URL": "",
-        "NANOBOT_TUI_API_TOKEN": "",
-        "NANOBOT_TUI_CHAT_ID": "resume-chat",
-        "NANOBOT_TUI_MODEL": "test/model",
-        "NANOBOT_TUI_WORKSPACE": "/tmp/nanobot-tui-pty",
-        "NANOBOT_TUI_VERSION": "test",
-        "NANOBOT_TUI_ACCESS": "workspace access",
+        "KOHAKU_TUI_WS_URL": "ws://127.0.0.1:9/ws",
+        "KOHAKU_TUI_API_URL": "",
+        "KOHAKU_TUI_API_TOKEN": "",
+        "KOHAKU_TUI_CHAT_ID": "resume-chat",
+        "KOHAKU_TUI_MODEL": "test/model",
+        "KOHAKU_TUI_WORKSPACE": "/tmp/kohaku-tui-pty",
+        "KOHAKU_TUI_VERSION": "test",
+        "KOHAKU_TUI_ACCESS": "workspace access",
         # A fixed theme keeps this test about PTY behavior rather than the
         # terminal emulator's optional OSC 10/11 response.
-        "NANOBOT_TUI_THEME": "dark",
+        "KOHAKU_TUI_THEME": "dark",
     }
     env.pop("HERDR_ENV", None)
     env.pop("HERDR_PANE_ID", None)

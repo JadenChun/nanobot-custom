@@ -6,8 +6,8 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from nanobot.cron.service import CronService
-from nanobot.cron.types import (
+from kohaku.cron.service import CronService
+from kohaku.cron.types import (
     CronDestination,
     CronJob,
     CronJobState,
@@ -31,7 +31,7 @@ def fixture_job(payload):
 async def test_inadmissible_jobs_keep_state_and_never_execute(tmp_path, payload):
     original = fixture_job(payload)
     before = deepcopy(original)
-    from nanobot.cron.migration import prepare_staging_job
+    from kohaku.cron.migration import prepare_staging_job
     prepared_result = prepare_staging_job(original)
     prepared = prepared_result.job
     assert original == before
@@ -158,7 +158,7 @@ async def test_action_update_and_enable_preserve_admission_fence(tmp_path):
 
 
 async def test_bound_runner_rejects_legacy_before_any_side_effect(tmp_path):
-    from nanobot.cron.bound_runner import run_bound_cron_job
+    from kohaku.cron.bound_runner import run_bound_cron_job
     job = fixture_job(CronPayload())
     with pytest.raises(ValueError, match='adapter is not installed'):
         await run_bound_cron_job(job, agent=None, cron=None)
@@ -170,7 +170,7 @@ async def test_webui_rejects_fenced_run_with_diagnostic(tmp_path):
     from websockets.datastructures import Headers
     from websockets.http11 import Request
 
-    from nanobot.webui.ws_http import GatewayHTTPHandler
+    from kohaku.webui.ws_http import GatewayHTTPHandler
     service = CronService(tmp_path / 'jobs.json', on_job=AsyncMock())
     job = service.add_job('legacy', CronSchedule(kind='every', every_ms=1000), 'hello')
     handler = SimpleNamespace(check_api_token=lambda request: True,
@@ -190,7 +190,7 @@ async def test_gateway_callback_checks_admission_before_named_internal_jobs(tmp_
     from pathlib import Path
 
     from tests.migration.test_p5_stage3_composition import composition
-    source = Path(__file__).parents[2] / 'nanobot/cli/gateway_runtime.py'
+    source = Path(__file__).parents[2] / 'kohaku/cli/gateway_runtime.py'
     tree = ast.parse(source.read_text())
     assert not any(isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == 'on_cron_job' for node in ast.walk(tree))
     assert not any(isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == 'register_system_job' for node in ast.walk(tree))

@@ -8,30 +8,30 @@ from pathlib import Path
 
 import pytest
 
-from nanobot.agent.memory import Consolidator, MemoryStore
-from nanobot.agent.memory_recovery import MemoryReceiptRecoveryRequired
-from nanobot.agent.memory_recovery_coordinator import (
+from kohaku.agent.memory import Consolidator, MemoryStore
+from kohaku.agent.memory_recovery import MemoryReceiptRecoveryRequired
+from kohaku.agent.memory_recovery_coordinator import (
     OfflineMemoryRecoveryError,
     reconcile_pending_memory_receipt_offline,
 )
-from nanobot.agent.memory_recovery_receipt_finalizer import (
+from kohaku.agent.memory_recovery_receipt_finalizer import (
     OfflineReceiptFinalizationError,
     finalize_pending_memory_receipt_offline,
 )
-from nanobot.agent.turn import TurnResult
-from nanobot.cron.action_store import CronActionStore
-from nanobot.cron.canonical_execution import execute_claimed_fresh_text
-from nanobot.cron.completion import CronCompletionProjector
-from nanobot.cron.definition_store import CronDefinitionAction, CronDefinitionStore
-from nanobot.cron.delivery_runtime import CronDeliveryRuntime
-from nanobot.cron.delivery_store import CronDeliveryOutboxStore
-from nanobot.cron.occurrence_store import CronOccurrenceStore, OccurrenceExecutionStartedError
-from nanobot.cron.service import CronService, _job_definition
-from nanobot.cron.types import CronSchedule
-from nanobot.providers.base import LLMResponse
-from nanobot.providers.request_budget import FinalizedRequestBudgetExceeded
-from nanobot.session.manager import SessionManager, SessionWriteConflict
-from nanobot.utils.prompt_budget import (
+from kohaku.agent.turn import TurnResult
+from kohaku.cron.action_store import CronActionStore
+from kohaku.cron.canonical_execution import execute_claimed_fresh_text
+from kohaku.cron.completion import CronCompletionProjector
+from kohaku.cron.definition_store import CronDefinitionAction, CronDefinitionStore
+from kohaku.cron.delivery_runtime import CronDeliveryRuntime
+from kohaku.cron.delivery_store import CronDeliveryOutboxStore
+from kohaku.cron.occurrence_store import CronOccurrenceStore, OccurrenceExecutionStartedError
+from kohaku.cron.service import CronService, _job_definition
+from kohaku.cron.types import CronSchedule
+from kohaku.providers.base import LLMResponse
+from kohaku.providers.request_budget import FinalizedRequestBudgetExceeded
+from kohaku.session.manager import SessionManager, SessionWriteConflict
+from kohaku.utils.prompt_budget import (
     AsyncPortableFileLock,
     PromptBudget,
     reduce_messages_to_budget,

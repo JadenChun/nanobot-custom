@@ -6,13 +6,13 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from nanobot.agent.runner import AgentRunner
-from nanobot.agent.turn import TurnContext
-from nanobot.providers.base import LLMResponse
-from nanobot.session.execution_owner import acquire_execution
-from nanobot.session.manager import JsonlSessionStore, Session
-from nanobot.session.source import SourceValidationError
-from nanobot.session.turn_writer import SourceTurnWriter
+from kohaku.agent.runner import AgentRunner
+from kohaku.agent.turn import TurnContext
+from kohaku.providers.base import LLMResponse
+from kohaku.session.execution_owner import acquire_execution
+from kohaku.session.manager import JsonlSessionStore, Session
+from kohaku.session.source import SourceValidationError
+from kohaku.session.turn_writer import SourceTurnWriter
 from tests.agent.runner_helpers import make_run_spec
 
 _MAX_TOOL_RESULT_CHARS = 1000

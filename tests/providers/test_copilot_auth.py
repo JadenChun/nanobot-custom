@@ -7,13 +7,13 @@ from pathlib import Path
 import httpx
 import pytest
 
-from nanobot.providers import copilot_auth
+from kohaku.providers import copilot_auth
 
 
 @pytest.fixture(autouse=True)
 def _isolated_auth(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     auth_file = tmp_path / "copilot_auth.json"
-    monkeypatch.setenv("NANOBOT_COPILOT_AUTH_PATH", str(auth_file))
+    monkeypatch.setenv("KOHAKU_COPILOT_AUTH_PATH", str(auth_file))
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.delenv("OAUTH_CLI_KIT_TOKEN_PATH", raising=False)
     return auth_file
@@ -30,7 +30,7 @@ def test_imports_the_original_nanobot_default_without_changing_its_file(
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.delenv("OAUTH_CLI_KIT_TOKEN_PATH", raising=False)
     # Only the default instance owns the shared legacy location.
-    from nanobot.config import loader
+    from kohaku.config import loader
 
     loader.set_config_path(tmp_path / ".nanobot" / "config.json")
     legacy = tmp_path / ".nanobot" / "copilot_auth.json"
@@ -63,9 +63,9 @@ def test_authority_path_rejects_final_symlink_without_touching_target(
     before = target.read_bytes()
     if use_override:
         link = tmp_path / "copilot-link.json"
-        monkeypatch.setenv("NANOBOT_COPILOT_AUTH_PATH", str(link))
+        monkeypatch.setenv("KOHAKU_COPILOT_AUTH_PATH", str(link))
     else:
-        monkeypatch.delenv("NANOBOT_COPILOT_AUTH_PATH", raising=False)
+        monkeypatch.delenv("KOHAKU_COPILOT_AUTH_PATH", raising=False)
         link = copilot_auth._auth_path()
     link.parent.mkdir(parents=True, exist_ok=True)
     link.symlink_to(target)

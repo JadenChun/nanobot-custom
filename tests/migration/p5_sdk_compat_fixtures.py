@@ -13,16 +13,16 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from nanobot.agent.hooks import create_file_edit_activity_hook
-from nanobot.agent.loop import AgentLoop
-from nanobot.agent.tools.base import Tool
-from nanobot.agent.turn import TurnResult
-from nanobot.nanobot import Nanobot
-from nanobot.providers.base import GenerationSettings, LLMProvider, LLMResponse
-from nanobot.providers.image_generation import image_gen_provider_configs
-from nanobot.runtime_composition import RuntimeComposition, RuntimeFactories
-from nanobot.session.manager import SessionManager
-from nanobot.session.runtime_authority import BorrowedSessionAuthority
+from kohaku.agent.hooks import create_file_edit_activity_hook
+from kohaku.agent.loop import AgentLoop
+from kohaku.agent.tools.base import Tool
+from kohaku.agent.turn import TurnResult
+from kohaku.kohaku import Kohaku
+from kohaku.providers.base import GenerationSettings, LLMProvider, LLMResponse
+from kohaku.providers.image_generation import image_gen_provider_configs
+from kohaku.runtime_composition import RuntimeComposition, RuntimeFactories
+from kohaku.session.manager import SessionManager
+from kohaku.session.runtime_authority import BorrowedSessionAuthority
 
 
 class Provider(LLMProvider):
@@ -70,7 +70,7 @@ def offline_sdk_positive(monkeypatch):
     def denied(*_args, **_kwargs):
         raise AssertionError("external effects denied")
 
-    monkeypatch.setattr("nanobot.migration_guard.require_runtime_ready", lambda: None)
+    monkeypatch.setattr("kohaku.migration_guard.require_runtime_ready", lambda: None)
     for name in ("connect", "connect_ex", "bind", "sendto"):
         monkeypatch.setattr(socket.socket, name, denied)
     for name in ("getaddrinfo", "create_connection"):
@@ -81,7 +81,7 @@ def offline_sdk_positive(monkeypatch):
             monkeypatch.setattr(os, name, denied)
     monkeypatch.setattr(asyncio, "create_subprocess_exec", denied)
     monkeypatch.setattr(asyncio, "create_subprocess_shell", denied)
-    monkeypatch.setattr("nanobot.providers.factory.make_provider", lambda _config, **_kwargs: Provider())
+    monkeypatch.setattr("kohaku.providers.factory.make_provider", lambda _config, **_kwargs: Provider())
 
 
 @pytest.fixture
@@ -92,7 +92,7 @@ async def sdk_bot_factory(monkeypatch, offline_sdk_positive):
     async def acquired_bot(config_path, *, workspace, provider=None, hooks=(), managed=False,
                            model=None, model_preset=None):
         if provider is not None:
-            monkeypatch.setattr("nanobot.providers.factory.make_provider", lambda _config, **_kwargs: provider)
+            monkeypatch.setattr("kohaku.providers.factory.make_provider", lambda _config, **_kwargs: provider)
 
         def define(config, **kwargs):
             defaults = RuntimeFactories.defaults()
@@ -123,7 +123,7 @@ async def sdk_bot_factory(monkeypatch, offline_sdk_positive):
             manager = SessionManager(Path(workspace),
                                      sessions_root=Path(config_path).parent / "sessions")
             authority = BorrowedSessionAuthority(manager)
-        bot = Nanobot.from_config(config_path, workspace=workspace,
+        bot = Kohaku.from_config(config_path, workspace=workspace,
                                   model=model, model_preset=model_preset,
                                   session_authority=authority)
         assert bot._loop is None and bot._mcp_provider is None

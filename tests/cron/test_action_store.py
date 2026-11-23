@@ -11,8 +11,8 @@ from queue import Empty
 
 import pytest
 
-import nanobot.cron.action_store as action_store
-from nanobot.cron.action_store import (
+import kohaku.cron.action_store as action_store
+from kohaku.cron.action_store import (
     ActionStoreConflictError,
     ActionStoreConversionRequiredError,
     ActionStoreCorruptError,

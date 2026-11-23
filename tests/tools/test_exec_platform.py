@@ -12,9 +12,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from nanobot.agent.tools.exec_session import ExecSessionManager, ExecSessionTool
-from nanobot.agent.tools.shell import ExecTool
-from nanobot.security.native_admission import NativeProcessReservation
+from kohaku.agent.tools.exec_session import ExecSessionManager, ExecSessionTool
+from kohaku.agent.tools.shell import ExecTool
+from kohaku.security.native_admission import NativeProcessReservation
 
 _WINDOWS_ENV_KEYS = {
     "APPDATA", "LOCALAPPDATA", "ProgramData",
@@ -42,7 +42,7 @@ class _FakeWindowsJob:
 class TestBuildEnvUnix:
 
     def test_expected_keys(self):
-        with patch("nanobot.agent.tools.shell._IS_WINDOWS", False):
+        with patch("kohaku.agent.tools.shell._IS_WINDOWS", False):
             env = ExecTool()._build_env()
         expected = {"HOME", "LANG", "TERM", "PYTHONUNBUFFERED"}
         assert expected <= set(env)
@@ -51,17 +51,17 @@ class TestBuildEnvUnix:
 
     def test_home_from_environ(self, monkeypatch):
         monkeypatch.setenv("HOME", "/Users/dev")
-        with patch("nanobot.agent.tools.shell._IS_WINDOWS", False):
+        with patch("kohaku.agent.tools.shell._IS_WINDOWS", False):
             env = ExecTool()._build_env()
         assert env["HOME"] == "/Users/dev"
 
     def test_secrets_excluded(self, monkeypatch):
         monkeypatch.setenv("OPENAI_API_KEY", "sk-secret")
-        monkeypatch.setenv("NANOBOT_TOKEN", "tok-secret")
-        with patch("nanobot.agent.tools.shell._IS_WINDOWS", False):
+        monkeypatch.setenv("KOHAKU_TOKEN", "tok-secret")
+        with patch("kohaku.agent.tools.shell._IS_WINDOWS", False):
             env = ExecTool()._build_env()
         assert "OPENAI_API_KEY" not in env
-        assert "NANOBOT_TOKEN" not in env
+        assert "KOHAKU_TOKEN" not in env
         for v in env.values():
             assert "secret" not in v.lower()
 
@@ -75,23 +75,23 @@ class TestBuildEnvWindows:
     }
 
     def test_expected_keys(self):
-        with patch("nanobot.agent.tools.shell._IS_WINDOWS", True):
+        with patch("kohaku.agent.tools.shell._IS_WINDOWS", True):
             env = ExecTool()._build_env()
         assert set(env) == self._EXPECTED_KEYS
 
     def test_secrets_excluded(self, monkeypatch):
         monkeypatch.setenv("OPENAI_API_KEY", "sk-secret")
-        monkeypatch.setenv("NANOBOT_TOKEN", "tok-secret")
-        with patch("nanobot.agent.tools.shell._IS_WINDOWS", True):
+        monkeypatch.setenv("KOHAKU_TOKEN", "tok-secret")
+        with patch("kohaku.agent.tools.shell._IS_WINDOWS", True):
             env = ExecTool()._build_env()
         assert "OPENAI_API_KEY" not in env
-        assert "NANOBOT_TOKEN" not in env
+        assert "KOHAKU_TOKEN" not in env
         for v in env.values():
             assert "secret" not in v.lower()
 
     def test_path_has_sensible_default(self):
         with (
-            patch("nanobot.agent.tools.shell._IS_WINDOWS", True),
+            patch("kohaku.agent.tools.shell._IS_WINDOWS", True),
             patch.dict("os.environ", {}, clear=True),
         ):
             env = ExecTool()._build_env()
@@ -99,7 +99,7 @@ class TestBuildEnvWindows:
 
     def test_systemroot_forwarded(self, monkeypatch):
         monkeypatch.setenv("SYSTEMROOT", r"D:\Windows")
-        with patch("nanobot.agent.tools.shell._IS_WINDOWS", True):
+        with patch("kohaku.agent.tools.shell._IS_WINDOWS", True):
             env = ExecTool()._build_env()
         assert env["SYSTEMROOT"] == r"D:\Windows"
 
@@ -113,7 +113,7 @@ class TestSpawnUnix:
     @pytest.mark.asyncio
     async def test_uses_bash(self):
         with (
-            patch("nanobot.agent.tools.shell._IS_WINDOWS", False),
+            patch("kohaku.agent.tools.shell._IS_WINDOWS", False),
             patch("asyncio.create_subprocess_exec", new_callable=AsyncMock) as mock_exec,
         ):
             mock_exec.return_value = AsyncMock()
@@ -131,7 +131,7 @@ class TestSpawnUnix:
     @pytest.mark.asyncio
     async def test_process_tree_starts_new_session(self):
         with (
-            patch("nanobot.agent.tools.shell._IS_WINDOWS", False),
+            patch("kohaku.agent.tools.shell._IS_WINDOWS", False),
             patch("asyncio.create_subprocess_exec", new_callable=AsyncMock) as mock_exec,
         ):
             mock_exec.return_value = AsyncMock()
@@ -160,8 +160,8 @@ class TestSpawnWindows:
         job.assign_and_resume.side_effect = OSError("OpenProcess failed")
 
         with (
-            patch("nanobot.agent.tools.shell._IS_WINDOWS", True),
-            patch("nanobot.agent.tools.shell.sys", MagicMock(platform="win32")),
+            patch("kohaku.agent.tools.shell._IS_WINDOWS", True),
+            patch("kohaku.agent.tools.shell.sys", MagicMock(platform="win32")),
             patch("asyncio.create_subprocess_exec", new_callable=AsyncMock) as mock_exec,
             patch.object(ExecTool, "_create_windows_job", return_value=job),
             pytest.raises(OSError, match="OpenProcess failed"),
@@ -178,7 +178,7 @@ class TestSpawnWindows:
         """Single-line commands on Windows now route through PowerShell."""
         env = {"COMSPEC": r"C:\Windows\system32\cmd.exe", "PATH": ""}
         with (
-            patch("nanobot.agent.tools.shell._IS_WINDOWS", True),
+            patch("kohaku.agent.tools.shell._IS_WINDOWS", True),
             patch("asyncio.create_subprocess_exec", new_callable=AsyncMock) as mock_exec,
         ):
             mock_exec.return_value = AsyncMock()
@@ -199,7 +199,7 @@ class TestSpawnWindows:
         """PowerShell should receive cwd and env from the caller."""
         env = {"PATH": "/usr/bin"}
         with (
-            patch("nanobot.agent.tools.shell._IS_WINDOWS", True),
+            patch("kohaku.agent.tools.shell._IS_WINDOWS", True),
             patch("asyncio.create_subprocess_exec", new_callable=AsyncMock) as mock_exec,
         ):
             mock_exec.return_value = AsyncMock()
@@ -213,7 +213,7 @@ class TestSpawnWindows:
     async def test_multiline_uses_powershell(self):
         env = {"PATH": ""}
         with (
-            patch("nanobot.agent.tools.shell._IS_WINDOWS", True),
+            patch("kohaku.agent.tools.shell._IS_WINDOWS", True),
             patch("asyncio.create_subprocess_exec", new_callable=AsyncMock) as mock_exec,
         ):
             mock_exec.return_value = AsyncMock()
@@ -236,7 +236,7 @@ class TestSpawnWindows:
         """Explicit shell='cmd' should preserve raw cmd.exe quoting semantics."""
         env = {"COMSPEC": r"C:\Windows\system32\cmd.exe", "PATH": ""}
         with (
-            patch("nanobot.agent.tools.shell._IS_WINDOWS", True),
+            patch("kohaku.agent.tools.shell._IS_WINDOWS", True),
             patch("asyncio.create_subprocess_shell", new_callable=AsyncMock) as mock_shell,
         ):
             mock_shell.return_value = AsyncMock()
@@ -259,7 +259,7 @@ class TestSpawnWindows:
         """PowerShell -Command should forward native process exit codes."""
         env = {"PATH": ""}
         with (
-            patch("nanobot.agent.tools.shell._IS_WINDOWS", True),
+            patch("kohaku.agent.tools.shell._IS_WINDOWS", True),
             patch("asyncio.create_subprocess_exec", new_callable=AsyncMock) as mock_exec,
         ):
             mock_exec.return_value = AsyncMock()
@@ -274,7 +274,7 @@ class TestSpawnWindows:
         """PowerShell should use UTF-8 for captured output, native input, and redirections."""
         env = {"PATH": ""}
         with (
-            patch("nanobot.agent.tools.shell._IS_WINDOWS", True),
+            patch("kohaku.agent.tools.shell._IS_WINDOWS", True),
             patch("asyncio.create_subprocess_exec", new_callable=AsyncMock) as mock_exec,
         ):
             mock_exec.return_value = AsyncMock()
@@ -294,7 +294,7 @@ class TestSpawnWindows:
         env = {"PATH": ""}
         command = r'"D:\Program Files\Python\python.exe" -u -c "print(1)"'
         with (
-            patch("nanobot.agent.tools.shell._IS_WINDOWS", True),
+            patch("kohaku.agent.tools.shell._IS_WINDOWS", True),
             patch("asyncio.create_subprocess_exec", new_callable=AsyncMock) as mock_exec,
         ):
             mock_exec.return_value = AsyncMock()
@@ -315,8 +315,8 @@ class TestSpawnWindows:
             return None
 
         with (
-            patch("nanobot.agent.tools.shell._IS_WINDOWS", True),
-            patch("nanobot.agent.tools.shell.shutil.which", side_effect=fake_which),
+            patch("kohaku.agent.tools.shell._IS_WINDOWS", True),
+            patch("kohaku.agent.tools.shell.shutil.which", side_effect=fake_which),
             patch("asyncio.create_subprocess_exec", new_callable=AsyncMock) as mock_exec,
         ):
             mock_exec.return_value = AsyncMock()
@@ -353,16 +353,16 @@ class TestPathAppendPlatform:
             return mock_proc
 
         with (
-            patch("nanobot.agent.tools.shell._IS_WINDOWS", False),
-            patch("nanobot.agent.tools.shell.os.pathsep", ":"),
+            patch("kohaku.agent.tools.shell._IS_WINDOWS", False),
+            patch("kohaku.agent.tools.shell.os.pathsep", ":"),
             patch.object(ExecTool, "_spawn", side_effect=capture_spawn),
             patch.object(ExecTool, "_guard_command", return_value=None),
         ):
             tool = ExecTool(path_append="/opt/bin; echo INJECTED")
             await tool.execute(command="ls")
 
-        assert captured_cmd == 'export PATH="$PATH:$NANOBOT_PATH_APPEND"; ls'
-        assert captured_env["NANOBOT_PATH_APPEND"] == "/opt/bin; echo INJECTED"
+        assert captured_cmd == 'export PATH="$PATH:$KOHAKU_PATH_APPEND"; ls'
+        assert captured_env["KOHAKU_PATH_APPEND"] == "/opt/bin; echo INJECTED"
         assert "INJECTED" not in captured_cmd
 
     @pytest.mark.asyncio
@@ -386,16 +386,16 @@ class TestPathAppendPlatform:
             return mock_proc
 
         with (
-            patch("nanobot.agent.tools.shell._IS_WINDOWS", False),
-            patch("nanobot.agent.tools.shell.os.pathsep", ":"),
+            patch("kohaku.agent.tools.shell._IS_WINDOWS", False),
+            patch("kohaku.agent.tools.shell.os.pathsep", ":"),
             patch.object(ExecTool, "_spawn", side_effect=capture_spawn),
             patch.object(ExecTool, "_guard_command", return_value=None),
         ):
             tool = ExecTool(path_prepend="/venv/bin; echo INJECTED")
             await tool.execute(command="python --version")
 
-        assert captured_cmd == 'export PATH="$NANOBOT_PATH_PREPEND:$PATH"; python --version'
-        assert captured_env["NANOBOT_PATH_PREPEND"] == "/venv/bin; echo INJECTED"
+        assert captured_cmd == 'export PATH="$KOHAKU_PATH_PREPEND:$PATH"; python --version'
+        assert captured_env["KOHAKU_PATH_PREPEND"] == "/venv/bin; echo INJECTED"
         assert "INJECTED" not in captured_cmd
 
     @pytest.mark.asyncio
@@ -418,8 +418,8 @@ class TestPathAppendPlatform:
             return mock_proc
 
         with (
-            patch("nanobot.agent.tools.shell._IS_WINDOWS", False),
-            patch("nanobot.agent.tools.shell.os.pathsep", ":"),
+            patch("kohaku.agent.tools.shell._IS_WINDOWS", False),
+            patch("kohaku.agent.tools.shell.os.pathsep", ":"),
             patch.object(ExecTool, "_spawn", side_effect=capture_spawn),
             patch.object(ExecTool, "_guard_command", return_value=None),
         ):
@@ -427,10 +427,10 @@ class TestPathAppendPlatform:
             await tool.execute(command="python --version")
 
         assert captured_cmd == (
-            'export PATH="$NANOBOT_PATH_PREPEND:$PATH:$NANOBOT_PATH_APPEND"; python --version'
+            'export PATH="$KOHAKU_PATH_PREPEND:$PATH:$KOHAKU_PATH_APPEND"; python --version'
         )
-        assert captured_env["NANOBOT_PATH_PREPEND"] == "/venv/bin"
-        assert captured_env["NANOBOT_PATH_APPEND"] == "/usr/sbin"
+        assert captured_env["KOHAKU_PATH_PREPEND"] == "/venv/bin"
+        assert captured_env["KOHAKU_PATH_APPEND"] == "/usr/sbin"
 
     @pytest.mark.asyncio
     async def test_windows_modifies_env(self):
@@ -450,8 +450,8 @@ class TestPathAppendPlatform:
             return mock_proc
 
         with (
-            patch("nanobot.agent.tools.shell._IS_WINDOWS", True),
-            patch("nanobot.agent.tools.shell.os.pathsep", ";"),
+            patch("kohaku.agent.tools.shell._IS_WINDOWS", True),
+            patch("kohaku.agent.tools.shell.os.pathsep", ";"),
             patch.object(ExecTool, "_spawn", side_effect=capture_spawn),
             patch.object(ExecTool, "_guard_command", return_value=None),
         ):
@@ -477,8 +477,8 @@ class TestPathAppendPlatform:
             return mock_proc
 
         with (
-            patch("nanobot.agent.tools.shell._IS_WINDOWS", True),
-            patch("nanobot.agent.tools.shell.os.pathsep", ";"),
+            patch("kohaku.agent.tools.shell._IS_WINDOWS", True),
+            patch("kohaku.agent.tools.shell.os.pathsep", ";"),
             patch.object(ExecTool, "_build_env", return_value={"PATH": r"C:\Windows\System32"}),
             patch.object(ExecTool, "_spawn", side_effect=capture_spawn),
             patch.object(ExecTool, "_guard_command", return_value=None),
@@ -505,7 +505,7 @@ class TestSandboxPlatform:
         mock_proc.returncode = 0
 
         with (
-            patch("nanobot.agent.tools.shell._IS_WINDOWS", True),
+            patch("kohaku.agent.tools.shell._IS_WINDOWS", True),
             patch.object(ExecTool, "_spawn", return_value=mock_proc) as mock_spawn,
             patch.object(ExecTool, "_guard_command", return_value=None),
         ):
@@ -524,8 +524,8 @@ class TestSandboxPlatform:
         mock_proc.returncode = 0
 
         with (
-            patch("nanobot.agent.tools.shell._IS_WINDOWS", False),
-            patch("nanobot.agent.tools.shell.wrap_command", return_value="bwrap -- sh -c ls") as mock_wrap,
+            patch("kohaku.agent.tools.shell._IS_WINDOWS", False),
+            patch("kohaku.agent.tools.shell.wrap_command", return_value="bwrap -- sh -c ls") as mock_wrap,
             patch.object(ExecTool, "_spawn", return_value=mock_proc) as mock_spawn,
             patch.object(ExecTool, "_guard_command", return_value=None),
         ):
@@ -546,8 +546,8 @@ class TestSandboxPlatform:
         tool_cache = tmp_path / "tool-cache"
 
         with (
-            patch("nanobot.agent.tools.shell._IS_WINDOWS", False),
-            patch("nanobot.agent.tools.shell.wrap_command", return_value="bwrap -- sh -c ls") as mock_wrap,
+            patch("kohaku.agent.tools.shell._IS_WINDOWS", False),
+            patch("kohaku.agent.tools.shell.wrap_command", return_value="bwrap -- sh -c ls") as mock_wrap,
             patch.object(ExecTool, "_spawn", return_value=mock_proc),
             patch.object(ExecTool, "_guard_command", return_value=None),
         ):
@@ -582,7 +582,7 @@ class TestExecuteEndToEnd:
         mock_proc.returncode = 0
 
         with (
-            patch("nanobot.agent.tools.shell._IS_WINDOWS", True),
+            patch("kohaku.agent.tools.shell._IS_WINDOWS", True),
             patch.object(ExecTool, "_spawn", return_value=mock_proc),
             patch.object(ExecTool, "_guard_command", return_value=None),
         ):
@@ -600,7 +600,7 @@ class TestExecuteEndToEnd:
         mock_proc.returncode = 0
 
         with (
-            patch("nanobot.agent.tools.shell._IS_WINDOWS", False),
+            patch("kohaku.agent.tools.shell._IS_WINDOWS", False),
             patch.object(ExecTool, "_spawn", return_value=mock_proc),
             patch.object(ExecTool, "_guard_command", return_value=None),
         ):
@@ -627,7 +627,7 @@ class TestExecuteEndToEnd:
             return mock_proc
 
         with (
-            patch("nanobot.agent.tools.shell._IS_WINDOWS", False),
+            patch("kohaku.agent.tools.shell._IS_WINDOWS", False),
             patch.object(ExecTool, "_spawn", side_effect=capture_spawn),
             patch.object(ExecTool, "_guard_command", return_value=None),
         ):
@@ -711,7 +711,7 @@ class TestWindowsMultilineExec:
         mock_proc.returncode = 0
 
         with (
-            patch("nanobot.agent.tools.shell._IS_WINDOWS", True),
+            patch("kohaku.agent.tools.shell._IS_WINDOWS", True),
             patch("asyncio.create_subprocess_exec", new_callable=AsyncMock) as mock_exec,
             patch.object(ExecTool, "_create_windows_job", side_effect=_FakeWindowsJob),
             patch.object(ExecTool, "_guard_command", return_value=None),
@@ -733,7 +733,7 @@ class TestWindowsMultilineExec:
         mock_proc.returncode = 0
 
         with (
-            patch("nanobot.agent.tools.shell._IS_WINDOWS", True),
+            patch("kohaku.agent.tools.shell._IS_WINDOWS", True),
             patch("asyncio.create_subprocess_exec", new_callable=AsyncMock) as mock_exec,
             patch.object(ExecTool, "_create_windows_job", side_effect=_FakeWindowsJob),
             patch.object(ExecTool, "_guard_command", return_value=None),
@@ -754,7 +754,7 @@ class TestWindowsMultilineExec:
         mock_proc.returncode = 0
 
         with (
-            patch("nanobot.agent.tools.shell._IS_WINDOWS", True),
+            patch("kohaku.agent.tools.shell._IS_WINDOWS", True),
             patch.object(ExecTool, "_spawn", return_value=mock_proc) as mock_spawn,
             patch.object(ExecTool, "_guard_command", return_value=None),
         ):
@@ -771,7 +771,7 @@ class TestWindowsMultilineExec:
         mock_proc.returncode = 0
 
         with (
-            patch("nanobot.agent.tools.shell._IS_WINDOWS", False),
+            patch("kohaku.agent.tools.shell._IS_WINDOWS", False),
             patch.object(ExecTool, "_spawn", return_value=mock_proc) as mock_spawn,
             patch.object(ExecTool, "_guard_command", return_value=None),
         ):
@@ -797,7 +797,7 @@ class TestResolveShellWindows:
         mock_proc.returncode = 0
 
         with (
-            patch("nanobot.agent.tools.shell._IS_WINDOWS", True),
+            patch("kohaku.agent.tools.shell._IS_WINDOWS", True),
             patch("asyncio.create_subprocess_exec", new_callable=AsyncMock) as mock_exec,
             patch.object(ExecTool, "_create_windows_job", side_effect=_FakeWindowsJob),
             patch.object(ExecTool, "_guard_command", return_value=None),
@@ -819,7 +819,7 @@ class TestResolveShellWindows:
         mock_proc.returncode = 0
 
         with (
-            patch("nanobot.agent.tools.shell._IS_WINDOWS", True),
+            patch("kohaku.agent.tools.shell._IS_WINDOWS", True),
             patch("asyncio.create_subprocess_shell", new_callable=AsyncMock) as mock_shell,
             patch.object(ExecTool, "_create_windows_job", side_effect=_FakeWindowsJob),
             patch.object(ExecTool, "_guard_command", return_value=None),
@@ -835,7 +835,7 @@ class TestResolveShellWindows:
     @pytest.mark.asyncio
     async def test_shell_bash_rejected_on_windows(self):
         """shell='bash' should still be rejected on Windows."""
-        with patch("nanobot.agent.tools.shell._IS_WINDOWS", True):
+        with patch("kohaku.agent.tools.shell._IS_WINDOWS", True):
             tool = ExecTool()
             result = await tool.execute(command="echo hello", shell="bash")
 

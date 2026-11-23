@@ -6,14 +6,14 @@ from dataclasses import replace
 
 import pytest
 
-from nanobot.session.artifact import (
+from kohaku.session.artifact import (
     ArtifactValidationError,
     bound_artifact_text,
     parse_artifact_descriptor,
     parse_artifact_reference,
 )
-from nanobot.session.source import new_source_event, prefix_digest
-from nanobot.session.source_store import SourceSnapshot, SourceState
+from kohaku.session.source import new_source_event, prefix_digest
+from kohaku.session.source_store import SourceSnapshot, SourceState
 
 WORKSPACE = 'a' * 32
 ARTIFACT = 'b' * 32
@@ -171,7 +171,7 @@ def test_non_call_execution_fields_cannot_spoof_intent_provenance(extra_ids):
 
 
 def test_manifest_membership_preserves_exact_immutable_descriptor_bindings():
-    from nanobot.session.artifact import published_artifacts
+    from kohaku.session.artifact import published_artifacts
 
     raw, source = fixture()
     assert published_artifacts(source, workspace_id=WORKSPACE) == ()
@@ -185,7 +185,7 @@ def test_manifest_membership_preserves_exact_immutable_descriptor_bindings():
 
 @pytest.mark.parametrize('failure', ['null', 'version', 'fields', 'wrong_id', 'duplicate_binding'])
 def test_invalid_manifest_is_not_treated_as_empty(failure):
-    from nanobot.session.artifact import published_artifacts
+    from kohaku.session.artifact import published_artifacts
 
     raw, source = fixture()
     manifest = {'schema_version': 1, 'descriptors': {ARTIFACT: raw}}
@@ -208,8 +208,8 @@ def test_invalid_manifest_is_not_treated_as_empty(failure):
 
 
 def test_attestation_requires_receipt_and_cannot_relabel_origin():
-    from nanobot.agent.tools.read_provenance import FilesystemReadReceipt
-    from nanobot.session.artifact import attested_artifact_origin
+    from kohaku.agent.tools.read_provenance import FilesystemReadReceipt
+    from kohaku.session.artifact import attested_artifact_origin
 
     raw, source = fixture()
     descriptor = parse_artifact_descriptor(raw)
@@ -241,8 +241,8 @@ def test_attestation_requires_receipt_and_cannot_relabel_origin():
 def test_attestation_binds_receipt_producer_to_its_exact_assistant_tool_call(
     declared_name, event_name, producer, accepted,
 ):
-    from nanobot.agent.tools.read_provenance import FilesystemReadReceipt
-    from nanobot.session.artifact import attested_artifact_origin
+    from kohaku.agent.tools.read_provenance import FilesystemReadReceipt
+    from kohaku.session.artifact import attested_artifact_origin
 
     raw, source = fixture()
     descriptor = parse_artifact_descriptor(raw)
@@ -275,8 +275,8 @@ def test_attestation_binds_receipt_producer_to_its_exact_assistant_tool_call(
     ],
 )
 def test_attestation_uses_exact_execution_position_for_repeated_provider_call_ids(producer, accepted):
-    from nanobot.agent.tools.read_provenance import FilesystemReadReceipt
-    from nanobot.session.artifact import attested_artifact_origin
+    from kohaku.agent.tools.read_provenance import FilesystemReadReceipt
+    from kohaku.session.artifact import attested_artifact_origin
 
     raw, source = fixture()
     raw.update(event_id=source.events[2]['_event_id'], execution_id='execution-two')

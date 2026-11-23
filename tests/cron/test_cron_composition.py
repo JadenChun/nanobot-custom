@@ -3,23 +3,23 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from nanobot.agent.turn import RunStatus, TurnResult
-from nanobot.channels.delivery_contract import ChannelTextPartReceipt, ChannelTextReceipt
-from nanobot.cron.action_store import CronActionStore
-from nanobot.cron.callback_store import CronCallbackStore
-from nanobot.cron.canonical_execution import build_claimed_fresh_request
-from nanobot.cron.channel_sender import CronChannelSender
-from nanobot.cron.completion import CronCompletionProjector
-from nanobot.cron.composition import (
+from kohaku.agent.turn import RunStatus, TurnResult
+from kohaku.channels.delivery_contract import ChannelTextPartReceipt, ChannelTextReceipt
+from kohaku.cron.action_store import CronActionStore
+from kohaku.cron.callback_store import CronCallbackStore
+from kohaku.cron.canonical_execution import build_claimed_fresh_request
+from kohaku.cron.channel_sender import CronChannelSender
+from kohaku.cron.completion import CronCompletionProjector
+from kohaku.cron.composition import (
     CronCompositionPreflightError,
     compose_claimed_text_occurrence,
 )
-from nanobot.cron.definition_store import CronDefinitionAction, CronDefinitionStore
-from nanobot.cron.delivery_runtime import CronDeliveryRuntime, UnknownOutcome
-from nanobot.cron.delivery_store import CronDeliveryOutboxStore
-from nanobot.cron.occurrence_store import CronOccurrenceStore, OccurrenceExecutionStartedError
-from nanobot.cron.service import CronService, _job_definition
-from nanobot.cron.types import CronDestination, CronSchedule
+from kohaku.cron.definition_store import CronDefinitionAction, CronDefinitionStore
+from kohaku.cron.delivery_runtime import CronDeliveryRuntime, UnknownOutcome
+from kohaku.cron.delivery_store import CronDeliveryOutboxStore
+from kohaku.cron.occurrence_store import CronOccurrenceStore, OccurrenceExecutionStartedError
+from kohaku.cron.service import CronService, _job_definition
+from kohaku.cron.types import CronDestination, CronSchedule
 
 
 def _claimed(tmp_path: Path, channels=("telegram", "telegram"), *, deliver=True, payload_overrides=None, timezone=None):

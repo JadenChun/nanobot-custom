@@ -1,4 +1,4 @@
-/** Positive-only v1 evidence for the surviving NanobotClient pending owner. */
+/** Positive-only v1 evidence for the surviving KohakuClient pending owner. */
 import type {
   InputAttemptBinding,
   InputAttemptCapability,

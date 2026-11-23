@@ -1,0 +1,9 @@
+[Desktop Entry]
+Categories={{categories}}
+Comment={{comment}}
+Exec={{exec}}
+StartupWMClass=kohaku-desktop
+Icon={{icon}}
+Name=Kohaku
+Terminal=false
+Type=Application

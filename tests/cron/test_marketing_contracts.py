@@ -8,14 +8,14 @@ from pathlib import Path
 
 import pytest
 
-from nanobot.cron.action_store import ActionStoreLegacyConversionError, CronActionStore
-from nanobot.cron.definition_store import (
+from kohaku.cron.action_store import ActionStoreLegacyConversionError, CronActionStore
+from kohaku.cron.definition_store import (
     CronDefinition,
     CronDefinitionStore,
     DefinitionStoreValidationError,
 )
-from nanobot.cron.service import CronService
-from nanobot.cron.types import CronJob, CronSchedule, CronVerifier
+from kohaku.cron.service import CronService
+from kohaku.cron.types import CronJob, CronSchedule, CronVerifier
 from tests.cron.test_action_store_conversion import NAMESPACE, _action, _job, _legacy_root
 
 

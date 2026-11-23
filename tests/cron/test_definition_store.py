@@ -9,8 +9,8 @@ from pathlib import Path
 
 import pytest
 
-from nanobot.cron.action_store import CronActionStore
-from nanobot.cron.definition_store import (
+from kohaku.cron.action_store import CronActionStore
+from kohaku.cron.definition_store import (
     CronDefinition,
     CronDefinitionAction,
     CronDefinitionCandidate,

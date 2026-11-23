@@ -8,17 +8,17 @@ from pathlib import Path
 
 import pytest
 
-from nanobot.agent import memory_recovery_conversion_apply as conversion_apply
-from nanobot.agent import memory_recovery_conversion_finalize as conversion_finalize
-from nanobot.agent import memory_recovery_conversion_runtime as conversion_prepare
-from nanobot.agent import memory_recovery_coordinator as coordinator
-from nanobot.agent import memory_recovery_transaction_history as transaction_history
-from nanobot.agent import memory_recovery_transaction_memory as transaction_memory
-from nanobot.agent import memory_recovery_transaction_offset as transaction_offset
-from nanobot.agent import memory_recovery_transaction_prepare as transaction_prepare
-from nanobot.agent import memory_recovery_transaction_terminal as transaction_terminal
-from nanobot.agent.memory_recovery_manifest import MemoryRecoveryManifest
-from nanobot.session.manager import JsonlSessionStore
+from kohaku.agent import memory_recovery_conversion_apply as conversion_apply
+from kohaku.agent import memory_recovery_conversion_finalize as conversion_finalize
+from kohaku.agent import memory_recovery_conversion_runtime as conversion_prepare
+from kohaku.agent import memory_recovery_coordinator as coordinator
+from kohaku.agent import memory_recovery_transaction_history as transaction_history
+from kohaku.agent import memory_recovery_transaction_memory as transaction_memory
+from kohaku.agent import memory_recovery_transaction_offset as transaction_offset
+from kohaku.agent import memory_recovery_transaction_prepare as transaction_prepare
+from kohaku.agent import memory_recovery_transaction_terminal as transaction_terminal
+from kohaku.agent.memory_recovery_manifest import MemoryRecoveryManifest
+from kohaku.session.manager import JsonlSessionStore
 from tests.state_stat import content_stat
 
 KEY = "telegram:offline-receipt"

@@ -10,17 +10,17 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from nanobot.agent.loop import AgentLoop, _TurnExecutionOptions
-from nanobot.agent.turn import DeliveryTarget, TurnRequest
-from nanobot.bus.events import InboundMessage, OutboundMessage
-from nanobot.bus.queue import MessageBus
-from nanobot.command import CommandContext
-from nanobot.config.schema import AgentDefaults, Config
-from nanobot.events import NO_EVENTS
-from nanobot.providers.base import LLMResponse
-from nanobot.session.manager import Session
-from nanobot.session.mode_storage import SessionModeError
-from nanobot.session.summary import SUMMARY_CONTINUATION_TEXT
+from kohaku.agent.loop import AgentLoop, _TurnExecutionOptions
+from kohaku.agent.turn import DeliveryTarget, TurnRequest
+from kohaku.bus.events import InboundMessage, OutboundMessage
+from kohaku.bus.queue import MessageBus
+from kohaku.command import CommandContext
+from kohaku.config.schema import AgentDefaults, Config
+from kohaku.events import NO_EVENTS
+from kohaku.providers.base import LLMResponse
+from kohaku.session.manager import Session
+from kohaku.session.mode_storage import SessionModeError
+from kohaku.session.summary import SUMMARY_CONTINUATION_TEXT
 from tests.agent import p6_admitted_fixtures
 from tests.agent.p6_admitted_fixtures import (
     AgentInputs,
@@ -261,7 +261,7 @@ class TestIdleScanThrottling:
     def test_configured_idle_scan_interval_throttles_checks(self, tmp_path, monkeypatch, admitted_sync):
         """The configured interval should reach the loop and gate session scans."""
         ticks = iter((1_000.0, 1_000.0, 1_009.999, 1_010.0))
-        monkeypatch.setattr("nanobot.agent.loop.time", SimpleNamespace(
+        monkeypatch.setattr("kohaku.agent.loop.time", SimpleNamespace(
             monotonic=lambda: next(ticks), time=time.time, time_ns=time.time_ns,
             perf_counter=time.perf_counter,
         ))
@@ -300,7 +300,7 @@ class TestIdleScanThrottling:
 
     def test_zero_idle_scan_interval_checks_every_tick(self, tmp_path, monkeypatch, admitted_sync):
         """An explicit zero should leave each idle tick eligible to scan."""
-        monkeypatch.setattr("nanobot.agent.loop.time", SimpleNamespace(
+        monkeypatch.setattr("kohaku.agent.loop.time", SimpleNamespace(
             monotonic=lambda: 1_000.0, time=time.time, time_ns=time.time_ns,
             perf_counter=time.perf_counter,
         ))
@@ -1376,7 +1376,7 @@ class TestSummaryPersistence:
 
 
 def test_unadmitted_legacy_auto_compact_constructor_rejects_pending_receipt(tmp_path: Path):
-    from nanobot.agent.memory_recovery_startup_admission import StartupReceiptAdmissionError
+    from kohaku.agent.memory_recovery_startup_admission import StartupReceiptAdmissionError
 
     workspace = tmp_path / "workspace"
     pending = workspace / "memory" / ".consolidation.pending.json"

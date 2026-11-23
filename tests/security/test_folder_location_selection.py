@@ -3,15 +3,15 @@ from pathlib import Path
 
 import pytest
 
-from nanobot.context_repo import ContextRepoManager, ResourceAccessPolicy
-from nanobot.context_repo.catalog import RepositoryCatalog, RepositoryEntry
-from nanobot.security.folder_grants import FolderGrantStore
-from nanobot.security.workspace_access import (
+from kohaku.context_repo import ContextRepoManager, ResourceAccessPolicy
+from kohaku.context_repo.catalog import RepositoryCatalog, RepositoryEntry
+from kohaku.security.folder_grants import FolderGrantStore
+from kohaku.security.workspace_access import (
     WorkspaceScopeError,
     default_workspace_scope,
 )
-from nanobot.session.manager import SessionManager
-from nanobot.session.workspace_focus import WorkspaceFocusOwner
+from kohaku.session.manager import SessionManager
+from kohaku.session.workspace_focus import WorkspaceFocusOwner
 
 
 def _owner(tmp_path: Path, home: Path, instance: Path) -> WorkspaceFocusOwner:

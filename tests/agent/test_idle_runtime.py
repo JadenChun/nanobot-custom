@@ -11,8 +11,8 @@ from pathlib import Path
 
 import pytest
 
-from nanobot.agent.idle_compaction import IdleCompactionPolicy
-from nanobot.agent.idle_runtime import (
+from kohaku.agent.idle_compaction import IdleCompactionPolicy
+from kohaku.agent.idle_runtime import (
     IdleRuntimeBindingError,
     IdleRuntimeBindingRegistry,
     IdleRuntimeClosedError,
@@ -24,14 +24,14 @@ from nanobot.agent.idle_runtime import (
     IdleSummaryProjectionConfig,
     IdleWorkspaceBinding,
 )
-from nanobot.agent.model_runtime import ModelRuntimeResolver
-from nanobot.config.schema import Config, ModelPresetConfig
-from nanobot.providers.base import GenerationSettings, LLMProvider
-from nanobot.providers.factory import ProviderSnapshot, provider_signature
-from nanobot.session.idle_checkpoint import IdlePolicyBinding
-from nanobot.session.manager import JsonlSessionStore, Session
-from nanobot.session.source_store import SourceSessionStore
-from nanobot.utils.llm_runtime import LLMRuntime
+from kohaku.agent.model_runtime import ModelRuntimeResolver
+from kohaku.config.schema import Config, ModelPresetConfig
+from kohaku.providers.base import GenerationSettings, LLMProvider
+from kohaku.providers.factory import ProviderSnapshot, provider_signature
+from kohaku.session.idle_checkpoint import IdlePolicyBinding
+from kohaku.session.manager import JsonlSessionStore, Session
+from kohaku.session.source_store import SourceSessionStore
+from kohaku.utils.llm_runtime import LLMRuntime
 
 
 class _Provider(LLMProvider):

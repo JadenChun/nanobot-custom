@@ -13,7 +13,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { isNativeRuntime } from "@/lib/runtime";
-import type { NanobotFeatureInfo } from "@/lib/types";
+import type { KohakuFeatureInfo } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 export const SETTINGS_SEARCH_INPUT_CLASS = cn(
@@ -45,16 +45,16 @@ export function CapabilityInstallNotice({
   );
 }
 
-export function NanobotFeatureInstallDialog({
+export function KohakuFeatureInstallDialog({
   feature,
   installing,
   onOpenChange,
   onConfirm,
 }: {
-  feature: NanobotFeatureInfo | null;
+  feature: KohakuFeatureInfo | null;
   installing: boolean;
   onOpenChange: (open: boolean) => void;
-  onConfirm: (feature: NanobotFeatureInfo) => void | Promise<void>;
+  onConfirm: (feature: KohakuFeatureInfo) => void | Promise<void>;
 }) {
   const { t } = useTranslation();
   const tx = (key: string, fallback: string, values?: Record<string, unknown>) =>
@@ -73,7 +73,7 @@ export function NanobotFeatureInstallDialog({
           <DialogDescription className="mt-3 max-w-[20rem] text-center text-[14px] leading-6 text-muted-foreground">
             {tx(
               "settings.nanobotFeatures.installConfirmDescription",
-              "nanobot will add what {{name}} needs, then turn it on. Continue?",
+              "Kohaku will add what {{name}} needs, then turn it on. Continue?",
               { name },
             )}
           </DialogDescription>

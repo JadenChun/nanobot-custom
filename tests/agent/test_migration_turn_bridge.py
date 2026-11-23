@@ -4,13 +4,13 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from nanobot.agent.loop import AgentLoop
-from nanobot.agent.runner import AgentRunResult
-from nanobot.agent.tools.file_state import FileStateStore
-from nanobot.agent.tools.registry import ToolRegistry
-from nanobot.agent.turn import HistoryMode, RunPolicyContext, TurnContext, TurnRequest
-from nanobot.config.schema import ToolsConfig
-from nanobot.context_repo import ContextRepoManager
+from kohaku.agent.loop import AgentLoop
+from kohaku.agent.runner import AgentRunResult
+from kohaku.agent.tools.file_state import FileStateStore
+from kohaku.agent.tools.registry import ToolRegistry
+from kohaku.agent.turn import HistoryMode, RunPolicyContext, TurnContext, TurnRequest
+from kohaku.config.schema import ToolsConfig
+from kohaku.context_repo import ContextRepoManager
 
 
 async def test_missing_policy_context_fails_before_runtime_access():
@@ -24,7 +24,7 @@ async def test_missing_policy_context_fails_before_runtime_access():
 @pytest.mark.parametrize("failure", [None, "cancel", "runner", "entry", "exit", "hook"])
 @pytest.mark.parametrize("fresh", [False, True])
 async def test_loop_forwards_same_context_and_mandatory_policy(tmp_path, monkeypatch, failure, fresh):
-    import nanobot.agent.loop as module
+    import kohaku.agent.loop as module
     loop = object.__new__(AgentLoop)
     loop._fork_dependencies = SimpleNamespace(
         resource_policy=SimpleNamespace(folder_grants=None),
@@ -34,7 +34,7 @@ async def test_loop_forwards_same_context_and_mandatory_policy(tmp_path, monkeyp
     loop.workspace_scopes = SimpleNamespace(for_turn=lambda **kwargs: SimpleNamespace(project_path=tmp_path))
     loop.context = SimpleNamespace(build_transcript=lambda *args, **kwargs: None)
     loop.tools = ToolRegistry()
-    from nanobot.agent.tools.message import MessageTool
+    from kohaku.agent.tools.message import MessageTool
     loop.tools.register(MessageTool(workspace=tmp_path))
     selected_tools = ToolRegistry()
     loop._file_state_store = FileStateStore()
@@ -54,7 +54,7 @@ async def test_loop_forwards_same_context_and_mandatory_policy(tmp_path, monkeyp
     monkeypatch.setattr(module, 'build_agent_turn_hook', lambda spec: None)
     if not fresh:
         monkeypatch.setattr(module, 'runner_wall_llm_timeout_s', lambda *args, **kwargs: None)
-    from nanobot.session.manager import Session
+    from kohaku.session.manager import Session
     active_session = Session(key='cron:fixture') if fresh else None
     if fresh:
         active_session.provider_state = object()
@@ -63,7 +63,7 @@ async def test_loop_forwards_same_context_and_mandatory_policy(tmp_path, monkeyp
                                                   approval_granted=failure is None))
     if fresh:
         context.request = TurnRequest(history_mode=HistoryMode.FRESH)
-    from nanobot.agent.delegation import current_turn_context
+    from kohaku.agent.delegation import current_turn_context
     async def run(spec):
         assert current_turn_context() is context
         if failure == "cancel":
@@ -84,10 +84,10 @@ async def test_loop_forwards_same_context_and_mandatory_policy(tmp_path, monkeyp
         def hook(spec):
             raise RuntimeError('hook')
         monkeypatch.setattr(module, 'build_agent_turn_hook', hook)
-    from nanobot.agent.delegation import reset_current_turn_context, set_current_turn_context
-    from nanobot.agent.tools.context import current_request_context
-    from nanobot.agent.tools.file_state import FileStates, current_file_states
-    from nanobot.security.workspace_access import current_workspace_scope
+    from kohaku.agent.delegation import reset_current_turn_context, set_current_turn_context
+    from kohaku.agent.tools.context import current_request_context
+    from kohaku.agent.tools.file_state import FileStates, current_file_states
+    from kohaku.security.workspace_access import current_workspace_scope
     outer = TurnContext()
     token = set_current_turn_context(outer)
     sentinel = FileStates()

@@ -16,11 +16,11 @@ from unittest.mock import patch
 
 import pytest
 
-import nanobot.cron.delivery_store as delivery_store_module
-from nanobot.cron.action_store import CronActionStore
-from nanobot.cron.completion import CronCompletionProjector
-from nanobot.cron.definition_store import CronDefinitionStore
-from nanobot.cron.delivery_store import (
+import kohaku.cron.delivery_store as delivery_store_module
+from kohaku.cron.action_store import CronActionStore
+from kohaku.cron.completion import CronCompletionProjector
+from kohaku.cron.definition_store import CronDefinitionStore
+from kohaku.cron.delivery_store import (
     CronDeliveryOutboxStore,
     DeliveryOutboxConflictError,
     DeliveryOutboxCorruptError,
@@ -29,9 +29,9 @@ from nanobot.cron.delivery_store import (
     DeliveryOutboxStaleRevisionError,
     DeliverySendBusyError,
 )
-from nanobot.cron.occurrence_store import OccurrenceReconciliationRequiredError
-from nanobot.cron.service import CronService
-from nanobot.cron.types import CronSchedule
+from kohaku.cron.occurrence_store import OccurrenceReconciliationRequiredError
+from kohaku.cron.service import CronService
+from kohaku.cron.types import CronSchedule
 
 NAMESPACE = "cron:e2-tests"
 
@@ -67,7 +67,7 @@ def test_qualified_module_capture_retains_in_place_flock_patches(tmp_path: Path,
 def _service(tmp_path: Path) -> CronService:
     root = tmp_path / "cron"
     definitions = CronDefinitionStore(CronActionStore(root, namespace=NAMESPACE))
-    occurrences = __import__("nanobot.cron.occurrence_store", fromlist=["CronOccurrenceStore"]).CronOccurrenceStore(
+    occurrences = __import__("kohaku.cron.occurrence_store", fromlist=["CronOccurrenceStore"]).CronOccurrenceStore(
         root / "occurrences", namespace=NAMESPACE
     )
     return CronService(
@@ -1188,7 +1188,7 @@ async def test_send_lock_fsync_failure_retries_existing_residue_before_authority
             raise OSError(f"{boundary} fsync failed")
         original_fsync(fd)
 
-    with patch("nanobot.cron.delivery_store.os.fsync", side_effect=fail_boundary):
+    with patch("kohaku.cron.delivery_store.os.fsync", side_effect=fail_boundary):
         for _ in range(2):
             with pytest.raises(delivery_store_module.DeliveryOutboxPersistenceError, match="send lock"):
                 outbox.acquire_send_fence(claim)

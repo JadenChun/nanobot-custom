@@ -9,8 +9,8 @@ from pathlib import Path
 import httpx
 import pytest
 
-from nanobot.agent.tools import image as image_tool
-from nanobot.config.schema import ImageConfig
+from kohaku.agent.tools import image as image_tool
+from kohaku.config.schema import ImageConfig
 
 _IMAGE = b"local image bytes"
 _URI = "data:image/png;base64," + base64.b64encode(_IMAGE).decode("ascii")

@@ -8,8 +8,8 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from nanobot.events import EventSink
-from nanobot.providers.base import (
+from kohaku.events import EventSink
+from kohaku.providers.base import (
     GenerationSettings,
     LLMProvider,
     LLMResponse,
@@ -17,16 +17,16 @@ from nanobot.providers.base import (
     ProviderConversationState,
     ToolCallRequest,
 )
-from nanobot.providers.fallback_provider import FallbackProvider
-from nanobot.providers.image_history import (
+from kohaku.providers.fallback_provider import FallbackProvider
+from kohaku.providers.image_history import (
     IMAGE_HISTORY_DEFERRED,
     IMAGE_HISTORY_OMISSION,
     recent_image_messages,
 )
-from nanobot.providers.openai_compat_provider import OpenAICompatProvider
-from nanobot.providers.pooled_provider import PooledProvider
-from nanobot.providers.provider_policy import ESTIMATED_COMPAT_POLICY
-from nanobot.providers.request_budget import ProviderRequestLimits
+from kohaku.providers.openai_compat_provider import OpenAICompatProvider
+from kohaku.providers.pooled_provider import PooledProvider
+from kohaku.providers.provider_policy import ESTIMATED_COMPAT_POLICY
+from kohaku.providers.request_budget import ProviderRequestLimits
 
 
 def image(label):
@@ -53,7 +53,7 @@ def image_urls(messages):
 
 
 async def saved_tool_image_batch(tmp_path, *, payloads=None):
-    from nanobot.agent.tools.filesystem import ReadFileTool
+    from kohaku.agent.tools.filesystem import ReadFileTool
 
     reader = ReadFileTool(workspace=tmp_path, restrict_to_workspace=True)
     if payloads is None:

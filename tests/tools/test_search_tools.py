@@ -12,20 +12,20 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from nanobot.agent.loop import AgentLoop
-from nanobot.agent.subagent import SubagentManager, SubagentStatus
-from nanobot.agent.tools.filesystem import SearchFilesTool
-from nanobot.agent.tools.search import FindFilesTool, GrepTool
-from nanobot.agent.tools.web import WebSearchTool
-from nanobot.bus.queue import MessageBus
-from nanobot.config.schema import WebSearchConfig
-from nanobot.providers.base import GenerationSettings
-from nanobot.security.workspace_access import (
+from kohaku.agent.loop import AgentLoop
+from kohaku.agent.subagent import SubagentManager, SubagentStatus
+from kohaku.agent.tools.filesystem import SearchFilesTool
+from kohaku.agent.tools.search import FindFilesTool, GrepTool
+from kohaku.agent.tools.web import WebSearchTool
+from kohaku.bus.queue import MessageBus
+from kohaku.config.schema import WebSearchConfig
+from kohaku.providers.base import GenerationSettings
+from kohaku.security.workspace_access import (
     bind_workspace_scope,
     default_workspace_scope,
     reset_workspace_scope,
 )
-from nanobot.utils.llm_runtime import LLMRuntime
+from kohaku.utils.llm_runtime import LLMRuntime
 from tests.agent.p6_admitted_fixtures import AgentInputs
 from tests.agent.p6_admitted_fixtures import admitted_async as admitted_async
 
@@ -402,7 +402,7 @@ async def test_grep_searches_xlsx_beyond_attachment_preview_limit(
 ) -> None:
     from openpyxl import Workbook
 
-    from nanobot.utils import document as document_utils
+    from kohaku.utils import document as document_utils
 
     workbook_path = tmp_path / "long.xlsx"
     workbook = Workbook()
@@ -754,7 +754,7 @@ async def test_agent_exposes_explicit_manifest_and_delegated_search(tmp_path: Pa
 @pytest.mark.asyncio
 async def test_retired_subagent_scope_fails_before_runner(tmp_path: Path, monkeypatch) -> None:
     # Inspect scope rejection past the separate production activation guard.
-    monkeypatch.setattr("nanobot.migration_guard.require_runtime_ready", lambda: None)
+    monkeypatch.setattr("kohaku.migration_guard.require_runtime_ready", lambda: None)
     bus = MessageBus()
     provider = MagicMock()
     provider.get_default_model.return_value = "test-model"

@@ -1,0 +1,1849 @@
+package ai.kohaku.mobile.network
+
+import android.Manifest
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.Activity
+import android.content.Context
+import android.content.Intent
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkCapabilities
+import android.net.Uri
+import android.provider.MediaStore
+import android.provider.OpenableColumns
+import android.os.Build
+import android.os.Handler
+import android.os.Looper
+import android.provider.Settings
+import android.util.Base64
+import android.util.Log
+import com.getcapacitor.BridgeActivity
+import com.getcapacitor.JSObject
+import com.getcapacitor.PermissionState
+import com.getcapacitor.Plugin
+import androidx.browser.customtabs.CustomTabsIntent
+import com.getcapacitor.PluginCall
+import com.getcapacitor.PluginMethod
+import com.getcapacitor.annotation.ActivityCallback
+import com.getcapacitor.annotation.CapacitorPlugin
+import com.getcapacitor.annotation.Permission
+import com.getcapacitor.annotation.PermissionCallback
+import java.net.URI
+import java.nio.charset.StandardCharsets
+import java.text.Normalizer
+import ai.kohaku.mobile.attachments.AttachmentLimits
+import ai.kohaku.mobile.attachments.AttachmentPolicy
+import ai.kohaku.mobile.MainActivity
+import ai.kohaku.mobile.RunKeepAliveRegistry
+import ai.kohaku.mobile.RunKeepAliveService
+import ai.kohaku.mobile.links.PairingChallenge
+import ai.kohaku.mobile.links.PairingChallengeCodec
+import ai.kohaku.mobile.links.PairingLinkParser
+import ai.kohaku.mobile.media.MediaHandleStore
+import java.util.Locale
+import java.util.concurrent.CompletableFuture
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.Executors
+import java.util.concurrent.ScheduledExecutorService
+import java.util.concurrent.ScheduledFuture
+import java.util.concurrent.TimeUnit
+import org.json.JSONObject
+import androidx.activity.result.ActivityResult
+import androidx.core.content.FileProvider
+import com.google.zxing.integration.android.IntentIntegrator
+import java.io.ByteArrayOutputStream
+
+@CapacitorPlugin(
+    name = "NativeNetwork",
+    permissions = [Permission(alias = "camera", strings = [Manifest.permission.CAMERA])],
+)
+class NativeNetworkPlugin : Plugin() {
+    private companion object {
+        private const val NOTIFICATION_GRACE_MS = 2_000L
+        private const val TAG = "NanobotNetwork"
+        private const val HOSTNAME_PREFIX = "kohaku-"
+        private const val MAX_DNS_LABEL_LENGTH = 63
+        private val combiningMarks = Regex("\\p{M}+")
+        private val hostnameSeparators = Regex("[^a-z0-9]+")
+    }
+
+    @Volatile private var transportHandle: Long = 0L
+    private var stateRecoveryAttempted = false
+    private val pollExecutor: ScheduledExecutorService = Executors.newSingleThreadScheduledExecutor()
+    private val retryExecutor: ScheduledExecutorService = Executors.newSingleThreadScheduledExecutor()
+    private val retryTimer = ScheduledRetryTimer(retryExecutor)
+    private val operationExecutor = Executors.newCachedThreadPool()
+    @Volatile private var requests = NativeRequestCorrelator<JSONObject>()
+    @Volatile private var admission = NativeRequestAdmission(timer = retryTimer)
+    private data class PendingWsFrame(val kind: Int, val data: ByteArrayOutputStream)
+    private val pendingWsFrames = ConcurrentHashMap<Long, PendingWsFrame>()
+    @Volatile private var activePairing: PairingChallenge? = null
+    private data class PairingApproval(
+        val pairingId: String,
+        val generation: Long,
+        val handle: Long,
+        val response: JSONObject,
+    )
+    private var pairingApproval: PairingApproval? = null
+    private data class RefreshAttempt(
+        val origin: String,
+        val installationId: String,
+        val generation: Long,
+        val handle: Long,
+    ) {
+        val result = CompletableFuture<Unit>()
+    }
+    private var refreshInFlight: RefreshAttempt? = null
+    private var pollTask: ScheduledFuture<*>? = null
+    private val mainHandler = Handler(Looper.getMainLooper())
+    private val custody by lazy { CustodyStore(context) }
+    private val mediaHandles by lazy { MediaHandleStore(context) }
+    private val attachmentLimits = AttachmentLimits()
+    private var pendingCameraFile: java.io.File? = null
+    private var networkCallback: ConnectivityManager.NetworkCallback? = null
+
+    private val stopIdleKeepAlive = Runnable {
+        if (RunKeepAliveRegistry.isEmpty()) RunKeepAliveService.stop(context.applicationContext)
+    }
+
+    override fun load() {
+        super.load()
+        // Capacitor keeps the default tone when createChannel omits sound.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val silent = NotificationChannel(
+                "kohaku_task_alerts_silent", "Task updates (silent)", NotificationManager.IMPORTANCE_DEFAULT
+            )
+            silent.setSound(null, null)
+            silent.enableVibration(false)
+            context.getSystemService(NotificationManager::class.java).createNotificationChannel(silent)
+        }
+        registerNetworkCallback()
+    }
+
+    override fun handleOnResume() {
+        super.handleOnResume()
+        notifyNativeNetworkChanged()
+    }
+
+    private fun registerNetworkCallback() {
+        try {
+            val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+                ?: return
+            val callback = object : ConnectivityManager.NetworkCallback() {
+                override fun onAvailable(network: Network) {
+                    notifyNativeNetworkChanged()
+                }
+
+                override fun onLost(network: Network) {
+                    notifyNativeNetworkChanged()
+                }
+
+                override fun onCapabilitiesChanged(network: Network, caps: NetworkCapabilities) {
+                    notifyNativeNetworkChanged()
+                }
+            }
+            cm.registerDefaultNetworkCallback(callback)
+            networkCallback = callback
+        } catch (exception: Exception) {
+            Log.w(TAG, "could not register default network callback", exception)
+        }
+    }
+
+    private fun unregisterNetworkCallback() {
+        val callback = networkCallback ?: return
+        networkCallback = null
+        try {
+            val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+            cm?.unregisterNetworkCallback(callback)
+        } catch (_: Exception) {
+            // ignore unregister errors on teardown
+        }
+    }
+
+    private fun notifyNativeNetworkChanged() {
+        val current = transportHandle
+        if (current == 0L) return
+        operationExecutor.execute {
+            try {
+                if (transportHandle == current) {
+                    NativeNetwork.networkChanged(current)
+                }
+            } catch (_: Throwable) {
+                // Best-effort flush on OS network handoff.
+            }
+        }
+    }
+
+    @PluginMethod
+    fun abiVersion(call: PluginCall) {
+        call.resolve(JSObject().put("version", NativeNetwork.abiVersion()))
+    }
+
+    /**
+     * Keep the process alive while a phone-started run is active. Android
+     * requires the foreground service to be started while the app is visible;
+     * a background start is rejected and treated as best-effort.
+     */
+    @PluginMethod
+    fun startRunKeepAlive(call: PluginCall) {
+        val chatId = call.getString("chatId")?.trim()
+        if (chatId.isNullOrBlank()) {
+            call.reject("chatId is required")
+            return
+        }
+        mainHandler.removeCallbacks(stopIdleKeepAlive)
+        RunKeepAliveRegistry.add(chatId)
+        try {
+            RunKeepAliveService.start(context.applicationContext)
+            call.resolve(JSObject().put("running", true))
+        } catch (exception: Exception) {
+            RunKeepAliveRegistry.remove(chatId)
+            call.reject(exception.message ?: "foreground service start failed")
+        }
+    }
+
+    @PluginMethod
+    fun stopRunKeepAlive(call: PluginCall) {
+        val chatId = call.getString("chatId")?.trim()
+        if (chatId.isNullOrBlank()) {
+            RunKeepAliveRegistry.clear()
+        } else {
+            RunKeepAliveRegistry.remove(chatId)
+        }
+        if (RunKeepAliveRegistry.isEmpty()) {
+            // Let the completion notification cross the bridge before the
+            // foreground service is removed.
+            mainHandler.removeCallbacks(stopIdleKeepAlive)
+            mainHandler.postDelayed(stopIdleKeepAlive, NOTIFICATION_GRACE_MS)
+        }
+        call.resolve()
+    }
+
+    @PluginMethod
+    @Synchronized
+    fun refresh(call: PluginCall) {
+        val generation = custody.attemptGeneration()
+        val record = try {
+            custody.load()
+        } catch (exception: Exception) {
+            call.reject(exception.message ?: "custody is unavailable")
+            return
+        }
+        if (record == null || record.revocationPending ||
+            (record.accessToken.isBlank() && record.refreshToken.isBlank())
+        ) {
+            call.reject("No paired device.")
+            return
+        }
+        val candidate = RefreshAttempt(record.origin, record.installationId, generation, transportHandle)
+        val existing = refreshInFlight
+        val attempt = if (existing != null && existing == candidate) {
+            existing
+        } else {
+            refreshInFlight = candidate
+            operationExecutor.execute {
+                try {
+                    performRefresh(record, candidate)
+                    candidate.result.complete(Unit)
+                } catch (exception: Exception) {
+                    candidate.result.completeExceptionally(settleRefreshFailure(candidate, exception))
+                } finally {
+                    synchronized(this) {
+                        if (refreshInFlight === candidate) refreshInFlight = null
+                    }
+                }
+            }
+            candidate
+        }
+        attempt.result.whenComplete { _, error ->
+            mainHandler.post {
+                if (error == null) {
+                    call.resolve(JSObject().put("refreshed", true))
+                } else {
+                    call.reject(error.message ?: "Access renewal failed.")
+                }
+            }
+        }
+    }
+
+    private fun settleRefreshFailure(attempt: RefreshAttempt, failure: Exception): Exception {
+        val status = httpStatus(failure)
+        if (!RefreshAuthority.requiresRepair(status, failure.message.orEmpty())) return failure
+        val clearedGeneration = try {
+            synchronized(this) {
+                custody.withAuthority(attempt.generation) {
+                    val current = custody.load()
+                    if (current?.installationId != attempt.installationId || current.origin != attempt.origin ||
+                        attempt.handle == 0L || transportHandle != attempt.handle
+                    ) return@withAuthority null
+                    custody.cancelPairing()
+                    activePairing = null
+                    pairingApproval = null
+                    RunKeepAliveRegistry.clear()
+                    RunKeepAliveService.stop(context.applicationContext)
+                    NativeNetwork.mediaPurge(attempt.handle)
+                    stopInternal()
+                    custody.logout(serverReachable = true)
+                    custody.purgeMedia()
+                    custody.attemptGeneration()
+                }
+            }
+        } catch (_: Exception) {
+            null
+        } ?: return failure
+        mainHandler.post {
+            synchronized(this) {
+                try {
+                    custody.withAuthority(clearedGeneration) {
+                        if (transportHandle == 0L) {
+                            (activity as? BridgeActivity)?.getBridge()?.getWebView()?.reload()
+                        }
+                    }
+                } catch (_: IllegalStateException) {
+                    // A newer pairing already owns the app.
+                }
+            }
+        }
+        val message = if (status == 426) "pairing upgrade required" else "pairing was revoked"
+        return IllegalStateException(message, failure)
+    }
+
+    private fun performRefresh(record: CustodyRecord, attempt: RefreshAttempt) {
+        custody.requireAuthority(attempt.generation)
+        val useDeviceProof = record.refreshToken.isBlank()
+        val refreshed = if (useDeviceProof) {
+            recoverAccess(record, attempt.generation, attempt.handle)
+        } else {
+            refreshBearer(record, attempt)
+        }
+        synchronized(this) {
+            check(attempt.handle == transportHandle) { "Native transport changed." }
+            custody.withAuthority(attempt.generation) {
+                val saved = custody.saveRefreshedTokens(
+                    attempt.origin,
+                    attempt.installationId,
+                    refreshed.getString("access_token"),
+                    if (useDeviceProof) refreshed.optString("refresh_token") else refreshed.getString("refresh_token"),
+                    refreshed.optInt("expires_in", 600),
+                    refreshed.optInt("refresh_expires_in", if (useDeviceProof) 0 else 30 * 24 * 60 * 60),
+                    expectedGeneration = attempt.generation,
+                )
+                NativeNetwork.mediaSetToken(attempt.handle, saved.accessToken)
+            }
+        }
+    }
+
+    private fun refreshBearer(record: CustodyRecord, attempt: RefreshAttempt): JSONObject {
+        return try {
+            requestRefresh(record, attempt.handle)
+        } catch (first: Exception) {
+            if (!isUnauthorized(first)) throw first
+            custody.requireAuthority(attempt.generation)
+            val latest = custody.load()
+            if (latest == null || latest.revocationPending || latest.installationId != attempt.installationId ||
+                latest.origin != attempt.origin || latest.refreshToken.isBlank() || latest.refreshToken == record.refreshToken
+            ) throw first
+            requestRefresh(latest, attempt.handle)
+        }
+    }
+
+    @PluginMethod
+    fun start(call: PluginCall) {
+        val origin = call.getString("origin")
+        val installationId = call.getString("installationId")
+        if (origin.isNullOrBlank() || installationId.isNullOrBlank()) {
+            call.reject("origin and installationId are required")
+            return
+        }
+        try {
+            synchronized(this) {
+                val record = requireTransportTarget(origin, installationId)
+                check(record.accessToken.isNotBlank()) { "No paired device." }
+                val current = transportHandle
+                val state = if (current == 0L) "" else
+                    NativeNetwork.status(current)?.let { JSONObject(String(it, Charsets.UTF_8)).optString("state") }
+                if (state !in setOf("starting", "needs_login", "ready")) startTransport(record)
+            }
+        } catch (exception: Exception) {
+            call.reject(exception.message ?: "native custody rejected the installation")
+            return
+        }
+        call.resolve(JSObject().put("state", "starting"))
+    }
+
+    private fun defaultDeviceLabel(): String {
+        val configured = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N_MR1) {
+            try {
+                Settings.Global.getString(context.contentResolver, Settings.Global.DEVICE_NAME)
+            } catch (_: Exception) {
+                null
+            }
+        } else {
+            null
+        }
+        val model = listOf(Build.MANUFACTURER, Build.MODEL)
+            .filter { it.isNotBlank() }
+            .joinToString(" ")
+            .trim()
+        return (configured?.trim()?.takeIf { it.isNotEmpty() } ?: model.ifEmpty { "Android device" })
+            .take(64)
+    }
+
+    private fun tailscaleHostname(): String {
+        val maxDeviceLength = MAX_DNS_LABEL_LENGTH - HOSTNAME_PREFIX.length
+        val device = sequenceOf(defaultDeviceLabel(), Build.MODEL, Build.DEVICE)
+            .map { label ->
+                Normalizer.normalize(label, Normalizer.Form.NFD)
+                    .replace(combiningMarks, "")
+                    .lowercase(Locale.ROOT)
+                    .replace(hostnameSeparators, "-")
+                    .trim('-')
+                    .take(maxDeviceLength)
+                    .trimEnd('-')
+            }
+            .firstOrNull { it.isNotEmpty() } ?: "android"
+        return HOSTNAME_PREFIX + device
+    }
+
+    @PluginMethod
+    fun pairingIdentity(call: PluginCall) {
+        try {
+            val record = custody.load()
+            val installation = record?.installationId ?: custody.installationIdentity()
+            val result = JSObject().put("installationId", installation)
+            if (record != null) {
+                result.put("origin", record.origin)
+                result.put("hasAccess", record.accessToken.isNotBlank())
+            }
+            call.resolve(result)
+        } catch (exception: Exception) {
+            call.reject(exception.message ?: "pairing identity is unavailable")
+        }
+    }
+
+    @PluginMethod
+    fun pairStart(call: PluginCall) {
+        val origin = call.getString("origin")
+        val installationId = call.getString("installationId")
+        val rawChallenge = call.getString("challenge")
+        val requestedLabel = call.getString("label")?.trim().orEmpty()
+        val label = if (
+            requestedLabel.isEmpty() ||
+            requestedLabel.equals("android", ignoreCase = true) ||
+            requestedLabel.equals("phone", ignoreCase = true)
+        ) {
+            defaultDeviceLabel()
+        } else {
+            requestedLabel.take(64)
+        }
+        if (origin.isNullOrBlank() || installationId.isNullOrBlank()) {
+            call.reject("origin and installationId are required")
+            return
+        }
+        val challenge = try {
+            if (!rawChallenge.isNullOrBlank()) {
+                PairingChallengeCodec.decode(rawChallenge).also { activePairing = it }
+            } else {
+                activePairing ?: throw IllegalStateException("no pending pairing challenge")
+            }
+        } catch (exception: Exception) {
+            call.reject(exception.message ?: "pairing challenge is invalid")
+            return
+        }
+        val generation = try {
+            custody.beginPairing(origin, installationId, challenge = PairingChallengeCodec.encode(challenge), label = label)
+        } catch (exception: Exception) {
+            call.reject(exception.message ?: "pending pairing could not be persisted")
+            return
+        }
+        operationExecutor.execute {
+            try {
+                val existing = custody.load()
+                if (
+                    transportHandle == 0L ||
+                    existing == null ||
+                    existing.origin != origin ||
+                    existing.installationId != installationId
+                ) {
+                    startTransport(origin, installationId, generation)
+                }
+                waitUntilReady()
+                custody.requirePairing(generation)
+                val collected = jsonRequest(
+                    "mobile_pair_collect",
+                    "/mobile/v1/pair/collect",
+                    body = null,
+                    headers = mapOf(
+                        "X-Nanobot-Pairing-Id" to challenge.pairingId,
+                        "X-Nanobot-Pairing-Nonce" to challenge.nonce,
+                        "X-Nanobot-Pairing-Secret" to challenge.collectorSecret,
+                        "X-Nanobot-Installation" to installationId,
+                        "X-Nanobot-Label" to label,
+                        "X-Nanobot-Device-Key" to DeviceProofCanonicalizer.encode(custody.deviceProofPublicKey()),
+                    ),
+                )
+                custody.withPairing(generation) {
+                    custody.savePendingPairing(origin, installationId, challenge.pairingId,
+                        PairingChallengeCodec.encode(challenge), generation)
+                    activePairing = challenge
+                }
+                val result = JSObject()
+                    .put("pairing_id", collected.getString("pairing_id"))
+                    .put("origin", origin)
+                    .put("installationId", installationId)
+                (collected.opt("comparison_code") as? String)?.let { result.put("comparison_code", it) }
+                (collected.opt("status") as? String)?.let { result.put("status", it) }
+                mainHandler.post { call.resolve(result) }
+            } catch (exception: Exception) {
+                mainHandler.post { call.reject(exception.message ?: "pairing collect failed") }
+            }
+        }
+    }
+
+    @PluginMethod
+    fun pairStartCode(call: PluginCall) {
+        val origin = call.getString("origin")
+        val installationId = call.getString("installationId")
+        val code = call.getString("code")
+        val requestedLabel = call.getString("label")?.trim().orEmpty()
+        val label = if (
+            requestedLabel.isEmpty() ||
+            requestedLabel.equals("android", ignoreCase = true) ||
+            requestedLabel.equals("phone", ignoreCase = true)
+        ) {
+            defaultDeviceLabel()
+        } else {
+            requestedLabel.take(64)
+        }
+        if (origin.isNullOrBlank() || installationId.isNullOrBlank() || code.isNullOrBlank()) {
+            call.reject("origin, installationId and code are required")
+            return
+        }
+        if (!Regex("^[0-9]{8}$").matches(code)) {
+            call.reject("pairing code must be 8 digits")
+            return
+        }
+        val generation = try {
+            custody.beginPairing(origin, installationId, code = code, label = label)
+        } catch (exception: Exception) {
+            call.reject(exception.message ?: "pending pairing could not be persisted")
+            return
+        }
+        operationExecutor.execute {
+            try {
+                val collected = collectPairingCode(origin, installationId, code, label, generation)
+                val result = JSObject()
+                    .put("pairing_id", collected.getString("pairing_id"))
+                    .put("origin", origin)
+                    .put("installationId", installationId)
+                (collected.opt("comparison_code") as? String)?.let { result.put("comparison_code", it) }
+                (collected.opt("status") as? String)?.let { result.put("status", it) }
+                mainHandler.post { call.resolve(result) }
+            } catch (exception: Exception) {
+                mainHandler.post { call.reject(exception.message ?: "pairing code failed") }
+            }
+        }
+    }
+
+    private fun collectPairingCode(origin: String, installationId: String, code: String, label: String, generation: Long): JSONObject {
+        custody.requirePairing(generation)
+        val existing = custody.load()
+        if (transportHandle == 0L || existing == null || existing.origin != origin || existing.installationId != installationId) {
+            startTransport(origin, installationId, generation)
+        }
+        waitUntilReady()
+        custody.requirePairing(generation)
+        val collected = jsonRequest("mobile_pair_code", "/mobile/v1/pair/code", body = null,
+            headers = mapOf("X-Nanobot-Pairing-Code" to code, "X-Nanobot-Installation" to installationId,
+                "X-Nanobot-Label" to label, "X-Nanobot-Device-Key" to DeviceProofCanonicalizer.encode(custody.deviceProofPublicKey())))
+        val rawChallenge = collected.optString("challenge")
+        val challenge = if (rawChallenge.isNotBlank()) PairingChallengeCodec.decode(rawChallenge) else PairingChallenge(
+            collected.getString("pairing_id"), collected.getString("nonce"), collected.getString("collector_secret"))
+        custody.withPairing(generation) {
+            custody.savePendingPairing(origin, installationId, challenge.pairingId, PairingChallengeCodec.encode(challenge), generation)
+            activePairing = challenge
+        }
+        return collected
+    }
+
+    @PluginMethod
+    fun connectTailscale(call: PluginCall) {
+        val origin = call.getString("origin")
+        val installationId = call.getString("installationId")
+        if (origin.isNullOrBlank() || installationId.isNullOrBlank()) {
+            call.reject("origin and installationId are required")
+            return
+        }
+        operationExecutor.execute {
+            try {
+                val current = synchronized(this) {
+                    val record = requireTransportTarget(origin, installationId)
+                    if (transportHandle == 0L) startTransport(record)
+                    transportHandle
+                }
+                val deadline = System.currentTimeMillis() + 5_000
+                var status = JSONObject()
+                while (System.currentTimeMillis() < deadline) {
+                    val bytes = NativeNetwork.status(current) ?: break
+                    status = JSONObject(String(bytes, StandardCharsets.UTF_8))
+                    if (status.optString("state") != "starting") break
+                    Thread.sleep(250)
+                }
+                val result = JSObject()
+                    .put("state", status.optString("state", "starting"))
+                    .put("message", status.optString("message"))
+                mainHandler.post { call.resolve(result) }
+            } catch (exception: Exception) {
+                mainHandler.post { call.reject(exception.message ?: "tailscale connection failed") }
+            }
+        }
+    }
+
+    @PluginMethod
+    @Synchronized
+    fun pairCancel(call: PluginCall) {
+        val (generation, pending) = try {
+            val cancelled = custody.fencePendingPairing()
+            activePairing = null
+            pairingApproval = null
+            cancelled
+        } catch (exception: Exception) {
+            call.reject(exception.message ?: "pairing cancellation could not be persisted")
+            return
+        }
+        if (pending == null) {
+            call.resolve(JSObject().put("status", "cancelled"))
+            return
+        }
+        operationExecutor.execute {
+            try {
+                // Collection cannot issue access. An attempt with no saved ID
+                // cannot have started polling or proving on this installation.
+                if (pending.pairingId.isNotBlank()) {
+                    val challenge = PairingChallengeCodec.decode(pending.challenge)
+                    val record = custody.load() ?: throw IllegalStateException("custody target is missing")
+                    val handle = synchronized(this) {
+                        custody.withAuthority(generation) {
+                            check(record.origin == pending.origin) { "Custody target changed." }
+                            val current = transportHandle
+                            val state = if (current == 0L) "" else NativeNetwork.status(current)
+                                ?.let { JSONObject(String(it, Charsets.UTF_8)).optString("state") }
+                            if (state !in setOf("starting", "needs_login", "ready")) startTransport(record)
+                            transportHandle
+                        }
+                    }
+                    waitUntilReady(expectedHandle = handle)
+                    val result = jsonRequest(
+                        "mobile_pair_cancel",
+                        "/mobile/v1/pair/cancel",
+                        body = null,
+                        headers = pairingHeaders(challenge) + ("X-Nanobot-Installation" to record.installationId),
+                        expectedHandle = handle,
+                    )
+                    check(result.optBoolean("cancelled", false)) { "owner did not cancel the pairing" }
+                }
+                custody.finishPairingCancellation(generation, pending)
+                mainHandler.post { call.resolve(JSObject().put("status", "cancelled")) }
+            } catch (exception: Exception) {
+                mainHandler.post {
+                    call.reject(exception.message ?: "pairing cancellation did not reach the owner")
+                }
+            }
+        }
+    }
+
+    @PluginMethod
+    fun pendingPairing(call: PluginCall) {
+        val pending = try {
+            val cancelling = custody.loadPairingCancellation()
+            if (cancelling != null) {
+                call.resolve(JSObject().put("cancellationPending", true).put("origin", cancelling.origin))
+                return
+            }
+            custody.loadPendingPairing()
+        } catch (exception: Exception) {
+            call.reject(exception.message ?: "pending pairing is unavailable")
+            return
+        }
+        if (pending == null) { call.resolve(JSObject().put("pending", false)); return }
+        operationExecutor.execute {
+            try {
+                if (pending.challenge.isBlank() && pending.code.isNotBlank()) {
+                    val record = custody.load() ?: throw IllegalStateException("custody target is missing")
+                    collectPairingCode(pending.origin, record.installationId, pending.code, pending.label, pending.generation)
+                }
+                val current = custody.loadPendingPairing() ?: throw IllegalStateException("pairing attempt was cancelled")
+                val challenge = PairingChallengeCodec.decode(current.challenge)
+                custody.withPairing(current.generation) { activePairing = challenge }
+                val result = JSObject().put("pending", true).put("origin", current.origin)
+                    .put("pairingId", challenge.pairingId).put("challenge", current.challenge)
+                mainHandler.post { call.resolve(result) }
+            } catch (exception: Exception) {
+                mainHandler.post { call.reject(exception.message ?: "pending pairing is unavailable") }
+            }
+        }
+    }
+
+    @PluginMethod
+    @Synchronized
+    fun pairPoll(call: PluginCall) {
+        val pairingId = call.getString("pairingId")
+        if (pairingId.isNullOrBlank()) {
+            call.reject("pairingId is required")
+            return
+        }
+        val challenge = activePairing
+        if (challenge == null || challenge.pairingId != pairingId) {
+            call.reject("pairing challenge is not active")
+            return
+        }
+        val pending = try {
+            custody.loadPendingPairing()
+        } catch (exception: Exception) {
+            call.reject(exception.message ?: "pending pairing is unavailable")
+            return
+        }
+        if (pending == null || pending.pairingId != pairingId) {
+            call.reject("pairing attempt is not current")
+            return
+        }
+        val generation = pending.generation
+        val handle = transportHandle
+        operationExecutor.execute {
+            try {
+                val record = custody.load() ?: throw IllegalStateException("custody target is missing")
+                custody.requirePairing(generation)
+                val approved = pollPairingResult(challenge, record, generation, handle)
+                if (approved.optString("status") != "approved") {
+                    val publicState = JSObject()
+                    (approved.opt("status") as? String)?.let { publicState.put("status", it) }
+                    (approved.opt("pairing_id") as? String)?.let { publicState.put("pairing_id", it) }
+                    (approved.opt("comparison_code") as? String)?.let { publicState.put("comparison_code", it) }
+                    (approved.opt("expires_at") as? Number)?.let { publicState.put("expires_at", it.toLong()) }
+                    (approved.opt("expires_in") as? Number)?.let { publicState.put("expires_in", it.toLong()) }
+                    mainHandler.post { call.resolve(publicState) }
+                    return@execute
+                }
+                synchronized(this) {
+                    custody.withPairing(generation) {
+                        check(transportHandle == handle) { "Native transport changed." }
+                        pairingApproval = PairingApproval(pairingId, generation, handle, approved)
+                    }
+                }
+                mainHandler.post {
+                    call.resolve(
+                        JSObject()
+                            .put("status", "approved")
+                            .put("installationId", record.installationId)
+                    )
+                }
+            } catch (exception: Exception) {
+                mainHandler.post { call.reject(exception.message ?: "pairing poll failed") }
+            }
+        }
+    }
+
+    @PluginMethod
+    @Synchronized
+    fun pairAccept(call: PluginCall) {
+        try {
+            val approval = pairingApproval ?: throw IllegalStateException("pairing approval is unavailable")
+            check(approval.pairingId == call.getString("pairingId") && approval.handle == transportHandle) {
+                "pairing approval is not current"
+            }
+            val saved = custody.savePairingTokens(approval.generation, approval.pairingId, approval.response)
+            pairingApproval = null
+            activePairing = null
+            NativeNetwork.mediaSetToken(approval.handle, saved.accessToken)
+            call.resolve()
+        } catch (exception: Exception) {
+            call.reject(exception.message ?: "pairing could not be completed")
+        }
+    }
+
+    private fun pairingHeaders(challenge: PairingChallenge): Map<String, String> = mapOf(
+        "X-Nanobot-Pairing-Id" to challenge.pairingId,
+        "X-Nanobot-Pairing-Nonce" to challenge.nonce,
+        "X-Nanobot-Pairing-Secret" to challenge.collectorSecret,
+    )
+
+    private fun pollPairingResult(
+        challenge: PairingChallenge,
+        record: CustodyRecord,
+        generation: Long,
+        handle: Long,
+    ): JSONObject {
+        try {
+            val polled = jsonRequest(
+                "mobile_pair_poll",
+                "/mobile/v1/pair/poll",
+                body = null,
+                headers = pairingHeaders(challenge),
+                expectedHandle = handle,
+            )
+            val proofChallenge = polled.optJSONObject("proof_challenge")
+            if (polled.optString("status") == "approved" && proofChallenge != null && !polled.has("access_token")) {
+                return provePairing(challenge.pairingId, proofChallenge, generation, handle)
+            }
+            return polled
+        } catch (failure: IllegalStateException) {
+            val code = failure.message.orEmpty().substringAfterLast(' ')
+            if (code != "pairing_not_found" && code != "pairing_consumed") throw failure
+            custody.requirePairing(generation)
+            return recoverAccess(record, generation, handle, pairingId = challenge.pairingId)
+        }
+    }
+
+    private fun recoverAccess(
+        record: CustodyRecord,
+        generation: Long,
+        handle: Long,
+        pairingId: String? = null,
+    ): JSONObject {
+        val installationId = record.installationId
+        val headers = mutableMapOf(
+            "X-Nanobot-Installation" to installationId,
+            "X-Nanobot-Device-Key" to DeviceProofCanonicalizer.encode(custody.deviceProofPublicKey()),
+        )
+        if (pairingId != null) headers["X-Nanobot-Pairing-Id"] = pairingId
+        val begun = jsonRequest(
+            "mobile_pair_recover",
+            "/mobile/v1/pair/recover",
+            body = null,
+            expectedHandle = handle,
+            headers = headers,
+        )
+        val claims = begun.getJSONObject("proof_challenge")
+        val canonical = DeviceProofCanonicalizer.canonicalBytes(
+            DeviceProofCanonicalizer.fromJson(claims)
+        )
+        validateProofBinding(claims, record, generation)
+        val signature = custody.signDeviceProof(canonical)
+        custody.requireAuthority(generation)
+        return jsonRequest(
+            "mobile_pair_recover_complete",
+            "/mobile/v1/pair/recover/complete",
+            body = null,
+            expectedHandle = handle,
+            headers = mapOf(
+                "X-Nanobot-Installation" to installationId,
+                "X-Nanobot-Device-Signature" to DeviceProofCanonicalizer.encode(signature),
+                "X-Nanobot-Proof-Claims" to DeviceProofCanonicalizer.encode(canonical),
+            ),
+        )
+    }
+
+    @PluginMethod
+    fun pendingPairingLink(call: PluginCall) {
+        val raw = MainActivity.pendingPairingLink
+        MainActivity.pendingPairingLink = null
+        if (raw == null) {
+            call.resolve(JSObject())
+            return
+        }
+        try {
+            val link = PairingLinkParser.parse(raw)
+            activePairing = PairingChallengeCodec.decode(link.challenge)
+            call.resolve(
+                JSObject()
+                    .put("origin", link.origin)
+                    .put("installationId", link.installationId)
+            )
+        } catch (exception: Exception) {
+            call.reject(exception.message ?: "pairing link is invalid")
+        }
+    }
+
+    @PluginMethod
+    fun consumePairingLink(call: PluginCall) {
+        val raw = MainActivity.pendingPairingLink
+        MainActivity.pendingPairingLink = null
+        if (raw == null) {
+            call.reject("no pending pairing link")
+            return
+        }
+        try {
+            val link = PairingLinkParser.parse(raw)
+            activePairing = PairingChallengeCodec.decode(link.challenge)
+            call.resolve(JSObject().put("origin", link.origin).put("installationId", link.installationId))
+        } catch (exception: Exception) {
+            call.reject(exception.message ?: "pairing link is invalid")
+        }
+    }
+
+    @PluginMethod
+    fun target(call: PluginCall) {
+        val record = try {
+            custody.load()
+        } catch (exception: Exception) {
+            call.reject(exception.message ?: "custody is unavailable")
+            return
+        }
+        if (record == null) {
+            call.reject("no paired target")
+            return
+        }
+        call.resolve(
+            JSObject()
+                .put("origin", record.origin)
+                .put("installationId", record.installationId)
+                .put("hasAccess", record.accessToken.isNotBlank())
+                .put("hasRefresh", record.refreshToken.isNotBlank())
+        )
+    }
+
+    @PluginMethod
+    fun remoteStatus(call: PluginCall) {
+        ownerRequest(call, "remote_status", "/remote/v1/status", null)
+    }
+
+    @PluginMethod
+    fun remoteDevices(call: PluginCall) {
+        ownerRequest(call, "remote_devices", "/remote/v1/devices", null)
+    }
+
+    @PluginMethod
+    fun remoteRevoke(call: PluginCall) {
+        val installationId = call.getString("installationId")
+        if (
+            installationId.isNullOrBlank() ||
+            !Regex("^[A-Za-z0-9._-]{1,128}$").matches(installationId)
+        ) {
+            call.reject("invalid installation id")
+            return
+        }
+        ownerRequest(
+            call,
+            "remote_device_revoke",
+            "/remote/v1/devices/$installationId/revoke",
+            JSONObject(),
+        )
+    }
+
+    private fun ownerRequest(
+        call: PluginCall,
+        operation: String,
+        path: String,
+        body: JSONObject?,
+    ) {
+        operationExecutor.execute {
+            try {
+                val record = custody.load()
+                val accessToken = record?.accessToken.orEmpty()
+                val headers = if (accessToken.isNotBlank()) {
+                    mapOf("Authorization" to "Bearer $accessToken")
+                } else {
+                    emptyMap()
+                }
+                val result = jsonRequest(operation, path, body = body, headers = headers)
+                mainHandler.post { call.resolve(JSObject(result.toString())) }
+            } catch (exception: Exception) {
+                mainHandler.post {
+                    call.reject(exception.message ?: "owner request failed")
+                }
+            }
+        }
+    }
+
+    @PluginMethod
+    fun status(call: PluginCall) {
+        val current = transportHandle
+        if (current == 0L) {
+            call.reject("transport is not started")
+            return
+        }
+        val bytes = NativeNetwork.status(current)
+        if (bytes == null) {
+            call.reject(NativeNetwork.lastError())
+            return
+        }
+        call.resolve(JSObject(String(bytes, StandardCharsets.UTF_8)))
+    }
+
+    @PluginMethod
+    fun http(call: PluginCall) {
+        val current = transportHandle
+        if (current == 0L) {
+            call.reject("transport is not started")
+            return
+        }
+        val operation = call.getString("operation")
+        val method = call.getString("method")
+        val path = call.getString("path")
+        if (operation.isNullOrBlank() || method.isNullOrBlank() || path.isNullOrBlank()) {
+            call.reject("operation, method and path are required")
+            return
+        }
+        val request = JSONObject()
+            .put("operation", operation)
+            .put("method", method)
+            .put("path", path)
+        val headers = call.getObject("headers")
+        val copied = JSONObject()
+        if (headers != null) {
+            for (key in headers.keys()) {
+                copied.put(key, headers.getString(key))
+            }
+        }
+        // Inject the custody access token natively; JS never receives it.
+        val record = try { custody.load() } catch (_: Exception) { null }
+        if (record != null && record.accessToken.isNotBlank() && !copied.has("Authorization")) {
+            copied.put("Authorization", "Bearer ${record.accessToken}")
+        }
+        if (copied.length() > 0) {
+            request.put("headers", copied)
+        }
+        call.getString("bodyBase64")?.let { request.put("body_base64", it) }
+        call.getInt("timeoutMs")?.let { request.put("timeout_ms", it) }
+        // Build once: every admission retry must carry the same bytes, so a
+        // mutation keeps its request identity for the server's replay guard.
+        val encodedRequest = request.toString()
+        val refusal = NativeRequestLimits.refusal(
+            encodedRequest.toByteArray(Charsets.UTF_8).size,
+            requests.pendingCount(),
+        )
+        if (refusal != null) {
+            call.reject(refusal)
+            return
+        }
+        val requestOwner = requests
+        val retry = admission
+        operationExecutor.execute {
+            try {
+                val admitted = retry.run {
+                    requestOwner.launch(
+                        false,
+                        lastError = { NativeNetwork.lastError() },
+                        start = { NativeNetwork.http(current, encodedRequest) },
+                    )
+                }.get()
+                mainHandler.post {
+                    call.resolve(JSObject().put("requestId", admitted.id))
+                }
+            } catch (exception: Exception) {
+                val cause = (exception as? java.util.concurrent.ExecutionException)?.cause ?: exception
+                mainHandler.post {
+                    call.reject(cause.message ?: "native request was not admitted")
+                }
+            }
+        }
+    }
+
+    @PluginMethod
+    fun cancel(call: PluginCall) {
+        val current = transportHandle
+        val requestId = callLong(call, "requestId")
+        if (current == 0L || requestId == null) {
+            call.reject("transport and requestId are required")
+            return
+        }
+        val status = NativeNetwork.cancel(current, requestId)
+        requests.abandon(requestId)
+        if (status != 0) {
+            call.reject(NativeNetwork.lastError())
+            return
+        }
+        call.resolve()
+    }
+
+    @PluginMethod
+    fun wsOpen(call: PluginCall) {
+        val current = transportHandle
+        if (current == 0L) {
+            call.reject("transport is not started")
+            return
+        }
+        val operation = call.getString("operation") ?: "fixture_ws"
+        val path = call.getString("path")
+        if (path.isNullOrBlank()) {
+            call.reject("path is required")
+            return
+        }
+        val request = JSONObject().put("operation", operation).put("path", path)
+        val headers = call.getObject("headers")
+        val copied = JSONObject()
+        if (headers != null) {
+            for (key in headers.keys()) {
+                copied.put(key, headers.getString(key))
+            }
+        }
+        val record = try { custody.load() } catch (_: Exception) { null }
+        if (record != null && record.accessToken.isNotBlank() && !copied.has("Authorization")) {
+            copied.put("Authorization", "Bearer ${record.accessToken}")
+        }
+        if (copied.length() > 0) {
+            request.put("headers", copied)
+        }
+        val wsId = NativeNetwork.wsOpen(current, request.toString())
+        if (wsId == 0L) {
+            call.reject(NativeNetwork.lastError())
+            return
+        }
+        call.resolve(JSObject().put("wsId", wsId))
+    }
+
+    @PluginMethod
+    fun wsSend(call: PluginCall) {
+        val current = transportHandle
+        val wsId = callLong(call, "wsId")
+        val dataBase64 = call.getString("dataBase64")
+        val kindName = call.getString("kind") ?: "text"
+        if (current == 0L || wsId == null || dataBase64 == null) {
+            call.reject("transport, wsId and dataBase64 are required")
+            return
+        }
+        val kind = if (kindName == "binary") 1 else 0
+        val data = Base64.decode(dataBase64, Base64.NO_WRAP)
+        val status = NativeNetwork.wsSend(current, wsId, kind, data)
+        if (status != 0) {
+            call.reject(NativeNetwork.lastError())
+            return
+        }
+        call.resolve()
+    }
+
+    @PluginMethod
+    fun wsSendBegin(call: PluginCall) {
+        val wsId = callLong(call, "wsId")
+        val kindName = call.getString("kind") ?: "text"
+        if (wsId == null) {
+            call.reject("wsId is required")
+            return
+        }
+        pendingWsFrames[wsId] = PendingWsFrame(
+            if (kindName == "binary") 1 else 0,
+            ByteArrayOutputStream(),
+        )
+        call.resolve()
+    }
+
+    @PluginMethod
+    fun wsSendChunk(call: PluginCall) {
+        val wsId = callLong(call, "wsId")
+        val dataBase64 = call.getString("dataBase64")
+        if (wsId == null || dataBase64 == null) {
+            call.reject("wsId and dataBase64 are required")
+            return
+        }
+        val frame = pendingWsFrames[wsId]
+        if (frame == null) {
+            call.reject("no pending websocket frame")
+            return
+        }
+        val chunk = try {
+            Base64.decode(dataBase64, Base64.NO_WRAP)
+        } catch (exception: Exception) {
+            pendingWsFrames.remove(wsId)
+            call.reject("websocket chunk is not base64")
+            return
+        }
+        synchronized(frame.data) {
+            frame.data.write(chunk)
+        }
+        call.resolve()
+    }
+
+    @PluginMethod
+    fun wsSendEnd(call: PluginCall) {
+        val current = transportHandle
+        val wsId = callLong(call, "wsId")
+        val discard = call.getBoolean("discard") ?: false
+        if (wsId == null) {
+            call.reject("wsId is required")
+            return
+        }
+        val frame = pendingWsFrames.remove(wsId)
+        if (frame == null) {
+            call.reject("no pending websocket frame")
+            return
+        }
+        if (discard) {
+            call.resolve()
+            return
+        }
+        if (current == 0L) {
+            call.reject("transport is not started")
+            return
+        }
+        val data = synchronized(frame.data) { frame.data.toByteArray() }
+        val status = NativeNetwork.wsSend(current, wsId, frame.kind, data)
+        if (status != 0) {
+            call.reject(NativeNetwork.lastError())
+            return
+        }
+        call.resolve()
+    }
+
+    @PluginMethod
+    fun wsClose(call: PluginCall) {
+        val current = transportHandle
+        val wsId = callLong(call, "wsId")
+        if (current == 0L || wsId == null) {
+            call.reject("transport and wsId are required")
+            return
+        }
+        pendingWsFrames.remove(wsId)
+        val status = NativeNetwork.wsClose(current, wsId)
+        if (status != 0) {
+            call.reject(NativeNetwork.lastError())
+            return
+        }
+        call.resolve()
+    }
+
+    @PluginMethod
+    fun wsPing(call: PluginCall) {
+        val current = transportHandle
+        val wsId = callLong(call, "wsId")
+        if (current == 0L || wsId == null) {
+            call.reject("transport and wsId are required")
+            return
+        }
+        val status = NativeNetwork.wsPing(current, wsId)
+        if (status != 0) {
+            call.reject(NativeNetwork.lastError())
+            return
+        }
+        call.resolve(JSObject().put("ok", true))
+    }
+
+    @PluginMethod
+    fun wsRefreshAuth(call: PluginCall) {
+        val current = transportHandle
+        val wsId = callLong(call, "wsId")
+        if (current == 0L || wsId == null) {
+            call.reject("transport and wsId are required")
+            return
+        }
+        val token = try {
+            custody.load()?.accessToken
+        } catch (_: Exception) {
+            null
+        }
+        if (token.isNullOrBlank()) {
+            call.reject("no current access token")
+            return
+        }
+        val frame = JSONObject()
+            .put("type", "auth_refresh")
+            .put("access_token", token)
+            .toString()
+            .toByteArray(StandardCharsets.UTF_8)
+        val status = NativeNetwork.wsSend(current, wsId, 0, frame)
+        if (status != 0) {
+            call.reject(NativeNetwork.lastError())
+            return
+        }
+        call.resolve(JSObject().put("ok", true))
+    }
+
+    @PluginMethod
+    fun openLogin(call: PluginCall) {
+        val current = transportHandle
+        if (current == 0L) {
+            call.reject("transport is not started")
+            return
+        }
+        val bytes = NativeNetwork.loginUrl(current)
+        if (bytes == null) {
+            call.reject("no approved login URL is available")
+            return
+        }
+        val loginURL = JSONObject(String(bytes, StandardCharsets.UTF_8)).optString("login_url")
+        if (!isApprovedLoginURL(loginURL)) {
+            call.reject("native transport returned an unapproved login URL")
+            return
+        }
+        try {
+            val customTabs = CustomTabsIntent.Builder().setShowTitle(true).build()
+            customTabs.intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            customTabs.launchUrl(context, Uri.parse(loginURL))
+        } catch (exception: Exception) {
+            val intent = Intent(Intent.ACTION_VIEW, Uri.parse(loginURL))
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            context.startActivity(intent)
+        }
+        call.resolve()
+    }
+
+    @PluginMethod
+    fun stop(call: PluginCall) {
+        stopInternal()
+        call.resolve()
+    }
+
+    @PluginMethod
+    fun scanPairingQr(call: PluginCall) {
+        if (getPermissionState("camera") != PermissionState.GRANTED) {
+            requestPermissionForAlias("camera", call, "cameraPermission")
+            return
+        }
+        launchQrScanner(call)
+    }
+
+    @PermissionCallback
+    fun cameraPermission(call: PluginCall) {
+        if (getPermissionState("camera") == PermissionState.GRANTED) {
+            launchQrScanner(call)
+        } else {
+            call.reject("camera permission is required to scan the pairing QR code")
+        }
+    }
+
+    private fun launchQrScanner(call: PluginCall) {
+        val integrator = IntentIntegrator(activity)
+        integrator.setDesiredBarcodeFormats(IntentIntegrator.QR_CODE)
+        integrator.setPrompt("Scan the Kohaku pairing QR code")
+        integrator.setBeepEnabled(false)
+        integrator.setOrientationLocked(true)
+        startActivityForResult(call, integrator.createScanIntent(), "qrScanned")
+    }
+
+    @ActivityCallback
+    fun qrScanned(call: PluginCall?, result: ActivityResult) {
+        if (call == null) return
+        val parsed = IntentIntegrator.parseActivityResult(result.resultCode, result.data)
+        val raw = parsed?.contents
+        if (raw.isNullOrBlank()) {
+            call.reject("QR scan cancelled")
+            return
+        }
+        MainActivity.pendingPairingLink = raw
+        call.resolve(JSObject().put("scanned", true))
+    }
+
+    @PluginMethod
+    fun pickCamera(call: PluginCall) {
+        if (getPermissionState("camera") != PermissionState.GRANTED) {
+            requestPermissionForAlias("camera", call, "cameraPickPermission")
+            return
+        }
+        launchCameraPick(call)
+    }
+
+    @PermissionCallback
+    fun cameraPickPermission(call: PluginCall) {
+        if (getPermissionState("camera") == PermissionState.GRANTED) {
+            launchCameraPick(call)
+        } else {
+            call.reject("camera permission is required to take a photo")
+        }
+    }
+
+    private fun launchCameraPick(call: PluginCall) {
+        val directory = context.cacheDir.resolve("nanobot-media")
+        if (!directory.exists() && !directory.mkdirs()) {
+            call.reject("camera directory could not be created")
+            return
+        }
+        val file = directory.resolve("camera-" + System.currentTimeMillis() + ".jpg")
+        val uri = FileProvider.getUriForFile(context, context.packageName + ".fileprovider", file)
+        val intent = Intent(MediaStore.ACTION_IMAGE_CAPTURE).apply {
+            putExtra(MediaStore.EXTRA_OUTPUT, uri)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
+        }
+        if (intent.resolveActivity(context.packageManager) == null) {
+            call.reject("no camera application is available")
+            return
+        }
+        pendingCameraFile = file
+        try {
+            startActivityForResult(call, intent, "cameraPicked")
+        } catch (exception: SecurityException) {
+            pendingCameraFile = null
+            file.delete()
+            call.reject("camera permission is required to take a photo")
+        }
+    }
+
+    @ActivityCallback
+    fun cameraPicked(call: PluginCall?, result: ActivityResult) {
+        val file = pendingCameraFile
+        pendingCameraFile = null
+        if (call == null) {
+            file?.delete()
+            return
+        }
+        if (result.resultCode != Activity.RESULT_OK || file == null || !file.exists()) {
+            file?.delete()
+            call.reject("camera capture cancelled")
+            return
+        }
+        try {
+            val bytes = boundedCameraBytes(file)
+            val name = "camera-" + System.currentTimeMillis() + ".jpg"
+            AttachmentPolicy.validate(name, "image/jpeg", bytes.size.toLong(), attachmentLimits)
+            call.resolve(
+                JSObject()
+                    .put("name", name)
+                    .put("mediaType", "image/jpeg")
+                    .put("size", bytes.size)
+                    .put("dataBase64", Base64.encodeToString(bytes, Base64.NO_WRAP))
+            )
+        } catch (exception: Exception) {
+            call.reject(exception.message ?: "camera capture failed")
+        } finally {
+            file.delete()
+        }
+    }
+
+    private fun boundedCameraBytes(file: java.io.File): ByteArray {
+        val original = file.readBytes()
+        if (original.size <= attachmentLimits.maxBytes) return original
+        val bitmap = BitmapFactory.decodeByteArray(original, 0, original.size)
+            ?: throw IllegalArgumentException("camera image cannot be decoded")
+        var maxDimension = 1600
+        var quality = 82
+        while (true) {
+            val scaled = scaleDown(bitmap, maxDimension)
+            val output = ByteArrayOutputStream()
+            scaled.compress(Bitmap.CompressFormat.JPEG, quality, output)
+            if (scaled !== bitmap) scaled.recycle()
+            val bytes = output.toByteArray()
+            if (bytes.size <= attachmentLimits.maxBytes) {
+                bitmap.recycle()
+                return bytes
+            }
+            if (maxDimension <= 640 && quality <= 55) {
+                bitmap.recycle()
+                throw IllegalArgumentException("camera image exceeds the attachment limit")
+            }
+            maxDimension = maxOf(640, maxDimension - 320)
+            quality = maxOf(55, quality - 8)
+        }
+    }
+
+    private fun scaleDown(bitmap: Bitmap, maxDimension: Int): Bitmap {
+        val largest = maxOf(bitmap.width, bitmap.height)
+        if (largest <= maxDimension) return bitmap
+        val ratio = maxDimension.toFloat() / largest.toFloat()
+        return Bitmap.createScaledBitmap(
+            bitmap,
+            maxOf(1, (bitmap.width * ratio).toInt()),
+            maxOf(1, (bitmap.height * ratio).toInt()),
+            true,
+        )
+    }
+
+    @PluginMethod
+    fun pickAttachment(call: PluginCall) {
+        val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
+            type = "*/*"
+        }
+        startActivityForResult(call, intent, "attachmentPicked")
+    }
+
+    @ActivityCallback
+    fun attachmentPicked(call: PluginCall?, result: ActivityResult) {
+        if (call == null) return
+        if (result.resultCode != Activity.RESULT_OK) {
+            call.reject("attachment selection cancelled")
+            return
+        }
+        val uri = result.data?.data
+        if (uri == null) {
+            call.reject("attachment URI is missing")
+            return
+        }
+        try {
+            val resolver = context.contentResolver
+            val name = resolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
+                if (cursor.moveToFirst()) cursor.getString(0) else null
+            } ?: "attachment"
+            val mediaType = resolver.getType(uri) ?: "application/octet-stream"
+            val bytes = resolver.openInputStream(uri)?.use { it.readNBytes(attachmentLimits.maxBytes + 1) }
+                ?: throw IllegalArgumentException("attachment cannot be opened")
+            if (bytes.size > attachmentLimits.maxBytes) {
+                call.reject("attachment exceeds the limit")
+                return
+            }
+            AttachmentPolicy.validate(name, mediaType, bytes.size.toLong(), attachmentLimits)
+            val handle = mediaHandles.put(bytes, mediaType, "bin")
+            call.resolve(
+                JSObject()
+                    .put("handleId", handle.id)
+                    .put("name", name)
+                    .put("mediaType", mediaType)
+                    .put("size", bytes.size)
+            )
+        } catch (exception: Exception) {
+            call.reject(exception.message ?: "attachment selection failed")
+        }
+    }
+
+    @PluginMethod
+    fun custodyStatus(call: PluginCall) {
+        val result = JSObject()
+        custody.status().forEach { (key, value) -> result.put(key, value) }
+        call.resolve(result)
+    }
+
+    @PluginMethod
+    @Synchronized
+    fun logout(call: PluginCall) {
+        RunKeepAliveRegistry.clear()
+        RunKeepAliveService.stop(context.applicationContext)
+        try {
+            custody.cancelPairing()
+            activePairing = null
+            pairingApproval = null
+        } catch (exception: Exception) {
+            call.reject(exception.message ?: "custody cancellation fence failed"); return
+        }
+        val serverReachable = call.getBoolean("serverReachable") ?: false
+        val current = transportHandle
+        if (current != 0L) {
+            NativeNetwork.mediaPurge(current)
+        }
+        stopInternal()
+        val pending = try {
+            custody.logout(serverReachable)
+        } catch (exception: Exception) {
+            call.reject(exception.message ?: "custody erasure failed")
+            return
+        }
+        custody.purgeMedia()
+        call.resolve(JSObject().put("serverRevocationPending", pending))
+    }
+
+    override fun handleOnDestroy() {
+        unregisterNetworkCallback()
+        RunKeepAliveRegistry.clear()
+        RunKeepAliveService.stop(context.applicationContext)
+        stopInternal()
+        pollExecutor.shutdownNow()
+        retryExecutor.shutdownNow()
+        operationExecutor.shutdownNow()
+    }
+
+    private fun startPoller() {
+        pollTask = pollExecutor.scheduleWithFixedDelay(
+            {
+                try {
+                    // Drain up to 64 queued events per tick so LLM token bursts
+                    // never back up behind a 50 events/sec cap and trigger Go's
+                    // event-queue-full WebSocket disconnect.
+                    for (drained in 0 until 64) {
+                        val current = transportHandle
+                        if (current == 0L) {
+                            return@scheduleWithFixedDelay
+                        }
+                        val bytes = NativeNetwork.pollEvent(current) ?: return@scheduleWithFixedDelay
+                        val event = JSONObject(String(bytes, StandardCharsets.UTF_8))
+                        logTransportEvent(event)
+                        if (current != transportHandle) return@scheduleWithFixedDelay
+                        val requestId = event.optLong("request_id", 0L)
+                        val publish: (JSONObject) -> Unit = { admitted ->
+                            val jsEvent = JSObject(admitted, admitted.keys().asSequence().toList().toTypedArray())
+                            mainHandler.post {
+                                if (current == transportHandle) notifyListeners("networkEvent", jsEvent)
+                            }
+                        }
+                        if (event.optString("type") in setOf("http_response", "http_error")) {
+                            val requestOwner = requests
+                            requestOwner.dispatch(requestId, event, publish)
+                        } else {
+                            publish(event)
+                        }
+                    }
+                } catch (t: Throwable) {
+                    // Never allow an uncaught exception to permanently cancel
+                    // the ScheduledExecutorService poller task.
+                    Log.e(TAG, "native event poller error", t)
+                }
+            },
+            0,
+            20,
+            TimeUnit.MILLISECONDS
+        )
+    }
+
+    private fun logTransportEvent(event: JSONObject) {
+        when (event.optString("type")) {
+            "ws_open" ->
+                Log.i(TAG, "ws_open ws=${event.optLong("ws_id")}")
+            "ws_closed" ->
+                Log.i(
+                    TAG,
+                    "ws_closed ws=${event.optLong("ws_id")} code=${event.optInt("code")} " +
+                        "reason=${event.optString("reason")}",
+                )
+            "node_state" -> {
+                val nodeState = event.optString("state")
+                val message = event.optString("message")
+                Log.i(
+                    TAG,
+                    "node_state state=$nodeState login_url=${event.optString("login_url")} " +
+                        "message=$message",
+                )
+                if (nodeState == "ready") stateRecoveryAttempted = false
+                if (nodeState == "error" &&
+                    (message.contains("cannot be decrypted") || message.contains("ReadState"))
+                ) {
+                    recoverCorruptNetworkState()
+                }
+            }
+            "http_error" ->
+                Log.w(
+                    TAG,
+                    "http_error code=${event.optString("code")} status=${event.optInt("status")} " +
+                        "message=${event.optString("message")}",
+                )
+            "http_response" ->
+                Log.i(
+                    TAG,
+                    "http_response request=${event.optLong("request_id")} status=${event.optInt("status")}",
+                )
+            "ws_error" ->
+                Log.w(
+                    TAG,
+                    "ws_error code=${event.optString("code")} message=${event.optString("message")}",
+                )
+            else -> Unit
+        }
+    }
+
+    private fun requestRefresh(record: CustodyRecord, handle: Long): JSONObject = jsonRequest(
+        "remote_refresh",
+        "/remote/v1/refresh",
+        body = JSONObject()
+            .put("installation_id", record.installationId)
+            .put("refresh_token", record.refreshToken),
+        expectedHandle = handle,
+    )
+
+    private fun isUnauthorized(exception: Exception): Boolean =
+        (exception.message ?: "").contains("HTTP 401")
+
+    private fun httpStatus(exception: Exception): Int {
+        val match = Regex("HTTP (\\d{3})").find(exception.message ?: "") ?: return 0
+        return match.groupValues.getOrNull(1)?.toIntOrNull() ?: 0
+    }
+
+    private fun requireTransportTarget(origin: String, installationId: String): CustodyRecord {
+        val record = custody.load() ?: throw CustodyMismatchException("Custody target is missing.")
+        check(record.origin == origin && record.installationId == installationId) { "Custody target changed." }
+        return record
+    }
+
+    @Synchronized
+    private fun startTransport(origin: String, installationId: String, generation: Long) {
+        custody.withPairing(generation) {
+            startTransport(custody.loadOrCreate(origin, installationId))
+        }
+    }
+
+    private fun startTransport(record: CustodyRecord) {
+        stopInternal()
+        requests = NativeRequestCorrelator()
+        admission = NativeRequestAdmission(timer = retryTimer)
+        val stateRoot = context.filesDir.resolve("network-state")
+        val safeInstallation = record.installationId.replace(Regex("[^A-Za-z0-9._-]"), "_").take(64)
+        val stateDir = stateRoot.resolve(safeInstallation)
+        if (!stateDir.exists() && !stateDir.mkdirs()) {
+            throw IllegalStateException("native state directory could not be created")
+        }
+        stateDir.setReadable(false, false)
+        stateDir.setWritable(false, false)
+        stateDir.setReadable(true, true)
+        stateDir.setWritable(true, true)
+        val config = JSONObject()
+            .put("origin", record.origin)
+            .put("installation_id", record.installationId)
+            .put("hostname", tailscaleHostname())
+            .put("state_dir", stateDir.absolutePath)
+            .put("state_key_base64", record.stateKeyBase64)
+            .put("max_ws_frame_bytes", 37_748_736)
+            .put("max_response_bytes", 8 * 1024 * 1024)
+        val newHandle = NativeNetwork.start(config.toString())
+        if (newHandle == 0L) {
+            throw IllegalStateException(NativeNetwork.lastError())
+        }
+        transportHandle = newHandle
+        NativeNetwork.mediaSetToken(newHandle, record.accessToken)
+        NativeMediaInterceptor.transportHandle = newHandle
+        startPoller()
+    }
+
+    private fun waitUntilReady(timeoutMs: Long = 90_000, expectedHandle: Long? = null) {
+        val deadline = System.currentTimeMillis() + timeoutMs
+        while (System.currentTimeMillis() < deadline) {
+            val current = transportHandle
+            if (current == 0L) throw IllegalStateException("native transport stopped")
+            check(expectedHandle == null || current == expectedHandle) { "Native transport changed." }
+            val status = JSONObject(String(NativeNetwork.status(current) ?: ByteArray(0), Charsets.UTF_8))
+            when (status.optString("state")) {
+                "ready" -> return
+                "needs_login" -> throw IllegalStateException("tailnet login required")
+                "error" -> throw IllegalStateException(status.optString("message", "native transport failed"))
+            }
+            Thread.sleep(250)
+        }
+        throw IllegalStateException("native transport readiness timeout")
+    }
+
+    private fun provePairing(pairingId: String, claims: JSONObject, generation: Long, handle: Long): JSONObject {
+        custody.requirePairing(generation)
+        val record = custody.load() ?: throw IllegalStateException("custody target is missing")
+        validateProofBinding(claims, record, generation)
+        val canonical = DeviceProofCanonicalizer.canonicalBytes(
+            DeviceProofCanonicalizer.fromJson(claims)
+        )
+        val signature = custody.signDeviceProof(canonical)
+        custody.requirePairing(generation)
+        return jsonRequest(
+            "mobile_pair_prove",
+            "/mobile/v1/pair/prove",
+            body = null,
+            expectedHandle = handle,
+            headers = mapOf(
+                "X-Nanobot-Pairing-Id" to pairingId,
+                "X-Nanobot-Device-Signature" to DeviceProofCanonicalizer.encode(signature),
+                "X-Nanobot-Proof-Claims" to DeviceProofCanonicalizer.encode(canonical),
+            ),
+        )
+    }
+
+    private fun validateProofBinding(claims: JSONObject, record: CustodyRecord, generation: Long) {
+        custody.requireAuthority(generation)
+        val fingerprint = java.security.MessageDigest.getInstance("SHA-256").digest(custody.deviceProofPublicKey())
+            .joinToString("") { "%02x".format(it) }
+        require(claims.getString("origin") == record.origin && claims.getString("installation_id") == record.installationId
+            && claims.getString("device_fingerprint") == fingerprint) { "device proof binding changed" }
+        require(claims.getLong("expires_at") > System.currentTimeMillis() / 1000L) { "device proof expired" }
+    }
+
+    private fun jsonRequest(
+        operation: String,
+        path: String,
+        body: JSONObject?,
+        headers: Map<String, String> = emptyMap(),
+        timeoutSeconds: Long = 30,
+        expectedHandle: Long? = null,
+    ): JSONObject {
+        val (current, requestOwner, retry) = synchronized(this) {
+            Triple(transportHandle, requests, admission)
+        }
+        check(current != 0L) { "transport is not started" }
+        check(expectedHandle == null || current == expectedHandle) { "Native transport changed." }
+        val request = JSONObject()
+            .put("operation", operation)
+            .put("method", if (body == null) "GET" else "POST")
+            .put("path", path)
+            .put("native", true)
+        if (headers.isNotEmpty()) {
+            val encodedHeaders = JSONObject()
+            headers.forEach { (key, value) -> encodedHeaders.put(key, value) }
+            request.put("headers", encodedHeaders)
+        }
+        if (body != null) {
+            request.put(
+                "body_base64",
+                Base64.encodeToString(body.toString().toByteArray(Charsets.UTF_8), Base64.NO_WRAP)
+            )
+        }
+        // The same encoded bytes carry the same request identity on retry.
+        val encodedRequest = request.toString()
+        val admission = try {
+            retry.run {
+                requestOwner.launch(
+                    true,
+                    lastError = { NativeNetwork.lastError() },
+                    start = { NativeNetwork.http(current, encodedRequest) },
+                )
+            }.get()
+        } catch (exception: Exception) {
+            val cause = (exception as? java.util.concurrent.ExecutionException)?.cause ?: exception
+            throw cause as? Exception ?: exception
+        }
+        val requestId = admission.id
+        val future = admission.future
+        try {
+            val event = future.get(timeoutSeconds, TimeUnit.SECONDS)
+            if (event.optString("type") == "http_error") {
+                throw IllegalStateException(event.optString("code", "native request failed"))
+            }
+            val status = event.optInt("status")
+            if (status < 200 || status >= 300) {
+                val code = try {
+                    val body = String(Base64.decode(event.optString("body_base64"), Base64.DEFAULT), Charsets.UTF_8)
+                    JSONObject(body).optString("error")
+                } catch (_: Exception) {
+                    ""
+                }
+                val safeCode = if (code in setOf(
+                    "pairing_expired",
+                    "pairing_not_found",
+                    "pairing_consumed",
+                    "pairing_rejected",
+                    "device_revoked",
+                    "upgrade_required",
+                )) " $code" else ""
+                throw IllegalStateException("HTTP $status$safeCode")
+            }
+            val payload = Base64.decode(event.getString("body_base64"), Base64.DEFAULT)
+            return JSONObject(String(payload, Charsets.UTF_8))
+        } finally {
+            requestOwner.abandon(requestId)
+            NativeNetwork.cancel(current, requestId)
+        }
+    }
+
+    @Synchronized
+    private fun recoverCorruptNetworkState() {
+        synchronized(this) {
+            if (stateRecoveryAttempted) return
+            stateRecoveryAttempted = true
+        }
+        operationExecutor.execute {
+            try {
+                val record = custody.load() ?: return@execute
+                CustodyStore.purgeNetworkState(context, record.installationId)
+                synchronized(this) {
+                    stopInternal()
+                    startTransport(record)
+                }
+            } catch (_: Exception) {
+                // The pairing page still offers Retry and a fresh link.
+            }
+        }
+    }
+
+    private fun stopInternal() {
+        pairingApproval = null
+        admission.close()
+        requests.close()
+        pollTask?.cancel(false)
+        pollTask = null
+        pendingWsFrames.clear()
+        val current = transportHandle
+        transportHandle = 0L
+        NativeMediaInterceptor.transportHandle = 0L
+        if (current != 0L) {
+            NativeNetwork.stop(current)
+        }
+    }
+
+    private fun callLong(call: PluginCall, key: String): Long? {
+        return call.getInt(key)?.toLong()
+            ?: call.getLong(key)
+            ?: call.getDouble(key)?.toLong()
+    }
+
+    private fun isApprovedLoginURL(raw: String): Boolean {
+        return try {
+            val uri = URI(raw)
+            uri.scheme == "https" &&
+                uri.userInfo == null &&
+                uri.fragment == null &&
+                uri.host in setOf("login.tailscale.com", "controlplane.tailscale.com") &&
+                !uri.path.isNullOrBlank()
+        } catch (_: Exception) {
+            false
+        }
+    }
+}

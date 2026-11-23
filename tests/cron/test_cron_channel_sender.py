@@ -5,8 +5,8 @@ from types import SimpleNamespace
 import pytest
 from telegram.error import TimedOut
 
-from nanobot.bus.queue import MessageBus
-from nanobot.channels.delivery_contract import (
+from kohaku.bus.queue import MessageBus
+from kohaku.channels.delivery_contract import (
     ChannelDeliveryPreflightError,
     ChannelDeliveryRejectedError,
     ChannelTextPartReceipt,
@@ -14,12 +14,12 @@ from nanobot.channels.delivery_contract import (
     PartialChannelTextDeliveryError,
     validate_receipt_binding,
 )
-from nanobot.channels.telegram.runtime import TelegramChannel, TelegramConfig
-from nanobot.cron.action_store import CronActionStore
-from nanobot.cron.channel_sender import CronChannelSender
-from nanobot.cron.completion import CronCompletionProjector
-from nanobot.cron.definition_store import CronDefinitionStore
-from nanobot.cron.delivery_runtime import (
+from kohaku.channels.telegram.runtime import TelegramChannel, TelegramConfig
+from kohaku.cron.action_store import CronActionStore
+from kohaku.cron.channel_sender import CronChannelSender
+from kohaku.cron.completion import CronCompletionProjector
+from kohaku.cron.definition_store import CronDefinitionStore
+from kohaku.cron.delivery_runtime import (
     ConfirmedDelivered,
     ConfirmedNotSent,
     CronDeliveryRuntime,
@@ -30,10 +30,10 @@ from nanobot.cron.delivery_runtime import (
     PermanentNotSent,
     UnknownOutcome,
 )
-from nanobot.cron.delivery_store import CronDeliveryOutboxStore, DeliveryOutboxPersistenceError
-from nanobot.cron.occurrence_store import CronOccurrenceStore
-from nanobot.cron.service import CronService
-from nanobot.cron.types import CronSchedule
+from kohaku.cron.delivery_store import CronDeliveryOutboxStore, DeliveryOutboxPersistenceError
+from kohaku.cron.occurrence_store import CronOccurrenceStore
+from kohaku.cron.service import CronService
+from kohaku.cron.types import CronSchedule
 
 
 def _request(**changes: object) -> DispatchRequest:

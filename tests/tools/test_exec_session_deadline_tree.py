@@ -6,8 +6,8 @@ from pathlib import Path
 
 import pytest
 
-from nanobot.agent.tools.exec_session import ExecSessionManager
-from nanobot.security.native_admission import NativeAdmissionLedger
+from kohaku.agent.tools.exec_session import ExecSessionManager
+from kohaku.security.native_admission import NativeAdmissionLedger
 
 pytestmark = pytest.mark.skipif(
     sys.platform != "linux",

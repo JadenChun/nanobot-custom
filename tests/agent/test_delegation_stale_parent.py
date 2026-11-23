@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import pytest
 
-from nanobot.agent.child_sessions import ChildAdmission, DelegationTree
-from nanobot.session.manager import SessionManager
-from nanobot.session.runtime_authority import read_runtime_session
+from kohaku.agent.child_sessions import ChildAdmission, DelegationTree
+from kohaku.session.manager import SessionManager
+from kohaku.session.runtime_authority import read_runtime_session
 
 
 def _source_parent(manager: SessionManager, key: str):
@@ -25,7 +25,7 @@ def _source_parent(manager: SessionManager, key: str):
 
 @pytest.mark.asyncio
 async def test_delegation_rejects_stale_parent(tmp_path, monkeypatch):
-    monkeypatch.setattr("nanobot.config.paths.get_data_dir", lambda: tmp_path)
+    monkeypatch.setattr("kohaku.config.paths.get_data_dir", lambda: tmp_path)
 
     manager = SessionManager(tmp_path / "workspace", sessions_root=tmp_path / "sessions")
     parent_key = "websocket:chat-a"

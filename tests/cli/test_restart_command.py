@@ -11,10 +11,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from nanobot.agent.context import TranscriptInput
-from nanobot.agent.loop import AgentLoop
-from nanobot.bus.events import InboundMessage
-from nanobot.providers.base import GenerationSettings, LLMResponse, LLMUsage
+from kohaku.agent.context import TranscriptInput
+from kohaku.agent.loop import AgentLoop
+from kohaku.bus.events import InboundMessage
+from kohaku.providers.base import GenerationSettings, LLMResponse, LLMUsage
 from tests.agent import p6_admitted_fixtures
 from tests.agent.test_loop_runner_integration import _execute_inbound, _run_context
 
@@ -54,9 +54,9 @@ class TestRestartCommand:
 
     @pytest.mark.asyncio
     async def test_restart_sends_message_and_calls_execv(self, tmp_path, admitted_async):
-        from nanobot.command.builtin import cmd_restart
-        from nanobot.command.router import CommandContext
-        from nanobot.utils.restart import (
+        from kohaku.command.builtin import cmd_restart
+        from kohaku.command.router import CommandContext
+        from kohaku.utils.restart import (
             RESTART_NOTIFY_CHANNEL_ENV,
             RESTART_NOTIFY_CHAT_ID_ENV,
             RESTART_STARTED_AT_ENV,
@@ -83,8 +83,8 @@ class TestRestartCommand:
         )
 
         with patch.dict(os.environ, {}, clear=False), \
-             patch("nanobot.command.builtin.asyncio", new=fake_asyncio), \
-             patch("nanobot.command.builtin.os.execv") as mock_execv:
+             patch("kohaku.command.builtin.asyncio", new=fake_asyncio), \
+             patch("kohaku.command.builtin.os.execv") as mock_execv:
             out = await cmd_restart(ctx)
             assert "Restarting" in out.content
             assert os.environ.get(RESTART_NOTIFY_CHANNEL_ENV) == "cli"
@@ -97,8 +97,8 @@ class TestRestartCommand:
 
     @pytest.mark.asyncio
     async def test_restart_windows_auto_spawns_and_exits(self, tmp_path, admitted_async):
-        from nanobot.command.builtin import cmd_restart
-        from nanobot.command.router import CommandContext
+        from kohaku.command.builtin import cmd_restart
+        from kohaku.command.router import CommandContext
 
         loop, _bus = await _make_loop(tmp_path, admitted_async)
         msg = InboundMessage(channel="cli", sender_id="user", chat_id="direct", content="/restart")
@@ -113,17 +113,17 @@ class TestRestartCommand:
             create_task=lambda coro: scheduled.append(asyncio.create_task(coro)) or scheduled[-1],
         )
 
-        with patch("nanobot.command.builtin.asyncio", new=fake_asyncio), \
-             patch("nanobot.command.builtin.sys.platform", "win32"), \
-             patch("nanobot.command.builtin.subprocess.CREATE_NEW_PROCESS_GROUP", 512, create=True), \
-             patch("nanobot.command.builtin.subprocess.Popen") as mock_popen, \
-             patch("nanobot.command.builtin.os._exit") as mock_exit, \
-             patch("nanobot.command.builtin.os.execv") as mock_execv:
+        with patch("kohaku.command.builtin.asyncio", new=fake_asyncio), \
+             patch("kohaku.command.builtin.sys.platform", "win32"), \
+             patch("kohaku.command.builtin.subprocess.CREATE_NEW_PROCESS_GROUP", 512, create=True), \
+             patch("kohaku.command.builtin.subprocess.Popen") as mock_popen, \
+             patch("kohaku.command.builtin.os._exit") as mock_exit, \
+             patch("kohaku.command.builtin.os.execv") as mock_execv:
             await cmd_restart(ctx)
             await scheduled[0]
 
         mock_popen.assert_called_once_with(
-            [sys.executable, "-m", "nanobot"] + sys.argv[1:],
+            [sys.executable, "-m", "kohaku"] + sys.argv[1:],
             creationflags=512,
         )
         mock_exit.assert_called_once_with(0)
@@ -131,8 +131,8 @@ class TestRestartCommand:
 
     @pytest.mark.asyncio
     async def test_restart_exit_mode_does_not_spawn(self, tmp_path, admitted_async):
-        from nanobot.command.builtin import cmd_restart
-        from nanobot.command.router import CommandContext
+        from kohaku.command.builtin import cmd_restart
+        from kohaku.command.router import CommandContext
 
         loop, _bus = await _make_loop(tmp_path, admitted_async)
         loop.restart_mode = "exit"
@@ -148,10 +148,10 @@ class TestRestartCommand:
             create_task=lambda coro: scheduled.append(asyncio.create_task(coro)) or scheduled[-1],
         )
 
-        with patch("nanobot.command.builtin.asyncio", new=fake_asyncio), \
-             patch("nanobot.command.builtin.subprocess.Popen") as mock_popen, \
-             patch("nanobot.command.builtin.os._exit") as mock_exit, \
-             patch("nanobot.command.builtin.os.execv") as mock_execv:
+        with patch("kohaku.command.builtin.asyncio", new=fake_asyncio), \
+             patch("kohaku.command.builtin.subprocess.Popen") as mock_popen, \
+             patch("kohaku.command.builtin.os._exit") as mock_exit, \
+             patch("kohaku.command.builtin.os.execv") as mock_execv:
             await cmd_restart(ctx)
             await scheduled[0]
 
@@ -182,8 +182,8 @@ class TestRestartCommand:
         )
 
         with patch.object(loop, "_dispatch", new_callable=AsyncMock) as mock_dispatch, \
-             patch("nanobot.command.builtin.asyncio", new=fake_asyncio), \
-             patch("nanobot.command.builtin.os.execv"):
+             patch("kohaku.command.builtin.asyncio", new=fake_asyncio), \
+             patch("kohaku.command.builtin.os.execv"):
             await bus.publish_inbound(msg)
 
             loop._running = True
@@ -271,8 +271,8 @@ class TestRestartCommand:
             reasoning_effort=None,
         )
 
-        from nanobot.command.builtin import cmd_status
-        from nanobot.command.router import CommandContext
+        from kohaku.command.builtin import cmd_status
+        from kohaku.command.router import CommandContext
 
         response = await cmd_status(CommandContext(
             msg=msg, session=session, key=msg.session_key, raw=msg.content,
@@ -322,11 +322,11 @@ class TestRestartCommand:
     async def test_run_agent_loop_estimates_usage_when_provider_omits_it(self, tmp_path, admitted_async, monkeypatch):
         loop, _bus = await _make_loop(tmp_path, admitted_async)
         monkeypatch.setattr(
-            "nanobot.agent.runner.estimate_prompt_tokens_chain",
+            "kohaku.agent.runner.estimate_prompt_tokens_chain",
             lambda *_args, **_kwargs: (123, "test"),
         )
         monkeypatch.setattr(
-            "nanobot.agent.runner.estimate_message_tokens",
+            "kohaku.agent.runner.estimate_message_tokens",
             lambda _message: 7,
         )
         loop.provider.chat_with_retry = AsyncMock(side_effect=[

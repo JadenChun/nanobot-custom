@@ -19,16 +19,16 @@ from unittest.mock import MagicMock, patch
 import httpx
 import pytest
 
-from nanobot.agent.child_sessions import ChildAdmission
-from nanobot.agent.delegation import ForegroundAgentManager
-from nanobot.agent.policy import RiskyActionPolicy
-from nanobot.agent.runner import ToolCallRequest
-from nanobot.agent.tools import web as web_module
-from nanobot.agent.tools.exec_session import ExecSessionManager
-from nanobot.agent.tools.web import _get_with_safe_redirects
-from nanobot.process_completion import ProcessCompletionRuntime
-from nanobot.session.manager import Session, SessionManager
-from nanobot.webui import transcript
+from kohaku.agent.child_sessions import ChildAdmission
+from kohaku.agent.delegation import ForegroundAgentManager
+from kohaku.agent.policy import RiskyActionPolicy
+from kohaku.agent.runner import ToolCallRequest
+from kohaku.agent.tools import web as web_module
+from kohaku.agent.tools.exec_session import ExecSessionManager
+from kohaku.agent.tools.web import _get_with_safe_redirects
+from kohaku.process_completion import ProcessCompletionRuntime
+from kohaku.session.manager import Session, SessionManager
+from kohaku.webui import transcript
 
 
 def test_denied_write_target_stays_denied() -> None:
@@ -169,7 +169,7 @@ def test_journal_open_failure_is_bounded(tmp_path: Path) -> None:
 async def test_compressed_oversize_fetch_is_refused(monkeypatch) -> None:
     monkeypatch.setattr(web_module, "MAX_FETCH_DOWNLOAD_BYTES", 64)
     monkeypatch.setattr(
-        "nanobot.security.network.socket.getaddrinfo",
+        "kohaku.security.network.socket.getaddrinfo",
         lambda *args, **kwargs: [
             (
                 socket.AF_INET,

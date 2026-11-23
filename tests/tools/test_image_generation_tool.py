@@ -7,11 +7,11 @@ from typing import Any
 
 import pytest
 
-from nanobot.agent.tools.base import ToolResult
-from nanobot.agent.tools.image_generation import ImageGenerationTool
-from nanobot.config.loader import set_config_path
-from nanobot.config.schema import ImageGenerationToolConfig, ProviderConfig
-from nanobot.providers.image_generation import (
+from kohaku.agent.tools.base import ToolResult
+from kohaku.agent.tools.image_generation import ImageGenerationTool
+from kohaku.config.loader import set_config_path
+from kohaku.config.schema import ImageGenerationToolConfig, ProviderConfig
+from kohaku.providers.image_generation import (
     MAX_REFERENCE_IMAGE_BYTES,
     MAX_REFERENCE_IMAGES,
     MAX_REFERENCE_TOTAL_BYTES,
@@ -52,7 +52,7 @@ async def test_generate_image_tool_stores_artifact_and_source_images(
     set_config_path(tmp_path / "config.json")
     FakeImageClient.instances = []
     monkeypatch.setattr(
-        "nanobot.agent.tools.image_generation.get_image_gen_provider",
+        "kohaku.agent.tools.image_generation.get_image_gen_provider",
         lambda name: FakeImageClient if name == "openrouter" else None,
     )
     ref = tmp_path / "ref.png"
@@ -110,7 +110,7 @@ async def test_generate_image_tool_selects_aihubmix_provider(
     set_config_path(tmp_path / "config.json")
     FakeImageClient.instances = []
     monkeypatch.setattr(
-        "nanobot.agent.tools.image_generation.get_image_gen_provider",
+        "kohaku.agent.tools.image_generation.get_image_gen_provider",
         lambda name: FakeImageClient if name == "aihubmix" else None,
     )
     tool = ImageGenerationTool(
@@ -143,7 +143,7 @@ def test_image_generation_tool_passes_provider_proxy_to_client(
 ) -> None:
     FakeImageClient.instances = []
     monkeypatch.setattr(
-        "nanobot.agent.tools.image_generation.get_image_gen_provider",
+        "kohaku.agent.tools.image_generation.get_image_gen_provider",
         lambda name: FakeImageClient if name == "openai_codex" else None,
     )
     proxy = "http://127.0.0.1:23458"
@@ -184,7 +184,7 @@ async def test_generate_image_tool_allows_ollama_without_api_key(
     set_config_path(tmp_path / "config.json")
     FakeImageClient.instances = []
     monkeypatch.setattr(
-        "nanobot.agent.tools.image_generation.get_image_gen_provider",
+        "kohaku.agent.tools.image_generation.get_image_gen_provider",
         lambda name: FakeImageClient if name == "ollama" else None,
     )
     tool = ImageGenerationTool(
@@ -253,7 +253,7 @@ def _write_reference(path: Path, size: int) -> Path:
 def _install_fake_provider(monkeypatch: pytest.MonkeyPatch) -> None:
     FakeImageClient.instances = []
     monkeypatch.setattr(
-        "nanobot.agent.tools.image_generation.get_image_gen_provider",
+        "kohaku.agent.tools.image_generation.get_image_gen_provider",
         lambda name: FakeImageClient if name == "openrouter" else None,
     )
 

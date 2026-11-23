@@ -2,11 +2,11 @@
 
 import pytest
 
-from nanobot.agent.tools.execution import KnownToolResult
-from nanobot.session.execution_owner import acquire_execution
-from nanobot.session.manager import JsonlSessionStore, Session
-from nanobot.session.source import SourceValidationError, validate_execution_links
-from nanobot.session.turn_writer import SourceTurnWriter
+from kohaku.agent.tools.execution import KnownToolResult
+from kohaku.session.execution_owner import acquire_execution
+from kohaku.session.manager import JsonlSessionStore, Session
+from kohaku.session.source import SourceValidationError, validate_execution_links
+from kohaku.session.turn_writer import SourceTurnWriter
 
 
 @pytest.fixture
@@ -91,11 +91,11 @@ async def test_child_serialization_failure_poisoning_stops_parent(store):
 async def test_known_assistant_is_durable_before_observer_failure(store, observer):
     from unittest.mock import AsyncMock, MagicMock
 
-    from nanobot.agent.hook import AgentHook
-    from nanobot.agent.runner import AgentRunner
-    from nanobot.agent.tools.registry import ToolRegistry
-    from nanobot.agent.turn import TurnContext
-    from nanobot.providers.base import LLMResponse
+    from kohaku.agent.hook import AgentHook
+    from kohaku.agent.runner import AgentRunner
+    from kohaku.agent.tools.registry import ToolRegistry
+    from kohaku.agent.turn import TurnContext
+    from kohaku.providers.base import LLMResponse
     from tests.agent.runner_helpers import make_run_spec
 
     class Broken(AgentHook):
@@ -127,7 +127,7 @@ async def test_known_assistant_is_durable_before_observer_failure(store, observe
 
 
 def test_projection_preserves_media_and_removes_only_marked_runtime_context():
-    from nanobot.runtime_context import RUNTIME_CONTEXT_HISTORY_META
+    from kohaku.runtime_context import RUNTIME_CONTEXT_HISTORY_META
     events = [{'_event_id': 'one', 'role': 'user', 'content': 'input\n\nold runtime',
                'attachments': [{'version': 1, 'id': 'att_fixture', 'sha256': '', 'mime': 'image/png',
                                 'bytes': 0, 'name': 'image.png', 'source': 'legacy', 'created_at': 0,
@@ -161,8 +161,8 @@ async def test_multimodal_source_retains_text_without_inline_image_or_reasoning(
 async def test_source_runner_requires_writer_dispatch_owner_match(store):
     from unittest.mock import AsyncMock, MagicMock
 
-    from nanobot.agent.runner import AgentRunner
-    from nanobot.agent.tools.registry import ToolRegistry
+    from kohaku.agent.runner import AgentRunner
+    from kohaku.agent.tools.registry import ToolRegistry
     from tests.agent.runner_helpers import make_run_spec
 
     provider = MagicMock()
@@ -178,8 +178,8 @@ async def test_source_runner_requires_writer_dispatch_owner_match(store):
 async def test_writer_strips_forged_origin_and_preserves_changed_inline_result(store):
     from dataclasses import replace
 
-    from nanobot.agent.tools.read_provenance import FilesystemReadReceipt
-    from nanobot.session.artifact import parse_artifact_descriptor
+    from kohaku.agent.tools.read_provenance import FilesystemReadReceipt
+    from kohaku.session.artifact import parse_artifact_descriptor
     from tests.session.test_artifact import fixture
 
     raw, _ = fixture()
@@ -213,8 +213,8 @@ async def test_writer_rejects_receipts_copied_between_canonical_producers(
 ):
     import hashlib
 
-    from nanobot.agent.tools.read_provenance import FilesystemReadReceipt
-    from nanobot.session.artifact import parse_artifact_descriptor
+    from kohaku.agent.tools.read_provenance import FilesystemReadReceipt
+    from kohaku.session.artifact import parse_artifact_descriptor
     from tests.session.test_artifact import fixture
 
     raw, _ = fixture()

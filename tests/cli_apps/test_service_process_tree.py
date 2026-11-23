@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from nanobot.apps.cli.service import CliAppManager
+from kohaku.apps.cli.service import CliAppManager
 
 pytestmark = pytest.mark.skipif(
     sys.platform != "linux",

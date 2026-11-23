@@ -1,4 +1,4 @@
-"""Hatch build hook that bundles the webui (Vite) into nanobot/web/dist.
+"""Hatch build hook that bundles the webui (Vite) into kohaku/web/dist.
 
 Triggered automatically by `python -m build` (and any other hatch-driven build)
 so published wheels and sdists ship a fresh webui without requiring developers
@@ -10,10 +10,10 @@ Behavior:
   development; webui contributors use `cd webui && bun run dev` (Vite HMR) and
   do not need a packaged `dist/`.
 - No-op when `webui/package.json` is absent (e.g. installing from an sdist that
-  already contains a prebuilt `nanobot/web/dist/`).
-- Skips when `NANOBOT_SKIP_WEBUI_BUILD=1` is set.
-- Reuses `nanobot/web/dist/` only when it is already fresh, unless
-  `NANOBOT_FORCE_WEBUI_BUILD=1` is set.
+  already contains a prebuilt `kohaku/web/dist/`).
+- Skips when `KOHAKU_SKIP_WEBUI_BUILD=1` is set.
+- Reuses `kohaku/web/dist/` only when it is already fresh, unless
+  `KOHAKU_FORCE_WEBUI_BUILD=1` is set.
 - Uses `bun install --frozen-lockfile` or `npm ci` before it runs the build.
 """
 
@@ -32,7 +32,7 @@ if str(_PROJECT_ROOT) not in sys.path:
 
 
 def _load_webui_build_module() -> ModuleType:
-    from nanobot.webui import build as webui_build
+    from kohaku.webui import build as webui_build
 
     return webui_build
 
@@ -44,7 +44,7 @@ class WebUIBuildHook(BuildHookInterface):
         root = Path(self.root)
         webui_dir = root / "webui"
         package_json = webui_dir / "package.json"
-        dist_dir = root / "nanobot" / "web" / "dist"
+        dist_dir = root / "kohaku" / "web" / "dist"
         index_html = dist_dir / "index.html"
 
         # `pip install -e .` builds an editable wheel; skip the (slow) webui
@@ -57,30 +57,30 @@ class WebUIBuildHook(BuildHookInterface):
             )
             return
 
-        require_fresh = os.environ.get("NANOBOT_REQUIRE_FRESH_WEBUI") == "1"
-        if os.environ.get("NANOBOT_SKIP_WEBUI_BUILD") == "1":
+        require_fresh = os.environ.get("KOHAKU_REQUIRE_FRESH_WEBUI") == "1"
+        if os.environ.get("KOHAKU_SKIP_WEBUI_BUILD") == "1":
             if require_fresh:
                 raise RuntimeError(
-                    "NANOBOT_REQUIRE_FRESH_WEBUI=1 forbids NANOBOT_SKIP_WEBUI_BUILD=1"
+                    "KOHAKU_REQUIRE_FRESH_WEBUI=1 forbids KOHAKU_SKIP_WEBUI_BUILD=1"
                 )
-            self.app.display_info("[webui-build] skipped via NANOBOT_SKIP_WEBUI_BUILD=1")
+            self.app.display_info("[webui-build] skipped via KOHAKU_SKIP_WEBUI_BUILD=1")
             return
 
         if not package_json.is_file():
             self.app.display_info(
-                "[webui-build] no webui/ source tree, assuming prebuilt nanobot/web/dist/"
+                "[webui-build] no webui/ source tree, assuming prebuilt kohaku/web/dist/"
             )
             return
 
         webui_build = _load_webui_build_module()
         status = webui_build.inspect_webui_bundle(source_dir=webui_dir, dist_dir=dist_dir)
-        force = os.environ.get("NANOBOT_FORCE_WEBUI_BUILD") == "1"
+        force = os.environ.get("KOHAKU_FORCE_WEBUI_BUILD") == "1"
         if not status.needs_build and not force:
             if require_fresh:
                 webui_build.require_fresh_webui_bundle(status)
             self.app.display_info(
                 f"[webui-build] reusing existing build at {dist_dir} "
-                "(already fresh; set NANOBOT_FORCE_WEBUI_BUILD=1 to rebuild)"
+                "(already fresh; set KOHAKU_FORCE_WEBUI_BUILD=1 to rebuild)"
             )
             return
 
@@ -101,7 +101,7 @@ class WebUIBuildHook(BuildHookInterface):
         except webui_build.WebUIBuildError as exc:
             raise RuntimeError(
                 "[webui-build] "
-                f"{exc}. Install `bun` or `npm`, or set NANOBOT_SKIP_WEBUI_BUILD=1 to bypass."
+                f"{exc}. Install `bun` or `npm`, or set KOHAKU_SKIP_WEBUI_BUILD=1 to bypass."
             ) from exc
 
         if not index_html.is_file():

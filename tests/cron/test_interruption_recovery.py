@@ -9,17 +9,17 @@ from types import SimpleNamespace
 
 import pytest
 
-import nanobot.cron.interruption_recovery as interruption_recovery
-import nanobot.cron.runtime as cron_runtime
-from nanobot.agent.turn import TurnResult
-from nanobot.config.schema import GatewayCronConfig
-from nanobot.cron.gateway import GatewayCron
-from nanobot.cron.occurrence import destination_policy
-from nanobot.cron.service import CronService
-from nanobot.session.execution_owner import ExecutionOwner, acquire_execution
-from nanobot.session.runtime_authority import DurableSessionAuthority
-from nanobot.session.source import new_source_event
-from nanobot.session.source_store import SourceSessionStore
+import kohaku.cron.interruption_recovery as interruption_recovery
+import kohaku.cron.runtime as cron_runtime
+from kohaku.agent.turn import TurnResult
+from kohaku.config.schema import GatewayCronConfig
+from kohaku.cron.gateway import GatewayCron
+from kohaku.cron.occurrence import destination_policy
+from kohaku.cron.service import CronService
+from kohaku.session.execution_owner import ExecutionOwner, acquire_execution
+from kohaku.session.runtime_authority import DurableSessionAuthority
+from kohaku.session.source import new_source_event
+from kohaku.session.source_store import SourceSessionStore
 from tests.cron.stage3_fixtures import FakeChannels, definition, definitions
 
 

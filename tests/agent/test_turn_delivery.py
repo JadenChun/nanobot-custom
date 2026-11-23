@@ -2,16 +2,16 @@ from pathlib import Path
 
 import pytest
 
-from nanobot.agent.turn_delivery import TurnDeliveryFactory
-from nanobot.bus.events import InboundMessage, OutboundMessage
-from nanobot.bus.outbound_events import ContextCompactionEvent
-from nanobot.bus.queue import MessageBus
-from nanobot.bus.runtime_events import TurnCompleted, UserInputCommitted
-from nanobot.events import RetryStatusEvent
-from nanobot.providers.base import LLMProvider, ProviderCallContext
-from nanobot.session.manager import SessionManager
-from nanobot.session.webui_turns import WebuiTurnRoutePolicy
-from nanobot.webui.metadata import (
+from kohaku.agent.turn_delivery import TurnDeliveryFactory
+from kohaku.bus.events import InboundMessage, OutboundMessage
+from kohaku.bus.outbound_events import ContextCompactionEvent
+from kohaku.bus.queue import MessageBus
+from kohaku.bus.runtime_events import TurnCompleted, UserInputCommitted
+from kohaku.events import RetryStatusEvent
+from kohaku.providers.base import LLMProvider, ProviderCallContext
+from kohaku.session.manager import SessionManager
+from kohaku.session.webui_turns import WebuiTurnRoutePolicy
+from kohaku.webui.metadata import (
     WEBSOCKET_TURN_OWNER_METADATA_KEY,
     WEBUI_TURN_METADATA_KEY,
 )
@@ -276,7 +276,7 @@ async def test_retry_completion_is_isolated_between_turns_in_one_session() -> No
 async def test_next_model_request_clears_exhaustion_within_the_same_turn() -> None:
     from unittest.mock import AsyncMock, patch
 
-    from nanobot.providers.base import LLMResponse
+    from kohaku.providers.base import LLMResponse
 
     class Provider(LLMProvider):
         async def chat(self, **kwargs):
@@ -291,7 +291,7 @@ async def test_next_model_request_clears_exhaustion_within_the_same_turn() -> No
     msg = InboundMessage(channel="websocket", sender_id="user", chat_id="chat", content="")
     delivery = TurnDeliveryFactory(bus).create(msg, msg.session_key)
     await delivery.events.emit(RetryStatusEvent("exhausted", 4, 4, "connection"))
-    with patch("nanobot.providers.base.asyncio.sleep", new_callable=AsyncMock):
+    with patch("kohaku.providers.base.asyncio.sleep", new_callable=AsyncMock):
         response = await Provider(provider_name="test").chat_with_retry(
             [{"role": "user", "content": "continue"}],
             provider_context=ProviderCallContext(events=delivery.events),
@@ -337,7 +337,7 @@ def test_websocket_lifecycles_get_distinct_internal_owners(tmp_path: Path) -> No
 
 
 def test_websocket_lifecycle_reuses_registered_ingress_owner(tmp_path: Path) -> None:
-    from nanobot.session import webui_turns as wth
+    from kohaku.session import webui_turns as wth
 
     owner = wth.register_queued_websocket_turn_if_idle("chat-queued", "turn-queued")
     assert owner is not None
@@ -366,7 +366,7 @@ def test_websocket_lifecycle_reuses_registered_ingress_owner(tmp_path: Path) -> 
 
 
 def test_internal_user_input_uses_the_persisted_webui_route(tmp_path: Path) -> None:
-    from nanobot.session import webui_turns as wth
+    from kohaku.session import webui_turns as wth
 
     sessions = SessionManager(tmp_path / "sessions")
     target = sessions.get_or_create("websocket:target")
@@ -400,7 +400,7 @@ async def test_same_chat_different_sessions_restore_previous_active_projection(
 ) -> None:
     from unittest.mock import AsyncMock, MagicMock
 
-    from nanobot.session import webui_turns as wth
+    from kohaku.session import webui_turns as wth
 
     factory = TurnDeliveryFactory(
         MessageBus(),
@@ -518,8 +518,8 @@ def test_late_subagent_route_requires_webui_owned_session(tmp_path: Path) -> Non
 async def test_context_slot_invalidates_before_outward_compaction_delivery(phase, cancelled) -> None:
     import asyncio
 
-    from nanobot.events import EventSink
-    from nanobot.providers.base import ContextUsageSnapshot
+    from kohaku.events import EventSink
+    from kohaku.providers.base import ContextUsageSnapshot
 
     factory = TurnDeliveryFactory(MessageBus())
     delivery = factory.create(InboundMessage(channel="websocket", sender_id="u", chat_id="t", content="hello"), "t")
@@ -541,7 +541,7 @@ async def test_context_slot_invalidates_before_outward_compaction_delivery(phase
 
 
 async def test_silent_and_no_lifecycle_delivery_do_not_own_context_snapshot_slots() -> None:
-    from nanobot.agent.turn_delivery import TurnRoute
+    from kohaku.agent.turn_delivery import TurnRoute
 
     factory = TurnDeliveryFactory(MessageBus())
     msg = InboundMessage(channel="cli", sender_id="u", chat_id="t", content="hello")

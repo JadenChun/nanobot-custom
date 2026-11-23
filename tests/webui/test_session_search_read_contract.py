@@ -31,11 +31,11 @@ from pathlib import Path
 
 import pytest
 
-import nanobot.webui.session_list_index as session_list_index
-import nanobot.webui.transcript as transcript
-from nanobot.session.manager import SessionManager
-from nanobot.webui.session_access import WebuiSessionAccess
-from nanobot.webui.session_list_index import (
+import kohaku.webui.session_list_index as session_list_index
+import kohaku.webui.transcript as transcript
+from kohaku.session.manager import SessionManager
+from kohaku.webui.session_access import WebuiSessionAccess
+from kohaku.webui.session_list_index import (
     CANONICAL_ROW_SOURCE,
     TRANSCRIPT_ROW_SOURCE,
     list_webui_sessions,

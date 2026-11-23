@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from nanobot.gateway.darwin_desktop_process import (
+from kohaku.gateway.darwin_desktop_process import (
     DarwinProcessWatch,
     darwin_desktop_available,
     darwin_gateway_matches,

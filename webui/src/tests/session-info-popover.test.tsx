@@ -129,7 +129,7 @@ describe("SessionInfoPopover", () => {
             payload: {
               kind: "local_trigger",
               message: "Review PR #4591",
-              command: 'nanobot trigger trg_123 "message"',
+              command: 'kohaku trigger trg_123 "message"',
             },
             state: { pending: false },
           },
@@ -149,7 +149,7 @@ describe("SessionInfoPopover", () => {
     await user.click(screen.getByRole("button", { name: "Session details" }));
 
     expect(await screen.findByText("Review PR #4591")).toBeInTheDocument();
-    expect(screen.queryByText('nanobot trigger trg_123 "message"')).not.toBeInTheDocument();
+    expect(screen.queryByText('kohaku trigger trg_123 "message"')).not.toBeInTheDocument();
   });
 
   it("refreshes while open so completed one-shot automations disappear", async () => {

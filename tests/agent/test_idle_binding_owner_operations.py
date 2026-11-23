@@ -6,7 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from nanobot.agent import idle_runtime as idle
+from kohaku.agent import idle_runtime as idle
 from tests.agent.test_idle_runtime import _registry
 
 _READS = [

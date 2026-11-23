@@ -6,13 +6,13 @@ from pathlib import Path
 
 import pytest
 
-from nanobot.agent.idle_runtime import IdleRuntimeBindingError, _source_material
-from nanobot.agent.idle_scanner import IdleCompactionScanner
-from nanobot.session import source_discovery as discovery_module
-from nanobot.session.manager import JsonlSessionStore, Session
-from nanobot.session.source_discovery import SourceDiscoveryCursor, SourceDiscoveryLimits
-from nanobot.session.source_root import SourceRootAuthority, SourceRootAuthorityError
-from nanobot.session.source_store import SourceSessionStore, SourceSnapshot
+from kohaku.agent.idle_runtime import IdleRuntimeBindingError, _source_material
+from kohaku.agent.idle_scanner import IdleCompactionScanner
+from kohaku.session import source_discovery as discovery_module
+from kohaku.session.manager import JsonlSessionStore, Session
+from kohaku.session.source_discovery import SourceDiscoveryCursor, SourceDiscoveryLimits
+from kohaku.session.source_root import SourceRootAuthority, SourceRootAuthorityError
+from kohaku.session.source_store import SourceSessionStore, SourceSnapshot
 
 KEY = "cli:idle-source-owner"
 LIMITS = SourceDiscoveryLimits(10, 10, 2000, 256)

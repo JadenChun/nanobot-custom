@@ -9,7 +9,7 @@ import {
   installMarketplaceSkill,
   searchMarketplaceSkills,
 } from "@/lib/api";
-import type { NanobotClient } from "@/lib/nanobot-client";
+import type { KohakuClient } from "@/lib/kohaku-client";
 import { notifySkillsChanged } from "@/lib/skill-events";
 import { ClientProvider } from "@/providers/ClientProvider";
 import { useSkills, useSkillsCatalog } from "@/hooks/useSkills";
@@ -25,7 +25,7 @@ vi.mock("@/lib/api", async (importOriginal) => {
   };
 });
 
-const client = {} as NanobotClient;
+const client = {} as KohakuClient;
 
 function marketplace(
   token: string,

@@ -5,10 +5,10 @@ from types import SimpleNamespace
 
 import pytest
 
-from nanobot.bus.queue import MessageBus
-from nanobot.config.schema import Config
-from nanobot.runtime_composition import RuntimeComposition, RuntimeFactories
-from nanobot.session.runtime_authority import (
+from kohaku.bus.queue import MessageBus
+from kohaku.config.schema import Config
+from kohaku.runtime_composition import RuntimeComposition, RuntimeFactories
+from kohaku.session.runtime_authority import (
     DurableSessionAuthority,
     Stage1UnavailableSessionAuthority,
 )

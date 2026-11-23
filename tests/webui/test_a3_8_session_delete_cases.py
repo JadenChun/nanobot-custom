@@ -16,13 +16,13 @@ import pytest
 from websockets.datastructures import Headers
 from websockets.http11 import Request
 
-from nanobot.session.manager import SessionManager
-from nanobot.webui.transcript import (
+from kohaku.session.manager import SessionManager
+from kohaku.webui.transcript import (
     append_transcript_object,
     read_transcript_lines,
     webui_transcript_path,
 )
-from nanobot.webui.ws_http import GatewayHTTPHandler
+from kohaku.webui.ws_http import GatewayHTTPHandler
 
 KEY = "websocket:delete-case"
 
@@ -48,7 +48,7 @@ def _delete(sessions: SessionManager) -> dict[str, object]:
 
 
 def _seed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[SessionManager, Path]:
-    monkeypatch.setattr("nanobot.config.paths.get_data_dir", lambda: tmp_path)
+    monkeypatch.setattr("kohaku.config.paths.get_data_dir", lambda: tmp_path)
     sessions = SessionManager(tmp_path / "workspace")
     session = sessions.get_or_create(KEY)
     session.add_message("user", "keep me readable")
@@ -63,7 +63,7 @@ def _seed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[SessionManag
 def test_session_delete_reports_partial_then_completes_on_retry(
     tmp_path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from nanobot.webui.transcript import pending_transcript_deletions
+    from kohaku.webui.transcript import pending_transcript_deletions
 
     sessions, transcript_path = _seed(tmp_path, monkeypatch)
     before = read_transcript_lines(KEY)

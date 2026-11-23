@@ -7,22 +7,22 @@ from types import SimpleNamespace
 
 import pytest
 
-from nanobot.agent.loop import AgentLoop
-from nanobot.agent.tools.base import Tool
-from nanobot.agent.tools.context import RequestContext, bind_request_context, reset_request_context
-from nanobot.agent.tools.registry import ToolRegistry
-from nanobot.bus.events import InboundMessage, OutboundMessage
-from nanobot.bus.outbound_events import DelegatedChildEvent, MessageAdmittedEvent
-from nanobot.bus.runtime_events import TurnCompleted
-from nanobot.channels.manager import ChannelManager
-from nanobot.providers.base import LLMResponse
-from nanobot.session.runtime_authority import DurableSessionAuthority
-from nanobot.session.session_handles import session_handle_for_name
-from nanobot.session.session_messages import SESSION_MESSAGE_METADATA_KEY
-from nanobot.session.source_store import SourceSessionStore
-from nanobot.session.webui_turns import WebuiTurnCoordinator
-from nanobot.webui.forking import create_webui_chat_fork
-from nanobot.webui.transcript import (
+from kohaku.agent.loop import AgentLoop
+from kohaku.agent.tools.base import Tool
+from kohaku.agent.tools.context import RequestContext, bind_request_context, reset_request_context
+from kohaku.agent.tools.registry import ToolRegistry
+from kohaku.bus.events import InboundMessage, OutboundMessage
+from kohaku.bus.outbound_events import DelegatedChildEvent, MessageAdmittedEvent
+from kohaku.bus.runtime_events import TurnCompleted
+from kohaku.channels.manager import ChannelManager
+from kohaku.providers.base import LLMResponse
+from kohaku.session.runtime_authority import DurableSessionAuthority
+from kohaku.session.session_handles import session_handle_for_name
+from kohaku.session.session_messages import SESSION_MESSAGE_METADATA_KEY
+from kohaku.session.source_store import SourceSessionStore
+from kohaku.session.webui_turns import WebuiTurnCoordinator
+from kohaku.webui.forking import create_webui_chat_fork
+from kohaku.webui.transcript import (
     append_transcript_object,
     hydrate_consolidated_transcript_lines,
     read_transcript_lines,
@@ -214,7 +214,7 @@ async def test_steer_display_uses_the_committed_injection(engine_config, tmp_pat
                     raise OSError("display write failed")
                 append_transcript_object(session_key, row)
 
-            monkeypatch.setattr("nanobot.webui.transcript.append_transcript_object", refuse_guidance)
+            monkeypatch.setattr("kohaku.webui.transcript.append_transcript_object", refuse_guidance)
         loop.bus.subscribe(lambda _: turn_completed.set(), TurnCompleted)
         runner = asyncio.create_task(loop.run())
         try:
@@ -273,7 +273,7 @@ async def test_fork_publishes_only_qualified_prefix_under_its_own_origin(
             source = loop.sessions.read_existing_canonical_source(KEY)
             assert source is not None
             store, snapshot = source
-            from nanobot.session.source import new_source_event
+            from kohaku.session.source import new_source_event
 
             store.source.append_source_events(KEY, snapshot.state, [
                 new_source_event({"role": "user", "content": "Canonical-only prompt"}, run_id="imported"),
@@ -305,7 +305,7 @@ async def test_fork_recovers_committed_answer_when_display_is_incomplete(
 
         await _submit(channel, conn, "First prompt")
         if failure == "write_error":
-            monkeypatch.setattr("nanobot.webui.transcript.append_transcript_object", refuse_answer)
+            monkeypatch.setattr("kohaku.webui.transcript.append_transcript_object", refuse_answer)
             await _dispatch_one(loop, channel)
         else:
             await loop._dispatch(await loop.bus.consume_inbound())
@@ -422,7 +422,7 @@ async def test_managed_shell_and_slash_command_archive_only_after_canonical_comm
             assert exec_tool.calls == ["printf ok"]
             assert any(row.get("text") == "ran:printf ok" for row in qualified)
         else:
-            assert any("nanobot commands" in str(row.get("text", "")) for row in qualified)
+            assert any("Kohaku commands" in str(row.get("text", "")) for row in qualified)
         assert qualified[-1]["event"] == "turn_end"
 
 
@@ -479,7 +479,7 @@ async def test_managed_new_and_busy_inline_commands_do_not_write_unbound_rows(
             await _drain(loop, channel)
             sent_frames = [json.loads(call.args[0]) for call in conn.send.await_args_list]
             assert any(
-                frame.get("event") == "message" and "nanobot commands" in str(frame.get("text", ""))
+                frame.get("event") == "message" and "Kohaku commands" in str(frame.get("text", ""))
                 for frame in sent_frames
             ), sent_frames
             provider_release.set()
@@ -494,7 +494,7 @@ async def test_managed_new_and_busy_inline_commands_do_not_write_unbound_rows(
         all_after = read_transcript_lines(KEY)[old_count:]
         assert len(active_rows) == len(all_after)
         assert not any(row.get("text") == "/help" for row in all_after)
-        assert not any("nanobot commands" in str(row.get("text", "")) for row in all_after)
+        assert not any("Kohaku commands" in str(row.get("text", "")) for row in all_after)
 
 
 @pytest.mark.parametrize("failed", [False, True])

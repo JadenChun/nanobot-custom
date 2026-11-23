@@ -4,14 +4,14 @@ from copy import deepcopy
 
 import pytest
 
-from nanobot.agent.tools.artifact import ReadArtifactTool
-from nanobot.session.artifact import ArtifactValidationError
-from nanobot.session.artifact_projection import ArtifactProjector
-from nanobot.session.artifact_reader import ArtifactReader
-from nanobot.session.source_compaction import SourceCompactionCandidate
-from nanobot.session.source_projection import RuntimeNode, SourceNode, source_nodes
-from nanobot.session.source_request import SourceRequestLedger, SourceTranscript
-from nanobot.session.source_store import SourceSessionStore
+from kohaku.agent.tools.artifact import ReadArtifactTool
+from kohaku.session.artifact import ArtifactValidationError
+from kohaku.session.artifact_projection import ArtifactProjector
+from kohaku.session.artifact_reader import ArtifactReader
+from kohaku.session.source_compaction import SourceCompactionCandidate
+from kohaku.session.source_projection import RuntimeNode, SourceNode, source_nodes
+from kohaku.session.source_request import SourceRequestLedger, SourceTranscript
+from kohaku.session.source_store import SourceSessionStore
 from tests.session.test_artifact_reader import setup_read
 
 
@@ -52,7 +52,7 @@ async def test_namespace_quota_failure_retains_authorized_inline_text(tmp_path):
     import hashlib
     from dataclasses import replace
 
-    from nanobot.session.artifact_store import PrivateArtifactStore
+    from kohaku.session.artifact_store import PrivateArtifactStore
 
     async with setup_read(tmp_path, 'evidence' * 6000) as (writer, tool, _store, descriptor, content):
         backend = writer.store._backend
@@ -117,16 +117,16 @@ async def test_cas_conflict_keeps_inline_and_never_rebases_or_retries(tmp_path, 
 
 
 async def test_governor_replacement_keeps_runtime_notes_and_no_tools_obeys_hard_budget(tmp_path):
-    from nanobot.agent.context_governance import (
+    from kohaku.agent.context_governance import (
         ContextGovernanceConfig,
         ContextGovernor,
         ContextWindowExceededError,
         ModelRequestState,
         SourceCompactionState,
     )
-    from nanobot.agent.tools.registry import ToolRegistry
-    from nanobot.providers.base import LLMResponse, LLMUsage
-    from nanobot.providers.conversation_state import ProviderConversationStateController
+    from kohaku.agent.tools.registry import ToolRegistry
+    from kohaku.providers.base import LLMResponse, LLMUsage
+    from kohaku.providers.conversation_state import ProviderConversationStateController
     from tests.agent.test_source_summary import SummaryProvider, runtime
 
     async with setup_read(tmp_path, 'evidence ' * 12000) as (writer, tool, store, _, _):
@@ -179,7 +179,7 @@ async def test_summary_evidence_is_canonical_not_generated_reference(tmp_path):
         modified.events[-1]['_artifact_read'] = {'reference': 'artifact:' + 'b' * 32}
         candidate = SourceCompactionCandidate.capture(modified, projected,
             eligible_ids=frozenset(node.event_id for node in projected.nodes))
-        from nanobot.session.source import SourceValidationError
+        from kohaku.session.source import SourceValidationError
         with pytest.raises(SourceValidationError, match='dependencies'):
             candidate.evidence(candidate.boundaries[-1])
 
@@ -238,7 +238,7 @@ def test_literal_artifact_text_does_not_create_typed_binding():
 
 
 async def test_owned_publication_loss_does_not_fall_back_to_transportable_inline(tmp_path, monkeypatch):
-    from nanobot.session.execution_owner import ExecutionOwnershipError
+    from kohaku.session.execution_owner import ExecutionOwnershipError
 
     async with setup_read(tmp_path, 'evidence' * 6000) as (writer, tool, store, _, _):
         projector = ArtifactProjector(ArtifactReader(writer, 'root_history', store, tool))
@@ -255,8 +255,8 @@ async def test_owned_publication_loss_does_not_fall_back_to_transportable_inline
 def test_ledger_rejects_malformed_artifact_binding(field, value):
     from dataclasses import replace
 
-    from nanobot.session.source import SourceValidationError
-    from nanobot.session.source_projection import ArtifactProjectionBinding
+    from kohaku.session.source import SourceValidationError
+    from kohaku.session.source_projection import ArtifactProjectionBinding
 
     binding = ArtifactProjectionBinding('b' * 32, 'event', 'execution', 'a' * 64)
     node = SourceNode('event', {'role': 'tool', 'content': 'reference'}, replace(binding, **{field: value}))

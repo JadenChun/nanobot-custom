@@ -5,18 +5,18 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from nanobot.agent.delegation import ForegroundAgentManager
-from nanobot.agent.runner import AgentRunResult
-from nanobot.agent.subagent import SubagentManager, SubagentStatus
-from nanobot.agent.tools.file_state import FileStates, bind_file_states, reset_file_states
-from nanobot.agent.tools.filesystem import FileToolsConfig, ReadFileTool
-from nanobot.agent.tools.registry import ToolRegistry
-from nanobot.bus.queue import MessageBus
-from nanobot.config.schema import ToolsConfig
-from nanobot.llm_usage.context import llm_usage_source
-from nanobot.providers.base import GenerationSettings, LLMProvider, LLMResponse, ToolCallRequest
-from nanobot.security.workspace_access import build_workspace_scope
-from nanobot.utils.llm_runtime import LLMRuntime
+from kohaku.agent.delegation import ForegroundAgentManager
+from kohaku.agent.runner import AgentRunResult
+from kohaku.agent.subagent import SubagentManager, SubagentStatus
+from kohaku.agent.tools.file_state import FileStates, bind_file_states, reset_file_states
+from kohaku.agent.tools.filesystem import FileToolsConfig, ReadFileTool
+from kohaku.agent.tools.registry import ToolRegistry
+from kohaku.bus.queue import MessageBus
+from kohaku.config.schema import ToolsConfig
+from kohaku.llm_usage.context import llm_usage_source
+from kohaku.providers.base import GenerationSettings, LLMProvider, LLMResponse, ToolCallRequest
+from kohaku.security.workspace_access import build_workspace_scope
+from kohaku.utils.llm_runtime import LLMRuntime
 from tests.agent import test_migration_engine as engine_fixtures
 
 engine_config = engine_fixtures.engine_config
@@ -87,8 +87,8 @@ async def test_foreground_tools_isolate_file_read_state(tmp_path, role):
 @pytest.mark.parametrize("role", ["planner", "reviewer", "explorer", "worker"])
 async def test_foreground_runner_receives_contents_already_read_by_parent(engine_config, role):
     """A delegated role must see file contents, not the parent's read stub."""
-    from nanobot.agent.loop import AgentLoop
-    from nanobot.agent.turn import TurnRequest
+    from kohaku.agent.loop import AgentLoop
+    from kohaku.agent.turn import TurnRequest
     from tests.agent.test_migration_engine import ScriptedProvider
     from tests.agent.test_migration_source_engine import upgrade
 
@@ -183,7 +183,7 @@ def test_subagent_prompt_keeps_agent_paths_for_selected_project(tmp_path):
     assert "one root and relative SKILL.md paths" in prompt
     assert "Join them when using `read_file`" in prompt
     assert str(project.resolve()) not in prompt
-    assert f"Nanobot's agent workspace: {agent_workspace.resolve()}" in prompt
+    assert f"Kohaku's agent workspace: {agent_workspace.resolve()}" in prompt
     assert f"History log: {agent_workspace.resolve() / 'memory' / 'history.jsonl'}" in prompt
     assert "global-custom" in prompt
     assert "project-custom" not in prompt

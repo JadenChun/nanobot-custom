@@ -14,8 +14,8 @@ function source(value: unknown = connection, exitCode = 0) {
     if (input.instanceId !== ${JSON.stringify(instanceId)} || input.gatewayId !== ${JSON.stringify(gatewayId)}) process.exit(9);
     process.stdout.write(${JSON.stringify(JSON.stringify(value))}); process.exit(${exitCode});`
   return desktopConnectionSource({
-    NANOBOT_TUI_DESKTOP_RESOLVER: JSON.stringify([process.execPath, "-e", script]),
-    NANOBOT_TUI_DESKTOP_TARGET: JSON.stringify({ instanceId, gatewayId }),
+    KOHAKU_TUI_DESKTOP_RESOLVER: JSON.stringify([process.execPath, "-e", script]),
+    KOHAKU_TUI_DESKTOP_TARGET: JSON.stringify({ instanceId, gatewayId }),
   })!
 }
 
@@ -24,7 +24,7 @@ describe("Desktop credential resolver", () => {
     expect(desktopConnectionSource({})).toBeUndefined()
   })
   test("fails closed for incomplete launcher metadata", () => {
-    expect(() => desktopConnectionSource({ NANOBOT_TUI_DESKTOP_TARGET: "{}" })).toThrow("Invalid Desktop")
+    expect(() => desktopConnectionSource({ KOHAKU_TUI_DESKTOP_TARGET: "{}" })).toThrow("Invalid Desktop")
   })
   test("refreshes through a pipe and pins the websocket to the chosen gateway", async () => {
     const resolver = source()

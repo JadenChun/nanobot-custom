@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import pytest
 
-from nanobot.providers.base import LLMResponse, ToolCallRequest
+from kohaku.providers.base import LLMResponse, ToolCallRequest
 
 
 def _response(finish_reason: str, *, with_tool_call: bool = True) -> LLMResponse:
@@ -66,7 +66,7 @@ class TestShouldExecuteTools:
 @pytest.mark.parametrize("field", ["provider", "account", "endpoint", "protocol", "model"])
 @pytest.mark.parametrize("invalid", [None, "", 0, False, [], {}])
 def test_transport_receipt_rejects_invalid_constructor_field(field, invalid):
-    from nanobot.providers.base import ProviderConversationTransportReceipt
+    from kohaku.providers.base import ProviderConversationTransportReceipt
 
     values = dict(provider="fixture", account="digest", endpoint="endpoint",
                   protocol="responses", model="model")
@@ -77,7 +77,7 @@ def test_transport_receipt_rejects_invalid_constructor_field(field, invalid):
 
 
 def test_transport_receipt_preserves_nonempty_string_values_and_private_record():
-    from nanobot.providers.base import ProviderConversationTransportReceipt
+    from kohaku.providers.base import ProviderConversationTransportReceipt
 
     class StringValue(str):
         pass

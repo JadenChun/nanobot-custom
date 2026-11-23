@@ -131,8 +131,8 @@ export function useSettingsController({
     setCliAppsError,
     setCliAppsMessage, setCustomMcpForm, setMcpConfigImport, setMcpError, setMcpFieldValues,
     setMcpMessage, setMcpOAuthCallbackError, setMcpOAuthCallbackUrl,
-    setNanobotFeatureConfirm, setNanobotFeatures,
-    setNanobotFeaturesError,
+    setKohakuFeatureConfirm, setKohakuFeatures,
+    setKohakuFeaturesError,
   } = systemState;
   const featureCatalog = nanobotFeatures?.features ?? [];
 
@@ -454,7 +454,7 @@ export function useSettingsController({
     handleMcpOAuthOpen,
     handleMcpPresetAction,
     handleMcpToolsChange,
-    handleNanobotFeatureAction,
+    handleKohakuFeatureAction,
     handleSaveCustomMcp,
   } = systemActions;
 
@@ -507,7 +507,7 @@ export function useSettingsController({
     handleMcpPresetAction,
     handleMcpToolsChange,
     handleMigrateModelConfigurations,
-    handleNanobotFeatureAction,
+    handleKohakuFeatureAction,
     handleSaveCustomMcp,
     handleToggleProvider,
     handleWebSearchProviderChange,
@@ -592,9 +592,9 @@ export function useSettingsController({
     setModelPresetEditingName,
     setModelPresetNameError,
     setModelPresetPendingDelete,
-    setNanobotFeatureConfirm,
-    setNanobotFeatures,
-    setNanobotFeaturesError,
+    setKohakuFeatureConfirm,
+    setKohakuFeatures,
+    setKohakuFeaturesError,
     setNetworkSafetyForm,
     setProviderForms,
     setProviderOAuthDialogError,

@@ -11,15 +11,15 @@ from typing import Iterator
 
 import pytest
 
-import nanobot.session.checked_source as checked_source
-from nanobot.agent.memory_recovery_storage import WorkspaceMemoryAuthority
-from nanobot.session.checked_source import (
+import kohaku.session.checked_source as checked_source
+from kohaku.agent.memory_recovery_storage import WorkspaceMemoryAuthority
+from kohaku.session.checked_source import (
     CheckedSessionAuthorityError,
     open_checked_recovery_session,
     open_checked_session,
 )
-from nanobot.session.manager import JsonlSessionStore
-from nanobot.session.recovery_locator import RecoveryCandidate, locate_recovery_candidate
+from kohaku.session.manager import JsonlSessionStore
+from kohaku.session.recovery_locator import RecoveryCandidate, locate_recovery_candidate
 
 WORKSPACE_ID = "a" * 32
 SESSION_KEY = "telegram:recovery"

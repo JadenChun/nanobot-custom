@@ -4,14 +4,14 @@ import asyncio
 from collections import deque
 from urllib.parse import quote
 
-from nanobot.channels.websocket.runtime import WebSocketChannel, WebSocketConfig
-from nanobot.channels.websocket.tests.ws_test_client import WsTestClient, http_get
-from nanobot.config import loader
-from nanobot.config.schema import Config
-from nanobot.providers.base import LLMProvider, LLMResponse, ToolCallRequest
-from nanobot.runtime_composition import RuntimeComposition
-from nanobot.session.webui_turns import WebuiTurnCoordinator
-from nanobot.webui.gateway_services import build_gateway_services
+from kohaku.channels.websocket.runtime import WebSocketChannel, WebSocketConfig
+from kohaku.channels.websocket.tests.ws_test_client import WsTestClient, http_get
+from kohaku.config import loader
+from kohaku.config.schema import Config
+from kohaku.providers.base import LLMProvider, LLMResponse, ToolCallRequest
+from kohaku.runtime_composition import RuntimeComposition
+from kohaku.session.webui_turns import WebuiTurnCoordinator
+from kohaku.webui.gateway_services import build_gateway_services
 
 
 class DelegatingProvider(LLMProvider):
@@ -66,7 +66,7 @@ async def test_a3_child_references_e2e(tmp_path, monkeypatch, unused_tcp_port):
     config.tools.restrict_to_workspace = True
     config.bind_source_path(config_path)
     monkeypatch.setattr(loader, "_current_config_path", config_path)
-    monkeypatch.setattr("nanobot.providers.factory.make_provider", lambda _config: DelegatingProvider())
+    monkeypatch.setattr("kohaku.providers.factory.make_provider", lambda _config: DelegatingProvider())
 
     composition = RuntimeComposition.define(
         config, sessions_root=runtime_dir / "sessions", startup_receipt_admitted=True,

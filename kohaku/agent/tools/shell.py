@@ -1,0 +1,1857 @@
+"""Shell execution tool."""
+
+from __future__ import annotations
+
+import asyncio
+import os
+import re
+import shlex
+import shutil
+import signal
+import stat
+import subprocess
+import sys
+import tempfile
+import time
+from collections.abc import Generator
+from contextlib import contextmanager, suppress
+from contextvars import ContextVar
+from dataclasses import dataclass, replace
+from pathlib import Path, PureWindowsPath
+from typing import TYPE_CHECKING, Any, Protocol, cast
+from urllib.parse import unquote
+
+from loguru import logger
+from pydantic import Field
+
+from kohaku.agent.tools.base import (
+    PRIVATE_NETWORK_DENIAL_NOTE,
+    Tool,
+    ToolDenialKind,
+    ToolDenialResult,
+    ToolResult,
+    tool_parameters,
+)
+from kohaku.agent.tools.context import (
+    ToolContext,
+    current_request_context,
+    current_request_session_key,
+)
+from kohaku.agent.tools.exec_session import (
+    DEFAULT_EXEC_SESSION_MANAGER,
+    DEFAULT_MAX_OUTPUT_CHARS,
+    DEFAULT_YIELD_MS,
+    MAX_OUTPUT_CHARS,
+    MAX_YIELD_MS,
+    ExecSessionManager,
+    clamp_session_int,
+    format_session_poll,
+)
+from kohaku.agent.tools.native_process import (
+    NativeProcessHandle,
+    native_supervisor_available,
+    spawn_native_process,
+)
+from kohaku.agent.tools.sandbox import (
+    managed_bwrap_available,
+    wrap_command,
+    wrap_managed_command,
+)
+from kohaku.agent.tools.schema import (
+    ArraySchema,
+    BooleanSchema,
+    IntegerSchema,
+    StringSchema,
+    tool_parameters_schema,
+)
+from kohaku.agent.turn import ToolOutcome
+from kohaku.config.paths import get_media_dir
+from kohaku.config_base import Base
+from kohaku.context_repo import ResourceAccessPolicy
+from kohaku.context_repo.policy import FolderAccessNeededError
+from kohaku.security.folder_grants import (
+    FolderGrantSnapshot,
+    FolderGrantView,
+)
+from kohaku.security.native_admission import NativeProcessReservation
+from kohaku.security.workspace_access import (
+    current_tool_workspace,
+    current_workspace_focus,
+    current_workspace_scope,
+)
+
+if TYPE_CHECKING:
+    from kohaku.agent.policy import LaunchConfinementAttestation
+    from kohaku.agent.tools.filesystem import ReadFileTool
+    from kohaku.security.desktop_permissions import (
+        DesktopPermissionOwner,
+        WorkspacePermissionReference,
+    )
+from kohaku.security.workspace_policy import is_path_within
+
+_IS_WINDOWS = sys.platform == "win32"
+_PROCESS_TREE_OWNER_ATTR = "_nanobot_process_tree_owner"
+_approved_exec_cwd: ContextVar[Path | None] = ContextVar("nanobot_approved_exec_cwd", default=None)
+
+
+@contextmanager
+def bind_approved_exec_cwd(cwd: Path | None) -> Generator[None, None, None]:
+    """Carry the server-approved working directory to the shell executor."""
+    token = _approved_exec_cwd.set(cwd)
+    try:
+        yield
+    finally:
+        _approved_exec_cwd.reset(token)
+
+
+class _ProcessTreeOwner(Protocol):
+    creation_flags: int
+
+    def assign_and_resume(self, pid: int) -> None: ...
+
+    def release(self) -> None: ...
+
+    def terminate(self) -> None: ...
+
+
+def _reap_pid(pid: int) -> None:
+    """Best-effort ``waitpid`` to reap a child and prevent zombies.
+
+    Call this after killing or after normal completion of any subprocess
+    as a safety net — asyncio's child-watcher *should* have reaped it,
+    but in containers / edge-cases it sometimes doesn't.
+
+    Uses ``os`` capability checks rather than ``_IS_WINDOWS`` so this is
+    safe when tests patch the platform flag while still running on Windows
+    (``os.waitpid`` / ``os.WNOHANG`` do not exist there).
+    """
+    waitpid = getattr(os, "waitpid", None)
+    wnohang = getattr(os, "WNOHANG", None)
+    if waitpid is None or wnohang is None:
+        return
+    try:
+        waitpid(pid, wnohang)
+    except (ProcessLookupError, ChildProcessError):
+        # Already reaped, or not our child — both are fine.
+        pass
+    except OSError as exc:
+        logger.debug("_reap_pid({}): {}", pid, exc)
+
+
+# Policy note appended to recoverable workspace-boundary guard errors.
+_WORKSPACE_BOUNDARY_NOTE = (
+    "\n\nNote: this is a hard policy boundary, not a transient failure. "
+    "Do NOT retry with shell tricks (symlinks, base64 piping, alternative "
+    "tools, working_dir overrides). If the user genuinely needs this "
+    "resource, tell them you cannot reach it under the current "
+    "restrict_to_workspace policy and ask how to proceed."
+)
+
+
+class ExecToolConfig(Base):
+    """Shell exec tool configuration."""
+    enable: bool = True
+    timeout: int = Field(default=60, ge=0)  # Hard timeout (s); 0 = no limit. Not capped by the per-call max.
+    path_prepend: str = ""
+    path_append: str = ""
+    sandbox: str = ""
+    sandbox_ro_binds: list[str] = Field(default_factory=list)
+    sandbox_rw_binds: list[str] = Field(default_factory=list)
+    allowed_env_keys: list[str] = Field(default_factory=list)
+    allow_patterns: list[str] = Field(default_factory=list)
+    deny_patterns: list[str] = Field(default_factory=list)
+
+
+@dataclass(slots=True)
+class _StagedInput:
+    """One approved input copied from its source into the invocation snapshot."""
+
+    requested: str
+    resolved: Path
+    snapshot: Path
+
+
+@dataclass(slots=True)
+class _PreparedCommand:
+    command: str
+    cwd: str
+    env: dict[str, str]
+    timeout: int | None
+    shell_program: str | None
+    login: bool
+    managed: bool = False
+    logical_cwd: str | None = None
+    grant_snapshot: FolderGrantSnapshot | None = None
+    launch_attestation: LaunchConfinementAttestation | None = None
+
+
+@tool_parameters(
+    tool_parameters_schema(
+        command=StringSchema("The shell command to execute"),
+        cmd=StringSchema("Compatibility alias for command"),
+        summary=StringSchema(
+            "Brief 2-6 word summary of what this command does (e.g. 'Check image dimensions', 'Run unit tests', 'Build WebUI bundle').",
+            nullable=True,
+        ),
+        working_dir=StringSchema("Optional working directory for the command"),
+        workdir=StringSchema("Compatibility alias for working_dir"),
+        timeout=IntegerSchema(
+            description="Hard timeout in seconds (default 60, max 600).",
+            minimum=1,
+            maximum=600,
+        ),
+        shell=StringSchema(
+            (
+                "Shell override; omit for PowerShell, or pass 'cmd' for cmd.exe."
+                if _IS_WINDOWS
+                else "Shell override; omit for bash, or pass 'sh' or 'zsh'."
+            ),
+            nullable=True,
+        ),
+        login=BooleanSchema(
+            description="Run bash/zsh as a login shell.",
+            default=False,
+            nullable=True,
+        ),
+        yield_time_ms=IntegerSchema(
+            description="Return after this many milliseconds if still running; omit to wait for exit.",
+            minimum=0,
+            maximum=MAX_YIELD_MS,
+            nullable=True,
+        ),
+        notify_on_exit=BooleanSchema(
+            description="Continue this conversation when a background process exits (gateway feature).",
+            default=False,
+        ),
+        max_output_chars=IntegerSchema(
+            description="Session output limit in characters (default 10000, max 50000).",
+            minimum=1000,
+            maximum=MAX_OUTPUT_CHARS,
+            nullable=True,
+        ),
+        max_output_tokens=IntegerSchema(
+            description="Compatibility alias for max_output_chars.",
+            minimum=1000,
+            maximum=MAX_OUTPUT_CHARS,
+            nullable=True,
+        ),
+        input_files=ArraySchema(
+            StringSchema("Exact existing file path to expose read-only"),
+            description=(
+                "Optional exact files (for example generated images or attachments) to make "
+                "readable at their original paths inside a Sandbox command. Each path must "
+                "pass the current read policy; this is not an access grant. Omit for no "
+                "additional inputs. Foreground commands only."
+            ),
+            max_items=16,
+            nullable=True,
+        ),
+    )
+)
+class ExecTool(Tool):
+    """Tool to execute shell commands."""
+    _DESKTOP_MUTATION_COMMAND_RE = re.compile(
+        r"(?:^|(?:&&|\|\||[;|&()\n]))\s*"
+        r"(?:(?:command|exec|nohup|sudo)\s+)*"
+        r"(?:env\s+(?:[A-Za-z_][A-Za-z0-9_]*=[^\s]+\s+)*)?"
+        r"(?:[A-Za-z_][A-Za-z0-9_]*=[^\s]+\s+)*"
+        r"(?:/(?:usr/)?bin/)?(?:open|osascript|xdotool|wmctrl)(?=\s|$)",
+        re.IGNORECASE,
+    )
+    _scopes = {"core", "subagent"}
+
+    config_key = "exec"
+
+    @classmethod
+    def config_cls(cls):
+        return ExecToolConfig
+
+    @classmethod
+    def enabled(cls, ctx: ToolContext) -> bool:
+        return ctx.config.exec.enable
+
+    @classmethod
+    def create(cls, ctx: ToolContext) -> Tool:
+        cfg = ctx.config.exec
+        from kohaku.agent.tools.filesystem import ReadFileTool
+
+        return cls(
+            working_dir=ctx.workspace,
+            timeout=cfg.timeout,
+            restrict_to_workspace=ctx.config.restrict_to_workspace,
+            webui_allow_local_service_access=ctx.config.webui_allow_local_service_access,
+            sandbox=cfg.sandbox,
+            path_prepend=cfg.path_prepend,
+            path_append=cfg.path_append,
+            sandbox_ro_binds=cfg.sandbox_ro_binds,
+            sandbox_rw_binds=cfg.sandbox_rw_binds,
+            allowed_env_keys=cfg.allowed_env_keys,
+            allow_patterns=cfg.allow_patterns,
+            deny_patterns=cfg.deny_patterns,
+            session_manager=ctx.exec_session_manager,
+            resource_policy=ctx.fork_dependencies.resource_policy if ctx.fork_dependencies else None,
+            desktop_use_active=ctx.config.desktop_use.enabled,
+            read_file_tool=ReadFileTool.create(ctx),
+        )
+
+    def __init__(
+        self,
+        timeout: int = 60,
+        working_dir: str | None = None,
+        deny_patterns: list[str] | None = None,
+        allow_patterns: list[str] | None = None,
+        restrict_to_workspace: bool = False,
+        webui_allow_local_service_access: bool = True,
+        allow_local_preview_access: bool | None = None,
+        sandbox: str = "",
+        path_prepend: str = "",
+        path_append: str = "",
+        sandbox_ro_binds: list[str] | None = None,
+        sandbox_rw_binds: list[str] | None = None,
+        allowed_env_keys: list[str] | None = None,
+        session_manager: ExecSessionManager | None = None,
+        resource_policy: ResourceAccessPolicy | None = None,
+        desktop_use_active: bool = False,
+        read_file_tool: "ReadFileTool | None" = None,
+    ):
+        self.resource_policy = resource_policy
+        self.desktop_use_active = desktop_use_active
+        self._read_file_tool = read_file_tool
+        self.timeout = timeout
+        self.working_dir = working_dir
+        self.sandbox = sandbox
+        self.deny_patterns = (deny_patterns or []) + [
+            r"\brm\s+-[rf]{1,2}\b",          # rm -r, rm -rf, rm -fr
+            r"\bdel\s+/[fq]\b",              # del /f, del /q
+            r"\brmdir\s+/s\b",               # rmdir /s
+            r"(?:^|[;&|]\s*)format(?!=)\b",   # format (as standalone command only)
+            r"\b(mkfs|diskpart)\b",          # disk operations
+            r"\bdd\s+if=",                   # dd
+            r">\s*/dev/sd",                  # write to disk
+            r"\b(shutdown|reboot|poweroff)\b",  # system power
+            r":\(\)\s*\{.*\};\s*:",          # fork bomb
+            # Block writes to nanobot internal state files (#2989).
+            # history.jsonl / .dream_cursor are managed by append_history();
+            # direct writes corrupt the cursor format and crash /dream.
+            r">>?\s*\S*(?:history\.jsonl|\.dream_cursor)",            # > / >> redirect
+            r"\btee\b[^|;&<>]*(?:history\.jsonl|\.dream_cursor)",     # tee / tee -a
+            r"\b(?:cp|mv)\b(?:\s+[^\s|;&<>]+)+\s+\S*(?:history\.jsonl|\.dream_cursor)",  # cp/mv target
+            r"\bdd\b[^|;&<>]*\bof=\S*(?:history\.jsonl|\.dream_cursor)",  # dd of=
+            r"\bsed\s+-i[^|;&<>]*(?:history\.jsonl|\.dream_cursor)",  # sed -i
+        ]
+        self.allow_patterns = allow_patterns or []
+        self.restrict_to_workspace = restrict_to_workspace
+        if allow_local_preview_access is not None:
+            webui_allow_local_service_access = allow_local_preview_access
+        self.webui_allow_local_service_access = webui_allow_local_service_access
+        self.path_prepend = path_prepend
+        self.path_append = path_append
+        self.sandbox_ro_binds = self._normalize_bind_roots(sandbox_ro_binds)
+        self.sandbox_rw_binds = self._normalize_bind_roots(sandbox_rw_binds)
+        self.allowed_env_keys = allowed_env_keys or []
+        self._session_manager = session_manager or DEFAULT_EXEC_SESSION_MANAGER
+        from kohaku.agent.policy import register_launch_confinement_attestor
+
+        register_launch_confinement_attestor(
+            self.working_dir or os.getcwd(), self.attest_launch_confinement,
+        )
+
+    def _full_access_active(self) -> bool:
+        focus = current_workspace_focus()
+        return bool(
+            focus is not None
+            and focus.permission_owner is not None
+            and focus.full_reference is not None
+            and focus.permission_owner.is_current_full_reference(focus.full_reference)
+        )
+
+    def _outer_confinement_provider(self, working_dir: str | None) -> str | None:
+        """Name the OS sandbox this executor applies to a launched command.
+
+        The provider is named only when that sandbox can actually wrap this
+        command here. An unavailable backend proves nothing.
+        """
+        policy = self.resource_policy
+        if policy is not None and policy.managed_mode and not self._full_access_active():
+            return "managed" if managed_bwrap_available() else None
+        if not self.sandbox or _IS_WINDOWS:
+            return None
+        workspace = self.working_dir or os.getcwd()
+        try:
+            wrap_command(self.sandbox, "true", workspace, working_dir or workspace)
+        except (OSError, ValueError):
+            return None
+        return self.sandbox
+
+    @staticmethod
+    def _process_ownership_identity() -> str | None:
+        """Name the process owner that can reap the launched command tree."""
+        if native_supervisor_available():
+            return "native-supervisor"
+        if os.name == "posix" or _IS_WINDOWS:
+            return "process-tree"
+        return None
+
+    def attest_launch_confinement(
+        self, command: str, working_dir: str | None = None,
+    ) -> LaunchConfinementAttestation | None:
+        """Attest confinement and process ownership for one nested launch.
+
+        Returns ``None`` when this executor cannot prove both for that exact
+        launch, including every tmux launch and every unconfined shell.
+        """
+        from kohaku.agent.policy import (
+            LaunchConfinementAttestation,
+            nested_launch_id,
+            nested_launch_path,
+        )
+
+        if nested_launch_path(command) != "shell":
+            return None
+        sandbox = self._outer_confinement_provider(working_dir)
+        owner = self._process_ownership_identity()
+        if sandbox is None or owner is None:
+            return None
+        return LaunchConfinementAttestation(
+            launch_id=nested_launch_id(
+                command, working_dir, self.working_dir or os.getcwd(),
+            ),
+            path="shell",
+            sandbox=sandbox,
+            process_owner=owner,
+        )
+
+    def _admit_nested_launch(
+        self, command: str, working_dir: str | None,
+    ) -> LaunchConfinementAttestation | ToolResult | None:
+        """Refuse a reduced-protection launch this executor cannot attest."""
+        from kohaku.agent.policy import nested_launch_path
+
+        if nested_launch_path(command) is None:
+            return None
+        attestation = self.attest_launch_confinement(command, working_dir)
+        if attestation is None:
+            return ToolResult.error(
+                "Error: nested agent launch refused before start "
+                "(launch_confinement_unproven): this launch reduces the nested agent's "
+                "sandbox or approval protection, and this executor cannot prove outer "
+                "confinement and process ownership for it."
+            )
+        return attestation
+
+    def _input_path_is_private(self, resolved: Path) -> bool:
+        from kohaku.config.paths import get_data_dir, get_media_dir
+        from kohaku.security.runtime_boundary import is_private_runtime_path
+
+        media = get_media_dir().resolve(strict=False)
+        if resolved.is_relative_to(media):
+            return False
+        policy = self.resource_policy
+        grants = policy.folder_grants if policy is not None else None
+        if grants is not None:
+            return grants.is_private_path(resolved)
+        return is_private_runtime_path(
+            resolved,
+            instance_root=get_data_dir().resolve(strict=False),
+            agent_home=policy.workspace if policy is not None else None,
+        )
+
+    def _stage_input_files(
+        self,
+        values: list[str] | None,
+    ) -> tuple[Path | None, list[_StagedInput]] | ToolResult:
+        """Copy approved inputs into one bounded per-invocation snapshot."""
+        if not values:
+            return None, []
+        reader = self._read_file_tool
+        assert reader is not None  # execute validated the input options.
+        staging = Path(tempfile.mkdtemp(prefix="nanobot-exec-inputs-"))
+        staged: list[_StagedInput] = []
+        seen: set[Path] = set()
+        total_bytes = 0
+        try:
+            for raw in values:
+                if type(raw) is not str or not raw.strip():
+                    raise ValueError("input_files entries must be non-empty paths")
+                requested = Path(raw).expanduser()
+                if requested.is_symlink():
+                    raise PermissionError("symlink inputs are not allowed")
+                try:
+                    resolved = reader.resolve_read_path(str(requested))
+                except (OSError, PermissionError, ValueError) as exc:
+                    raise PermissionError("input path is not readable") from exc
+                if resolved in seen:
+                    continue
+                if resolved.is_symlink() or not resolved.is_file():
+                    raise PermissionError("input path is not an approved regular file")
+                if self._input_path_is_private(resolved):
+                    raise PermissionError("input path is private runtime storage")
+                flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+                descriptor = os.open(resolved, flags)
+                try:
+                    before = os.fstat(descriptor)
+                    if not stat.S_ISREG(before.st_mode):
+                        raise PermissionError("input path is not a regular file")
+                    total_bytes += before.st_size
+                    if before.st_size > self._MAX_INPUT_BYTES or total_bytes > self._MAX_INPUT_BYTES:
+                        raise ValueError("input files exceed the snapshot byte limit")
+                    snapshot = staging / f"{len(staged):02d}-{resolved.name}"
+                    with open(snapshot, "wb") as destination, os.fdopen(
+                        descriptor, "rb", closefd=False,
+                    ) as source:
+                        shutil.copyfileobj(source, destination, 1024 * 1024)
+                    after = os.fstat(descriptor)
+                    if (
+                        (after.st_size, after.st_mtime_ns, after.st_ino)
+                        != (before.st_size, before.st_mtime_ns, before.st_ino)
+                    ):
+                        raise PermissionError("input changed while it was being read")
+                finally:
+                    os.close(descriptor)
+                snapshot.chmod(0o400)
+                staged.append(_StagedInput(str(requested), resolved, snapshot))
+                seen.add(resolved)
+            return staging, staged
+        except (OSError, PermissionError, ValueError) as exc:
+            shutil.rmtree(staging, ignore_errors=True)
+            return ToolResult.error(f"Error: input_files was not admitted ({exc})")
+        except BaseException:
+            shutil.rmtree(staging, ignore_errors=True)
+            raise
+
+    def _revalidate_input_files(self, staged: list[_StagedInput]) -> ToolResult | None:
+        """Fail closed if an approved input changed before launch."""
+        reader = self._read_file_tool
+        if reader is None or not staged:
+            return None
+        for item in staged:
+            try:
+                resolved = reader.resolve_read_path(item.requested)
+            except (OSError, PermissionError, ValueError):
+                return ToolResult.error(
+                    "Error: input_files permission changed before command launch"
+                )
+            if resolved != item.resolved or resolved.is_symlink() or not item.snapshot.is_file():
+                return ToolResult.error(
+                    "Error: input_files source changed before command launch"
+                )
+        return None
+
+    @property
+    def name(self) -> str:
+        return "exec"
+
+    _MAX_TIMEOUT = 600
+    _MAX_OUTPUT = 10_000
+    _MAX_INPUT_FILES = 16
+    _MAX_INPUT_BYTES = 64 * 1024 * 1024
+
+    # Kernel device files safe as stdio redirect targets (#3599).
+    _BENIGN_DEVICE_PATHS: frozenset[str] = frozenset({
+        "/dev/null",
+        "/dev/zero",
+        "/dev/full",
+        "/dev/random",
+        "/dev/urandom",
+        "/dev/stdin",
+        "/dev/stdout",
+        "/dev/stderr",
+        "/dev/tty",
+    })
+
+    @property
+    def description(self) -> str:
+        return (
+            "Execute a shell command. Always pass a brief 2-6 word `summary` "
+            "of what the command does."
+        )
+
+    @property
+    def exclusive(self) -> bool:
+        return True
+
+    @staticmethod
+    def request_location(
+        command: str | None = None, cmd: str | None = None,
+        working_dir: str | None = None, workdir: str | None = None, **kwargs: object,
+    ) -> tuple[str | None, str | None]:
+        """Resolve compatibility aliases identically for policy and execution."""
+        return command or cmd, working_dir or workdir
+
+    def approval_preflight(
+        self, command: str | None = None, cmd: str | None = None,
+        working_dir: str | None = None, workdir: str | None = None,
+        timeout: int | None = None, shell: str | None = None,
+        login: bool | None = None, yield_time_ms: int | None = None,
+        notify_on_exit: bool = False, input_files: list[str] | None = None,
+        **kwargs: object,
+    ) -> Path | str | ToolOutcome:
+        """Return the effective cwd, or a refusal consent cannot change.
+
+        Prepare the command, but do not copy inputs, reserve admission, or
+        launch it. The live launch must still independently enforce these checks.
+        """
+        command, working_dir = self.request_location(command, cmd, working_dir, workdir)
+        if not command:
+            return ToolResult.error("Error: Missing command. Provide command or cmd.")
+        if (error := self._input_options_error(input_files, yield_time_ms, notify_on_exit)) is not None:
+            return error
+        try:
+            prepared = self._prepare_command(command, working_dir, timeout, shell, login)
+            if not isinstance(prepared, _PreparedCommand):
+                return prepared
+            policy = self.resource_policy
+            grants = policy.folder_grants if policy is not None else None
+            refusal = self._native_command_refusal(
+                grants, managed=prepared.managed, owned=self._owned_native_permission() is not None,
+            )
+            if refusal is not None:
+                return refusal
+            cwd = Path(prepared.logical_cwd or prepared.cwd).resolve(strict=True)
+            if not cwd.is_dir():
+                return ToolResult.error("Error: working_dir is not a directory")
+            return cwd
+        except (OSError, RuntimeError, ValueError) as exc:
+            return ToolResult.error(f"Error: Command preparation failed ({exc})")
+
+    def _input_options_error(
+        self, input_files: list[str] | None, yield_time_ms: int | None, notify_on_exit: bool,
+    ) -> ToolResult | None:
+        if not input_files:
+            return None
+        if yield_time_ms is not None or notify_on_exit:
+            return ToolResult.error("Error: input_files is supported only for foreground commands")
+        if self._read_file_tool is None:
+            return ToolResult.error("Error: input file read policy is unavailable")
+        if len(input_files) > self._MAX_INPUT_FILES:
+            return ToolResult.error(f"Error: input_files accepts at most {self._MAX_INPUT_FILES} files")
+        return None
+
+    async def execute(
+        self, command: str | None = None, cmd: str | None = None,
+        summary: str | None = None,
+        working_dir: str | None = None, workdir: str | None = None,
+        timeout: int | None = None, shell: str | None = None,
+        login: bool | None = None, yield_time_ms: int | None = None,
+        max_output_chars: int | None = None,
+        max_output_tokens: int | None = None,
+        notify_on_exit: bool = False,
+        input_files: list[str] | None = None,
+        **kwargs: Any,
+    ) -> str | ToolOutcome:
+        """Run a shell command, optionally exposing exact approved input files.
+
+        ``input_files`` is additive: omitting it preserves the existing shell
+        confinement. Supplying a path is not an access grant; each path passes
+        the same read resolver and current policy as ``read_file``.
+        """
+        if (error := self._input_options_error(input_files, yield_time_ms, notify_on_exit)) is not None:
+            return error
+        staged_result = self._stage_input_files(input_files)
+        if isinstance(staged_result, str):
+            return staged_result
+        staging, staged = staged_result
+        input_mounts = tuple(
+            (item.snapshot, str(item.resolved)) for item in staged
+        )
+        try:
+            return await self._execute_impl(
+                command=command,
+                cmd=cmd,
+                working_dir=working_dir,
+                workdir=workdir,
+                timeout=timeout,
+                shell=shell,
+                login=login,
+                yield_time_ms=yield_time_ms,
+                max_output_chars=max_output_chars,
+                max_output_tokens=max_output_tokens,
+                notify_on_exit=notify_on_exit,
+                input_mounts=input_mounts,
+                staged_inputs=staged,
+                **kwargs,
+            )
+        finally:
+            if staging is not None:
+                shutil.rmtree(staging, ignore_errors=True)
+
+    async def _execute_impl(
+        self, command: str | None = None, cmd: str | None = None,
+        working_dir: str | None = None, workdir: str | None = None,
+        timeout: int | None = None, shell: str | None = None,
+        login: bool | None = None, yield_time_ms: int | None = None,
+        max_output_chars: int | None = None,
+        max_output_tokens: int | None = None,
+        notify_on_exit: bool = False,
+        *,
+        input_mounts: tuple[tuple[Path, str], ...] = (),
+        staged_inputs: list[_StagedInput] | None = None,
+        **kwargs: Any,
+    ) -> str | ToolOutcome:
+        command, working_dir = self.request_location(command, cmd, working_dir, workdir)
+        if not command:
+            return ToolResult.error("Error: Missing command. Provide command or cmd.")
+        if max_output_chars is None:
+            max_output_chars = max_output_tokens
+
+        prepared = self._prepare_command(
+            command,
+            working_dir,
+            timeout,
+            shell,
+            login,
+            input_mounts=input_mounts,
+        )
+        if isinstance(prepared, ToolOutcome):
+            return prepared
+        if isinstance(prepared, str):
+            return prepared
+        prepared, native_admission = self._reserve_native_admission(
+            prepared,
+            command,
+            working_dir,
+            timeout,
+            shell,
+            login,
+        )
+        if isinstance(prepared, ToolOutcome):
+            return prepared
+        if isinstance(prepared, str):
+            return prepared
+
+        revalidation_error = self._revalidate_input_files(staged_inputs or [])
+        if revalidation_error is not None:
+            if native_admission is not None:
+                native_admission.cancel_if_unlaunched()
+            return revalidation_error
+
+        if yield_time_ms is not None or notify_on_exit:
+            return await self._execute_session(
+                prepared,
+                yield_time_ms,
+                max_output_chars,
+                notify_on_exit=notify_on_exit,
+                native_admission=native_admission,
+            )
+
+        process: asyncio.subprocess.Process | NativeProcessHandle | None = None
+        try:
+            process = await self._spawn(
+                prepared.command,
+                prepared.cwd,
+                prepared.env,
+                prepared.shell_program,
+                prepared.login,
+                process_tree=True,
+                native_admission=native_admission,
+            )
+
+            try:
+                stdout, stderr = await asyncio.wait_for(
+                    process.communicate(),
+                    timeout=prepared.timeout,
+                )
+            except asyncio.TimeoutError:
+                await self.kill_process_tree(process)
+                return ToolResult.error(f"Error: Command timed out after {prepared.timeout} seconds")
+            except asyncio.CancelledError:
+                await self.kill_process_tree(process)
+                raise
+
+            # Safety-net reap: asyncio *should* have reaped the child via
+            # communicate(), but in containers the child-watcher sometimes
+            # misses it, leaving a zombie.
+            _reap_pid(process.pid)
+
+            output_parts: list[str] = []
+
+            if stdout:
+                output_parts.append(stdout.decode("utf-8", errors="replace"))
+
+            if stderr:
+                stderr_text = stderr.decode("utf-8", errors="replace")
+                if stderr_text.strip():
+                    output_parts.append(f"STDERR:\n{stderr_text}")
+
+            output_parts.append(f"\nExit code: {process.returncode}")
+
+            result = "\n".join(output_parts) if output_parts else "(no output)"
+
+            max_len = clamp_session_int(max_output_chars, self._MAX_OUTPUT, 1000, MAX_OUTPUT_CHARS)
+            if len(result) > max_len:
+                half = max_len // 2
+                result = (
+                    result[:half]
+                    + f"\n\n... ({len(result) - max_len:,} chars truncated) ...\n\n"
+                    + result[-half:]
+                )
+
+            self._release_process_tree(process)
+            if prepared.managed and process.returncode != 0 and "read-only file system" in result.lower():
+                result += ("\n\nSandbox blocked a write. Commands are allowed, but file changes need "
+                           "read/write access to that folder. Review its Sandbox access in Folders, "
+                           "or request the user's approval for that folder. This did not switch to Full access.")
+                return ToolResult.error(result)
+            return result
+
+        except Exception as e:
+            # Kill and reap the child if it was spawned but an unexpected
+            # error prevented communicate() from completing.
+            if process is not None:
+                await self.kill_process_tree(process)
+            return ToolResult.error(f"Error executing command: {str(e)}")
+
+    async def _execute_session(
+        self,
+        prepared: _PreparedCommand,
+        yield_time_ms: int | None,
+        max_output_chars: int | None,
+        *,
+        notify_on_exit: bool = False,
+        native_admission: NativeProcessReservation | None = None,
+    ) -> str:
+        try:
+            origin = current_request_context()
+            scope = current_workspace_scope()
+            if origin is not None and scope is not None:
+                origin = replace(origin, workspace_scope=scope)
+            session_id, poll = await self._session_manager.start(
+                command=prepared.command,
+                cwd=prepared.cwd,
+                logical_cwd=prepared.logical_cwd,
+                env=prepared.env,
+                timeout=prepared.timeout,
+                shell_program=prepared.shell_program,
+                login=prepared.login,
+                yield_time_ms=clamp_session_int(yield_time_ms, DEFAULT_YIELD_MS, 0, MAX_YIELD_MS),
+                owner_session_key=current_request_session_key(),
+                notify_on_exit=notify_on_exit,
+                origin=origin,
+                native_admission=native_admission,
+                resource_policy=self.resource_policy if prepared.managed else None,
+                allow_folder_grants=(
+                    self.resource_policy.folder_grants_allowed
+                    if prepared.managed and self.resource_policy is not None
+                    else False
+                ),
+                grant_snapshot=prepared.grant_snapshot,
+                max_output_chars=clamp_session_int(
+                    max_output_chars,
+                    DEFAULT_MAX_OUTPUT_CHARS,
+                    1000,
+                    MAX_OUTPUT_CHARS,
+                ),
+            )
+            result = format_session_poll(session_id, poll)
+            return ToolResult.error(result) if poll.timed_out else result
+        except Exception as exc:
+            return ToolResult.error(f"Error executing command: {exc}")
+
+    def _resolve_timeout(self, timeout: int | None) -> int | None:
+        """Resolve the effective hard timeout in seconds (None = no limit).
+
+        A per-call timeout supplied by the model stays capped at _MAX_TIMEOUT so
+        the LLM cannot request unbounded execution. The config-level default
+        (self.timeout) may exceed that cap, and 0 disables the limit entirely
+        for trusted long-running tasks (#3595).
+        """
+        if timeout:
+            return min(timeout, self._MAX_TIMEOUT)
+        if self.timeout and self.timeout > 0:
+            return self.timeout
+        return None
+
+    def _prepare_command(
+        self,
+        command: str,
+        working_dir: str | None = None,
+        timeout: int | None = None,
+        shell: str | None = None,
+        login: bool | None = None,
+        *,
+        input_mounts: tuple[tuple[Path, str], ...] = (),
+    ) -> _PreparedCommand | str | ToolOutcome:
+        focus = current_workspace_focus()
+        full_active = self._full_access_active()
+        managed = bool(
+            self.resource_policy
+            and self.resource_policy.managed_mode
+            and not full_active
+        )
+        access = current_tool_workspace(
+            self.working_dir,
+            restrict_to_workspace=self.restrict_to_workspace,
+            sandbox_restricts_workspace=bool(self.sandbox),
+        )
+        workspace_root = str(access.project_path) if access.project_path is not None else self.working_dir
+        if working_dir:
+            requested_dir = Path(working_dir).expanduser()
+            cwd = str(
+                requested_dir
+                if requested_dir.is_absolute()
+                else Path(workspace_root or os.getcwd()) / requested_dir
+            )
+        else:
+            cwd = workspace_root or os.getcwd()
+        if (approved_cwd := _approved_exec_cwd.get()) is not None:
+            try:
+                resolved_cwd = Path(cwd).expanduser().resolve(strict=True)
+            except (OSError, RuntimeError, ValueError):
+                return ToolResult.error("Error: working_dir is no longer available after approval.")
+            if resolved_cwd != approved_cwd or not resolved_cwd.is_dir():
+                return ToolResult.error("Error: working_dir changed after approval. Reassess the command.")
+            # Do not hand the original alias to a later launch step.
+            cwd = str(resolved_cwd)
+        # Prevent an LLM-supplied working_dir from escaping the configured
+        # workspace when restrict_to_workspace is enabled (#2826). Without
+        # this, a caller can pass working_dir="/etc" and then all absolute
+        # paths under /etc would pass the _guard_command check that anchors
+        # on cwd.
+        if not managed and access.restrict_to_workspace and workspace_root:
+            try:
+                requested = Path(cwd).expanduser().resolve()
+                resolved_root = Path(workspace_root).expanduser().resolve()
+            except Exception:
+                return ToolResult.error(
+                    "Error: working_dir could not be resolved"
+                    + _WORKSPACE_BOUNDARY_NOTE
+                )
+            if not is_path_within(requested, resolved_root) and not self._managed_exec_path(requested):
+                return ToolResult.error(
+                    "Error: working_dir is outside the configured workspace"
+                    + _WORKSPACE_BOUNDARY_NOTE
+                )
+
+        guard_error = self._guard_command(
+            command, cwd, restrict_to_workspace=(access.restrict_to_workspace and not managed),
+            workspace_root=workspace_root,
+        )
+        if guard_error:
+            return guard_error
+        launch_admission = self._admit_nested_launch(command, working_dir)
+        if isinstance(launch_admission, str):
+            return launch_admission
+        grant_snapshot: FolderGrantSnapshot | None = None
+        logical_cwd = cwd
+        if managed:
+            policy = self.resource_policy
+            grants = policy.folder_grants if policy is not None else None
+            if policy is None or grants is None:
+                return ToolResult.error("Error: Sandbox command confinement is unavailable")
+            try:
+                grant_snapshot = grants.snapshot()
+                task_roots = ()
+                if (
+                    focus is not None
+                    and focus.permission_owner is not None
+                    and focus.task_reference is not None
+                    and focus.permission_owner.is_current_task_reference(focus.task_reference)
+                ):
+                    task_roots = focus.permission_owner.once_roots(focus.task_reference)
+                selected_shell, shell_error = self._resolve_shell(shell)
+                if shell_error:
+                    return shell_error
+                command = wrap_managed_command(
+                    command,
+                    cwd=cwd,
+                    agent_home=policy.workspace,
+                    grants=grants,
+                    include_folder_grants=policy.folder_grants_allowed,
+                    grant_snapshot=grant_snapshot,
+                    excluded_roots=policy.managed_repository_roots(),
+                    task_roots=task_roots,
+                    input_files=input_mounts,
+                    shell_program=selected_shell,
+                    login=bool(login),
+                )
+            except (OSError, PermissionError, RuntimeError, ValueError) as exc:
+                return ToolResult.error(f"Error: Sandbox command confinement is unavailable ({exc})")
+            cwd = str(policy.workspace)
+        if not managed and self.sandbox and workspace_root:
+            root = Path(workspace_root).resolve()
+            if not is_path_within(Path(cwd).resolve(), root) and not any(
+                is_path_within(Path(cwd).resolve(), bind) for bind in self._active_sandbox_bind_roots(root)
+            ):
+                return ToolResult.error("Error: managed working directory is not mounted in the configured sandbox")
+
+        if self.sandbox and not managed:
+            if _IS_WINDOWS:
+                logger.warning(
+                    "Sandbox '{}' is not supported on Windows; running unsandboxed",
+                    self.sandbox,
+                )
+            else:
+                workspace = workspace_root or cwd
+                command = wrap_command(
+                    self.sandbox,
+                    command,
+                    workspace,
+                    cwd,
+                    sandbox_ro_binds=[str(p) for p in self.sandbox_ro_binds],
+                    sandbox_rw_binds=[str(p) for p in self.sandbox_rw_binds],
+                    input_files=input_mounts,
+                )
+                cwd = str(Path(workspace).resolve())
+
+        effective_timeout = self._resolve_timeout(timeout)
+        env = self._build_env()
+        # Git may be invoked inside a compound command or an interactive session.
+        # Apply its noninteractive defaults at the shared preparation boundary,
+        # preserving the caller's explicit SSH command without copying all env vars.
+        env.setdefault("GIT_TERMINAL_PROMPT", "0")
+        env.setdefault(
+            "GIT_SSH_COMMAND",
+            os.environ.get("GIT_SSH_COMMAND", "ssh -o BatchMode=yes -o ConnectTimeout=10"),
+        )
+
+        if managed:
+            env["PATH"] = self._compose_path(os.environ.get("PATH", "/usr/local/bin:/usr/bin:/bin"))
+        if not managed and (self.path_prepend or self.path_append):
+            if _IS_WINDOWS:
+                env["PATH"] = self._compose_path(env.get("PATH", ""))
+            else:
+                command = self._wrap_path_export(command, env)
+
+        if managed:
+            shell_program = None
+        else:
+            shell_program, shell_error = self._resolve_shell(shell)
+            if shell_error:
+                return shell_error
+
+        return _PreparedCommand(
+            command=command,
+            cwd=cwd,
+            env=env,
+            timeout=effective_timeout,
+            shell_program=shell_program,
+            login=False if managed or login is None else login,
+            managed=managed,
+            logical_cwd=logical_cwd,
+            grant_snapshot=grant_snapshot,
+            launch_attestation=launch_admission,
+        )
+
+    @staticmethod
+    def _owned_native_permission() -> tuple[DesktopPermissionOwner, WorkspacePermissionReference] | None:
+        focus = current_workspace_focus()
+        if focus is None or (owner := focus.permission_owner) is None:
+            return None
+        if (task := focus.task_reference) is not None and owner.is_current_task_reference(task):
+            return owner, task
+        if (full := focus.full_reference) is not None and owner.is_current_full_reference(full):
+            return owner, full
+        return None
+
+    @staticmethod
+    def _native_command_refusal(
+        grants: FolderGrantView | None, *, managed: bool, owned: bool,
+    ) -> ToolResult | None:
+        if owned and grants is None:
+            return ToolResult.error("Error: native command admission is unavailable")
+        needs_supervisor = owned or (not managed and grants is not None and not grants.is_managed)
+        if needs_supervisor and not native_supervisor_available():
+            return ToolResult.error("Error: whole-tree native process proof is unavailable")
+        return None
+
+    def _reserve_native_admission(
+        self,
+        prepared: _PreparedCommand,
+        command: str,
+        working_dir: str | None,
+        timeout: int | None,
+        shell: str | None,
+        login: bool | None,
+    ) -> tuple[_PreparedCommand | str | ToolOutcome, NativeProcessReservation | None]:
+        """Close the first-activation race around legacy process launch."""
+        policy = self.resource_policy
+        grants = policy.folder_grants if policy is not None else None
+        owned = self._owned_native_permission()
+        refusal = self._native_command_refusal(grants, managed=prepared.managed, owned=owned is not None)
+        if refusal is not None:
+            return refusal, None
+        if owned is not None:
+            permission_owner, permission_reference = owned
+            assert grants is not None  # Checked by _native_command_refusal.
+            try:
+                reservation = grants.try_begin_owned_native_process(
+                    permission_owner,
+                    permission_reference,
+                )
+            except Exception as exc:
+                return ToolResult.error(
+                    f"Error: native command admission is unavailable ({exc})",
+                ), None
+            if reservation is None:
+                return ToolResult.error("Error: workspace permission changed before command launch"), None
+            return prepared, reservation
+        if prepared.managed or policy is None or grants is None:
+            return prepared, None
+        try:
+            reservation = grants.try_begin_native_process()
+        except Exception as exc:
+            return ToolResult.error(f"Error: native command admission is unavailable ({exc})"), None
+        if reservation is not None:
+            return prepared, reservation
+        if policy.managed_mode:
+            managed_prepared = self._prepare_command(command, working_dir, timeout, shell, login)
+            if isinstance(managed_prepared, ToolOutcome):
+                return managed_prepared, None
+            if isinstance(managed_prepared, str):
+                return managed_prepared, None
+            if not managed_prepared.managed:
+                return ToolResult.error("Error: workspace access changed while preparing the command"), None
+            return managed_prepared, None
+        return prepared, None
+
+    def _compose_path(self, current_path: str) -> str:
+        parts: list[str] = []
+        if self.path_prepend:
+            parts.append(self.path_prepend)
+        if current_path:
+            parts.append(current_path)
+        if self.path_append:
+            parts.append(self.path_append)
+        return os.pathsep.join(parts)
+
+    def _wrap_path_export(self, command: str, env: dict[str, str]) -> str:
+        segments: list[str] = []
+        if self.path_prepend:
+            env["KOHAKU_PATH_PREPEND"] = self.path_prepend
+            segments.append("$KOHAKU_PATH_PREPEND")
+        segments.append("$PATH")
+        if self.path_append:
+            env["KOHAKU_PATH_APPEND"] = self.path_append
+            segments.append("$KOHAKU_PATH_APPEND")
+        path_expr = os.pathsep.join(segments)
+        return f'export PATH="{path_expr}"; {command}'
+
+    @staticmethod
+    async def _spawn(
+        command: str, cwd: str, env: dict[str, str],
+        shell_program: str | None = None,
+        login: bool = False,
+        *,
+        stdin: int = asyncio.subprocess.DEVNULL,
+        process_tree: bool = False,
+        native_admission: NativeProcessReservation | None = None,
+    ) -> asyncio.subprocess.Process | NativeProcessHandle:
+        """Launch *command* in a platform-appropriate shell."""
+        if native_admission is not None:
+            if native_supervisor_available():
+                return await spawn_native_process(
+                    command=command,
+                    cwd=cwd,
+                    env=env,
+                    shell_program=shell_program,
+                    login=login,
+                    reservation=native_admission,
+                )
+            if not native_admission.cancel_if_unlaunched():
+                native_admission.mark_unproven()
+            raise RuntimeError("whole-tree native process supervisor is unavailable")
+        if _IS_WINDOWS:
+            windows_job = None
+            process = None
+            creation_flags = 0
+            if process_tree and sys.platform == "win32":
+                windows_job = ExecTool._create_windows_job()
+                creation_flags = windows_job.creation_flags
+            # Default to PowerShell so single-line and multi-line commands
+            # share the same shell semantics.  cmd.exe is reachable via the
+            # explicit shell="cmd" parameter (see _resolve_shell).
+            default_program = shutil.which("pwsh") or shutil.which("powershell") or "powershell"
+            program = shell_program or default_program
+            program_name = PureWindowsPath(program).name.lower()
+            try:
+                if program_name in ("cmd", "cmd.exe"):
+                    cmd_env = {**env, "COMSPEC": program}
+                    process = await asyncio.create_subprocess_shell(
+                        command,
+                        stdin=stdin,
+                        stdout=asyncio.subprocess.PIPE,
+                        stderr=asyncio.subprocess.PIPE,
+                        cwd=cwd,
+                        env=cmd_env,
+                        creationflags=creation_flags,
+                    )
+                else:
+                    command = ExecTool._normalize_powershell_command(command)
+                    command = (
+                        "[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)\n"
+                        "if ($PSVersionTable.PSVersion.Major -lt 6) { $OutputEncoding = [Console]::OutputEncoding }\n"
+                        "$PSDefaultParameterValues['Out-File:Encoding'] = 'utf8'\n"
+                        f"{command}\n"
+                        "if ($LASTEXITCODE -ne $null) { exit $LASTEXITCODE }"
+                    )
+                    process = await asyncio.create_subprocess_exec(
+                        program, "-NoProfile", "-NonInteractive", "-Command", command,
+                        stdin=stdin,
+                        stdout=asyncio.subprocess.PIPE,
+                        stderr=asyncio.subprocess.PIPE,
+                        cwd=cwd,
+                        env=env,
+                        creationflags=creation_flags,
+                    )
+                if windows_job is not None:
+                    windows_job.assign_and_resume(process.pid)
+                    setattr(process, _PROCESS_TREE_OWNER_ATTR, windows_job)
+                return process
+            except BaseException:
+                if windows_job is not None:
+                    windows_job.terminate()
+                if process is not None:
+                    await ExecTool._kill_process(process)
+                raise
+        shell_program = shell_program or shutil.which("bash") or "/bin/bash"
+        args: list[str] = [shell_program]
+        shell_name = Path(shell_program).name.lower()
+        if login and shell_name in {"bash", "bash.exe", "zsh", "zsh.exe"}:
+            args.append("-l")
+        args.extend(["-c", command])
+        if process_tree:
+            return await asyncio.create_subprocess_exec(
+                *args,
+                stdin=stdin,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                cwd=cwd,
+                env=env,
+                start_new_session=True,
+            )
+        return await asyncio.create_subprocess_exec(
+            *args,
+            stdin=stdin,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            cwd=cwd,
+            env=env,
+        )
+
+    @staticmethod
+    def _normalize_powershell_command(command: str) -> str:
+        stripped = command.lstrip()
+        if not stripped or stripped[0] not in {"'", '"'}:
+            return command
+
+        quote = stripped[0]
+        end = stripped.find(quote, 1)
+        if end == -1 or end + 1 >= len(stripped) or not stripped[end + 1].isspace():
+            return command
+
+        executable = stripped[1:end]
+        looks_like_windows_executable = (
+            bool(re.match(r"^[A-Za-z]:[\\/]", executable))
+            or executable.startswith(r"\\")
+            or executable.lower().endswith((".exe", ".cmd", ".bat", ".ps1"))
+        )
+        if not looks_like_windows_executable:
+            return command
+
+        leading = command[: len(command) - len(stripped)]
+        return f"{leading}& {stripped}"
+
+    @staticmethod
+    def _resolve_shell(shell: str | None) -> tuple[str | None, str | None]:
+        if not shell:
+            return None, None
+        if "\0" in shell or "\n" in shell or "\r" in shell:
+            return None, ToolResult.error("Error: shell contains invalid characters")
+        if _IS_WINDOWS:
+            win_allowed = {"powershell", "powershell.exe", "pwsh", "pwsh.exe", "cmd", "cmd.exe"}
+            path = Path(shell).expanduser()
+            if path.is_absolute():
+                name = path.name.lower()
+                if name not in win_allowed:
+                    return None, ToolResult.error(
+                        f"Error: unsupported shell {shell!r}. "
+                        "Allowed: powershell, pwsh, cmd"
+                    )
+                if not path.is_file():
+                    return None, ToolResult.error(f"Error: shell is not found: {shell}")
+                return str(path), None
+            if "/" in shell or "\\" in shell:
+                return None, ToolResult.error("Error: shell must be a shell name or absolute path")
+            if shell.lower() not in win_allowed:
+                return None, ToolResult.error(
+                    f"Error: unsupported shell {shell!r}. "
+                    "Allowed: powershell, pwsh, cmd"
+                )
+            if shell.lower() in ("cmd", "cmd.exe"):
+                resolved = os.environ.get("COMSPEC") or shutil.which("cmd") or "cmd"
+                return resolved, None
+            resolved = shutil.which(shell) or shell
+            return resolved, None
+        allowed = {"sh", "bash", "zsh"}
+        path = Path(shell).expanduser()
+        if path.is_absolute():
+            if path.name not in allowed:
+                return None, ToolResult.error(f"Error: unsupported shell {shell!r}. Allowed: bash, sh, zsh")
+            if not path.is_file() or not os.access(path, os.X_OK):
+                return None, ToolResult.error(f"Error: shell is not executable: {shell}")
+            return str(path), None
+        if "/" in shell or "\\" in shell:
+            return None, ToolResult.error("Error: shell must be a shell name or absolute path")
+        if shell not in allowed:
+            return None, ToolResult.error(f"Error: unsupported shell {shell!r}. Allowed: bash, sh, zsh")
+        resolved = shutil.which(shell)
+        if not resolved:
+            return None, ToolResult.error(f"Error: shell not found: {shell}")
+        return resolved, None
+
+    @staticmethod
+    async def _kill_process(process: asyncio.subprocess.Process) -> None:
+        """Kill a subprocess and reap it to prevent zombies.
+
+        Safe to call when the process has already exited (e.g. generic
+        exception handlers after a successful ``communicate()``): skips
+        ``kill()`` and only runs the safety-net reap.
+        """
+        if process.returncode is not None:
+            _reap_pid(process.pid)
+            return
+        try:
+            with suppress(ProcessLookupError):
+                process.kill()
+            with suppress(asyncio.TimeoutError):
+                await asyncio.wait_for(process.wait(), timeout=5.0)
+        finally:
+            _reap_pid(process.pid)
+
+    @staticmethod
+    async def process_tree_quiescent(
+        process: asyncio.subprocess.Process | NativeProcessHandle,
+        *,
+        timeout: float = 0.0,
+    ) -> bool:
+        """Return whether the owned process tree has no live members."""
+        if isinstance(process, NativeProcessHandle):
+            return (
+                process.quiescence_proven()
+                if timeout <= 0
+                else await process.wait_quiescent(timeout)
+            )
+        owner = ExecTool._process_tree_owner(process)
+        if owner is not None or _IS_WINDOWS:
+            # Windows owns the tree through the Job Object. The root exit is the
+            # only portable observation available here; the job termination is
+            # the whole-tree action.
+            return process.returncode is not None
+        if process.returncode is None:
+            return False
+        deadline = time.monotonic() + max(0.0, timeout)
+        while True:
+            try:
+                os.killpg(process.pid, 0)
+            except ProcessLookupError:
+                return True
+            except PermissionError:
+                return False
+            if time.monotonic() >= deadline:
+                return False
+            await asyncio.sleep(0.01)
+
+    @staticmethod
+    async def kill_process_tree(
+        process: asyncio.subprocess.Process | NativeProcessHandle,
+    ) -> None:
+        """Kill a session process and descendants, then prove tree quiescence."""
+        if isinstance(process, NativeProcessHandle):
+            await process.kill_process_tree()
+            return
+        owner = ExecTool._process_tree_owner(process)
+        try:
+            if owner is not None:
+                owner.terminate()
+            elif _IS_WINDOWS:
+                if process.returncode is None:
+                    with suppress(OSError, asyncio.TimeoutError):
+                        await asyncio.wait_for(
+                            asyncio.to_thread(
+                                subprocess.run,
+                                ["taskkill", "/PID", str(process.pid), "/T", "/F"],
+                                check=False,
+                                stdout=subprocess.DEVNULL,
+                                stderr=subprocess.DEVNULL,
+                            ),
+                            timeout=5.0,
+                        )
+            else:
+                # Signal the group even after the root exits so adopted
+                # descendants cannot outlive an already-reaped root.
+                try:
+                    os.killpg(process.pid, signal.SIGKILL)
+                except (ProcessLookupError, PermissionError):
+                    pass
+
+            if process.returncode is None:
+                with suppress(ProcessLookupError):
+                    process.kill()
+            with suppress(asyncio.TimeoutError):
+                await asyncio.wait_for(process.wait(), timeout=5.0)
+        finally:
+            if owner is not None:
+                ExecTool._drop_process_tree_owner(process)
+            _reap_pid(process.pid)
+
+    @staticmethod
+    def _process_tree_owner(
+        process: asyncio.subprocess.Process | NativeProcessHandle,
+    ) -> _ProcessTreeOwner | None:
+        if isinstance(process, NativeProcessHandle):
+            return None
+        # _spawn is the only writer for this private ownership marker.
+        return cast(_ProcessTreeOwner | None, vars(process).get(_PROCESS_TREE_OWNER_ATTR))
+
+    @staticmethod
+    def _create_windows_job() -> _ProcessTreeOwner:
+        from kohaku.agent.tools._windows_job import WindowsJob
+
+        return WindowsJob.create()
+
+    @staticmethod
+    def _drop_process_tree_owner(
+        process: asyncio.subprocess.Process | NativeProcessHandle,
+    ) -> None:
+        with suppress(AttributeError):
+            delattr(process, _PROCESS_TREE_OWNER_ATTR)
+
+    @staticmethod
+    def _release_process_tree(
+        process: asyncio.subprocess.Process | NativeProcessHandle,
+    ) -> None:
+        if isinstance(process, NativeProcessHandle):
+            return
+        owner = ExecTool._process_tree_owner(process)
+        if owner is None:
+            return
+        owner.release()
+        ExecTool._drop_process_tree_owner(process)
+
+    def _build_env(self) -> dict[str, str]:
+        """Build a minimal environment for subprocess execution.
+
+        On Unix, only HOME/LANG/TERM are passed by default. If callers request
+        ``login=True``, bash/zsh may source the user's profile and add PATH or
+        other variables.
+
+        On Windows, ``cmd.exe`` has no login-profile mechanism, so a curated
+        set of system variables (including PATH) is forwarded.  API keys and
+        other secrets are still excluded.
+        """
+        if _IS_WINDOWS:
+            sr = os.environ.get("SYSTEMROOT", r"C:\Windows")
+            env = {
+                "SYSTEMROOT": sr,
+                "COMSPEC": os.environ.get("COMSPEC", f"{sr}\\system32\\cmd.exe"),
+                "USERPROFILE": os.environ.get("USERPROFILE", ""),
+                "HOMEDRIVE": os.environ.get("HOMEDRIVE", "C:"),
+                "HOMEPATH": os.environ.get("HOMEPATH", "\\"),
+                "TEMP": os.environ.get("TEMP", f"{sr}\\Temp"),
+                "TMP": os.environ.get("TMP", f"{sr}\\Temp"),
+                "PATHEXT": os.environ.get("PATHEXT", ".COM;.EXE;.BAT;.CMD"),
+                "PATH": os.environ.get("PATH", f"{sr}\\system32;{sr}"),
+                "PYTHONUNBUFFERED": "1",
+                "APPDATA": os.environ.get("APPDATA", ""),
+                "LOCALAPPDATA": os.environ.get("LOCALAPPDATA", ""),
+                "ProgramData": os.environ.get("ProgramData", ""),
+                "ProgramFiles": os.environ.get("ProgramFiles", ""),
+                "ProgramFiles(x86)": os.environ.get("ProgramFiles(x86)", ""),
+                "ProgramW6432": os.environ.get("ProgramW6432", ""),
+            }
+            for key in self.allowed_env_keys:
+                val = os.environ.get(key)
+                if val is not None:
+                    env[key] = val
+            return env
+        home = os.environ.get("HOME", "/tmp")
+        env = {
+            "HOME": home,
+            "LANG": os.environ.get("LANG", "C.UTF-8"),
+            "TERM": os.environ.get("TERM", "dumb"),
+            "PYTHONUNBUFFERED": "1",
+        }
+        for key in self.allowed_env_keys:
+            val = os.environ.get(key)
+            if val is not None:
+                env[key] = val
+        return env
+
+    def _guard_command(
+        self,
+        command: str,
+        cwd: str,
+        *,
+        restrict_to_workspace: bool | None = None,
+        workspace_root: str | None = None,
+    ) -> str | ToolOutcome | None:
+        """Best-effort safety guard for potentially destructive commands."""
+        cmd = command.strip()
+        lower = cmd.lower()
+
+        # Retain the fork's deny-first contract even in full-access mode.
+        for pattern in self.deny_patterns:
+            if re.search(pattern, lower):
+                return ToolResult.error("Error: Command blocked by deny pattern filter")
+        segments = self._split_shell_segments(lower)
+        if self.allow_patterns and (not segments or not all(
+            any(re.fullmatch(pattern, segment) for pattern in self.allow_patterns)
+            for segment in segments
+        )):
+            return ToolResult.error("Error: Command blocked by allowlist filter (not in allowlist)")
+        if self.desktop_use_active and self._DESKTOP_MUTATION_COMMAND_RE.search(cmd):
+            return ToolResult.error("Error: Shell-based desktop mutation is blocked because desktop_use is enabled")
+        from kohaku.security.network import contains_internal_url
+        if contains_internal_url(cmd):
+            return ToolDenialResult(
+                "Error: Command blocked by safety guard (internal/private URL detected)"
+                f"\n\n{PRIVATE_NETWORK_DENIAL_NOTE}",
+                kind=ToolDenialKind.PRIVATE_NETWORK,
+            )
+        if self.resource_policy:
+            policy_error = self.resource_policy.validate_exec(command, cwd)
+            if policy_error:
+                if isinstance(policy_error, FolderAccessNeededError):
+                    from kohaku.agent.tools.workspace import folder_access_outcome
+
+                    return folder_access_outcome(policy_error, self.resource_policy)
+                return ToolResult.error(policy_error)
+
+        should_restrict = self.restrict_to_workspace if restrict_to_workspace is None else restrict_to_workspace
+        if should_restrict:
+            if "..\\" in cmd or "../" in cmd:
+                return ToolResult.error(
+                    "Error: Command blocked by safety guard (path traversal detected)"
+                    + _WORKSPACE_BOUNDARY_NOTE
+                )
+
+            cwd_path = Path(cwd).resolve()
+            resolved_workspace = (
+                Path(workspace_root).expanduser().resolve()
+                if workspace_root
+                else None
+            )
+            sandbox_bind_roots = self._active_sandbox_bind_roots(
+                resolved_workspace or cwd_path
+            )
+
+            for raw in self._extract_absolute_paths(cmd):
+                try:
+                    expanded = os.path.expandvars(raw.strip())
+                    # Python's expanduser() intentionally does not implement
+                    # shell directory-stack forms. ``~+`` is the active cwd,
+                    # while ``~-`` and indexed forms can resolve outside it;
+                    # normalize the former and fail closed on the latter.
+                    if expanded == "~+":
+                        p = cwd_path
+                    elif expanded.startswith("~+/"):
+                        p = (cwd_path / expanded[3:]).resolve()
+                    elif re.match(r"^~(?:-|[+-]\d+)(?:/|$)", expanded):
+                        return ToolResult.error(
+                            "Error: Command blocked by safety guard "
+                            "(path outside working dir)"
+                            + _WORKSPACE_BOUNDARY_NOTE
+                        )
+                    else:
+                        p = Path(expanded).expanduser().resolve()
+                    # Match against the un-resolved path first.  On Linux,
+                    # /dev/stderr is a symlink to /proc/self/fd/2 and
+                    # ``Path.resolve()`` would mask the device-file intent.
+                    if self._is_benign_device_path(expanded):
+                        continue
+                except Exception:
+                    continue
+
+                if self._is_benign_device_path(str(p)):
+                    continue
+
+                media_path = get_media_dir().resolve()
+                allowed = (
+                    is_path_within(p, cwd_path)
+                    or is_path_within(p, media_path)
+                )
+                if not allowed and resolved_workspace is not None:
+                    allowed = is_path_within(p, resolved_workspace)
+                if not allowed and sandbox_bind_roots:
+                    allowed = any(is_path_within(p, root) for root in sandbox_bind_roots)
+                if not allowed and self._managed_exec_path(p):
+                    allowed = not self.sandbox or any(is_path_within(p, root) for root in sandbox_bind_roots)
+                if p.is_absolute() and not allowed:
+                    return ToolResult.error(
+                        "Error: Command blocked by safety guard (path outside working dir)"
+                        + _WORKSPACE_BOUNDARY_NOTE
+                    )
+
+        return None
+
+    def _managed_exec_path(self, path: Path) -> bool:
+        """Only declared context/target roots can extend command access."""
+        if self.resource_policy is None:
+            return False
+        manager = self.resource_policy.context_manager
+        if manager.find_repo_for_path(path) is None and manager.find_target_repo_for_path(path) is None:
+            return False
+        try:
+            self.resource_policy.validate_path(path, "exec")
+        except PermissionError:
+            return False
+        return True
+
+    @staticmethod
+    def _split_shell_segments(command: str) -> list[str]:
+        """Split shell commands on top-level chaining operators."""
+        segments: list[str] = []
+        current: list[str] = []
+        quote: str | None = None
+        escaped = False
+        paren_depth = 0
+        i = 0
+
+        while i < len(command):
+            ch = command[i]
+
+            if escaped:
+                current.append(ch)
+                escaped = False
+                i += 1
+                continue
+
+            if ch == "\\" and quote != "'":
+                current.append(ch)
+                escaped = True
+                i += 1
+                continue
+
+            if quote is not None:
+                current.append(ch)
+                if ch == quote:
+                    quote = None
+                i += 1
+                continue
+
+            if ch in {"'", '"', "`"}:
+                current.append(ch)
+                quote = ch
+                i += 1
+                continue
+
+            if ch == "(":
+                paren_depth += 1
+                current.append(ch)
+                i += 1
+                continue
+
+            if ch == ")" and paren_depth > 0:
+                paren_depth -= 1
+                current.append(ch)
+                i += 1
+                continue
+
+            operator_len = 0
+            if paren_depth == 0:
+                if command.startswith(("&&", "||"), i):
+                    operator_len = 2
+                elif ch == "&" and not (
+                    (i > 0 and command[i - 1] in "<>") or command.startswith("&>", i)
+                ):
+                    current.append(ch)
+                    operator_len = 1
+                # A newline separates commands just like ";" does, so a payload
+                # smuggled onto its own line must be checked on its own too.
+                elif ch in {";", "|", "\n", "\r"}:
+                    operator_len = 1
+
+            if operator_len:
+                segment = "".join(current).strip()
+                if segment:
+                    segments.append(segment)
+                current = []
+                i += operator_len
+                continue
+
+            current.append(ch)
+            i += 1
+
+        segment = "".join(current).strip()
+        if segment:
+            segments.append(segment)
+        return segments
+
+    @classmethod
+    def _is_benign_device_path(cls, path: str) -> bool:
+        """Return True for kernel device files that should never be workspace-blocked."""
+        if path in cls._BENIGN_DEVICE_PATHS:
+            return True
+        return path.startswith("/dev/fd/")
+
+    @staticmethod
+    def _extract_absolute_paths(command: str) -> list[str]:
+        # Windows: match drive-root paths like `C:\` as well as `C:\path\to\file`, and UNC paths like `\\server\share`
+        # NOTE: `*` is required so `C:\` (nothing after the slash) is still extracted.
+        win_paths = re.findall(
+            r"(?<![A-Za-z])(?:[A-Za-z]:[^\s\"'|><;]*|\\\\[^\s\"'|><;]+(?:\\[^\s\"'|><;]+)*)",
+            command
+        )
+        try:
+            lexer = shlex.shlex(command, posix=True, punctuation_chars="();<>|&")
+            lexer.whitespace_split = True
+            lexer.commenters = ""
+            tokens = list(lexer)
+        except ValueError:
+            # Keep malformed quoting fail-closed. The shell will normally reject
+            # it too, but a conservative raw scan must not turn it into a bypass.
+            tokens = [command]
+
+        paths = [*win_paths]
+        seen = set(win_paths)
+        for index, token in enumerate(tokens):
+            for path in ExecTool._extract_posix_paths_from_token(token):
+                if path not in seen:
+                    paths.append(path)
+                    seen.add(path)
+            if index > 0 and tokens[index - 1] in {"-c", "-lc", "--command"}:
+                for path in ExecTool._extract_absolute_paths(token):
+                    if path not in seen:
+                        paths.append(path)
+                        seen.add(path)
+        return paths
+
+    @staticmethod
+    def _extract_posix_paths_from_token(token: str) -> list[str]:
+        """Extract local POSIX/home paths from one shell-decoded token.
+
+        ``shlex`` separates real grouping/redirection operators while preserving
+        parentheses and spaces that were quoted or escaped as part of a path.
+        Embedded scripts (for example ``sh -c \"cat /tmp/x\"``) still need a
+        small boundary scan. Colons are not general boundaries: treating them
+        as such misclassifies URLs, ``host:/remote`` and ``C:/Windows``. They
+        are considered only inside a syntactically valid assignment, where
+        shells expand each colon-delimited tilde component.
+        """
+        paths: list[str] = []
+        for match in re.finditer(
+            r"file://(?:[^/\s\"']+)?(/[^\s\"'<>|;&]*)",
+            token,
+            flags=re.IGNORECASE,
+        ):
+            uri_prefix = token[: match.start()]
+            raw_path = match.group(1)
+            if uri_prefix.count("(") > uri_prefix.count(")"):
+                raw_path = raw_path.split(")", 1)[0]
+            if uri_prefix.count("{") > uri_prefix.count("}"):
+                raw_path = raw_path.split(",", 1)[0].split("}", 1)[0]
+            raw_path = raw_path.split("?", 1)[0].split("#", 1)[0]
+            if raw_path:
+                paths.append(unquote(raw_path))
+        boundary_chars = frozenset(" \t\r\n=({,<>|;&\"'")
+        i = 0
+        while i < len(token):
+            is_posix = token[i] == "/"
+            home_match = re.match(
+                r"~(?:[+-](?:\d+)?|[A-Za-z0-9_.@-]+)?(?=/|:|$)",
+                token[i:],
+            )
+            is_home = home_match is not None
+            if not is_posix and not is_home:
+                i += 1
+                continue
+
+            prefix = token[:i]
+            parameter_default = (
+                i >= 2 and token[i - 2] == ":" and token[i - 1] in "-+?="
+            )
+            word_start = max(
+                (prefix.rfind(char) for char in " \t\r\n<>|;&"),
+                default=-1,
+            ) + 1
+            word_prefix = prefix[word_start:]
+            assignment_component = bool(
+                re.fullmatch(
+                    r"(?:[A-Za-z_][A-Za-z0-9_]*|--?[A-Za-z0-9_.-]+)="
+                    r"(?:[^:=\s]*:)*",
+                    word_prefix,
+                )
+            )
+            at_boundary = i == 0 or token[i - 1] in boundary_chars
+            if is_home:
+                # A shell word beginning with ``~`` is a separate shlex token.
+                # Mid-token expansion is valid only after ``=`` or a colon in
+                # an assignment. This avoids PromQL/Loki ``=~`` and ``|~``
+                # match operators while covering PATH-like values.
+                at_boundary = i == 0 or assignment_component
+            if not at_boundary and not parameter_default:
+                i += 1
+                continue
+
+            if re.search(r"[A-Za-z][A-Za-z0-9+.-]*://", word_prefix) or re.match(
+                r"(?:[^/:=\s]+@)?[^/:=\s]+:$",
+                word_prefix,
+            ):
+                # HTTP-style URL path/query fragments and scp-style remote paths
+                # are not local filesystem references. ``file://`` paths were
+                # decoded above. Windows drive paths are already captured by the
+                # platform-specific expression above.
+                i += 1
+                continue
+
+            assignment_value = assignment_component
+            if i == 0 or assignment_value:
+                end = len(token)
+                if assignment_value:
+                    separator = token.find(":", i)
+                    if separator >= 0:
+                        end = separator
+            elif token[i - 1] in {"'", '"'}:
+                quote = token[i - 1]
+                closing = token.find(quote, i)
+                end = len(token) if closing < 0 else closing
+            else:
+                end_chars = set(" \t\r\n\"'<>|;&")
+                if prefix.count("(") > prefix.count(")"):
+                    end_chars.add(")")
+                if prefix.count("{") > prefix.count("}"):
+                    end_chars.update({",", "}"})
+                end = i
+                while end < len(token) and token[end] not in end_chars:
+                    end += 1
+
+            candidate = token[i:end]
+            if candidate:
+                paths.append(candidate)
+            i = max(end, i + 1)
+        return paths
+
+    @staticmethod
+    def _normalize_bind_roots(paths: list[str] | None) -> list[Path]:
+        roots: list[Path] = []
+        seen: set[str] = set()
+        for raw in paths or []:
+            value = str(raw).strip()
+            if not value:
+                continue
+            path = Path(os.path.expandvars(value)).expanduser()
+            if not path.is_absolute():
+                continue
+            with suppress(OSError, RuntimeError, ValueError):
+                resolved = path.resolve(strict=False)
+                key = os.path.normcase(os.fspath(resolved))
+                if key in seen:
+                    continue
+                seen.add(key)
+                roots.append(resolved)
+        return roots
+
+    def _active_sandbox_bind_roots(
+        self,
+        workspace_root: Path | None = None,
+    ) -> list[Path]:
+        if self.sandbox != "bwrap" or _IS_WINDOWS:
+            return []
+        roots = [*self.sandbox_ro_binds, *self.sandbox_rw_binds]
+        if workspace_root is None:
+            return roots
+        return [
+            root
+            for root in roots
+            if not is_path_within(workspace_root, root)
+        ]

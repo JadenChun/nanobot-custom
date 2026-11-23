@@ -1,7 +1,7 @@
 """Current-context completion metadata does not change canonical answer replay."""
 import pytest
 
-from nanobot.webui.transcript import replay_transcript_to_ui_messages
+from kohaku.webui.transcript import replay_transcript_to_ui_messages
 
 
 @pytest.mark.parametrize("text", ["firstsecondfinal", "# Rewritten\n![plot](/signed/image.png)\nFinal answer"])
@@ -61,10 +61,10 @@ def test_snapshot_cannot_cross_or_restamp_a_different_user_boundary(turn_id) -> 
 
 
 def test_no_slot_is_omitted_and_retained_snapshots_validate() -> None:
-    from nanobot.bus.outbound_events import TurnEndEvent
-    from nanobot.providers.base import ContextUsageSnapshot
-    from nanobot.webui.outbound_wire import encode_turn_end
-    from nanobot.webui.transcript import (
+    from kohaku.bus.outbound_events import TurnEndEvent
+    from kohaku.providers.base import ContextUsageSnapshot
+    from kohaku.webui.outbound_wire import encode_turn_end
+    from kohaku.webui.transcript import (
         validate_retained_transcript_record,
         validate_retained_webui_thread,
     )

@@ -11,10 +11,10 @@ from types import SimpleNamespace
 
 import pytest
 
-from nanobot.remote import ipc
-from nanobot.remote.client import OwnerRequestError, RemoteAccessClient
-from nanobot.remote.owner import RemoteAccessOwner
-from nanobot.remote.store import RemoteAccessStore
+from kohaku.remote import ipc
+from kohaku.remote.client import OwnerRequestError, RemoteAccessClient
+from kohaku.remote.owner import RemoteAccessOwner
+from kohaku.remote.store import RemoteAccessStore
 
 _TEST_UID = 4242
 

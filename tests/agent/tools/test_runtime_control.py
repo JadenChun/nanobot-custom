@@ -7,15 +7,15 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from nanobot.agent.loop import AgentLoop
-from nanobot.agent.tools.runtime_control import (
+from kohaku.agent.loop import AgentLoop
+from kohaku.agent.tools.runtime_control import (
     RUNTIME_COMMAND_KEYS,
     RUNTIME_SNAPSHOT_KEYS,
     AgentRuntimeControl,
     RuntimeControl,
 )
-from nanobot.agent.tools.self import MyTool, MyToolConfig
-from nanobot.config.schema import ToolsConfig
+from kohaku.agent.tools.self import MyTool, MyToolConfig
+from kohaku.config.schema import ToolsConfig
 from tests.agent import p6_admitted_fixtures
 
 admitted_async = p6_admitted_fixtures.admitted_async

@@ -9,23 +9,23 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from nanobot.agent.runner import AgentRunner
-from nanobot.agent.tools.base import (
+from kohaku.agent.runner import AgentRunner
+from kohaku.agent.tools.base import (
     Tool,
     ToolPreparationError,
     ToolPreparationErrorKind,
 )
-from nanobot.agent.tools.context import RequestContext, request_context
-from nanobot.agent.tools.mcp import MCPToolWrapper
-from nanobot.agent.tools.registry import (
+from kohaku.agent.tools.context import RequestContext, request_context
+from kohaku.agent.tools.mcp import MCPToolWrapper
+from kohaku.agent.tools.registry import (
     MANAGED_WEBUI_TOOL_NAMES,
     ManagedToolDispatchGuard,
     ToolRegistry,
     managed_webui_tool_names,
 )
-from nanobot.config.schema import AgentDefaults
-from nanobot.providers.base import LLMProvider, LLMResponse, ToolCallRequest
-from nanobot.security.folder_grants import FolderGrantStore
+from kohaku.config.schema import AgentDefaults
+from kohaku.providers.base import LLMProvider, LLMResponse, ToolCallRequest
+from kohaku.security.folder_grants import FolderGrantStore
 from tests.agent.runner_helpers import make_run_spec
 
 _MAX_TOOL_RESULT_CHARS = AgentDefaults().max_tool_result_chars

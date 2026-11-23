@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from nanobot.remote.device_proof import (
+from kohaku.remote.device_proof import (
     DeviceProofClaims,
     DeviceProofError,
     canonical_device_proof_bytes,

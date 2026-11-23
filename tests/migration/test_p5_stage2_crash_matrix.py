@@ -7,10 +7,10 @@ from pathlib import Path
 
 import pytest
 
-from nanobot.session.execution_owner import acquire_execution
-from nanobot.session.manager import Session, SessionManager
-from nanobot.session.runtime_authority import DurableSessionAuthority, OfflineSessionOperator
-from nanobot.session.session_mode import SessionModeError
+from kohaku.session.execution_owner import acquire_execution
+from kohaku.session.manager import Session, SessionManager
+from kohaku.session.runtime_authority import DurableSessionAuthority, OfflineSessionOperator
+from kohaku.session.session_mode import SessionModeError
 
 
 @pytest.mark.parametrize("phase", ["master_prepared", "witness_preparing", "records_committed", "registry_active"])

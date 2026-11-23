@@ -7,9 +7,9 @@ from datetime import datetime
 
 import pytest
 
-from nanobot.agent import memory_recovery_conversion as conversion
-from nanobot.agent import memory_recovery_storage as storage
-from nanobot.agent.memory_recovery_conversion import (
+from kohaku.agent import memory_recovery_conversion as conversion
+from kohaku.agent import memory_recovery_storage as storage
+from kohaku.agent.memory_recovery_conversion import (
     CapturedConversionPayload,
     ConversionError,
     _check_record_bounds,
@@ -21,7 +21,7 @@ from nanobot.agent.memory_recovery_conversion import (
     legacy_finalized_conversion_payload,
     prepare_conversion_payload,
 )
-from nanobot.agent.memory_recovery_manifest import (
+from kohaku.agent.memory_recovery_manifest import (
     MAX_RECORD_BYTES,
     MemoryRecoveryManifest,
     derive_manifest_identity,
@@ -956,9 +956,9 @@ def test_conversion_phase_payloads_reject_extra_fields_and_duplicate_keys() -> N
 def _v2_receipt(entry: str = "[2025-04-03 11:22] first\n\n[2025-04-04 12:34] second"):
     from types import MappingProxyType
 
-    from nanobot.agent.memory_recovery import MemoryReceipt
-    from nanobot.agent.memory_recovery_manifest import ManifestRecord
-    from nanobot.agent.memory_recovery_transaction import capture_transaction_payload
+    from kohaku.agent.memory_recovery import MemoryReceipt
+    from kohaku.agent.memory_recovery_manifest import ManifestRecord
+    from kohaku.agent.memory_recovery_transaction import capture_transaction_payload
 
     values = {
         "version": 1,
@@ -996,7 +996,7 @@ def _v2_receipt(entry: str = "[2025-04-03 11:22] first\n\n[2025-04-04 12:34] sec
 
 
 def _v2_prepare(entry: str = "[2025-04-03 11:22] first\n\n[2025-04-04 12:34] second"):
-    from nanobot.agent.memory_recovery_conversion import capture_receipt_tail_conversion_payload
+    from kohaku.agent.memory_recovery_conversion import capture_receipt_tail_conversion_payload
 
     receipt, transaction, record = _v2_receipt(entry)
     captured = capture_receipt_tail_conversion_payload(transaction.identity)
@@ -1051,7 +1051,7 @@ def test_receipt_tail_v2_is_single_canonical_row_and_distinct_namespace() -> Non
     b"\xff\n<!-- nanobot-consolidation:receipt-marker -->\nentry\n\n",
 ])
 def test_receipt_tail_v2_rejects_ambiguous_or_invalid_source(source: bytes) -> None:
-    from nanobot.agent.memory_recovery_conversion import capture_receipt_tail_conversion_payload
+    from kohaku.agent.memory_recovery_conversion import capture_receipt_tail_conversion_payload
 
     receipt, transaction, record = _v2_receipt("entry")
     values = _prepared_inputs(source_bytes=source)
@@ -1088,7 +1088,7 @@ def test_receipt_tail_v2_phase_round_trip_and_context() -> None:
 
 
 def test_receipt_tail_v2_preserve_has_no_invented_evidence() -> None:
-    from nanobot.agent.memory_recovery_conversion import capture_receipt_tail_conversion_payload
+    from kohaku.agent.memory_recovery_conversion import capture_receipt_tail_conversion_payload
 
     captured = capture_receipt_tail_conversion_payload("a" * 64)
     values = _prepared_inputs(history=b'{"cursor":1}\n')
@@ -1147,7 +1147,7 @@ def test_v1_captured_and_prepared_exact_payload_shape_retained() -> None:
 
 
 def test_receipt_tail_v2_rejects_oversized_and_wrong_policy_payloads() -> None:
-    from nanobot.agent.memory_recovery_conversion import capture_receipt_tail_conversion_payload
+    from kohaku.agent.memory_recovery_conversion import capture_receipt_tail_conversion_payload
 
     captured, prepared, _, _, _, _ = _v2_prepare()
     wrong_policy = captured.to_payload()
@@ -1182,7 +1182,7 @@ def test_receipt_tail_v2_roundtrip_through_real_manifest_chain(tmp_path) -> None
     """The transaction record and every conversion predecessor digest are loaded evidence."""
     from dataclasses import replace
 
-    from nanobot.agent.memory_recovery_conversion import capture_receipt_tail_conversion_payload
+    from kohaku.agent.memory_recovery_conversion import capture_receipt_tail_conversion_payload
 
     receipt, transaction, _ = _v2_receipt()
     authority = storage.WorkspaceMemoryAuthority(tmp_path)

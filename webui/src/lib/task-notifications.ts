@@ -9,7 +9,7 @@
  */
 import type { TFunction } from "i18next";
 
-import type { TaskNotificationEvent } from "@/lib/nanobot-client";
+import type { TaskNotificationEvent } from "@/lib/kohaku-client";
 import { resolveModelRequestFailureCopy } from "@/lib/model-request-failure";
 
 interface MobileTaskNotificationBridge {
@@ -32,7 +32,7 @@ declare global {
 }
 
 const DEFAULT_NOTIFICATION_TITLE = "Kohaku";
-const DEFAULT_NOTIFICATION_ICON = "/brand/nanobot_icon_192.png";
+const DEFAULT_NOTIFICATION_ICON = "/brand/kohaku_icon_192.png";
 const DESKTOP_HIDE_EVENT = "nanobot:desktop-hide";
 const DESKTOP_SHOW_EVENT = "nanobot:desktop-show";
 

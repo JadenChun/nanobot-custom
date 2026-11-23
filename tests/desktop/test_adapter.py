@@ -12,8 +12,8 @@ from typing import Any, Callable
 
 import pytest
 
-from nanobot.desktop.adapter import DesktopAdapter, DesktopError
-from nanobot.gateway.darwin_desktop_process import darwin_desktop_available
+from kohaku.desktop.adapter import DesktopAdapter, DesktopError
+from kohaku.gateway.darwin_desktop_process import darwin_desktop_available
 
 
 def _prepared_config(
@@ -74,7 +74,7 @@ def test_hello_requires_an_explicit_existing_config_without_fallback(tmp_path: P
 def test_first_run_seeds_an_authenticated_default_once(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(Path, "home", classmethod(lambda _cls: tmp_path))
     adapter = DesktopAdapter()
-    path = tmp_path / ".nanobot" / "config.json"
+    path = tmp_path / ".kohaku" / "config.json"
     with pytest.raises(DesktopError, match="config_unavailable"):
         adapter.handle("hello", {"config_path": str(path), "workspace": None})
     assert not path.exists()  # hello must remain read-only
@@ -99,7 +99,7 @@ def test_first_run_does_not_replace_even_an_invalid_existing_config(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(Path, "home", classmethod(lambda _cls: tmp_path))
-    path = tmp_path / ".nanobot" / "config.json"
+    path = tmp_path / ".kohaku" / "config.json"
     path.parent.mkdir()
     path.write_text("not valid JSON", encoding="utf-8")
 
@@ -142,7 +142,7 @@ def test_desktop_start_reports_unsupported_platform_without_launching(
 ) -> None:
     config_path = tmp_path / "profile" / "config.json"
     _prepared_config(config_path, tmp_path / "workspace")
-    monkeypatch.setattr("nanobot.gateway.runtime.darwin_desktop_available", lambda: False)
+    monkeypatch.setattr("kohaku.gateway.runtime.darwin_desktop_available", lambda: False)
     adapter = DesktopAdapter()
     try:
         adapter.handle("hello", {"config_path": str(config_path), "workspace": None})
@@ -179,7 +179,7 @@ def test_desktop_start_returns_handle_without_waiting_for_readiness(
     monkeypatch: pytest.MonkeyPatch,
     reject_identity: bool,
 ) -> None:
-    from nanobot.gateway.runtime import GatewayClientLease
+    from kohaku.gateway.runtime import GatewayClientLease
 
     config_path = tmp_path / "profile" / "config.json"
     _prepared_config(config_path, tmp_path / "workspace")
@@ -264,7 +264,7 @@ def test_desktop_created_gateway_rejects_port_proof_mismatch_without_mutation(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from nanobot.gateway.runtime import GatewayClientLease
+    from kohaku.gateway.runtime import GatewayClientLease
 
     config_path = tmp_path / "profile" / "config.json"
     gateway_port, websocket_port = _prepared_config(config_path, tmp_path / "workspace")
@@ -371,7 +371,7 @@ def test_desktop_start_keeps_admission_handle_if_state_is_replaced_before_respon
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from nanobot.gateway.runtime import (
+    from kohaku.gateway.runtime import (
         GatewayDesktopLifecycleError,
         GatewayStartOptions,
         RuntimeResult,
@@ -468,11 +468,11 @@ def test_hello_rejects_missing_environment_references_without_writes(
     _prepared_config(config_path, workspace)
     config_path.write_text(
         config_path.read_text(encoding="utf-8").replace(
-            "desktop-provider-sentinel", "${NANOBOT_DESKTOP_MISSING_SENTINEL}"
+            "desktop-provider-sentinel", "${KOHAKU_DESKTOP_MISSING_SENTINEL}"
         ),
         encoding="utf-8",
     )
-    monkeypatch.delenv("NANOBOT_DESKTOP_MISSING_SENTINEL", raising=False)
+    monkeypatch.delenv("KOHAKU_DESKTOP_MISSING_SENTINEL", raising=False)
     before = config_path.read_bytes()
     adapter = DesktopAdapter()
 
@@ -480,7 +480,7 @@ def test_hello_rejects_missing_environment_references_without_writes(
         adapter.handle("hello", {"config_path": str(config_path), "workspace": None})
 
     assert error.value.code == "config_invalid"
-    assert "NANOBOT_DESKTOP_MISSING_SENTINEL" not in str(error.value)
+    assert "KOHAKU_DESKTOP_MISSING_SENTINEL" not in str(error.value)
     assert config_path.read_bytes() == before
     assert not (workspace / ".nanobot").exists()
     assert adapter._selection is None
@@ -490,18 +490,18 @@ def test_hello_resolves_environment_references_before_provider_validation(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    import nanobot.desktop.adapter as adapter_module
+    import kohaku.desktop.adapter as adapter_module
 
     workspace = tmp_path / "workspace"
     config_path = tmp_path / "profile" / "config.json"
     _prepared_config(config_path, workspace)
     config_path.write_text(
         config_path.read_text(encoding="utf-8").replace(
-            "desktop-provider-sentinel", "${NANOBOT_DESKTOP_PROVIDER_SENTINEL}"
+            "desktop-provider-sentinel", "${KOHAKU_DESKTOP_PROVIDER_SENTINEL}"
         ),
         encoding="utf-8",
     )
-    monkeypatch.setenv("NANOBOT_DESKTOP_PROVIDER_SENTINEL", "resolved-provider-secret")
+    monkeypatch.setenv("KOHAKU_DESKTOP_PROVIDER_SENTINEL", "resolved-provider-secret")
     observed: list[str] = []
     monkeypatch.setattr(
         adapter_module,
@@ -526,18 +526,18 @@ def test_child_rejects_missing_environment_references_before_gateway_start(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    import nanobot.desktop.gateway_child as child
+    import kohaku.desktop.gateway_child as child
 
     workspace = tmp_path / "workspace"
     config_path = tmp_path / "profile" / "config.json"
     _prepared_config(config_path, workspace)
     config_path.write_text(
         config_path.read_text(encoding="utf-8").replace(
-            "desktop-provider-sentinel", "${NANOBOT_DESKTOP_CHILD_MISSING_SENTINEL}"
+            "desktop-provider-sentinel", "${KOHAKU_DESKTOP_CHILD_MISSING_SENTINEL}"
         ),
         encoding="utf-8",
     )
-    monkeypatch.delenv("NANOBOT_DESKTOP_CHILD_MISSING_SENTINEL", raising=False)
+    monkeypatch.delenv("KOHAKU_DESKTOP_CHILD_MISSING_SENTINEL", raising=False)
     starts: list[bool] = []
     monkeypatch.setattr(child, "_run_gateway", lambda *_args, **_kwargs: starts.append(True))
     before = config_path.read_bytes()
@@ -546,7 +546,7 @@ def test_child_rejects_missing_environment_references_before_gateway_start(
 
     assert result == 1
     assert starts == []
-    assert "NANOBOT_DESKTOP_CHILD_MISSING_SENTINEL" not in capsys.readouterr().err
+    assert "KOHAKU_DESKTOP_CHILD_MISSING_SENTINEL" not in capsys.readouterr().err
     assert config_path.read_bytes() == before
     assert not (workspace / ".nanobot").exists()
 
@@ -555,19 +555,19 @@ def test_child_resolves_environment_references_before_provider_and_gateway(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    import nanobot.desktop.gateway_child as child
+    import kohaku.desktop.gateway_child as child
 
     workspace = tmp_path / "workspace"
     config_path = tmp_path / "profile" / "config.json"
     _prepared_config(config_path, workspace)
     config_path.write_text(
         config_path.read_text(encoding="utf-8").replace(
-            "desktop-provider-sentinel", "${NANOBOT_DESKTOP_CHILD_PROVIDER_SENTINEL}"
+            "desktop-provider-sentinel", "${KOHAKU_DESKTOP_CHILD_PROVIDER_SENTINEL}"
         ),
         encoding="utf-8",
     )
     monkeypatch.setenv(
-        "NANOBOT_DESKTOP_CHILD_PROVIDER_SENTINEL", "child-resolved-provider-secret"
+        "KOHAKU_DESKTOP_CHILD_PROVIDER_SENTINEL", "child-resolved-provider-secret"
     )
     observed: list[str] = []
     monkeypatch.setattr(
@@ -642,7 +642,7 @@ def test_desktop_lifecycle_controls_one_isolated_child_and_confirms_exit(
             sys.executable,
             "-I",
             "-m",
-            "nanobot.desktop.gateway_child",
+            "kohaku.desktop.gateway_child",
         ]
         actual_cmdline = [
             part.decode() for part in Path(f"/proc/{gateway_pid}/cmdline").read_bytes().split(b"\0") if part
@@ -769,9 +769,9 @@ def test_desktop_adopts_normal_on_demand_gateway_and_promotes_its_lease(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    import nanobot.desktop.adapter as adapter_module
-    import nanobot.gateway.runtime as gateway_runtime_module
-    from nanobot.gateway.runtime import (
+    import kohaku.desktop.adapter as adapter_module
+    import kohaku.gateway.runtime as gateway_runtime_module
+    from kohaku.gateway.runtime import (
         GatewayClientLease,
         GatewayDesktopLifecycleError,
         GatewayInstance,
@@ -836,13 +836,13 @@ def test_desktop_adopts_normal_on_demand_gateway_and_promotes_its_lease(
         assert os.getpgid(normal_child.pid) == normal_child.pid
         assert os.getsid(normal_child.pid) == normal_child.pid
         assert Path(f"/proc/{normal_child.pid}/comm").read_text(encoding="ascii").strip() == (
-            "nanobot-gateway"
+            "kohaku-gateway"
         )
         assert [
             part.decode()
             for part in Path(f"/proc/{normal_child.pid}/cmdline").read_bytes().split(b"\0")
             if part
-        ] == ["nanobot-gateway"]
+        ] == ["kohaku-gateway"]
 
         def assert_refused_without_state_or_signal(
             candidate_state: dict[str, Any],
@@ -1154,7 +1154,7 @@ def test_desktop_adopts_normal_on_demand_gateway_and_promotes_its_lease(
     reason="requires Linux PID birth identity and pidfd lifecycle",
 )
 def test_simultaneous_desktop_acquisitions_start_one_gateway(tmp_path: Path) -> None:
-    from nanobot.gateway.runtime import GatewayClientLease
+    from kohaku.gateway.runtime import GatewayClientLease
 
     config_path = tmp_path / "profile" / "config.json"
     workspace = tmp_path / "workspace"
@@ -1194,7 +1194,7 @@ def test_simultaneous_desktop_acquisitions_start_one_gateway(tmp_path: Path) -> 
                 command = (proc_entry / "cmdline").read_bytes().split(b"\0")
             except OSError:
                 continue
-            if b"nanobot.desktop.gateway_child" in command and os.fsencode(
+            if b"kohaku.desktop.gateway_child" in command and os.fsencode(
                 str(config_path)
             ) in command:
                 child_pids.append(int(proc_entry.name))

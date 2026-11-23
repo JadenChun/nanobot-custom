@@ -13,10 +13,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from nanobot.bus.queue import MessageBus
-from nanobot.channels.websocket.runtime import WebSocketConfig
-from nanobot.security.folder_grants import FolderGrantStore
-from nanobot.webui.gateway_services import GatewayServices, build_gateway_services
+from kohaku.bus.queue import MessageBus
+from kohaku.channels.websocket.runtime import WebSocketConfig
+from kohaku.security.folder_grants import FolderGrantStore
+from kohaku.webui.gateway_services import GatewayServices, build_gateway_services
 
 GrantIdentity = tuple[str, bool]
 GrantEntry = tuple[str, str, bool]

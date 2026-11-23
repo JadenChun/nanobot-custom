@@ -7,17 +7,17 @@ from unittest.mock import patch
 
 import pytest
 
-from nanobot.agent.loop import AgentLoop
-from nanobot.agent.tools.image_generation import (
+from kohaku.agent.loop import AgentLoop
+from kohaku.agent.tools.image_generation import (
     ImageGenerationTool,
     ImageGenerationToolConfig,
     reload_image_generation_tool,
 )
-from nanobot.agent.tools.registry import ToolRegistry
-from nanobot.config.loader import load_config, save_config, set_config_path
-from nanobot.config.schema import Config, ProviderConfig
-from nanobot.providers.base import LLMProvider, LLMResponse
-from nanobot.providers.image_generation import GeneratedImageResponse
+from kohaku.agent.tools.registry import ToolRegistry
+from kohaku.config.loader import load_config, save_config, set_config_path
+from kohaku.config.schema import Config, ProviderConfig
+from kohaku.providers.base import LLMProvider, LLMResponse
+from kohaku.providers.image_generation import GeneratedImageResponse
 
 PNG_DATA_URL = (
     "data:image/png;base64,"
@@ -181,9 +181,9 @@ async def test_explicit_instance_media_root_survives_ambient_config_and_reload(
 
     try:
         with (
-            patch("nanobot.migration_guard.require_runtime_ready", lambda *a, **k: None),
+            patch("kohaku.migration_guard.require_runtime_ready", lambda *a, **k: None),
             patch(
-                "nanobot.agent.tools.image_generation.get_image_gen_provider",
+                "kohaku.agent.tools.image_generation.get_image_gen_provider",
                 return_value=_FakeImageGenerationProvider,
             ),
         ):
@@ -200,7 +200,7 @@ async def test_explicit_instance_media_root_survives_ambient_config_and_reload(
         assert isinstance(tool, ImageGenerationTool)
 
         with patch(
-            "nanobot.agent.tools.image_generation.get_image_gen_provider",
+            "kohaku.agent.tools.image_generation.get_image_gen_provider",
             return_value=_FakeImageGenerationProvider,
         ):
             first_result = await tool.execute(prompt="explicit instance")
@@ -216,7 +216,7 @@ async def test_explicit_instance_media_root_survives_ambient_config_and_reload(
         save_config(reloaded_config, explicit_path)
 
         with patch(
-            "nanobot.agent.tools.image_generation.get_image_gen_provider",
+            "kohaku.agent.tools.image_generation.get_image_gen_provider",
             return_value=_FakeImageGenerationProvider,
         ):
             reload_result = await reload_image_generation_tool(loop, loop.tools)

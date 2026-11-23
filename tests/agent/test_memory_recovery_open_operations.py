@@ -9,10 +9,10 @@ from types import SimpleNamespace
 
 import pytest
 
-from nanobot.agent import memory_recovery_quarantine_storage as quarantine
-from nanobot.agent import memory_recovery_storage as storage
-from nanobot.agent import memory_recovery_target_verify as verifier
-from nanobot.agent import memory_recovery_transaction_memory as memory_stage
+from kohaku.agent import memory_recovery_quarantine_storage as quarantine
+from kohaku.agent import memory_recovery_storage as storage
+from kohaku.agent import memory_recovery_target_verify as verifier
+from kohaku.agent import memory_recovery_transaction_memory as memory_stage
 
 OPERATIONS = (
     ("open_recovery_absolute_directory", "_dir_flags", False, False),

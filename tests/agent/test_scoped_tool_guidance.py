@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from nanobot.agent.context import ContextBuilder
+from kohaku.agent.context import ContextBuilder
 
 
 def test_disabled_tool_lines_are_absent_from_guidance(tmp_path: Path) -> None:

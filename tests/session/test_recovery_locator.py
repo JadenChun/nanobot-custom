@@ -8,8 +8,8 @@ from pathlib import Path
 
 import pytest
 
-from nanobot.session.manager import JsonlSessionStore
-from nanobot.session.recovery_locator import (
+from kohaku.session.manager import JsonlSessionStore
+from kohaku.session.recovery_locator import (
     RecoveryLocatorError,
     locate_recovery_candidate,
 )
@@ -252,7 +252,7 @@ def test_rejects_foreign_owned_marker_from_stat_injection(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     workspace, sessions_root, _ = _layout(tmp_path)
-    import nanobot.session.recovery_locator as locator
+    import kohaku.session.recovery_locator as locator
 
     original_stat = os.stat
 
@@ -281,7 +281,7 @@ def test_rejects_source_mode_change_during_lookup(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     workspace, sessions_root, session_path = _layout(tmp_path)
-    import nanobot.session.recovery_locator as locator
+    import kohaku.session.recovery_locator as locator
 
     original_check = locator._check_file_entry
 
@@ -299,7 +299,7 @@ def test_rejects_namespace_mode_change_during_lookup(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     workspace, sessions_root, session_path = _layout(tmp_path)
-    import nanobot.session.recovery_locator as locator
+    import kohaku.session.recovery_locator as locator
 
     original_check = locator._check_directory_entry
     changed = False
@@ -320,7 +320,7 @@ def test_closes_all_descriptors_after_injected_failure(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     workspace, sessions_root, _ = _layout(tmp_path)
-    import nanobot.session.recovery_locator as locator
+    import kohaku.session.recovery_locator as locator
 
     opened: list[int] = []
     closed: list[int] = []
@@ -354,7 +354,7 @@ def test_rejects_namespace_path_replacement_during_lookup(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     workspace, sessions_root, session_path = _layout(tmp_path)
-    import nanobot.session.recovery_locator as locator
+    import kohaku.session.recovery_locator as locator
 
     original = locator._check_directory_entry
     changed = False
@@ -389,7 +389,7 @@ def test_rejects_missing_external_sessions_root(tmp_path: Path) -> None:
 
 def test_never_opens_the_session_source_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     workspace, sessions_root, session_path = _layout(tmp_path)
-    import nanobot.session.recovery_locator as locator
+    import kohaku.session.recovery_locator as locator
 
     original_open = os.open
     monkeypatch.setattr(locator, "_require_descriptor_support", lambda: None)

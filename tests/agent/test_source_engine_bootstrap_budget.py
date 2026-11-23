@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import pytest
 
-from nanobot.agent.loop import AgentLoop
-from nanobot.agent.tools.read_provenance import parse_read_receipt
-from nanobot.agent.tools.registry import ToolRegistry
-from nanobot.agent.turn import TurnRequest
-from nanobot.providers.base import LLMResponse, ToolCallRequest
-from nanobot.utils import helpers
+from kohaku.agent.loop import AgentLoop
+from kohaku.agent.tools.read_provenance import parse_read_receipt
+from kohaku.agent.tools.registry import ToolRegistry
+from kohaku.agent.turn import TurnRequest
+from kohaku.providers.base import LLMResponse, ToolCallRequest
+from kohaku.utils import helpers
 from tests.agent import test_migration_engine as engine_fixtures
 from tests.agent.test_migration_source_engine import upgrade
 

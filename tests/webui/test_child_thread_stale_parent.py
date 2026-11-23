@@ -7,17 +7,17 @@ from urllib.parse import quote
 
 import pytest
 
-from nanobot.bus.queue import MessageBus
-from nanobot.channels.websocket.runtime import WebSocketConfig
-from nanobot.channels.websocket.tests.ws_test_client import InProcessHttpChannel, http_get
-from nanobot.session.manager import Session, SessionManager
-from nanobot.session.runtime_authority import RuntimeSessionMetadata, read_runtime_session
-from nanobot.webui.gateway_services import build_gateway_services
+from kohaku.bus.queue import MessageBus
+from kohaku.channels.websocket.runtime import WebSocketConfig
+from kohaku.channels.websocket.tests.ws_test_client import InProcessHttpChannel, http_get
+from kohaku.session.manager import Session, SessionManager
+from kohaku.session.runtime_authority import RuntimeSessionMetadata, read_runtime_session
+from kohaku.webui.gateway_services import build_gateway_services
 
 
 @pytest.mark.asyncio
 async def test_child_thread_route_rejects_stale_parent(tmp_path, monkeypatch):
-    monkeypatch.setattr("nanobot.config.paths.get_data_dir", lambda: tmp_path)
+    monkeypatch.setattr("kohaku.config.paths.get_data_dir", lambda: tmp_path)
 
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)

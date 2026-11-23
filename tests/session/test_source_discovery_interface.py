@@ -8,16 +8,16 @@ from pathlib import Path
 
 import pytest
 
-from nanobot.session import source_root as root_module
-from nanobot.session import source_store
-from nanobot.session.manager import JsonlSessionStore
-from nanobot.session.source import SourceValidationError
-from nanobot.session.source_discovery import (
+from kohaku.session import source_root as root_module
+from kohaku.session import source_store
+from kohaku.session.manager import JsonlSessionStore
+from kohaku.session.source import SourceValidationError
+from kohaku.session.source_discovery import (
     SourceDiscoveryCursor,
     SourceDiscoveryLimits,
     SourceDiscoveryRootChangedError,
 )
-from nanobot.session.source_root import SourceRootClosedError
+from kohaku.session.source_root import SourceRootClosedError
 from tests.session.test_source_discovery import _source_session
 
 

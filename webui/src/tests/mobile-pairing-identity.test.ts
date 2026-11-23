@@ -369,7 +369,7 @@ describe("mobile pairing identity", () => {
     const input = document.querySelector<HTMLInputElement>(".mobile-pairing-input");
     expect(input).not.toBeNull();
     input!.value = [
-      "nanobot://pair?origin=https%3A%2F%2Fdesktop.example",
+      "kohaku://pair?origin=https%3A%2F%2Fdesktop.example",
       "installation=desktop-generated-id",
       "challenge=pairing-1.nonce.secret",
     ].join("&");
@@ -476,7 +476,7 @@ describe("mobile pairing identity", () => {
     });
     const input = document.querySelector<HTMLInputElement>(".mobile-pairing-input");
     input!.value = [
-      "nanobot://pair?origin=https%3A%2F%2Fdesktop.example",
+      "kohaku://pair?origin=https%3A%2F%2Fdesktop.example",
       "installation=desktop-generated-id",
       "challenge=pairing-1.nonce.secret",
     ].join("&");
@@ -501,7 +501,7 @@ describe("mobile pairing identity", () => {
     });
     const input = document.querySelector<HTMLInputElement>(".mobile-pairing-input");
     input!.value = [
-      "nanobot://pair?origin=https%3A%2F%2Fdesktop.example",
+      "kohaku://pair?origin=https%3A%2F%2Fdesktop.example",
       "installation=desktop-generated-id",
       "challenge=pairing-1.nonce.secret",
     ].join("&");
@@ -538,7 +538,7 @@ describe("mobile pairing identity", () => {
     });
     const input = document.querySelector<HTMLInputElement>(".mobile-pairing-input");
     input!.value = [
-      "nanobot://pair?origin=https%3A%2F%2Fdesktop.example",
+      "kohaku://pair?origin=https%3A%2F%2Fdesktop.example",
       "installation=desktop-generated-id",
       "challenge=pairing-1.nonce.secret",
     ].join("&");
@@ -565,7 +565,7 @@ describe("mobile pairing identity", () => {
     });
     const input = document.querySelector<HTMLInputElement>(".mobile-pairing-input");
     input!.value = [
-      "nanobot://pair?origin=https%3A%2F%2Fdesktop.example",
+      "kohaku://pair?origin=https%3A%2F%2Fdesktop.example",
       "installation=desktop-generated-id",
       "challenge=pairing-1.nonce.secret",
     ].join("&");
@@ -599,7 +599,7 @@ describe("mobile pairing identity", () => {
 
     if (flow === "QR") {
       document.querySelector<HTMLInputElement>(".mobile-pairing-input")!.value = [
-        "nanobot://pair?origin=https%3A%2F%2Fdesktop.example",
+        "kohaku://pair?origin=https%3A%2F%2Fdesktop.example",
         "installation=desktop-generated-id",
         "challenge=pairing-1.nonce.secret",
       ].join("&");
@@ -633,7 +633,7 @@ describe("mobile pairing identity", () => {
     expect(document.querySelector<HTMLElement>(".mobile-pairing")?.dataset.state).toBe("idle");
     expect(document.querySelectorAll<HTMLElement>(".mobile-pairing-pill")[1]?.textContent)
       .toBe("Connects when pairing");
-    expect(document.body.textContent).not.toContain("Paired. Loading Nanobot...");
+    expect(document.body.textContent).not.toContain("Paired. Loading Kohaku...");
     expect(document.body.textContent).not.toContain("999999");
     expect(fixture.pairAccept).not.toHaveBeenCalled();
   });
@@ -649,7 +649,7 @@ describe("mobile pairing identity", () => {
       return element as HTMLFormElement;
     });
     document.querySelector<HTMLInputElement>(".mobile-pairing-input")!.value = [
-      "nanobot://pair?origin=https%3A%2F%2Fdesktop.example",
+      "kohaku://pair?origin=https%3A%2F%2Fdesktop.example",
       "installation=desktop-generated-id",
       "challenge=pairing-1.nonce.secret",
     ].join("&");
@@ -674,7 +674,7 @@ describe("mobile pairing identity", () => {
       return element as HTMLFormElement;
     });
     document.querySelector<HTMLInputElement>(".mobile-pairing-input")!.value = [
-      "nanobot://pair?origin=https%3A%2F%2Fdesktop.example",
+      "kohaku://pair?origin=https%3A%2F%2Fdesktop.example",
       "installation=desktop-generated-id",
       "challenge=pairing-1.nonce.secret",
     ].join("&");
@@ -706,7 +706,7 @@ describe("mobile pairing identity", () => {
       return element as HTMLFormElement;
     });
     document.querySelector<HTMLInputElement>(".mobile-pairing-input")!.value = [
-      "nanobot://pair?origin=https%3A%2F%2Fdesktop.example",
+      "kohaku://pair?origin=https%3A%2F%2Fdesktop.example",
       "installation=desktop-generated-id",
       "challenge=pairing-1.nonce.secret",
     ].join("&");
@@ -724,7 +724,7 @@ describe("mobile pairing identity", () => {
     fixture.releaseHeld();
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(document.querySelector<HTMLElement>(".mobile-pairing")?.dataset.state).toBe("error");
-    expect(document.body.textContent).not.toContain("Paired. Loading Nanobot...");
+    expect(document.body.textContent).not.toContain("Paired. Loading Kohaku...");
   });
 
   it("joins the bootstrap handshake when its terminal event arrives before the ID", async () => {

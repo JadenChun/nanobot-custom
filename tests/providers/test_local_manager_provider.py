@@ -2,10 +2,10 @@
 
 from unittest.mock import patch
 
-from nanobot.config.schema import Config, ProvidersConfig
-from nanobot.providers.factory import make_provider, validate_provider_setup
-from nanobot.providers.openai_compat_provider import OpenAICompatProvider
-from nanobot.providers.registry import PROVIDERS, find_by_name
+from kohaku.config.schema import Config, ProvidersConfig
+from kohaku.providers.factory import make_provider, validate_provider_setup
+from kohaku.providers.openai_compat_provider import OpenAICompatProvider
+from kohaku.providers.registry import PROVIDERS, find_by_name
 
 
 def test_local_manager_config_field_exists() -> None:
@@ -51,7 +51,7 @@ def test_local_manager_preset_routes_to_live_gateway() -> None:
     )
 
     validate_provider_setup(config)
-    with patch("nanobot.providers.openai_compat_provider.AsyncOpenAI"):
+    with patch("kohaku.providers.openai_compat_provider.AsyncOpenAI"):
         provider = make_provider(config)
 
     assert isinstance(provider, OpenAICompatProvider)

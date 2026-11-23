@@ -8,8 +8,8 @@ from pathlib import Path
 
 import pytest
 
-from nanobot.agent import memory_recovery_legacy_archive as archive
-from nanobot.agent import memory_recovery_storage as storage
+from kohaku.agent import memory_recovery_legacy_archive as archive
+from kohaku.agent import memory_recovery_storage as storage
 
 
 def _setup(tmp_path: Path):

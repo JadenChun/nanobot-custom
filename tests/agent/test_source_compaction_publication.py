@@ -5,22 +5,22 @@ from unittest.mock import Mock
 
 import pytest
 
-from nanobot.agent.context_governance import (
+from kohaku.agent.context_governance import (
     ContextGovernanceConfig,
     ContextGovernor,
     ContextWindowExceededError,
     ModelRequestState,
     SourceCompactionState,
 )
-from nanobot.agent.tools.registry import ToolRegistry
-from nanobot.providers.base import LLMResponse, LLMUsage
-from nanobot.providers.conversation_state import ProviderConversationStateController
-from nanobot.session.execution_owner import acquire_execution
-from nanobot.session.manager import JsonlSessionStore, Session, SessionWriteConflict
-from nanobot.session.source import SourceValidationError
-from nanobot.session.source_projection import RuntimeNode, project_source, source_nodes
-from nanobot.session.source_request import SourceRequestLedger, SourceTranscript
-from nanobot.session.turn_writer import SourceTurnWriter
+from kohaku.agent.tools.registry import ToolRegistry
+from kohaku.providers.base import LLMResponse, LLMUsage
+from kohaku.providers.conversation_state import ProviderConversationStateController
+from kohaku.session.execution_owner import acquire_execution
+from kohaku.session.manager import JsonlSessionStore, Session, SessionWriteConflict
+from kohaku.session.source import SourceValidationError
+from kohaku.session.source_projection import RuntimeNode, project_source, source_nodes
+from kohaku.session.source_request import SourceRequestLedger, SourceTranscript
+from kohaku.session.turn_writer import SourceTurnWriter
 from tests.agent.test_source_summary import SummaryProvider, runtime
 
 
@@ -181,7 +181,7 @@ async def test_checkpoint_write_failure_keeps_old_memory_and_source(store, monke
 
 
 async def test_publication_requires_contiguous_disjoint_summary_proof(store):
-    from nanobot.session.checkpoint_dependencies import (
+    from kohaku.session.checkpoint_dependencies import (
         ConsumedSummaryChunk,
         SummaryDependencyProof,
     )

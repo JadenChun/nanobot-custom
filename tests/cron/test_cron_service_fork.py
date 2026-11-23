@@ -2,8 +2,8 @@ import asyncio
 
 import pytest
 
-from nanobot.cron.service import CronService
-from nanobot.cron.types import CronSchedule
+from kohaku.cron.service import CronService
+from kohaku.cron.types import CronSchedule
 from tests.cron import p6_compat_fixtures as cases
 from tests.cron.stage3_fixtures import offline_denial  # noqa: F401
 

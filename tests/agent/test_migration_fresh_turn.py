@@ -3,13 +3,13 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from nanobot.agent.loop import AgentLoop, TurnKind
-from nanobot.agent.loop import TurnContext as StageContext
-from nanobot.agent.tools.registry import ToolRegistry
-from nanobot.agent.turn import HistoryMode, TurnContext, TurnRequest, TurnSource
-from nanobot.bus.events import InboundMessage
-from nanobot.config.schema import ToolsConfig
-from nanobot.session.manager import Session
+from kohaku.agent.loop import AgentLoop, TurnKind
+from kohaku.agent.loop import TurnContext as StageContext
+from kohaku.agent.tools.registry import ToolRegistry
+from kohaku.agent.turn import HistoryMode, TurnContext, TurnRequest, TurnSource
+from kohaku.bus.events import InboundMessage
+from kohaku.config.schema import ToolsConfig
+from kohaku.session.manager import Session
 
 
 def stage():
@@ -55,7 +55,7 @@ async def test_fresh_build_excludes_prior_state_but_appends_detail_history():
     assert ctx.provider_state is None and session.provider_state is None
     assert [m['content'] for m in session.messages] == ['prior secret', 'prior answer', '/new']
     # The save boundary uses the fresh projected input, not retained detail length.
-    from nanobot.session.turn_continuation import prepare_save_boundary
+    from kohaku.session.turn_continuation import prepare_save_boundary
     prepare_save_boundary(ctx)
     loop._save_turn(session, [{'role': 'system', 'content': 'system'},
                               {'role': 'user', 'content': '/new'},
@@ -81,7 +81,7 @@ async def test_scheduled_text_does_not_execute_interactive_command():
 
 
 async def test_fresh_restore_does_not_consume_old_recovery(monkeypatch):
-    import nanobot.agent.loop as module
+    import kohaku.agent.loop as module
     loop = object.__new__(AgentLoop)
     loop._fork_dependencies = SimpleNamespace(
         resource_policy=SimpleNamespace(folder_grants=None),
@@ -99,8 +99,8 @@ async def test_fresh_restore_does_not_consume_old_recovery(monkeypatch):
 
 
 async def test_fresh_runner_summary_cannot_replace_retained_history_boundary(monkeypatch):
-    from nanobot.agent.runner import AgentRunResult
-    from nanobot.session import turn_continuation
+    from kohaku.agent.runner import AgentRunResult
+    from kohaku.session import turn_continuation
     loop = object.__new__(AgentLoop)
     ctx = stage()
     ctx.delivery.running = AsyncMock()
@@ -118,8 +118,8 @@ async def test_fresh_runner_summary_cannot_replace_retained_history_boundary(mon
 
 @pytest.mark.parametrize('sent,suppressed', [('final', True), ('progress', False), ('', False)])
 async def test_canonical_final_suppression_requires_matching_text(sent, suppressed):
-    from nanobot.agent.runner import AgentRunResult
-    from nanobot.agent.tools.message import MessageTool
+    from kohaku.agent.runner import AgentRunResult
+    from kohaku.agent.tools.message import MessageTool
     loop = object.__new__(AgentLoop)
     ctx = stage()
     ctx.delivery.running = AsyncMock()

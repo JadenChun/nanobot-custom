@@ -6,20 +6,20 @@ from pathlib import Path
 
 import pytest
 
-from nanobot.agent.hook import AgentHook, AgentHookContext
-from nanobot.agent.policy import CompositeToolPolicy, RiskyActionPolicy, ToolPolicy
-from nanobot.agent.tools.base import Tool
-from nanobot.agent.tools.execution import execute_tool_calls
-from nanobot.agent.tools.filesystem import EditFileTool
-from nanobot.agent.tools.registry import ToolRegistry
-from nanobot.agent.tools.shell import ExecTool
-from nanobot.agent.turn import ApprovalDecision, ToolOutcome, TurnContext
-from nanobot.agent.turn_admission import ApprovalAdmission
-from nanobot.agent.write_guard import FileLockRegistry
-from nanobot.context_repo import ContextRepoManager, ResourceAccessPolicy
-from nanobot.providers.base import ToolCallRequest
-from nanobot.security.folder_grants import FolderGrantStore
-from nanobot.security.workspace_access import (
+from kohaku.agent.hook import AgentHook, AgentHookContext
+from kohaku.agent.policy import CompositeToolPolicy, RiskyActionPolicy, ToolPolicy
+from kohaku.agent.tools.base import Tool
+from kohaku.agent.tools.execution import execute_tool_calls
+from kohaku.agent.tools.filesystem import EditFileTool
+from kohaku.agent.tools.registry import ToolRegistry
+from kohaku.agent.tools.shell import ExecTool
+from kohaku.agent.turn import ApprovalDecision, ToolOutcome, TurnContext
+from kohaku.agent.turn_admission import ApprovalAdmission
+from kohaku.agent.write_guard import FileLockRegistry
+from kohaku.context_repo import ContextRepoManager, ResourceAccessPolicy
+from kohaku.providers.base import ToolCallRequest
+from kohaku.security.folder_grants import FolderGrantStore
+from kohaku.security.workspace_access import (
     bind_workspace_scope,
     build_workspace_scope,
     reset_workspace_scope,
@@ -210,7 +210,7 @@ async def test_hard_denied_command_never_asks_or_launches(tmp_path, monkeypatch,
 
 
 async def test_missing_managed_backend_is_not_an_approval_prompt(tmp_path, monkeypatch):
-    monkeypatch.setattr("nanobot.agent.tools.sandbox.managed_bwrap_available", lambda: False)
+    monkeypatch.setattr("kohaku.agent.tools.sandbox.managed_bwrap_available", lambda: False)
     root = tmp_path / "workspace"
     root.mkdir()
     instance = tmp_path / "instance"

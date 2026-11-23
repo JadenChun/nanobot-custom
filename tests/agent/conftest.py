@@ -9,9 +9,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from nanobot.agent.loop import AgentLoop
-from nanobot.bus.queue import MessageBus
-from nanobot.providers.base import LLMProvider
+from kohaku.agent.loop import AgentLoop
+from kohaku.bus.queue import MessageBus
+from kohaku.providers.base import LLMProvider
 
 
 @pytest.fixture
@@ -79,9 +79,9 @@ def make_loop(
         kwargs["hooks"] = hooks
 
     if patch_deps:
-        with patch("nanobot.agent.loop.ContextBuilder"), \
-             patch("nanobot.agent.loop.SessionManager"), \
-             patch("nanobot.agent.loop.SubagentManager") as mock_sub_mgr:
+        with patch("kohaku.agent.loop.ContextBuilder"), \
+             patch("kohaku.agent.loop.SessionManager"), \
+             patch("kohaku.agent.loop.SubagentManager") as mock_sub_mgr:
             mock_sub_mgr.return_value.cancel_by_session = AsyncMock(return_value=0)
             return AgentLoop(**kwargs)
     return AgentLoop(**kwargs)

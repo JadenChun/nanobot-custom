@@ -9,9 +9,9 @@ import math
 import pytest
 from pydantic import ValidationError
 
-from nanobot.config.errors import ConfigLoadError
-from nanobot.config.loader import load_config, save_config
-from nanobot.config.schema import Config, IdleCompactionConfig
+from kohaku.config.errors import ConfigLoadError
+from kohaku.config.loader import load_config, save_config
+from kohaku.config.schema import Config, IdleCompactionConfig
 
 FULL_IDLE = {
     "enabled": True,
@@ -321,10 +321,10 @@ def test_schema_construction_does_not_activate_idle_runtime(monkeypatch) -> None
     def fail(*_args: object, **_kwargs: object) -> None:
         raise AssertionError("idle configuration must not activate runtime work")
 
-    monkeypatch.setattr("nanobot.agent.idle_compaction.IdleCompactionCoordinator", fail)
-    monkeypatch.setattr("nanobot.providers.factory.make_provider", fail)
-    monkeypatch.setattr("nanobot.session.idle_checkpoint.capture_idle_checkpoint", fail)
-    monkeypatch.setattr("nanobot.session.idle_checkpoint.publish_idle_checkpoint", fail)
+    monkeypatch.setattr("kohaku.agent.idle_compaction.IdleCompactionCoordinator", fail)
+    monkeypatch.setattr("kohaku.providers.factory.make_provider", fail)
+    monkeypatch.setattr("kohaku.session.idle_checkpoint.capture_idle_checkpoint", fail)
+    monkeypatch.setattr("kohaku.session.idle_checkpoint.publish_idle_checkpoint", fail)
 
     config = Config.model_validate(
         {

@@ -3,13 +3,13 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from nanobot.providers.base import (
+from kohaku.providers.base import (
     LLMProvider,
     LLMResponse,
     ProviderCallContext,
     ProviderConversationState,
 )
-from nanobot.providers.pooled_provider import PooledProvider
+from kohaku.providers.pooled_provider import PooledProvider
 
 
 class Leaf(LLMProvider):
@@ -48,7 +48,7 @@ class Leaf(LLMProvider):
 
 
 def test_generation_constructor_and_assignment_preserve_exact_leaf_identity():
-    from nanobot.providers.base import GenerationSettings
+    from kohaku.providers.base import GenerationSettings
 
     leaves = [Leaf(key, []) for key in ('a', 'b', 'c')]
     original = GenerationSettings(max_tokens=71, temperature=0.25, reasoning_effort='high')
@@ -67,8 +67,8 @@ def test_generation_constructor_and_assignment_preserve_exact_leaf_identity():
 def test_generation_identity_propagates_through_nested_legacy_pool():
     from types import SimpleNamespace
 
-    from nanobot.providers.base import GenerationSettings
-    from nanobot.providers.legacy_fallback_provider import LegacyFallbackProvider
+    from kohaku.providers.base import GenerationSettings
+    from kohaku.providers.legacy_fallback_provider import LegacyFallbackProvider
 
     first, second, third = (Leaf(key, []) for key in ('a', 'b', 'c'))
     original = GenerationSettings(max_tokens=71)
@@ -188,7 +188,7 @@ async def test_compaction_state_is_owned_and_detached():
     (error(408, 'timed out', 'timeout'), None),
 ])
 def test_legacy_cooldown_classification(response, seconds):
-    from nanobot.providers.pooled_provider import _rotation_cooldown
+    from kohaku.providers.pooled_provider import _rotation_cooldown
     assert _rotation_cooldown(response) == seconds
 
 
@@ -231,7 +231,7 @@ async def test_reconstructed_pool_rebuilds_from_portable_history():
 async def test_nested_fallback_never_replays_delivered_delta(delta, kind, pooled, entry):
     from types import SimpleNamespace
 
-    from nanobot.providers.fallback_provider import FallbackProvider
+    from kohaku.providers.fallback_provider import FallbackProvider
     terminal = error(408 if kind == 'timeout' else 429, kind, kind)
     leaf = Leaf('a', [terminal])
     leaf.delta = delta
@@ -258,7 +258,7 @@ async def test_compat_responses_error_after_delivery_does_not_switch_transport(d
     from types import SimpleNamespace
     from unittest.mock import patch
 
-    from nanobot.providers.openai_compat_provider import OpenAICompatProvider
+    from kohaku.providers.openai_compat_provider import OpenAICompatProvider
 
     provider = OpenAICompatProvider(api_key='fixture', default_model='fixture')
     chat_create = AsyncMock()
@@ -284,7 +284,7 @@ async def test_compat_responses_error_after_delivery_does_not_switch_transport(d
         await selected('delivered')
         raise ValueError('compatible transport error')
 
-    with patch('nanobot.providers.openai_compat_provider.consume_sdk_stream', consume):
+    with patch('kohaku.providers.openai_compat_provider.consume_sdk_stream', consume):
         result = await provider.chat_stream(messages=[], **{delta: callback})
     assert result.finish_reason == 'error'
     callback.assert_awaited_once()
@@ -295,7 +295,7 @@ async def test_compat_responses_error_after_delivery_does_not_switch_transport(d
 async def test_fallback_defers_pool_exhaustion_and_counts_leaf_attempts(succeed):
     from types import SimpleNamespace
 
-    from nanobot.providers.fallback_provider import FallbackProvider
+    from kohaku.providers.fallback_provider import FallbackProvider
 
     primary = PooledProvider([Leaf('a', [error()]), Leaf('b', [error()])], ['a', 'b'])
     terminal = LLMResponse(content='ok') if succeed else error()

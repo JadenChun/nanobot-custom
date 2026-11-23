@@ -5,9 +5,9 @@ from pathlib import Path
 
 import pytest
 
-from nanobot.config.schema import DirectoryBrowserConfig, DirectoryBrowserRootConfig
-from nanobot.webui import workspace_directories
-from nanobot.webui.workspace_directories import DirectoryBrowserError, WorkspaceDirectoryBrowser
+from kohaku.config.schema import DirectoryBrowserConfig, DirectoryBrowserRootConfig
+from kohaku.webui import workspace_directories
+from kohaku.webui.workspace_directories import DirectoryBrowserError, WorkspaceDirectoryBrowser
 
 
 class Clock:
@@ -279,7 +279,7 @@ def test_owner_grant_commit_uses_resolved_canonical_path(tmp_path) -> None:
     from websockets.datastructures import Headers
     from websockets.http11 import Request as WsRequest
 
-    from nanobot.webui.ws_http import GatewayHTTPHandler
+    from kohaku.webui.ws_http import GatewayHTTPHandler
 
     root = tmp_path / "projects"
     root.mkdir()

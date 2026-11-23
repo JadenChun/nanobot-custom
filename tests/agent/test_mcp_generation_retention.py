@@ -9,9 +9,9 @@ from unittest.mock import patch
 import pytest
 from mcp.types import TextContent
 
-from nanobot.agent.tools.mcp import MCPProvider, MCPToolWrapper
-from nanobot.agent.tools.registry import ToolRegistry
-from nanobot.config.schema import MCPServerConfig
+from kohaku.agent.tools.mcp import MCPProvider, MCPToolWrapper
+from kohaku.agent.tools.registry import ToolRegistry
+from kohaku.config.schema import MCPServerConfig
 
 TOOL_NAME = "mcp_probe_probe"
 
@@ -96,7 +96,7 @@ async def test_failed_replacement_retains_old_generation() -> None:
         return {}
 
     try:
-        with patch("nanobot.agent.tools.mcp.connect_mcp_servers", new=fake_connect):
+        with patch("kohaku.agent.tools.mcp.connect_mcp_servers", new=fake_connect):
             await provider.connect()
             old_tool = registry.get(TOOL_NAME)
             assert old_tool is not None
@@ -133,7 +133,7 @@ async def test_old_generation_closes_once_after_admitted_call_settles() -> None:
         return {"probe": connection}
 
     try:
-        with patch("nanobot.agent.tools.mcp.connect_mcp_servers", new=fake_connect):
+        with patch("kohaku.agent.tools.mcp.connect_mcp_servers", new=fake_connect):
             await provider.connect()
             wrapper = registry.get(TOOL_NAME)
             assert wrapper is not None
@@ -180,7 +180,7 @@ async def test_ready_replacement_swaps_tools_and_retires_old_generation() -> Non
         return {"probe": new_connection}
 
     try:
-        with patch("nanobot.agent.tools.mcp.connect_mcp_servers", new=fake_connect):
+        with patch("kohaku.agent.tools.mcp.connect_mcp_servers", new=fake_connect):
             await provider.connect()
             old_tool = registry.get(TOOL_NAME)
             assert old_tool is not None

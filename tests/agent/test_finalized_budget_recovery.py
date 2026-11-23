@@ -15,21 +15,21 @@ import httpx
 import pytest
 from openai import AsyncOpenAI
 
-from nanobot.agent.context_governance import (
+from kohaku.agent.context_governance import (
     ContextGovernanceConfig,
     ContextGovernor,
     ModelRequestState,
     SourceCompactionState,
 )
-from nanobot.agent.hook import AgentHook, AgentHookContext
-from nanobot.agent.loop import AgentLoop
-from nanobot.agent.runner import AgentRunner
-from nanobot.agent.tools.base import Tool
-from nanobot.agent.tools.registry import ToolRegistry
-from nanobot.agent.turn import TurnCallbacks, TurnRequest
-from nanobot.config.schema import Config
-from nanobot.events import AgentEvent, ContextCompactionEvent, EventSink
-from nanobot.providers.base import (
+from kohaku.agent.hook import AgentHook, AgentHookContext
+from kohaku.agent.loop import AgentLoop
+from kohaku.agent.runner import AgentRunner
+from kohaku.agent.tools.base import Tool
+from kohaku.agent.tools.registry import ToolRegistry
+from kohaku.agent.turn import TurnCallbacks, TurnRequest
+from kohaku.config.schema import Config
+from kohaku.events import AgentEvent, ContextCompactionEvent, EventSink
+from kohaku.providers.base import (
     ContextUsageSnapshot,
     GenerationSettings,
     LLMResponse,
@@ -37,10 +37,10 @@ from nanobot.providers.base import (
     ProviderCallContext,
     ToolCallRequest,
 )
-from nanobot.providers.conversation_state import ProviderConversationStateController
-from nanobot.providers.openai_compat_provider import OpenAICompatProvider
-from nanobot.providers.registry import find_by_name
-from nanobot.providers.request_budget import (
+from kohaku.providers.conversation_state import ProviderConversationStateController
+from kohaku.providers.openai_compat_provider import OpenAICompatProvider
+from kohaku.providers.registry import find_by_name
+from kohaku.providers.request_budget import (
     ESTIMATED_COMPAT_POLICY,
     BackendContextOverflow,
     FinalizedRequestBudgetExceeded,
@@ -50,20 +50,20 @@ from nanobot.providers.request_budget import (
     TransportIdentity,
     TransportMeasurement,
 )
-from nanobot.session.checkpoint_dependencies import SummaryDependencyProof
-from nanobot.session.execution_owner import acquire_execution
-from nanobot.session.manager import SessionWriteConflict
-from nanobot.session.source import SourceValidationError, validate_execution_links
-from nanobot.session.source_projection import CheckpointNode, RuntimeNode, SourceNode, source_nodes
-from nanobot.session.source_request import (
+from kohaku.session.checkpoint_dependencies import SummaryDependencyProof
+from kohaku.session.execution_owner import acquire_execution
+from kohaku.session.manager import SessionWriteConflict
+from kohaku.session.source import SourceValidationError, validate_execution_links
+from kohaku.session.source_projection import CheckpointNode, RuntimeNode, SourceNode, source_nodes
+from kohaku.session.source_request import (
     SourceRequestLedger,
     SourceRequestTicket,
     SourceTranscript,
 )
-from nanobot.session.turn_writer import SourceTurnWriter
-from nanobot.utils.helpers import estimate_prompt_tokens_chain
-from nanobot.utils.llm_runtime import LLMRuntime
-from nanobot.utils.runtime import build_budget_exhausted_finalization_message
+from kohaku.session.turn_writer import SourceTurnWriter
+from kohaku.utils.helpers import estimate_prompt_tokens_chain
+from kohaku.utils.llm_runtime import LLMRuntime
+from kohaku.utils.runtime import build_budget_exhausted_finalization_message
 from tests.agent.test_migration_engine import ScriptedProvider
 from tests.agent.test_migration_engine import engine_config as engine_config
 from tests.agent.test_source_pressure_compaction import pressure_state
@@ -260,8 +260,8 @@ async def test_source_turn_recovers_one_finalized_request_budget_rejection(
     engine_config: Config, tmp_path, monkeypatch, streaming: bool, finalization: bool,
     irreducible: bool, no_progress: bool, second_backend_overflow: bool,
 ) -> None:
-    from nanobot.agent import runner as runner_module
-    from nanobot.agent.loop import AgentLoop
+    from kohaku.agent import runner as runner_module
+    from kohaku.agent.loop import AgentLoop
 
     image_path = engine_config.workspace_path / "large-fixture.png"
     image_path.write_bytes(_png_bytes(1024, 1024, padding=225_000))
@@ -916,7 +916,7 @@ async def test_unusable_summary_is_terminal_without_checkpoint_publication(store
 
 
 async def test_incomplete_real_sdk_summary_cannot_publish_source_checkpoint(store):
-    from nanobot.providers.conversation_state import ProviderConversationStateController
+    from kohaku.providers.conversation_state import ProviderConversationStateController
 
     async with acquire_execution(store, "test:compact", run_id="incomplete-sdk-summary") as owner:
         writer = SourceTurnWriter(store.source, owner, run_id="incomplete-sdk-summary")

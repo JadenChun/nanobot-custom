@@ -3,7 +3,7 @@ import json
 
 import pytest
 
-from nanobot.desktop.protocol import MAX_FRAME_BYTES, ProtocolError, parse_request, serve
+from kohaku.desktop.protocol import MAX_FRAME_BYTES, ProtocolError, parse_request, serve
 
 
 def test_parse_request_rejects_unknown_fields_and_boolean_ids() -> None:

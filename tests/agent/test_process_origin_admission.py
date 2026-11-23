@@ -7,16 +7,16 @@ from unittest.mock import AsyncMock, MagicMock, Mock
 
 import pytest
 
-from nanobot.agent.automation_turns import AutomationTurnError
-from nanobot.agent.loop import AgentLoop
-from nanobot.agent.tools.context import RequestContext
-from nanobot.agent.tools.exec_session import ExecCompletion
-from nanobot.agent.turn import DeliveryTarget, RunStatus, TurnRequest
-from nanobot.bus.events import InboundMessage
-from nanobot.process_completion import ProcessCompletionRuntime
-from nanobot.providers.base import GenerationSettings, LLMResponse
-from nanobot.security.workspace_access import build_workspace_scope
-from nanobot.session.source_store import SourceOriginMismatchError
+from kohaku.agent.automation_turns import AutomationTurnError
+from kohaku.agent.loop import AgentLoop
+from kohaku.agent.tools.context import RequestContext
+from kohaku.agent.tools.exec_session import ExecCompletion
+from kohaku.agent.turn import DeliveryTarget, RunStatus, TurnRequest
+from kohaku.bus.events import InboundMessage
+from kohaku.process_completion import ProcessCompletionRuntime
+from kohaku.providers.base import GenerationSettings, LLMResponse
+from kohaku.security.workspace_access import build_workspace_scope
+from kohaku.session.source_store import SourceOriginMismatchError
 from tests.agent import p6_admitted_fixtures
 
 admitted_async = p6_admitted_fixtures.admitted_async
@@ -48,7 +48,7 @@ async def origin_loop(tmp_path, admitted_async):
 async def test_stale_origin_at_final_admission_writes_nothing_and_never_calls_provider(
     origin_loop, monkeypatch, change,
 ):
-    import nanobot.agent.loop as loop_module
+    import kohaku.agent.loop as loop_module
 
     loop = origin_loop
     key = "websocket:origin"
@@ -127,7 +127,7 @@ async def test_missing_source_condition_never_creates_a_replacement(origin_loop)
 
 @pytest.mark.parametrize("failure_at", ["body", "cleanup"])
 async def test_admitted_missing_file_preserves_the_exact_error(origin_loop, monkeypatch, failure_at):
-    import nanobot.agent.loop as loop_module
+    import kohaku.agent.loop as loop_module
 
     loop = origin_loop
     key = "websocket:origin"
@@ -255,7 +255,7 @@ async def test_typed_origin_with_existing_session_requirement_refuses_changed_so
 async def test_process_final_admission_rejection_settles_waiter_without_success(
     origin_loop, tmp_path, monkeypatch,
 ):
-    import nanobot.agent.loop as loop_module
+    import kohaku.agent.loop as loop_module
 
     loop = origin_loop
     key = "websocket:origin"

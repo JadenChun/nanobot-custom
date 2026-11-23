@@ -6,15 +6,15 @@ import json
 import time
 from pathlib import Path
 
-from nanobot.config.loader import load_config
-from nanobot.llm_usage import (
+from kohaku.config.loader import load_config
+from kohaku.llm_usage import (
     get_llm_usage_store,
     llm_usage_store_path,
     record_llm_call,
 )
-from nanobot.llm_usage.models import LLMCallRecord
-from nanobot.providers.base import LLMUsage
-from nanobot.webui.settings_system import settings_usage_payload
+from kohaku.llm_usage.models import LLMCallRecord
+from kohaku.providers.base import LLMUsage
+from kohaku.webui.settings_system import settings_usage_payload
 
 
 def _config(root: Path) -> Path:

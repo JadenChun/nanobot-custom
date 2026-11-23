@@ -7,7 +7,7 @@ import base64
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 
-from nanobot.remote.device_proof import (
+from kohaku.remote.device_proof import (
     DeviceProofClaims,
     canonical_device_proof_bytes,
 )

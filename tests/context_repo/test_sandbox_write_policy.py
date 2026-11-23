@@ -4,8 +4,8 @@ from pathlib import Path
 
 import pytest
 
-from nanobot.context_repo import ContextRepoManager, ResourceAccessPolicy
-from nanobot.security.folder_grants import FolderGrantStore
+from kohaku.context_repo import ContextRepoManager, ResourceAccessPolicy
+from kohaku.security.folder_grants import FolderGrantStore
 
 
 def test_sandbox_reads_unlisted_paths_and_ignores_legacy_command_checkbox(tmp_path: Path):
@@ -30,8 +30,8 @@ def test_sandbox_reads_unlisted_paths_and_ignores_legacy_command_checkbox(tmp_pa
 
 
 def test_folder_map_is_metadata_only_and_never_an_exclusive_write_list(tmp_path):
-    from nanobot.agent.context import ContextBuilder
-    from nanobot.context_repo.catalog import RepositoryCatalog, RepositoryEntry
+    from kohaku.agent.context import ContextBuilder
+    from kohaku.context_repo.catalog import RepositoryCatalog, RepositoryEntry
     home, documents, reference = (tmp_path / name for name in ("home", "documents", "documents/reference"))
     for path in (home, documents, reference):
         path.mkdir(parents=True, exist_ok=True)

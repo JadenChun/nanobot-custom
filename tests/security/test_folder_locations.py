@@ -5,14 +5,14 @@ from uuid import uuid4
 
 import pytest
 
-from nanobot.context_repo import ContextRepoManager, ResourceAccessPolicy
-from nanobot.context_repo.catalog import (
+from kohaku.context_repo import ContextRepoManager, ResourceAccessPolicy
+from kohaku.context_repo.catalog import (
     CatalogRevisionConflictError,
     RepositoryCatalog,
     RepositoryEntry,
 )
-from nanobot.security.folder_grants import FolderGrantStore, GrantRevisionConflictError
-from nanobot.security.folder_locations import FolderLocationEdit, apply_folder_edit
+from kohaku.security.folder_grants import FolderGrantStore, GrantRevisionConflictError
+from kohaku.security.folder_locations import FolderLocationEdit, apply_folder_edit
 
 
 def test_folder_edit_reuses_parent_and_retries_partial_commit(tmp_path: Path, monkeypatch):

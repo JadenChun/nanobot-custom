@@ -23,7 +23,7 @@ import {
   fetchMcpOAuthStatus,
   fetchMcpPresets,
   fetchMarketplaceSkillTrends,
-  fetchNanobotFeatures,
+  fetchKohakuFeatures,
   fetchProviderModels,
   fetchSessionAutomations,
   fetchSessionGeneratedAssets,
@@ -43,8 +43,8 @@ import {
   loginProviderOAuth,
   logoutProviderOAuth,
   migrateModelConfigurations,
-  disableNanobotFeature,
-  enableNanobotFeature,
+  disableKohakuFeature,
+  enableKohakuFeature,
   runAutomationAction,
   runCliAppAction,
   rememberRepository,
@@ -1000,7 +1000,7 @@ describe("webui API helpers", () => {
 
     await expect(fetchApiService("tok")).rejects.toMatchObject({
       status: 200,
-      message: "Gateway returned WebUI HTML instead of JSON. Restart nanobot gateway and try again.",
+      message: "Gateway returned WebUI HTML instead of JSON. Restart kohaku gateway and try again.",
     });
   });
 
@@ -1288,7 +1288,7 @@ describe("webui API helpers", () => {
       }),
     } as Response);
 
-    await expect(fetchNanobotFeatures("tok")).resolves.toMatchObject({ features: [] });
+    await expect(fetchKohakuFeatures("tok")).resolves.toMatchObject({ features: [] });
     expect(fetch).toHaveBeenCalledWith(
       "/api/settings/nanobot-features",
       expect.objectContaining({
@@ -1296,14 +1296,14 @@ describe("webui API helpers", () => {
       }),
     );
 
-    await enableNanobotFeature(mutationTransport, "matrix");
+    await enableKohakuFeature(mutationTransport, "matrix");
     expect(requestMutation).toHaveBeenLastCalledWith(
       "settings.feature.enable",
       { name: "matrix" },
       150_000,
     );
 
-    await disableNanobotFeature(mutationTransport, "matrix");
+    await disableKohakuFeature(mutationTransport, "matrix");
     expect(requestMutation).toHaveBeenLastCalledWith(
       "settings.feature.disable",
       { name: "matrix" },

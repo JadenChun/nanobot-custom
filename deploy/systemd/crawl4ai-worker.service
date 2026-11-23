@@ -7,10 +7,10 @@ After=network-online.target
 Type=simple
 User=crawl4ai-worker
 Group=marketing-agent
-WorkingDirectory=/opt/marketing-agent/nanobot-custom
+WorkingDirectory=/opt/marketing-agent/kohaku
 Environment=HOME=/var/lib/crawl4ai-worker
 EnvironmentFile=/etc/crawl4ai-worker/crawl4ai-worker.env
-ExecStart=/opt/marketing-agent/crawl4ai-worker/.venv/bin/nanobot-crawl-worker
+ExecStart=/opt/marketing-agent/crawl4ai-worker/.venv/bin/kohaku-crawl-worker
 RuntimeDirectory=crawl4ai-worker
 RuntimeDirectoryMode=0770
 StateDirectory=crawl4ai-worker

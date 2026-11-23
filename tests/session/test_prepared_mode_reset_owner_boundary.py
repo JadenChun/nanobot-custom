@@ -5,15 +5,15 @@ from pathlib import Path
 
 import pytest
 
-from nanobot.session.execution_owner import (
+from kohaku.session.execution_owner import (
     ExecutionBusyError,
     acquire_execution,
     execution_lock_guard,
 )
-from nanobot.session.manager import JsonlSessionStore, SessionWriteConflict
-from nanobot.session.runtime_authority import OfflineSessionOperator
-from nanobot.session.source import SourceValidationError
-from nanobot.session.source_store import SourceResetPlan, SourceSessionStore
+from kohaku.session.manager import JsonlSessionStore, SessionWriteConflict
+from kohaku.session.runtime_authority import OfflineSessionOperator
+from kohaku.session.source import SourceValidationError
+from kohaku.session.source_store import SourceResetPlan, SourceSessionStore
 from tests.session.test_execution_owner import seed
 
 TIMESTAMP = "2026-10-13T00:00:00+00:00"

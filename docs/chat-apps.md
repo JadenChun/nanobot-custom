@@ -1,90 +1,90 @@
 # Chat Apps for Self-Hosted AI Agents
 
-Connect nanobot to Telegram, Discord, Slack, WeChat, Email, Mattermost, and
+Connect Kohaku to Telegram, Discord, Slack, WeChat, Email, Mattermost, and
 other chat platforms. This page is the full chat-channel reference. If you want
 a focused setup path for one platform, start with a guide:
 
 | Platform | Guide |
 |---|---|
-| Telegram | [Build a Telegram AI Agent with nanobot](./guides/telegram-ai-agent.md) |
-| Discord | [Build a Discord AI Agent with nanobot](./guides/discord-ai-agent.md) |
-| Slack | [Build a Slack AI Agent with nanobot](./guides/slack-ai-agent.md) |
-| Feishu | [Build a Feishu AI Agent with nanobot](./guides/feishu-ai-agent.md) |
-| WhatsApp | [Build a WhatsApp AI Agent with nanobot](./guides/whatsapp-ai-agent.md) |
-| WeChat | [Build a WeChat AI Agent with nanobot](./guides/wechat-ai-agent.md) |
-| QQ | [Build a QQ AI Agent with nanobot](./guides/qq-ai-agent.md) |
-| Email | [Build an Email AI Agent with nanobot](./guides/email-ai-agent.md) |
-| Mattermost | [Build a Mattermost AI Agent with nanobot](./guides/mattermost-ai-agent.md) |
+| Telegram | [Build a Telegram AI Agent with Kohaku](./guides/telegram-ai-agent.md) |
+| Discord | [Build a Discord AI Agent with Kohaku](./guides/discord-ai-agent.md) |
+| Slack | [Build a Slack AI Agent with Kohaku](./guides/slack-ai-agent.md) |
+| Feishu | [Build a Feishu AI Agent with Kohaku](./guides/feishu-ai-agent.md) |
+| WhatsApp | [Build a WhatsApp AI Agent with Kohaku](./guides/whatsapp-ai-agent.md) |
+| WeChat | [Build a WeChat AI Agent with Kohaku](./guides/wechat-ai-agent.md) |
+| QQ | [Build a QQ AI Agent with Kohaku](./guides/qq-ai-agent.md) |
+| Email | [Build an Email AI Agent with Kohaku](./guides/email-ai-agent.md) |
+| Mattermost | [Build a Mattermost AI Agent with Kohaku](./guides/mattermost-ai-agent.md) |
 
 Want to build your own channel? See the [Channel Package Guide](./channel-package-guide.md).
 
 Before configuring a chat app, make sure the local CLI path works:
 
 ```bash
-nanobot agent -m "Hello!"
+kohaku agent -m "Hello!"
 ```
 
-If that fails, fix installation, config, provider, or model setup first with [`quick-start.md`](./quick-start.md), [`providers.md`](./providers.md), and [`troubleshooting.md`](./troubleshooting.md). Chat apps require `nanobot gateway` to stay running after the channel is configured.
+If that fails, fix installation, config, provider, or model setup first with [`quick-start.md`](./quick-start.md), [`providers.md`](./providers.md), and [`troubleshooting.md`](./troubleshooting.md). Chat apps require `kohaku gateway` to stay running after the channel is configured.
 
 ## Recommended Setup in the WebUI
 
 For normal local setup, let the WebUI write and validate the channel config:
 
-1. Run `nanobot webui`.
+1. Run `kohaku webui`.
 2. Open **Settings → Channels**.
 3. Search for the platform and open its setup panel.
 4. Follow the credential fields or QR flow. The screen tells you which platform-side token, permission, account, or URL it needs.
-5. Let nanobot install the optional channel support when prompted.
+5. Let Kohaku install the optional channel support when prompted.
 6. Restart from the WebUI if it reports that a restart is required.
 7. Send a private test message. If the channel returns a pairing code, approve the pending request in the WebUI and send the message again.
 
 If your installed stable release does not show **Settings → Channels**, continue with the [manual setup pattern](#manual-setup-pattern) below or install current source.
 
-Optional package installation is available to a same-machine WebUI by default. Remote browser clients cannot change the Python environment unless an administrator explicitly enables that capability. Run `nanobot plugins enable <channel>` locally when the guided install is unavailable.
+Optional package installation is available to a same-machine WebUI by default. Remote browser clients cannot change the Python environment unless an administrator explicitly enables that capability. Run `kohaku plugins enable <channel>` locally when the guided install is unavailable.
 
 The sections below explain what each chat platform requires and provide manual config for deployments that manage `config.json` directly.
 
 > [!NOTE]
 > If you are upgrading from a version where chat app SDKs were installed by default,
-> enable the channel in the same Python environment so nanobot installs its
+> enable the channel in the same Python environment so Kohaku installs its
 > manifest-declared dependencies:
 >
 > ```bash
-> nanobot plugins enable <channel>
+> kohaku plugins enable <channel>
 > ```
 >
 > Replace `<channel>` with names such as `telegram`, `slack`, `feishu`,
 > `dingtalk`, `matrix`, `qq`, `napcat`, `weixin`, `wecom`, or `msteams`.
-> To turn a channel off later, run `nanobot plugins disable <channel>`.
-> nanobot keeps the saved settings, but stops loading that channel after the
+> To turn a channel off later, run `kohaku plugins disable <channel>`.
+> Kohaku keeps the saved settings, but stops loading that channel after the
 > next restart.
 
 ## Manual Setup Pattern
 
-Most examples below are snippets to merge into `~/.nanobot/config.json`. When a snippet includes `allowFrom`, it is showing a static allowlist. For pairing-based access on supported channels, omit `allowFrom`; Slack and Mattermost also need `dm.policy` set to `"allowlist"` for DMs to issue pairing codes.
+Most examples below are snippets to merge into `~/.kohaku/config.json`. When a snippet includes `allowFrom`, it is showing a static allowlist. For pairing-based access on supported channels, omit `allowFrom`; Slack and Mattermost also need `dm.policy` set to `"allowlist"` for DMs to issue pairing codes.
 
 Every chat app uses the same shape:
 
 1. Create or prepare the bot/account in the chat platform.
 2. Copy the token, secret, QR login state, webhook URL, or account ID that platform gives you.
-3. Merge that platform's JSON snippet into `~/.nanobot/config.json`.
+3. Merge that platform's JSON snippet into `~/.kohaku/config.json`.
 4. Prefer pairing for DM-capable channels: omit `allowFrom`, let the first DM receive a pairing code, then approve it with `/pairing approve <code>`.
 5. For channels without pairing, such as Email, keep access narrow with `allowFrom` or the platform-specific allow list.
-6. Check that nanobot can see the configured channel:
+6. Check that Kohaku can see the configured channel:
 
 ```bash
-nanobot channels status
+kohaku channels status
 ```
 
 7. Start the gateway and leave that terminal running:
 
 ```bash
-nanobot gateway
+kohaku gateway
 ```
 
 8. Send a test DM. If the bot returns a pairing code, approve it and send the message again. In group chats, follow that channel's `groupPolicy` behavior: many channels default to mention-only, while Matrix and WhatsApp default to open group replies.
 
-If `nanobot channels status` does not show the channel as enabled, the config snippet is in the wrong place, the channel name is misspelled, or the config file you edited is not the one nanobot is reading. If the channel is enabled but messages do not arrive, run `nanobot gateway --verbose` and compare the platform-side credentials, event permissions, and allow lists.
+If `kohaku channels status` does not show the channel as enabled, the config snippet is in the wrong place, the channel name is misspelled, or the config file you edited is not the one Kohaku is reading. If the channel is enabled but messages do not arrive, run `kohaku gateway --verbose` and compare the platform-side credentials, event permissions, and allow lists.
 
 > `allowFrom: ["*"]` bypasses pairing and allows anyone who can reach that channel to talk to the bot. Use it only when that is intentional, or temporarily while testing in a private sandbox.
 
@@ -92,9 +92,9 @@ If `nanobot channels status` does not show the channel as enabled, the config sn
 |---------|---------------|
 | **Telegram** | Bot token from @BotFather |
 | **Discord** | Bot token + Message Content intent |
-| **WhatsApp** | QR code scan (`nanobot channels login whatsapp`) |
-| **WeChat (Weixin)** | QR code scan (`nanobot channels login weixin`) |
-| **Feishu** | QR code scan (`nanobot channels login feishu`) or App ID + App Secret |
+| **WhatsApp** | QR code scan (`kohaku channels login whatsapp`) |
+| **WeChat (Weixin)** | QR code scan (`kohaku channels login weixin`) |
+| **Feishu** | QR code scan (`kohaku channels login feishu`) or App ID + App Secret |
 | **DingTalk** | App Key + App Secret |
 | **Slack** | Bot token + App-Level token |
 | **Matrix** | Homeserver URL + Access token |
@@ -106,18 +106,19 @@ If `nanobot channels status` does not show the channel as enabled, the config sn
 | **Mochat** | Claw token (auto-setup available) |
 | **Signal** | signal-cli daemon + phone number |
 
+<a id="telegram"></a>
 <details>
 <summary><b>Telegram</b></summary>
 
 **Recommended WebUI setup**
 
 1. Create a bot with `@BotFather` and copy its token.
-2. Run `nanobot webui`, then open **Settings → Channels → Telegram**.
+2. Run `kohaku webui`, then open **Settings → Channels → Telegram**.
 3. Paste the token. If the gateway cannot reach Telegram directly, expand
    **Advanced** and add an HTTP or SOCKS proxy.
 4. Save and enable Telegram, then send the bot a direct message.
 
-The configuration badge means nanobot found a saved token. The live connection
+The configuration badge means Kohaku found a saved token. The live connection
 check is separate, so a temporary Telegram or proxy outage does not make an
 existing configuration disappear. Saved tokens and proxy URLs remain masked.
 
@@ -129,7 +130,7 @@ and troubleshooting.
 Install the optional channel dependency:
 
 ```bash
-nanobot plugins enable telegram
+kohaku plugins enable telegram
 ```
 
 **1. Create a bot**
@@ -174,12 +175,12 @@ containing a username or password as a secret.
 **3. Run**
 
 ```bash
-nanobot gateway
+kohaku gateway
 ```
 
 **Webhook mode (optional)**
 
-Telegram uses long polling by default. To receive updates through a webhook, expose a public HTTPS URL that forwards to nanobot's local listener and set `mode` to `webhook`:
+Telegram uses long polling by default. To receive updates through a webhook, expose a public HTTPS URL that forwards to Kohaku's local listener and set `mode` to `webhook`:
 
 ```json
 {
@@ -200,9 +201,9 @@ Telegram uses long polling by default. To receive updates through a webhook, exp
 }
 ```
 
-> `webhookSecretToken` is required in webhook mode. Do not expose the local webhook listener directly to the public internet without a reverse proxy or tunnel in front of it. TLS/Host policy is handled by your proxy; nanobot only listens on `webhookListenHost:webhookListenPort` and validates Telegram's webhook secret token. `webhookMaxConnections` defaults to `4`; nanobot still serializes Telegram updates per conversation before forwarding them to the agent.
+> `webhookSecretToken` is required in webhook mode. Do not expose the local webhook listener directly to the public internet without a reverse proxy or tunnel in front of it. TLS/Host policy is handled by your proxy; Kohaku only listens on `webhookListenHost:webhookListenPort` and validates Telegram's webhook secret token. `webhookMaxConnections` defaults to `4`; Kohaku still serializes Telegram updates per conversation before forwarding them to the agent.
 >
-> `webhookUrl` is the public HTTPS URL registered with Telegram. `webhookPath` is the local path nanobot listens on. They often use the same path, but may differ when a reverse proxy or tunnel rewrites the request path.
+> `webhookUrl` is the public HTTPS URL registered with Telegram. `webhookPath` is the local path kohaku listens on. They often use the same path, but may differ when a reverse proxy or tunnel rewrites the request path.
 
 </details>
 
@@ -214,35 +215,35 @@ Uses **Socket.IO WebSocket** by default, with HTTP polling fallback.
 **Install the optional realtime dependency**
 
 ```bash
-nanobot plugins enable mochat
+kohaku plugins enable mochat
 ```
 
 Without these dependencies, Mochat still works through HTTP polling.
 
-**1. Ask nanobot to set up Mochat for you**
+**1. Ask Kohaku to set up Mochat for you**
 
-Simply send this message to nanobot (replace `xxx@xxx` with your real email):
+Simply send this message to Kohaku (replace `xxx@xxx` with your real email):
 
 ```
 Read https://raw.githubusercontent.com/HKUDS/MoChat/refs/heads/main/skills/nanobot/skill.md and register on MoChat. My Email account is xxx@xxx Bind me as your owner and DM me on MoChat.
 ```
 
-nanobot will automatically register, configure `~/.nanobot/config.json`, and connect to Mochat.
+Kohaku will automatically register, configure `~/.kohaku/config.json`, and connect to Mochat.
 
 **2. Restart gateway**
 
 ```bash
-nanobot gateway
+kohaku gateway
 ```
 
-That's it — nanobot handles the rest!
+That's it — Kohaku handles the rest!
 
 <br>
 
 <details>
 <summary>Manual configuration (advanced)</summary>
 
-If you prefer to configure manually, add the following to `~/.nanobot/config.json`:
+If you prefer to configure manually, add the following to `~/.kohaku/config.json`:
 
 > Keep `claw_token` private. It should only be sent in `X-Claw-Token` header to your Mochat API endpoint.
 
@@ -271,6 +272,7 @@ If you prefer to configure manually, add the following to `~/.nanobot/config.jso
 
 </details>
 
+<a id="discord"></a>
 <details>
 <summary><b>Discord</b></summary>
 
@@ -321,18 +323,19 @@ If you prefer to configure manually, add the following to `~/.nanobot/config.jso
 **6. Run**
 
 ```bash
-nanobot gateway
+kohaku gateway
 ```
 
 </details>
 
+<a id="matrix"></a>
 <details>
 <summary><b>Matrix (Element)</b></summary>
 
 Enable Matrix support first:
 
 ```bash
-nanobot plugins enable matrix
+kohaku plugins enable matrix
 ```
 
 > [!NOTE]
@@ -391,24 +394,25 @@ nanobot plugins enable matrix
 **4. Run**
 
 ```bash
-nanobot gateway
+kohaku gateway
 ```
 
 </details>
 
+<a id="whatsapp"></a>
 <details>
 <summary><b>WhatsApp</b></summary>
 
 Requires the WhatsApp optional dependencies:
 
 ```bash
-nanobot plugins enable whatsapp
+kohaku plugins enable whatsapp
 ```
 
 **1. Link device with QR**
 
 ```bash
-nanobot channels login whatsapp
+kohaku channels login whatsapp
 # Scan QR with WhatsApp → Settings → Linked Devices
 ```
 
@@ -435,7 +439,7 @@ Optional session database path:
 {
   "channels": {
     "whatsapp": {
-      "databasePath": "~/.nanobot/whatsapp-auth/neonize.db"
+      "databasePath": "~/.kohaku/whatsapp-auth/neonize.db"
     }
   }
 }
@@ -444,18 +448,18 @@ Optional session database path:
 **Migrating from the old bridge**
 
 - Remove `bridgeUrl` and `bridgeToken`; WhatsApp no longer runs a local Node.js bridge.
-- Re-run `nanobot channels login whatsapp`; old Baileys bridge auth data is not reused by neonize.
+- Re-run `kohaku channels login whatsapp`; old Baileys bridge auth data is not reused by neonize.
 - Update `allowFrom` entries to the WhatsApp sender ID without a leading `+`.
 
 **3. Run**
 
 ```bash
-nanobot gateway
+kohaku gateway
 ```
 
 **Optional: static LID mappings**
 
-Modern WhatsApp can deliver a sender's LID instead of their phone number. nanobot
+Modern WhatsApp can deliver a sender's LID instead of their phone number. Kohaku
 learns LID to phone mappings at runtime when both identifiers are present, but you
 can also seed mappings up front so the phone number resolves from the
 very first message:
@@ -474,6 +478,7 @@ very first message:
 
 </details>
 
+<a id="feishu"></a>
 <details>
 <summary><b>Feishu</b></summary>
 
@@ -482,12 +487,12 @@ Uses **WebSocket** long connection — no public IP required.
 **Quick setup: QR login**
 
 ```bash
-nanobot plugins enable feishu
-nanobot channels login feishu
+kohaku plugins enable feishu
+kohaku channels login feishu
 # Use --force to create/sign in with a new bot
 ```
 
-Open the printed URL or scan the QR code with Feishu/Lark on your phone. If the optional `qrcode` package is installed, nanobot shows a terminal QR code; otherwise it prints the login URL. nanobot writes `appId`, `appSecret`, `domain`, and `enabled` under `channels.feishu` in the active config file. Use `--config <path>` to update a non-default config.
+Open the printed URL or scan the QR code with Feishu/Lark on your phone. If the optional `qrcode` package is installed, Kohaku shows a terminal QR code; otherwise it prints the login URL. Kohaku writes `appId`, `appSecret`, `domain`, and `enabled` under `channels.feishu` in the active config file. Use `--config <path>` to update a non-default config.
 
 If QR login is unavailable for your account, use manual setup below.
 
@@ -498,10 +503,10 @@ If QR login is unavailable for your account, use manual setup below.
 - Create a new app → Enable **Bot** capability
 - **Permissions**:
   - `im:message` (send messages) and `im:message.p2p_msg:readonly` (receive messages)
-  - **Streaming replies** (default in nanobot): add **`cardkit:card:write`** (often labeled **Create and update cards** in the Feishu developer console). Required for CardKit entities and streamed assistant text. Older apps may not have it yet — open **Permission management**, enable the scope, then **publish** a new app version if the console requires it.
+  - **Streaming replies** (default in Kohaku): add **`cardkit:card:write`** (often labeled **Create and update cards** in the Feishu developer console). Required for CardKit entities and streamed assistant text. Older apps may not have it yet — open **Permission management**, enable the scope, then **publish** a new app version if the console requires it.
   - If you **cannot** add `cardkit:card:write`, set `"streaming": false` under `channels.feishu` (see below). The bot still works; replies use normal interactive cards without token-by-token streaming.
 - **Events**: Add `im.message.receive_v1` (receive messages)
-  - Select **Long Connection** mode (requires running nanobot first to establish connection)
+  - Select **Long Connection** mode (requires running Kohaku first to establish connection)
 - Get **App ID** and **App Secret** from "Credentials & Basic Info"
 - Publish the app
 
@@ -530,7 +535,7 @@ If QR login is unavailable for your account, use manual setup below.
 
 > `streaming` defaults to `true`. Use `false` if your app does not have **`cardkit:card:write`** (see permissions above).
 > `encryptKey` and `verificationToken` are optional for Long Connection mode.
-> `allowFrom`: Add your open_id (find it in nanobot logs when you message the bot). Use `["*"]` to allow all users.
+> `allowFrom`: Add your open_id (find it in kohaku logs when you message the bot). Use `["*"]` to allow all users.
 > `groupPolicy`: `"mention"` (default — respond only when @mentioned), `"open"` (respond to all group messages). Private chats always respond.
 > `reactEmoji`: Emoji for "processing" status (default: `OnIt`). See [available emojis](https://open.larkoffice.com/document/server-docs/im-v1/message-reaction/emojis-introduce).
 > `doneEmoji`: Optional emoji for "completed" status (e.g., `DONE`, `OK`, `HEART`). When set, bot adds this reaction after removing `reactEmoji`.
@@ -540,7 +545,7 @@ If QR login is unavailable for your account, use manual setup below.
 **3. Run**
 
 ```bash
-nanobot gateway
+kohaku gateway
 ```
 
 > [!TIP]
@@ -548,6 +553,7 @@ nanobot gateway
 
 </details>
 
+<a id="qq"></a>
 <details>
 <summary><b>QQ (QQ单聊)</b></summary>
 
@@ -556,7 +562,7 @@ Uses **botpy SDK** with WebSocket — no public IP required. Currently supports 
 **Install the optional channel dependency**
 
 ```bash
-nanobot plugins enable qq
+kohaku plugins enable qq
 ```
 
 **1. Register & create bot**
@@ -571,7 +577,7 @@ nanobot plugins enable qq
 
 **3. Configure**
 
-> - `allowFrom`: Add your openid (find it in nanobot logs when you message the bot). Use `["*"]` for public access.
+> - `allowFrom`: Add your openid (find it in kohaku logs when you message the bot). Use `["*"]` for public access.
 > - `msgFormat`: Optional. Use `"plain"` (default) for maximum compatibility with legacy QQ clients, or `"markdown"` for richer formatting on newer clients.
 > - For production: submit a review in the bot console and publish. See [QQ Bot Docs](https://bot.q.qq.com/wiki/) for the full publishing flow.
 
@@ -592,13 +598,14 @@ nanobot plugins enable qq
 **4. Run**
 
 ```bash
-nanobot gateway
+kohaku gateway
 ```
 
 Now send a message to the bot from QQ — it should respond!
 
 </details>
 
+<a id="napcat"></a>
 <details>
 <summary><b>Napcat (QQ via OneBot v11 支持群聊等功能)</b></summary>
 
@@ -614,7 +621,7 @@ Connects to a [Napcat](https://github.com/NapNeko/NapCatQQ) instance over its **
 **Install the optional channel dependency**
 
 ```bash
-nanobot plugins enable napcat
+kohaku plugins enable napcat
 ```
 
 **2. Configure**
@@ -649,6 +656,7 @@ nanobot plugins enable napcat
 
 </details>
 
+<a id="dingtalk"></a>
 <details>
 <summary><b>DingTalk (钉钉)</b></summary>
 
@@ -657,7 +665,7 @@ Uses **Stream Mode** — no public IP required.
 **Install the optional channel dependency**
 
 ```bash
-nanobot plugins enable dingtalk
+kohaku plugins enable dingtalk
 ```
 
 **1. Create a DingTalk bot**
@@ -692,11 +700,12 @@ nanobot plugins enable dingtalk
 **3. Run**
 
 ```bash
-nanobot gateway
+kohaku gateway
 ```
 
 </details>
 
+<a id="slack"></a>
 <details>
 <summary><b>Slack</b></summary>
 
@@ -705,7 +714,7 @@ Uses **Socket Mode** — no public URL required.
 **Install the optional channel dependency**
 
 ```bash
-nanobot plugins enable slack
+kohaku plugins enable slack
 ```
 
 **1. Create a Slack app**
@@ -719,9 +728,9 @@ nanobot plugins enable slack
 - **App Home**: Scroll to **Show Tabs** → Enable **Messages Tab** → Check **"Allow users to send Slash commands and messages from the messages tab"**
 - **Install App**: Click **Install to Workspace** → Authorize → copy the **Bot Token** (`xoxb-...`)
 
-> `files:read` is required to read files users send to nanobot. `files:write` is required for nanobot to send images, videos, and other file uploads. If you add either scope later, reinstall the Slack app to the workspace and restart nanobot so it uses the updated bot token.
+> `files:read` is required to read files users send to Kohaku. `files:write` is required for Kohaku to send images, videos, and other file uploads. If you add either scope later, reinstall the Slack app to the workspace and restart Kohaku so it uses the updated bot token.
 
-**3. Configure nanobot**
+**3. Configure Kohaku**
 
 ```json
 {
@@ -740,7 +749,7 @@ nanobot plugins enable slack
 **4. Run**
 
 ```bash
-nanobot gateway
+kohaku gateway
 ```
 
 DM the bot directly or @mention it in a channel — it should respond!
@@ -753,10 +762,11 @@ DM the bot directly or @mention it in a channel — it should respond!
 
 </details>
 
+<a id="email"></a>
 <details>
 <summary><b>Email</b></summary>
 
-Give nanobot its own email account. It polls **IMAP** for incoming mail and replies via **SMTP** — like a personal email assistant.
+Give Kohaku its own email account. It polls **IMAP** for incoming mail and replies via **SMTP** — like a personal email assistant.
 
 **1. Get credentials (Gmail example)**
 - Create a dedicated Gmail account for your bot (e.g. `my-nanobot@gmail.com`)
@@ -808,11 +818,12 @@ Give nanobot its own email account. It polls **IMAP** for incoming mail and repl
 **3. Run**
 
 ```bash
-nanobot gateway
+kohaku gateway
 ```
 
 </details>
 
+<a id="wechat"></a>
 <details>
 <summary><b>WeChat (微信 / Weixin)</b></summary>
 
@@ -821,7 +832,7 @@ Uses **HTTP long-poll** with QR-code login via the ilinkai personal WeChat API. 
 **1. Enable WeChat support**
 
 ```bash
-nanobot plugins enable weixin
+kohaku plugins enable weixin
 ```
 
 **2. Configure**
@@ -837,32 +848,33 @@ nanobot plugins enable weixin
 }
 ```
 
-> - `allowFrom`: Add the sender ID you see in nanobot logs for your WeChat account. Use `["*"]` to allow all users.
-> - `token`: Optional. If omitted, log in interactively and nanobot will save the token for you.
-> - `routeTag`: Optional. When your upstream Weixin deployment requires request routing, nanobot will send it as the `SKRouteTag` header.
-> - `stateDir`: Optional. Defaults to nanobot's runtime directory for Weixin state.
+> - `allowFrom`: Add the sender ID you see in kohaku logs for your WeChat account. Use `["*"]` to allow all users.
+> - `token`: Optional. If omitted, log in interactively and Kohaku will save the token for you.
+> - `routeTag`: Optional. When your upstream Weixin deployment requires request routing, Kohaku will send it as the `SKRouteTag` header.
+> - `stateDir`: Optional. Defaults to Kohaku's runtime directory for Weixin state.
 > - `pollTimeout`: Optional long-poll timeout in seconds.
 
 **3. Login**
 
 ```bash
-nanobot channels login weixin
+kohaku channels login weixin
 ```
 
 Use `--force` to re-authenticate and ignore any saved token:
 
 ```bash
-nanobot channels login weixin --force
+kohaku channels login weixin --force
 ```
 
 **4. Run**
 
 ```bash
-nanobot gateway
+kohaku gateway
 ```
 
 </details>
 
+<a id="wecom"></a>
 <details>
 <summary><b>Wecom (企业微信)</b></summary>
 
@@ -873,7 +885,7 @@ nanobot gateway
 **1. Enable WeCom support**
 
 ```bash
-nanobot plugins enable wecom
+kohaku plugins enable wecom
 ```
 
 **2. Create a WeCom AI Bot**
@@ -898,11 +910,12 @@ Go to the WeCom admin console → Intelligent Robot → Create Robot → select 
 **4. Run**
 
 ```bash
-nanobot gateway
+kohaku gateway
 ```
 
 </details>
 
+<a id="msteams"></a>
 <details>
 <summary><b>Microsoft Teams</b> (MVP — DM only)</summary>
 
@@ -912,7 +925,7 @@ nanobot gateway
 **1. Enable Microsoft Teams support**
 
 ```bash
-nanobot plugins enable msteams
+kohaku plugins enable msteams
 ```
 
 **2. Create a Teams / Azure bot app registration**
@@ -946,7 +959,7 @@ Create or reuse a Microsoft Teams / Azure bot app registration. Set the bot mess
 ```
 
 > - `replyInThread: true` replies to the triggering Teams activity when a stored `activity_id` is available.
-> - `mentionOnlyResponse` controls what Nanobot receives when a user sends only a bot mention (`<at>Nanobot</at>`). Set to `""` to ignore mention-only messages.
+> - `mentionOnlyResponse` controls what Kohaku receives when a user sends only a bot mention (`<at>Kohaku</at>`). Set to `""` to ignore mention-only messages.
 > - `validateInboundAuth: true` enables inbound Bot Framework bearer-token validation (signature, issuer, audience, lifetime, `serviceUrl`). This is the safe default for public deployments. Only set it to `false` for local development or tightly controlled testing.
 > - `refTtlDays` (default `30`) controls how old stored conversation refs can be before they are pruned.
 > - `pruneWebChatRefs` (default `true`) drops refs with `webchat.botframework.com` service URLs.
@@ -956,11 +969,12 @@ Create or reuse a Microsoft Teams / Azure bot app registration. Set the bot mess
 **4. Run**
 
 ```bash
-nanobot gateway
+kohaku gateway
 ```
 
 </details>
 
+<a id="signal"></a>
 <details>
 <summary><b>Signal</b></summary>
 
@@ -1018,7 +1032,7 @@ signal-cli -a +1234567890 daemon --http localhost:8080
 **3. Run**
 
 ```bash
-nanobot gateway
+kohaku gateway
 ```
 
 > [!TIP]

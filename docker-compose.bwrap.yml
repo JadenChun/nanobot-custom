@@ -6,11 +6,11 @@ x-bwrap-security: &bwrap-security
     - seccomp=unconfined
 
 services:
-  nanobot-gateway:
+  kohaku-gateway:
     <<: *bwrap-security
 
-  nanobot-api:
+  kohaku-api:
     <<: *bwrap-security
 
-  nanobot-cli:
+  kohaku-cli:
     <<: *bwrap-security

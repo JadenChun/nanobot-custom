@@ -7,7 +7,7 @@ from dataclasses import dataclass
 
 import pytest
 
-from nanobot.agent.idle_compaction import (
+from kohaku.agent.idle_compaction import (
     IdleAuxiliaryLimits,
     IdleAuxiliaryUsage,
     IdleCompactionCoordinator,

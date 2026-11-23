@@ -8,10 +8,10 @@ from pathlib import Path
 
 import pytest
 
-from nanobot.cron.action_store import CronActionStore
-from nanobot.cron.completion import CronCompletionProjector
-from nanobot.cron.definition_store import CronDefinitionAction, CronDefinitionStore
-from nanobot.cron.delivery_runtime import (
+from kohaku.cron.action_store import CronActionStore
+from kohaku.cron.completion import CronCompletionProjector
+from kohaku.cron.definition_store import CronDefinitionAction, CronDefinitionStore
+from kohaku.cron.delivery_runtime import (
     ConfirmedDelivered,
     ConfirmedNotSent,
     CronDeliveryReentrancyError,
@@ -25,15 +25,15 @@ from nanobot.cron.delivery_runtime import (
     PermanentNotSent,
     UnknownOutcome,
 )
-from nanobot.cron.delivery_store import (
+from kohaku.cron.delivery_store import (
     CronDeliveryOutboxStore,
     DeliveryOutboxOwnershipError,
     DeliveryOutboxPersistenceError,
     DeliverySendBusyError,
 )
-from nanobot.cron.occurrence_store import CronOccurrenceStore
-from nanobot.cron.service import CronService, _job_definition
-from nanobot.cron.types import CronDestination, CronSchedule
+from kohaku.cron.occurrence_store import CronOccurrenceStore
+from kohaku.cron.service import CronService, _job_definition
+from kohaku.cron.types import CronDestination, CronSchedule
 
 NAMESPACE = "cron:package-e3-tests"
 
@@ -881,10 +881,10 @@ def test_management_only_service_creates_no_delivery_or_occurrence_files(tmp_pat
 
 
 def test_runtime_has_no_channel_provider_or_bus_wiring() -> None:
-    source = Path(__file__).parents[2].joinpath("nanobot", "cron", "delivery_runtime.py").read_text()
-    assert "nanobot.channels" not in source
-    assert "nanobot.providers" not in source
-    assert "nanobot.bus" not in source
+    source = Path(__file__).parents[2].joinpath("kohaku", "cron", "delivery_runtime.py").read_text()
+    assert "kohaku.channels" not in source
+    assert "kohaku.providers" not in source
+    assert "kohaku.bus" not in source
 
 
 # Author cases C1-C2 from resume2/req-next/CASES.md (R1: bounded delivery registry).

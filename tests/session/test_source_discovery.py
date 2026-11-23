@@ -9,9 +9,9 @@ from pathlib import Path
 
 import pytest
 
-import nanobot.session.source_discovery as source_discovery_module
-from nanobot.session.manager import JsonlSessionStore, Session
-from nanobot.session.source_discovery import (
+import kohaku.session.source_discovery as source_discovery_module
+from kohaku.session.manager import JsonlSessionStore, Session
+from kohaku.session.source_discovery import (
     SourceDiscoveryCursor,
     SourceDiscoveryLimits,
     SourceDiscoveryRootChangedError,

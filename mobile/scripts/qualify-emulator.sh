@@ -11,9 +11,9 @@ mobile_require_toolchain
 
 run_id="$(date +%Y%m%d-%H%M%S)"
 evidence_dir="${MOBILE_ROOT}/evidence/${run_id}/M01"
-avd_name="${NANOBOT_MOBILE_AVD:-nanobot-m01}"
-emulator_port="${NANOBOT_MOBILE_EMULATOR_PORT:-5590}"
-emulator_gpu="${NANOBOT_MOBILE_EMULATOR_GPU:-angle_indirect}"
+avd_name="${KOHAKU_MOBILE_AVD:-nanobot-m01}"
+emulator_port="${KOHAKU_MOBILE_EMULATOR_PORT:-5590}"
+emulator_gpu="${KOHAKU_MOBILE_EMULATOR_GPU:-angle_indirect}"
 serial="emulator-${emulator_port}"
 keep_emulator=0
 native_tests=0
@@ -162,26 +162,26 @@ if [[ "${native_tests}" -eq 1 ]]; then
   adb -s "${serial}" install -r -t "${apk}"
 fi
 adb -s "${serial}" logcat -c
-adb -s "${serial}" shell am force-stop ai.nanobot.mobile.debug
-adb -s "${serial}" shell am start -W -n ai.nanobot.mobile.debug/ai.nanobot.mobile.MainActivity
+adb -s "${serial}" shell am force-stop ai.kohaku.mobile.debug
+adb -s "${serial}" shell am start -W -n ai.kohaku.mobile.debug/ai.kohaku.mobile.MainActivity
 
 probe_ok=0
 for _ in $(seq 1 90); do
-  if adb -s "${serial}" logcat -d -s NanobotProbe:I Capacitor/Console:I 2>/dev/null \
-    | grep -q 'NANOBOT_MOBILE_PROBE_OK'; then
+  if adb -s "${serial}" logcat -d -s KohakuProbe:I Capacitor/Console:I 2>/dev/null \
+    | grep -q 'KOHAKU_MOBILE_PROBE_OK'; then
     probe_ok=1
     break
   fi
   sleep 1
 done
-adb -s "${serial}" logcat -d -s NanobotProbe:I Capacitor/Console:I >"${evidence_dir}/probe-logcat.txt" || true
+adb -s "${serial}" logcat -d -s KohakuProbe:I Capacitor/Console:I >"${evidence_dir}/probe-logcat.txt" || true
 cat "${evidence_dir}/probe-logcat.txt"
 
 adb -s "${serial}" shell getprop ro.product.cpu.abi >"${evidence_dir}/abi.txt"
 adb -s "${serial}" shell getprop ro.build.version.sdk >>"${evidence_dir}/abi.txt"
 adb -s "${serial}" shell getprop ro.build.version.release >>"${evidence_dir}/abi.txt"
 adb -s "${serial}" exec-out screencap -p >"${evidence_dir}/fixture-shell.png" || true
-adb -s "${serial}" shell dumpsys package ai.nanobot.mobile.debug >"${evidence_dir}/package-dump.txt" || true
+adb -s "${serial}" shell dumpsys package ai.kohaku.mobile.debug >"${evidence_dir}/package-dump.txt" || true
 
 if [[ "${probe_ok}" -ne 1 ]]; then
   echo "native probe marker missing" >&2

@@ -1,0 +1,125 @@
+"""Runtime context for tool construction."""
+from __future__ import annotations
+
+from contextlib import contextmanager
+from contextvars import ContextVar, Token
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, Callable, Protocol, runtime_checkable
+
+if TYPE_CHECKING:
+    from kohaku.agent.delegation import ForegroundAgentManager
+    from kohaku.agent.subagent import RetiredSubagentAuthority, SubagentManager
+    from kohaku.agent.tools.exec_session import ExecSessionManager
+    from kohaku.agent.tools.file_state import FileStates
+    from kohaku.agent.tools.runtime_control import RuntimeControl
+    from kohaku.agent.write_guard import FileLockRegistry
+    from kohaku.bus.queue import MessageBus
+    from kohaku.config.schema import ProviderConfig, ToolsConfig
+    from kohaku.context_repo import ResourceAccessPolicy
+    from kohaku.cron.service import CronService
+    from kohaku.providers.factory import ProviderSnapshot
+    from kohaku.security.workspace_access import WorkspaceSandboxStatus, WorkspaceScope
+    from kohaku.session.manager import SessionManager
+    from kohaku.session.source_store import SourceState
+    from kohaku.session.workspace_focus import WorkspaceFocusOwner
+    from kohaku.utils.llm_runtime import LLMRuntime
+
+_CURRENT_REQUEST_CONTEXT: ContextVar["RequestContext | None"] = ContextVar(
+    "nanobot_tool_request_context",
+    default=None,
+)
+
+
+@dataclass(frozen=True)
+class RequestContext:
+    """Per-request context injected into tools at message-processing time."""
+    channel: str
+    chat_id: str
+    message_id: str | None = None
+    session_key: str | None = None
+    original_user_text: str | None = None
+    runtime: LLMRuntime | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
+    sender_id: str | None = None
+    turn_id: str | None = None
+    workspace: Path | None = None
+    attributes: dict[str, Any] = field(default_factory=dict)
+    workspace_scope: WorkspaceScope | None = None
+    persistent_session: bool = True
+    source_state: SourceState | None = None
+    media_root: Path | None = None
+
+
+@runtime_checkable
+class ContextAware(Protocol):
+    def set_context(self, ctx: RequestContext) -> None:
+        ...
+
+
+def bind_request_context(ctx: RequestContext) -> Token[RequestContext | None]:
+    return _CURRENT_REQUEST_CONTEXT.set(ctx)
+
+
+def reset_request_context(token: Token[RequestContext | None]) -> None:
+    _CURRENT_REQUEST_CONTEXT.reset(token)
+
+
+@contextmanager
+def request_context(ctx: RequestContext):
+    """Bind one immutable request snapshot and restore the previous value."""
+    token = bind_request_context(ctx)
+    try:
+        yield ctx
+    finally:
+        reset_request_context(token)
+
+
+def current_request_context() -> RequestContext | None:
+    return _CURRENT_REQUEST_CONTEXT.get()
+
+
+def current_request_session_key() -> str | None:
+    ctx = current_request_context()
+    return ctx.session_key if ctx else None
+
+
+@dataclass(frozen=True)
+class ForkToolDependencies:
+    """Trusted construction inputs supplied by the owning foreground harness."""
+
+    foreground_manager: ForegroundAgentManager
+    resource_policy: ResourceAccessPolicy
+    file_locks: FileLockRegistry
+    crawler_enabled: bool = False
+    explore_max_iterations: int = 100
+
+
+@dataclass
+class ToolContext:
+    config: ToolsConfig
+    workspace: str
+    bus: MessageBus | None = None
+    subagent_manager: SubagentManager | RetiredSubagentAuthority | None = None
+    cron_service: CronService | None = None
+    exec_session_manager: ExecSessionManager | None = None
+    sessions: SessionManager | None = None
+    file_state_store: FileStates | None = None
+    provider_snapshot_loader: Callable[..., ProviderSnapshot] | None = None
+    image_generation_provider_configs: dict[str, ProviderConfig] | None = None
+    media_root: Path | None = None
+    timezone: str = "UTC"
+    workspace_sandbox: WorkspaceSandboxStatus | None = None
+    runtime_control: RuntimeControl | None = None
+    fork_dependencies: ForkToolDependencies | None = None
+    workspace_focus_owner: WorkspaceFocusOwner | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ExternalToolContext:
+    """Data-only construction inputs exposed to installed tool plugins."""
+
+    config: ToolsConfig
+    workspace: str
+    timezone: str
+    workspace_sandbox: WorkspaceSandboxStatus | None = None

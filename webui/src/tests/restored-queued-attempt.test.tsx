@@ -2,8 +2,8 @@ import { act, fireEvent, render, screen, waitFor, within } from "@testing-librar
 import { afterEach, describe, expect, it } from "vitest";
 
 import { ThreadComposer } from "@/components/thread/ThreadComposer";
-import { useNanobotStream, type SendAttachment, type SendOptions, type SubmittedTurn } from "@/hooks/useNanobotStream";
-import { NanobotClient, type QueuedAttemptBinding } from "@/lib/nanobot-client";
+import { useKohakuStream, type SendAttachment, type SendOptions, type SubmittedTurn } from "@/hooks/useKohakuStream";
+import { KohakuClient, type QueuedAttemptBinding } from "@/lib/kohaku-client";
 import { ClientProvider } from "@/providers/ClientProvider";
 
 class SocketStub {
@@ -44,7 +44,7 @@ class SocketStub {
 }
 
 function IntegrationComposer({ chatId }: { chatId: string }) {
-  const stream = useNanobotStream(chatId);
+  const stream = useKohakuStream(chatId);
   return (
     <ThreadComposer
       onSend={stream.send}
@@ -64,7 +64,7 @@ function OwnerBackedComposer({
   chatId,
   isStreaming,
 }: {
-  client: NanobotClient;
+  client: KohakuClient;
   chatId: string;
   isStreaming: boolean;
 }) {
@@ -118,9 +118,9 @@ function queueKey(chatId: string) {
 }
 
 describe('actual-client restored queue anti-replay',()=>{
- let clients: NanobotClient[]=[];
+ let clients: KohakuClient[]=[];
  afterEach(()=>{act(()=>clients.forEach(c=>c.close()));clients=[];localStorage.clear();});
- function connected(){const socket=new SocketStub();const client=new NanobotClient({url:'ws://test',reconnect:false,socketFactory:()=>socket as unknown as WebSocket});client.connect();socket.open();clients.push(client);return {client,socket};}
+ function connected(){const socket=new SocketStub();const client=new KohakuClient({url:'ws://test',reconnect:false,socketFactory:()=>socket as unknown as WebSocket});client.connect();socket.open();clients.push(client);return {client,socket};}
  it.each(['same client remount','recreated client'])('does not transmit the unresolved row again after %s',async mode=>{
   const chatId='restored-real-owner';let current=connected();const originalSocket=current.socket;
   const view=()=> <ClientProvider client={current.client} token="test-token"><IntegrationComposer chatId={chatId}/></ClientProvider>;
@@ -182,7 +182,7 @@ describe('actual-client restored queue anti-replay',()=>{
 });
 
 describe("actual-client queued outcome joins", () => {
-  let clients: NanobotClient[] = [];
+  let clients: KohakuClient[] = [];
   afterEach(() => {
     act(() => clients.forEach((client) => client.close()));
     clients = [];
@@ -191,7 +191,7 @@ describe("actual-client queued outcome joins", () => {
 
   function connected() {
     const sockets: SocketStub[] = [];
-    const client = new NanobotClient({
+    const client = new KohakuClient({
       url: "ws://test",
       reconnect: false,
       socketFactory: () => {
@@ -279,7 +279,7 @@ describe("actual-client queued outcome joins", () => {
     });
   }
 
-  function idleSnapshot(client: NanobotClient, chatId: string, turnId: string) {
+  function idleSnapshot(client: KohakuClient, chatId: string, turnId: string) {
     return client.reconcileCanonicalCompletion(
       chatId,
       client.getRunGeneration(chatId),

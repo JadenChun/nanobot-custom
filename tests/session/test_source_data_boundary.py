@@ -9,9 +9,9 @@ from copy import deepcopy
 
 import pytest
 
-from nanobot.session import session_mode, source_store
-from nanobot.session.manager import JsonlSessionStore, Session
-from nanobot.session.source import SourceValidationError
+from kohaku.session import session_mode, source_store
+from kohaku.session.manager import JsonlSessionStore, Session
+from kohaku.session.source import SourceValidationError
 from tests.session.test_source_store import seed, upgrade
 
 
@@ -167,7 +167,7 @@ def test_mode_selects_once_at_import_and_does_not_follow_later_source_rebind(sto
         raise AssertionError("late source rebind changed import-time binding")
 
     monkeypatch.setattr(source_store, "select_legacy_source_event_upgrader", select)
-    name = "nanobot.session._source_data_import_probe"
+    name = "kohaku.session._source_data_import_probe"
     spec = importlib.util.spec_from_file_location(name, session_mode.__file__)
     assert spec is not None and spec.loader is not None
     isolated = importlib.util.module_from_spec(spec)

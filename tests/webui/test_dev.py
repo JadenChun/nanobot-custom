@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from nanobot.webui.dev import (
+from kohaku.webui.dev import (
     WebUIDevError,
     WebUIDevServer,
     run_webui_dev_server,
@@ -75,7 +75,7 @@ def test_start_webui_dev_server_uses_vite_directly_and_sets_proxy_target(
         return process
 
     monkeypatch.setattr(
-        "nanobot.webui.dev.shutil.which",
+        "kohaku.webui.dev.shutil.which",
         lambda name: "node" if name == "node" else None,
     )
 
@@ -97,7 +97,7 @@ def test_start_webui_dev_server_uses_vite_directly_and_sets_proxy_target(
     assert kwargs["cwd"] == source
     assert kwargs["env"] == {
         "EXISTING": "value",
-        "NANOBOT_API_URL": "http://127.0.0.1:8899",
+        "KOHAKU_API_URL": "http://127.0.0.1:8899",
     }
     assert output == ["WebUI dev server: http://127.0.0.1:5173/"]
     assert "secret" not in output[0]
@@ -167,7 +167,7 @@ def test_dev_server_context_stops_the_child(monkeypatch) -> None:
     server = type("Server", (), {"process": process})()
     stopped: list[bool] = []
     server.stop = lambda: stopped.append(True)
-    monkeypatch.setattr("nanobot.webui.dev.start_webui_dev_server", lambda **_kwargs: server)
+    monkeypatch.setattr("kohaku.webui.dev.start_webui_dev_server", lambda **_kwargs: server)
 
     with run_webui_dev_server(target_url="unused", browser_url="unused") as running:
         assert running is server

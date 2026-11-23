@@ -5,7 +5,7 @@ from dataclasses import replace
 
 import pytest
 
-from nanobot._migration_preflight import CHECKS, Check, inspect_copy, reduce_checks
+from kohaku._migration_preflight import CHECKS, Check, inspect_copy, reduce_checks
 
 
 @pytest.fixture
@@ -121,8 +121,8 @@ def test_omitted_heartbeat_not_silently_rewritten(copied):
 
 
 def test_env_and_mutation_sentinels(copied, monkeypatch):
-    monkeypatch.setenv("NANOBOT_AGENTS__DEFAULTS__WORKSPACE", "/host/private")
-    monkeypatch.setenv("NANOBOT_GATEWAY__HEARTBEAT__ENABLED", "true")
+    monkeypatch.setenv("KOHAKU_AGENTS__DEFAULTS__WORKSPACE", "/host/private")
+    monkeypatch.setenv("KOHAKU_GATEWAY__HEARTBEAT__ENABLED", "true")
     def forbidden(*args, **kwargs):
         raise AssertionError("mutation")
     for name in ("mkdir", "chmod", "fsync", "fork"):
@@ -170,7 +170,7 @@ def test_ambiguous_or_invalid_ttl_fails_structure_and_dormancy(copied, ttl_field
 def test_inventory_bound_and_symlink_directory(copied, monkeypatch, tmp_path):
     from pathlib import Path
 
-    import nanobot._migration_preflight as preflight
+    import kohaku._migration_preflight as preflight
     directory = Path(copied["sessions_root"])
     directory.mkdir()
     (directory / "nested").symlink_to(tmp_path, target_is_directory=True)
@@ -184,7 +184,7 @@ def test_inventory_bound_and_symlink_directory(copied, monkeypatch, tmp_path):
 def test_config_bound_and_snapshot_change(copied, monkeypatch):
     from pathlib import Path
 
-    import nanobot._migration_preflight as preflight
+    import kohaku._migration_preflight as preflight
     original = preflight._Copy.recheck
     def changed(self):
         Path(copied["config"]).write_text("{}")
@@ -202,7 +202,7 @@ def test_channel_metadata_without_entrypoint_load(copied, monkeypatch, mode, exp
     from pathlib import Path
     from types import SimpleNamespace
 
-    import nanobot._migration_preflight as preflight
+    import kohaku._migration_preflight as preflight
     config = Path(copied["config"])
     data = json.loads(config.read_text())
     name = "telegram" if mode == "reserved" else "external"
@@ -223,9 +223,9 @@ def test_descriptor_missing_dependency_never_loads_runtime(copied, monkeypatch):
     from pathlib import Path
     from types import SimpleNamespace
 
-    import nanobot._migration_preflight as preflight
-    import nanobot.channels.plugin as plugin
-    import nanobot.channels.registry as registry
+    import kohaku._migration_preflight as preflight
+    import kohaku.channels.plugin as plugin
+    import kohaku.channels.registry as registry
     config = Path(copied["config"])
     data = json.loads(config.read_text())
     data["channels"] = {"telegram": {"enabled": True}}
@@ -291,7 +291,7 @@ def test_workspace_runtime_exist_and_are_disjoint(copied, kind):
 def test_json_decoder_keeps_string_keys_through_nested_containers(copied):
     from pathlib import Path
 
-    from nanobot._migration_preflight import _Copy
+    from kohaku._migration_preflight import _Copy
 
     config = Path(copied["config"])
     payload = {"NestedConfig": {"0": [{"TagName": "ordinary"}], "Enabled": False}}

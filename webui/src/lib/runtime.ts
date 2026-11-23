@@ -24,7 +24,7 @@ interface HostRuntimeInfo {
   engine_transport?: "unix_socket";
 }
 
-interface NanobotHostApi {
+interface KohakuHostApi {
   getRuntimeInfo?(): Promise<HostRuntimeInfo>;
   restartEngine?(): Promise<void>;
   pickFolder?(): Promise<string | null>;
@@ -48,7 +48,7 @@ type HostSocketEvent =
   | { code?: number; id: string; reason?: string; type: "close" };
 
 type HostSocketBridge = Required<Pick<
-  NanobotHostApi,
+  KohakuHostApi,
   "closeSocket" | "onSocketEvent" | "openSocket" | "sendSocket"
 >>;
 
@@ -65,15 +65,15 @@ interface LoopbackHostConfig {
   token: string;
 }
 
-let loopbackHostApi: NanobotHostApi | null = null;
+let loopbackHostApi: KohakuHostApi | null = null;
 
 declare global {
   interface Window {
-    nanobotHost?: NanobotHostApi;
+    nanobotHost?: KohakuHostApi;
   }
 }
 
-function getHostApi(): NanobotHostApi | null {
+function getHostApi(): KohakuHostApi | null {
   if (typeof window === "undefined") return null;
   return window.nanobotHost ?? loopbackHostApi;
 }
@@ -240,7 +240,7 @@ function validateLoopbackHostConfig(
   return { port, token };
 }
 
-function createLoopbackHostApi(config: LoopbackHostConfig): NanobotHostApi {
+function createLoopbackHostApi(config: LoopbackHostConfig): KohakuHostApi {
   return {
     async pickFolder(): Promise<string | null> {
       let response: Response;

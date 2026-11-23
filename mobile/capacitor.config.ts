@@ -1,12 +1,12 @@
 import type { CapacitorConfig } from '@capacitor/cli';
 
 const config: CapacitorConfig = {
-  appId: 'ai.nanobot.mobile',
+  appId: 'ai.kohaku.mobile',
   appName: 'Kohaku',
-  webDir: process.env.NANOBOT_MOBILE_WEB_DIR || 'www',
+  webDir: process.env.KOHAKU_MOBILE_WEB_DIR || 'www',
   plugins: {
     LocalNotifications: {
-      smallIcon: 'ic_stat_nanobot',
+      smallIcon: 'ic_stat_kohaku',
       iconColor: '#EF8E30',
     },
   },

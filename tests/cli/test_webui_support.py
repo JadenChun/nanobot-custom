@@ -1,18 +1,18 @@
 from types import SimpleNamespace
 
-from nanobot.cli.webui_support import _prepare_webui_bundle_for_gateway
-from nanobot.config.schema import Config
+from kohaku.cli.webui_support import _prepare_webui_bundle_for_gateway
+from kohaku.config.schema import Config
 
 
 def test_source_checkout_preserves_warn_only_gateway_startup(monkeypatch) -> None:
     modes: list[str] = []
     monkeypatch.setattr(
-        "nanobot.cli.webui_support.inspect_webui_bundle",
+        "kohaku.cli.webui_support.inspect_webui_bundle",
         lambda: SimpleNamespace(source_available=True),
     )
-    monkeypatch.setattr("nanobot.cli.webui_support._webui_channel_enabled", lambda _config: True)
+    monkeypatch.setattr("kohaku.cli.webui_support._webui_channel_enabled", lambda _config: True)
     monkeypatch.setattr(
-        "nanobot.cli.webui_support.ensure_webui_bundle",
+        "kohaku.cli.webui_support.ensure_webui_bundle",
         lambda **kwargs: modes.append(kwargs["mode"]),
     )
 
@@ -24,12 +24,12 @@ def test_source_checkout_preserves_warn_only_gateway_startup(monkeypatch) -> Non
 def test_skip_mode_does_not_build_the_source_webui_bundle(monkeypatch) -> None:
     modes: list[str] = []
     monkeypatch.setattr(
-        "nanobot.cli.webui_support.inspect_webui_bundle",
+        "kohaku.cli.webui_support.inspect_webui_bundle",
         lambda: SimpleNamespace(source_available=True),
     )
-    monkeypatch.setattr("nanobot.cli.webui_support._webui_channel_enabled", lambda _config: True)
+    monkeypatch.setattr("kohaku.cli.webui_support._webui_channel_enabled", lambda _config: True)
     monkeypatch.setattr(
-        "nanobot.cli.webui_support.ensure_webui_bundle",
+        "kohaku.cli.webui_support.ensure_webui_bundle",
         lambda **kwargs: modes.append(kwargs["mode"]),
     )
 

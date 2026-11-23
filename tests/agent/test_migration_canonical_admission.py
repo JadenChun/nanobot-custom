@@ -5,20 +5,20 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from nanobot.agent.loop import AgentLoop
-from nanobot.agent.run_store import RunStore
-from nanobot.agent.runner import AgentRunResult
-from nanobot.agent.tools.registry import ToolRegistry
-from nanobot.agent.turn import (
+from kohaku.agent.loop import AgentLoop
+from kohaku.agent.run_store import RunStore
+from kohaku.agent.runner import AgentRunResult
+from kohaku.agent.tools.registry import ToolRegistry
+from kohaku.agent.turn import (
     ApprovalDecision,
     DelegationBudget,
     DeliveryTarget,
     RunStatus,
     TurnRequest,
 )
-from nanobot.agent.turn_admission import ApprovalAdmission
-from nanobot.config.schema import ToolsConfig
-from nanobot.session.manager import SessionManager
+from kohaku.agent.turn_admission import ApprovalAdmission
+from kohaku.config.schema import ToolsConfig
+from kohaku.session.manager import SessionManager
 
 
 def host(tmp_path):
@@ -126,8 +126,8 @@ async def test_cancelled_waiter_finalizes_without_stage_execution(tmp_path):
 
 
 async def test_usage_and_tool_error_callback_survive_conversion(tmp_path):
-    from nanobot.agent.turn import TurnCallbacks
-    from nanobot.providers.base import LLMUsage
+    from kohaku.agent.turn import TurnCallbacks
+    from kohaku.providers.base import LLMUsage
     loop = host(tmp_path)
     loop._process_turn.return_value.run_result = AgentRunResult(final_content='failed', messages=[],
         stop_reason='tool_error', error='fixture error', usage=LLMUsage.estimated(input_tokens=10, output_tokens=3))
@@ -145,7 +145,7 @@ async def test_usage_and_tool_error_callback_survive_conversion(tmp_path):
 
 
 async def test_trusted_reply_and_scheduled_provenance(tmp_path):
-    from nanobot.agent.turn import ApprovalGrant, ScheduledTurnLink
+    from kohaku.agent.turn import ApprovalGrant, ScheduledTurnLink
     loop = host(tmp_path)
     request = TurnRequest(content='task', session_key='cron:job',
         delivery_target=DeliveryTarget(channel='telegram', chat_id='42', message_id='trusted'),
@@ -164,7 +164,7 @@ async def test_trusted_reply_and_scheduled_provenance(tmp_path):
 
 
 async def test_direct_adapter_uses_canonical_admission_and_preserves_options(tmp_path):
-    from nanobot.bus.events import OutboundMessage
+    from kohaku.bus.events import OutboundMessage
     loop = host(tmp_path)
     loop.runtime_event_publisher = SimpleNamespace(run_status_changed=AsyncMock(), clear_turn=lambda key: None)
     outbound = OutboundMessage(channel='cli', chat_id='direct', content='answer')
@@ -184,7 +184,7 @@ async def test_direct_adapter_uses_canonical_admission_and_preserves_options(tmp
     assert call.kwargs['on_progress'] is progress
     assert call.kwargs['ephemeral'] and call.kwargs['run_extra_hooks_for_ephemeral']
     assert call.kwargs['attributes'] == {'fixture': 1}
-    from nanobot.session.turn_continuation import SKIP_USER_PERSIST_META
+    from kohaku.session.turn_continuation import SKIP_USER_PERSIST_META
     assert call.args[0].metadata[SKIP_USER_PERSIST_META]
     loop.runtime_event_publisher.run_status_changed.assert_awaited_once()
 
@@ -218,7 +218,7 @@ async def test_cancelled_direct_waiter_does_not_publish_idle_for_active_turn(tmp
 
 @pytest.mark.asyncio
 async def test_direct_approval_cleanup_uses_effective_key_while_lock_owned(tmp_path):
-    from nanobot.agent.loop import _TurnExecutionOptions
+    from kohaku.agent.loop import _TurnExecutionOptions
 
     loop = host(tmp_path)
     pending = await loop.approval_admission.store(
@@ -253,7 +253,7 @@ async def test_idle_publisher_failure_still_clears_and_unlocks(tmp_path):
 
 @pytest.mark.parametrize('fence', ['session', 'cleanup'])
 async def test_unadmitted_cancel_terminal_has_no_admission_effects(tmp_path, fence):
-    from nanobot.agent.turn import TurnCallbacks
+    from kohaku.agent.turn import TurnCallbacks
 
     loop = host(tmp_path)
     reached = asyncio.Event()
@@ -278,7 +278,7 @@ async def test_unadmitted_cancel_terminal_has_no_admission_effects(tmp_path, fen
 
         # This local admission spy never owns or cancels the cleanup future.
         from unittest.mock import patch
-        patcher = patch('nanobot.agent.loop.asyncio.wait', wait)
+        patcher = patch('kohaku.agent.loop.asyncio.wait', wait)
         patcher.start()
     complete = AsyncMock()
     loop.approval_admission.consume = AsyncMock(side_effect=AssertionError('consume'))
@@ -370,9 +370,9 @@ async def test_cancelled_waiter_bookkeeping_fault_preserves_cancellation(tmp_pat
             unlink(path)
             fail()
 
-        monkeypatch.setattr('nanobot.agent.run_store.os.unlink', cleanup)
+        monkeypatch.setattr('kohaku.agent.run_store.os.unlink', cleanup)
     else:
-        monkeypatch.setattr('nanobot.agent.run_store.' + {
+        monkeypatch.setattr('kohaku.agent.run_store.' + {
             'render': 'json.dump', 'fsync': 'os.fsync', 'link': 'os.link',
         }[fault], fail)
     task = asyncio.create_task(loop.execute_turn(TurnRequest(
@@ -391,9 +391,9 @@ async def test_cancelled_waiter_bookkeeping_fault_preserves_cancellation(tmp_pat
 async def test_cancelled_waiter_exclusions_do_not_load_or_admit(tmp_path, monkeypatch, exclusion):
     import json
 
-    from nanobot.agent.loop import _TurnExecutionOptions
-    from nanobot.bus.events import InboundMessage
-    from nanobot.session.runtime_authority import OfflineSessionOperator
+    from kohaku.agent.loop import _TurnExecutionOptions
+    from kohaku.bus.events import InboundMessage
+    from kohaku.session.runtime_authority import OfflineSessionOperator
 
     loop = host(tmp_path)
     key = 'cli:exclude'
@@ -485,8 +485,8 @@ async def test_cancellation_before_record_construction_releases_receipt(tmp_path
 
 @pytest.mark.parametrize('outcome', ['success', 'stage-error', 'rejection', 'construction-error'])
 async def test_cancellation_receipt_released_on_non_cancel_outcomes(tmp_path, outcome):
-    from nanobot.agent.loop import _TurnExecutionOptions
-    from nanobot.bus.events import InboundMessage
+    from kohaku.agent.loop import _TurnExecutionOptions
+    from kohaku.bus.events import InboundMessage
 
     loop = host(tmp_path)
     request = TurnRequest(content='task', session_key='cli:release', run_id='release')

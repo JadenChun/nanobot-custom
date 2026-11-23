@@ -4,8 +4,8 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from nanobot.agent.turn import RunStatus, TurnResult
-from nanobot.cron.quota_recovery import CronQuotaRecovery, codex_retry_at
+from kohaku.agent.turn import RunStatus, TurnResult
+from kohaku.cron.quota_recovery import CronQuotaRecovery, codex_retry_at
 from tests.cron.test_gateway_cron import _gateway
 
 

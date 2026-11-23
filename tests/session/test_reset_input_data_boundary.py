@@ -6,12 +6,12 @@ from dataclasses import FrozenInstanceError, fields, replace
 
 import pytest
 
-from nanobot.session import source as source_module
-from nanobot.session.execution_owner import ExecutionOwnershipError, acquire_execution
-from nanobot.session.manager import JsonlSessionStore, SessionStorageError
-from nanobot.session.runtime_authority import DurableSessionAuthority
-from nanobot.session.source import new_source_event
-from nanobot.session.source_store import SourceSessionStore
+from kohaku.session import source as source_module
+from kohaku.session.execution_owner import ExecutionOwnershipError, acquire_execution
+from kohaku.session.manager import JsonlSessionStore, SessionStorageError
+from kohaku.session.runtime_authority import DurableSessionAuthority
+from kohaku.session.source import new_source_event
+from kohaku.session.source_store import SourceSessionStore
 from tests.session.test_execution_owner import seed
 
 

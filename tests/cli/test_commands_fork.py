@@ -11,15 +11,15 @@ import pytest
 from rich.console import Console
 from typer.testing import CliRunner
 
-from nanobot.bus.events import OutboundMessage
-from nanobot.cli.commands import app
-from nanobot.config.schema import Config, FallbackEntry
-from nanobot.providers.factory import make_provider as _make_provider
-from nanobot.providers.legacy_fallback_provider import LegacyFallbackProvider
-from nanobot.providers.openai_codex_provider import _strip_model_prefix
-from nanobot.providers.openai_compat_provider import OpenAICompatProvider
-from nanobot.providers.pooled_provider import PooledProvider
-from nanobot.providers.registry import find_by_name
+from kohaku.bus.events import OutboundMessage
+from kohaku.cli.commands import app
+from kohaku.config.schema import Config, FallbackEntry
+from kohaku.providers.factory import make_provider as _make_provider
+from kohaku.providers.legacy_fallback_provider import LegacyFallbackProvider
+from kohaku.providers.openai_codex_provider import _strip_model_prefix
+from kohaku.providers.openai_compat_provider import OpenAICompatProvider
+from kohaku.providers.pooled_provider import PooledProvider
+from kohaku.providers.registry import find_by_name
 from tests.agent import p6_admitted_fixtures
 from tests.cli import p6_classic_cli_fixtures
 
@@ -54,7 +54,7 @@ class _StopGatewayError(RuntimeError):
 @pytest.fixture
 def isolated_cli_effects(tmp_path, monkeypatch):
     """Positive-only disposable paths and effect fences, not startup admission."""
-    from nanobot.config import loader
+    from kohaku.config import loader
 
     def denied(*_args, **_kwargs):
         raise AssertionError("CLI option test attempted an external effect")
@@ -71,8 +71,8 @@ def isolated_cli_effects(tmp_path, monkeypatch):
 @pytest.fixture
 def gateway_graphs(tmp_path, monkeypatch, isolated_cli_effects):
     """Observe real failed acquisition and verify the durable lease is released."""
-    from nanobot.runtime_composition import RuntimeComposition, RuntimeState
-    from nanobot.session.runtime_authority import DurableSessionAuthority
+    from kohaku.runtime_composition import RuntimeComposition, RuntimeState
+    from kohaku.session.runtime_authority import DurableSessionAuthority
 
     original_define = RuntimeComposition.define
     graphs = []
@@ -117,12 +117,12 @@ def mock_paths(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
         config.agents.defaults.workspace = str(workspace_dir)
         return config
 
-    monkeypatch.setattr("nanobot.migration_guard.require_runtime_ready", lambda: None)
-    monkeypatch.setattr("nanobot.cli.process_identity._set_process_title", lambda _title: None)
-    with patch("nanobot.config.loader.get_config_path") as mock_cp, \
-         patch("nanobot.config.loader.save_config") as mock_sc, \
-         patch("nanobot.config.loader.load_config") as mock_lc, \
-         patch("nanobot.config.schema.Config", side_effect=configured_default):
+    monkeypatch.setattr("kohaku.migration_guard.require_runtime_ready", lambda: None)
+    monkeypatch.setattr("kohaku.cli.process_identity._set_process_title", lambda _title: None)
+    with patch("kohaku.config.loader.get_config_path") as mock_cp, \
+         patch("kohaku.config.loader.save_config") as mock_sc, \
+         patch("kohaku.config.loader.load_config") as mock_lc, \
+         patch("kohaku.config.schema.Config", side_effect=configured_default):
         mock_cp.return_value = config_file
         mock_lc.side_effect = lambda _config_path=None: configured_default()
 
@@ -145,7 +145,7 @@ def test_onboard_fresh_install(mock_paths):
     assert result.exit_code == 0
     assert "Created config" in result.stdout
     assert "Created workspace" in result.stdout
-    assert "nanobot is ready" in result.stdout
+    assert "kohaku is ready" in result.stdout
     assert config_file.exists()
     assert (workspace_dir / "AGENTS.md").exists()
     assert (workspace_dir / "memory" / "MEMORY.md").exists()
@@ -188,7 +188,7 @@ def _strip_ansi(text):
 
 
 def test_onboard_help_shows_workspace_and_config_options(monkeypatch):
-    monkeypatch.setattr("nanobot.cli.process_identity._set_process_title", lambda _title: None)
+    monkeypatch.setattr("kohaku.cli.process_identity._set_process_title", lambda _title: None)
     result = runner.invoke(app, ["onboard", "--help"])
 
     assert result.exit_code == 0
@@ -204,10 +204,10 @@ def test_onboard_help_shows_workspace_and_config_options(monkeypatch):
 def test_onboard_interactive_discard_does_not_save_or_create_workspace(mock_paths, monkeypatch):
     config_file, workspace_dir = mock_paths
 
-    from nanobot.cli.onboard import OnboardResult
+    from kohaku.cli.onboard import OnboardResult
 
     monkeypatch.setattr(
-        "nanobot.cli.onboard.run_onboard",
+        "kohaku.cli.onboard.run_onboard",
         lambda initial_config: OnboardResult(config=initial_config, should_save=False),
     )
 
@@ -223,10 +223,10 @@ def test_onboard_uses_explicit_config_and_workspace_paths(tmp_path, monkeypatch)
     config_path = tmp_path / "instance" / "config.json"
     workspace_path = tmp_path / "workspace"
 
-    monkeypatch.setattr("nanobot.migration_guard.require_runtime_ready", lambda: None)
-    monkeypatch.setattr("nanobot.cli.process_identity._set_process_title", lambda _title: None)
-    monkeypatch.setattr("nanobot.config.loader.set_config_path", lambda _path: None)
-    monkeypatch.setattr("nanobot.channels.registry.discover_plugins", lambda: {})
+    monkeypatch.setattr("kohaku.migration_guard.require_runtime_ready", lambda: None)
+    monkeypatch.setattr("kohaku.cli.process_identity._set_process_title", lambda _title: None)
+    monkeypatch.setattr("kohaku.config.loader.set_config_path", lambda _path: None)
+    monkeypatch.setattr("kohaku.channels.registry.discover_plugins", lambda: {})
 
     result = runner.invoke(
         app,
@@ -241,23 +241,23 @@ def test_onboard_uses_explicit_config_and_workspace_paths(tmp_path, monkeypatch)
     compact_output = stripped_output.replace("\n", "")
     resolved_config = str(config_path.resolve())
     assert resolved_config in compact_output
-    assert f'nanobot webui -c "{resolved_config}"' in result.stdout
+    assert f'kohaku webui -c "{resolved_config}"' in result.stdout
 
 
 def test_onboard_wizard_preserves_explicit_config_in_next_steps(tmp_path, monkeypatch):
     config_path = tmp_path / "instance" / "config.json"
     workspace_path = tmp_path / "workspace"
 
-    from nanobot.cli.onboard import OnboardResult
+    from kohaku.cli.onboard import OnboardResult
 
-    monkeypatch.setattr("nanobot.migration_guard.require_runtime_ready", lambda: None)
-    monkeypatch.setattr("nanobot.cli.process_identity._set_process_title", lambda _title: None)
-    monkeypatch.setattr("nanobot.config.loader.set_config_path", lambda _path: None)
+    monkeypatch.setattr("kohaku.migration_guard.require_runtime_ready", lambda: None)
+    monkeypatch.setattr("kohaku.cli.process_identity._set_process_title", lambda _title: None)
+    monkeypatch.setattr("kohaku.config.loader.set_config_path", lambda _path: None)
     monkeypatch.setattr(
-        "nanobot.cli.onboard.run_onboard",
+        "kohaku.cli.onboard.run_onboard",
         lambda initial_config: OnboardResult(config=initial_config, should_save=True),
     )
-    monkeypatch.setattr("nanobot.channels.registry.discover_plugins", lambda: {})
+    monkeypatch.setattr("kohaku.channels.registry.discover_plugins", lambda: {})
 
     result = runner.invoke(
         app,
@@ -266,18 +266,18 @@ def test_onboard_wizard_preserves_explicit_config_in_next_steps(tmp_path, monkey
 
     assert result.exit_code == 0
     resolved_config = str(config_path.resolve())
-    assert f'nanobot webui -c "{resolved_config}"' in result.stdout
+    assert f'kohaku webui -c "{resolved_config}"' in result.stdout
 
 
 def test_artifacts_path_reports_workspace_scoped_browser_test_dir(tmp_path, monkeypatch):
     runtime_config = Config()
     runtime_config.agents.defaults.workspace = str(tmp_path / "workspace")
 
-    monkeypatch.setattr("nanobot.migration_guard.require_runtime_ready", lambda: None)
-    monkeypatch.setattr("nanobot.cli.process_identity._set_process_title", lambda _title: None)
+    monkeypatch.setattr("kohaku.migration_guard.require_runtime_ready", lambda: None)
+    monkeypatch.setattr("kohaku.cli.process_identity._set_process_title", lambda _title: None)
 
     monkeypatch.setattr(
-        "nanobot.cli.commands._load_runtime_config",
+        "kohaku.cli.commands._load_runtime_config",
         lambda config=None, workspace=None: runtime_config,
     )
 
@@ -293,11 +293,11 @@ def test_artifacts_clean_removes_saved_browser_test_artifacts(tmp_path, monkeypa
     runtime_config = Config()
     runtime_config.agents.defaults.workspace = str(tmp_path / "workspace")
 
-    monkeypatch.setattr("nanobot.migration_guard.require_runtime_ready", lambda: None)
-    monkeypatch.setattr("nanobot.cli.process_identity._set_process_title", lambda _title: None)
+    monkeypatch.setattr("kohaku.migration_guard.require_runtime_ready", lambda: None)
+    monkeypatch.setattr("kohaku.cli.process_identity._set_process_title", lambda _title: None)
 
     monkeypatch.setattr(
-        "nanobot.cli.commands._load_runtime_config",
+        "kohaku.cli.commands._load_runtime_config",
         lambda config=None, workspace=None: runtime_config,
     )
 
@@ -321,9 +321,9 @@ def test_artifacts_clean_decline_keeps_workspace_files(tmp_path, monkeypatch):
     artifacts_root.mkdir(parents=True)
     saved = artifacts_root / "notes.md"
     saved.write_text("keep", encoding="utf-8")
-    monkeypatch.setattr("nanobot.migration_guard.require_runtime_ready", lambda: None)
-    monkeypatch.setattr("nanobot.cli.process_identity._set_process_title", lambda _title: None)
-    monkeypatch.setattr("nanobot.cli.commands._load_runtime_config", lambda *_: runtime_config)
+    monkeypatch.setattr("kohaku.migration_guard.require_runtime_ready", lambda: None)
+    monkeypatch.setattr("kohaku.cli.process_identity._set_process_title", lambda _title: None)
+    monkeypatch.setattr("kohaku.cli.commands._load_runtime_config", lambda *_: runtime_config)
 
     result = runner.invoke(app, ["artifacts", "clean"], input="n\n")
 
@@ -341,9 +341,9 @@ def test_artifacts_clean_rejects_symlinked_root_outside_workspace(tmp_path, monk
     parent = runtime_config.workspace_path / "artifacts"
     parent.mkdir(parents=True)
     (parent / "browser-tests").symlink_to(external, target_is_directory=True)
-    monkeypatch.setattr("nanobot.migration_guard.require_runtime_ready", lambda: None)
-    monkeypatch.setattr("nanobot.cli.process_identity._set_process_title", lambda _title: None)
-    monkeypatch.setattr("nanobot.cli.commands._load_runtime_config", lambda *_: runtime_config)
+    monkeypatch.setattr("kohaku.migration_guard.require_runtime_ready", lambda: None)
+    monkeypatch.setattr("kohaku.cli.process_identity._set_process_title", lambda _title: None)
+    monkeypatch.setattr("kohaku.cli.commands._load_runtime_config", lambda *_: runtime_config)
 
     result = runner.invoke(app, ["artifacts", "clean", "--yes"])
 
@@ -353,11 +353,11 @@ def test_artifacts_clean_rejects_symlinked_root_outside_workspace(tmp_path, monk
 
 
 def test_artifacts_path_stops_before_config_when_migration_is_incomplete(tmp_path, monkeypatch):
-    from nanobot.migration_guard import MigrationIncompleteError
+    from kohaku.migration_guard import MigrationIncompleteError
 
-    monkeypatch.setattr("nanobot.cli.process_identity._set_process_title", lambda _title: None)
+    monkeypatch.setattr("kohaku.cli.process_identity._set_process_title", lambda _title: None)
     monkeypatch.setattr(
-        "nanobot.cli.commands._load_runtime_config",
+        "kohaku.cli.commands._load_runtime_config",
         lambda *_: pytest.fail("migration guard must precede config and artifacts writes"),
     )
 
@@ -368,7 +368,7 @@ def test_artifacts_path_stops_before_config_when_migration_is_incomplete(tmp_pat
 
 
 def test_artifacts_clean_receipt_denial_keeps_workspace_files(tmp_path, monkeypatch):
-    from nanobot.agent.memory_recovery_startup_admission import StartupReceiptAdmissionError
+    from kohaku.agent.memory_recovery_startup_admission import StartupReceiptAdmissionError
 
     runtime_config = Config()
     runtime_config.agents.defaults.workspace = str(tmp_path / "workspace")
@@ -380,11 +380,11 @@ def test_artifacts_clean_receipt_denial_keeps_workspace_files(tmp_path, monkeypa
     def deny(_workspace, *, sessions_root):
         raise StartupReceiptAdmissionError()
 
-    monkeypatch.setattr("nanobot.migration_guard.require_runtime_ready", lambda: None)
-    monkeypatch.setattr("nanobot.cli.process_identity._set_process_title", lambda _title: None)
-    monkeypatch.setattr("nanobot.cli.commands._load_runtime_config", lambda *_: runtime_config)
+    monkeypatch.setattr("kohaku.migration_guard.require_runtime_ready", lambda: None)
+    monkeypatch.setattr("kohaku.cli.process_identity._set_process_title", lambda _title: None)
+    monkeypatch.setattr("kohaku.cli.commands._load_runtime_config", lambda *_: runtime_config)
     monkeypatch.setattr(
-        "nanobot.agent.memory_recovery_startup_admission.require_startup_receipt_admission",
+        "kohaku.agent.memory_recovery_startup_admission.require_startup_receipt_admission",
         deny,
     )
 
@@ -559,9 +559,9 @@ def test_config_falls_back_to_vllm_when_ollama_not_configured():
 
 
 def test_openai_compat_provider_passes_model_through():
-    from nanobot.providers.openai_compat_provider import OpenAICompatProvider
+    from kohaku.providers.openai_compat_provider import OpenAICompatProvider
 
-    with patch("nanobot.providers.openai_compat_provider.AsyncOpenAI"):
+    with patch("kohaku.providers.openai_compat_provider.AsyncOpenAI"):
         provider = OpenAICompatProvider(default_model="github-copilot/gpt-5.3-codex")
 
     assert provider.get_default_model() == "github-copilot/gpt-5.3-codex"
@@ -647,16 +647,16 @@ def mock_agent_runtime(tmp_path, monkeypatch, classic_cli_runtime):
     provider = MagicMock()
     provider.generation.max_tokens = 4096
 
-    monkeypatch.setattr("nanobot.migration_guard.require_runtime_ready", lambda: None)
-    monkeypatch.setattr("nanobot.cli.process_identity._set_process_title", lambda _title: None)
+    monkeypatch.setattr("kohaku.migration_guard.require_runtime_ready", lambda: None)
+    monkeypatch.setattr("kohaku.cli.process_identity._set_process_title", lambda _title: None)
 
-    with patch("nanobot.config.loader.load_config", return_value=config) as mock_load_config, \
-         patch("nanobot.config.loader.resolve_config_env_vars", side_effect=lambda c: c), \
-         patch("nanobot.cli.agent.sync_workspace_templates") as mock_sync_templates, \
-         patch("nanobot.providers.factory.make_provider", return_value=provider), \
-         patch("nanobot.cli.terminal._print_agent_response") as mock_print_response, \
-         patch("nanobot.cron.service.CronService") as mock_cron, \
-         patch("nanobot.cli.agent.AgentLoop.from_config") as mock_from_config:
+    with patch("kohaku.config.loader.load_config", return_value=config) as mock_load_config, \
+         patch("kohaku.config.loader.resolve_config_env_vars", side_effect=lambda c: c), \
+         patch("kohaku.cli.agent.sync_workspace_templates") as mock_sync_templates, \
+         patch("kohaku.providers.factory.make_provider", return_value=provider), \
+         patch("kohaku.cli.terminal._print_agent_response") as mock_print_response, \
+         patch("kohaku.cron.service.CronService") as mock_cron, \
+         patch("kohaku.cli.agent.AgentLoop.from_config") as mock_from_config:
 
         agent_loop = MagicMock()
         agent_loop.channels_config = None
@@ -678,7 +678,7 @@ def mock_agent_runtime(tmp_path, monkeypatch, classic_cli_runtime):
 
 
 def test_agent_help_shows_workspace_and_config_options(monkeypatch):
-    monkeypatch.setattr("nanobot.cli.process_identity._set_process_title", lambda _title: None)
+    monkeypatch.setattr("kohaku.cli.process_identity._set_process_title", lambda _title: None)
     result = runner.invoke(app, ["agent", "--help"])
 
     assert result.exit_code == 0
@@ -720,7 +720,7 @@ def test_agent_logs_flag_prints_explicit_runtime_logs_banner(mock_agent_runtime)
 def test_agent_log_file_adds_rotating_file_sink(
     mock_agent_runtime, monkeypatch, tmp_path: Path
 ):
-    monkeypatch.setattr("nanobot.cli.agent.console", Console(width=200))
+    monkeypatch.setattr("kohaku.cli.agent.console", Console(width=200))
     log_path = tmp_path / "agent.log"
     with patch("loguru.logger.remove"), \
          patch("loguru.logger.add") as add_log, \
@@ -763,7 +763,7 @@ def test_agent_config_sets_active_path(mock_agent_runtime, monkeypatch, tmp_path
     seen: dict[str, Path] = {}
 
     monkeypatch.setattr(
-        "nanobot.config.loader.set_config_path",
+        "kohaku.config.loader.set_config_path",
         lambda path: seen.__setitem__("config_path", path),
     )
     result = runner.invoke(app, ["agent", "-m", "hello", "-c", str(config_file)])
@@ -802,7 +802,7 @@ def test_agent_workspace_override_does_not_migrate_legacy_cron(
     legacy_file.write_text('{"jobs": []}')
 
     override = tmp_path / "override-workspace"
-    monkeypatch.setattr("nanobot.config.paths.get_cron_dir", lambda: legacy_dir)
+    monkeypatch.setattr("kohaku.config.paths.get_cron_dir", lambda: legacy_dir)
 
     result = runner.invoke(
         app,
@@ -830,7 +830,7 @@ def test_agent_custom_config_workspace_does_not_migrate_legacy_cron(
     custom_workspace = tmp_path / "custom-workspace"
     config = mock_agent_runtime["config"]
     config.agents.defaults.workspace = str(custom_workspace)
-    monkeypatch.setattr("nanobot.config.paths.get_cron_dir", lambda: legacy_dir)
+    monkeypatch.setattr("kohaku.config.paths.get_cron_dir", lambda: legacy_dir)
 
     result = runner.invoke(app, ["agent", "-m", "hello", "-c", str(config_file)])
 
@@ -904,11 +904,11 @@ async def test_cron_execution_uses_fresh_detail_and_links_exact_visible_pair(
     tmp_path: Path, admitted_async, monkeypatch,
 ) -> None:
     """Current contract: fresh detail plus an exact metadata link, not mirrored turns."""
-    from nanobot.agent.loop import AgentLoop
-    from nanobot.agent.turn import HistoryMode, TurnRequest, TurnSource
-    from nanobot.cron.canonical_execution import execute_claimed_fresh_text
-    from nanobot.cron.occurrence_store import OccurrenceExecutionStartedError
-    from nanobot.providers.base import LLMResponse
+    from kohaku.agent.loop import AgentLoop
+    from kohaku.agent.turn import HistoryMode, TurnRequest, TurnSource
+    from kohaku.cron.canonical_execution import execute_claimed_fresh_text
+    from kohaku.cron.occurrence_store import OccurrenceExecutionStartedError
+    from kohaku.providers.base import LLMResponse
     from tests.cron.test_canonical_execution import ScriptedProvider, _service_claim
 
     service, claim = _service_claim(tmp_path)
@@ -984,12 +984,12 @@ async def test_cron_execution_uses_fresh_detail_and_links_exact_visible_pair(
 async def test_cron_empty_canonical_ledger_ignores_stale_message_tool_delivery(
     tmp_path: Path, isolated_cli_effects,
 ) -> None:
-    from nanobot.agent.tools.message import MessageTool, capture_message_deliveries
-    from nanobot.agent.turn import TurnResult
-    from nanobot.channels.delivery_contract import ChannelTextPartReceipt, ChannelTextReceipt
-    from nanobot.cron.canonical_execution import execute_claimed_fresh_text
-    from nanobot.cron.channel_sender import CronChannelSender
-    from nanobot.cron.delivery_runtime import ConfirmedDelivered
+    from kohaku.agent.tools.message import MessageTool, capture_message_deliveries
+    from kohaku.agent.turn import TurnResult
+    from kohaku.channels.delivery_contract import ChannelTextPartReceipt, ChannelTextReceipt
+    from kohaku.cron.canonical_execution import execute_claimed_fresh_text
+    from kohaku.cron.channel_sender import CronChannelSender
+    from kohaku.cron.delivery_runtime import ConfirmedDelivered
     from tests.cron.test_canonical_execution import _service_claim
 
     service, claim = _service_claim(tmp_path)
@@ -1082,7 +1082,7 @@ def _patch_cli_command_runtime(
     cron_service=None,
     get_cron_dir=None,
 ) -> None:
-    from nanobot.providers.factory import ProviderSnapshot
+    from kohaku.providers.factory import ProviderSnapshot
 
     provider_factory = make_provider or (lambda _config: MagicMock())
 
@@ -1094,8 +1094,8 @@ def _patch_cli_command_runtime(
         return config
 
     # This module checks CLI behavior behind the production migration guard.
-    monkeypatch.setattr("nanobot.migration_guard.require_runtime_ready", lambda: None)
-    monkeypatch.setattr("nanobot.cli.process_identity._set_process_title", lambda _title: None)
+    monkeypatch.setattr("kohaku.migration_guard.require_runtime_ready", lambda: None)
+    monkeypatch.setattr("kohaku.cli.process_identity._set_process_title", lambda _title: None)
 
     def provider_snapshot(target_config: Config) -> ProviderSnapshot:
         return ProviderSnapshot(
@@ -1106,41 +1106,41 @@ def _patch_cli_command_runtime(
         )
 
     monkeypatch.setattr(
-        "nanobot.config.loader.set_config_path",
+        "kohaku.config.loader.set_config_path",
         set_config_path or (lambda _path: None),
     )
-    monkeypatch.setattr("nanobot.config.loader.load_config", load_config)
-    monkeypatch.setattr("nanobot.config.loader.resolve_config_env_vars", lambda loaded: loaded)
+    monkeypatch.setattr("kohaku.config.loader.load_config", load_config)
+    monkeypatch.setattr("kohaku.config.loader.resolve_config_env_vars", lambda loaded: loaded)
     monkeypatch.setattr(
-        "nanobot.cli.gateway_runtime.sync_workspace_templates",
+        "kohaku.cli.gateway_runtime.sync_workspace_templates",
         sync_templates or (lambda _path: None),
     )
-    monkeypatch.setattr("nanobot.providers.factory.make_provider", provider_factory)
+    monkeypatch.setattr("kohaku.providers.factory.make_provider", provider_factory)
     monkeypatch.setattr(
-        "nanobot.providers.factory.build_provider_snapshot",
+        "kohaku.providers.factory.build_provider_snapshot",
         provider_snapshot,
     )
     monkeypatch.setattr(
-        "nanobot.providers.factory.load_provider_snapshot",
+        "kohaku.providers.factory.load_provider_snapshot",
         lambda _config_path=None: provider_snapshot(config),
     )
-    monkeypatch.setattr("nanobot.cli.webui_support._provider_setup_error", lambda _config: None)
-    monkeypatch.setattr("nanobot.cli.gateway_runtime._tcp_endpoint_reachable", lambda *_a: False)
-    monkeypatch.setattr("nanobot.cli.gateway_runtime._webui_endpoint_reachable", lambda *_a: False)
+    monkeypatch.setattr("kohaku.cli.webui_support._provider_setup_error", lambda _config: None)
+    monkeypatch.setattr("kohaku.cli.gateway_runtime._tcp_endpoint_reachable", lambda *_a: False)
+    monkeypatch.setattr("kohaku.cli.gateway_runtime._webui_endpoint_reachable", lambda *_a: False)
 
     if message_bus is not None:
-        monkeypatch.setattr("nanobot.bus.queue.MessageBus", message_bus)
+        monkeypatch.setattr("kohaku.bus.queue.MessageBus", message_bus)
     if session_manager is not None:
-        monkeypatch.setattr("nanobot.session.manager.SessionManager", session_manager)
+        monkeypatch.setattr("kohaku.session.manager.SessionManager", session_manager)
     if cron_service is not None:
-        monkeypatch.setattr("nanobot.cron.service.CronService", cron_service)
+        monkeypatch.setattr("kohaku.cron.service.CronService", cron_service)
     if get_cron_dir is not None:
-        monkeypatch.setattr("nanobot.config.paths.get_cron_dir", get_cron_dir)
+        monkeypatch.setattr("kohaku.config.paths.get_cron_dir", get_cron_dir)
 
 
 def _patch_serve_runtime(monkeypatch, config: Config, seen: dict[str, object]) -> None:
-    from nanobot.api.server import create_app
-    from nanobot.runtime_composition import RuntimeComposition, RuntimeState
+    from kohaku.api.server import create_app
+    from kohaku.runtime_composition import RuntimeComposition, RuntimeState
 
     def forbidden(*_args, **_kwargs):
         raise AssertionError("API option parsing must not acquire runtime resources")
@@ -1169,8 +1169,8 @@ def _patch_serve_runtime(monkeypatch, config: Config, seen: dict[str, object]) -
 
     _patch_cli_command_runtime(monkeypatch, config, make_provider=forbidden)
     monkeypatch.setattr(RuntimeComposition, "acquire", forbidden)
-    monkeypatch.setattr("nanobot.cli.commands.sync_workspace_templates", forbidden)
-    monkeypatch.setattr("nanobot.api.server.create_app", _record_create_app)
+    monkeypatch.setattr("kohaku.cli.commands.sync_workspace_templates", forbidden)
+    monkeypatch.setattr("kohaku.api.server.create_app", _record_create_app)
     monkeypatch.setattr("aiohttp.web.run_app", _fake_run_app)
 
 
@@ -1322,7 +1322,7 @@ def test_gateway_custom_config_workspace_does_not_migrate_legacy_cron(
 
 def test_migrate_cron_store_moves_legacy_file(tmp_path: Path) -> None:
     """Legacy global jobs.json is moved into the workspace on first run."""
-    from nanobot.cli.runtime_config import _migrate_cron_store
+    from kohaku.cli.runtime_config import _migrate_cron_store
 
     legacy_dir = tmp_path / "global" / "cron"
     legacy_dir.mkdir(parents=True)
@@ -1333,7 +1333,7 @@ def test_migrate_cron_store_moves_legacy_file(tmp_path: Path) -> None:
     config.agents.defaults.workspace = str(tmp_path / "workspace")
     workspace_cron = config.workspace_path / "cron" / "jobs.json"
 
-    with patch("nanobot.config.paths.get_cron_dir", return_value=legacy_dir):
+    with patch("kohaku.config.paths.get_cron_dir", return_value=legacy_dir):
         _migrate_cron_store(config)
 
     assert workspace_cron.exists()
@@ -1343,7 +1343,7 @@ def test_migrate_cron_store_moves_legacy_file(tmp_path: Path) -> None:
 
 def test_migrate_cron_store_skips_when_workspace_file_exists(tmp_path: Path) -> None:
     """Migration does not overwrite an existing workspace cron store."""
-    from nanobot.cli.runtime_config import _migrate_cron_store
+    from kohaku.cli.runtime_config import _migrate_cron_store
 
     legacy_dir = tmp_path / "global" / "cron"
     legacy_dir.mkdir(parents=True)
@@ -1355,7 +1355,7 @@ def test_migrate_cron_store_skips_when_workspace_file_exists(tmp_path: Path) -> 
     workspace_cron.parent.mkdir(parents=True)
     workspace_cron.write_text('{"new": true}')
 
-    with patch("nanobot.config.paths.get_cron_dir", return_value=legacy_dir):
+    with patch("kohaku.config.paths.get_cron_dir", return_value=legacy_dir):
         _migrate_cron_store(config)
 
     assert workspace_cron.read_text() == '{"new": true}'
@@ -1378,12 +1378,12 @@ def _probe_gateway_health_port(monkeypatch, seen):
         raise _StopGatewayError("stop before socket bind")
 
     monkeypatch.setattr(
-        "nanobot.runtime_composition.RuntimeComposition.define",
+        "kohaku.runtime_composition.RuntimeComposition.define",
         lambda *_args, **_kwargs: Composition(),
     )
-    monkeypatch.setattr("nanobot.cli.gateway_runtime._tcp_endpoint_reachable", probe)
+    monkeypatch.setattr("kohaku.cli.gateway_runtime._tcp_endpoint_reachable", probe)
     monkeypatch.setattr(
-        "nanobot.cli.gateway_runtime._install_gateway_shutdown_handlers",
+        "kohaku.cli.gateway_runtime._install_gateway_shutdown_handlers",
         lambda *_args, **_kwargs: lambda: seen.__setitem__("restored", True),
     )
 
@@ -1487,7 +1487,7 @@ def test_serve_cli_options_override_api_config(monkeypatch, tmp_path: Path, isol
 
 
 def test_channels_login_requires_channel_name(monkeypatch) -> None:
-    monkeypatch.setattr("nanobot.cli.process_identity._set_process_title", lambda _title: None)
+    monkeypatch.setattr("kohaku.cli.process_identity._set_process_title", lambda _title: None)
     result = runner.invoke(app, ["channels", "login"])
 
     assert result.exit_code == 2

@@ -9,19 +9,19 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from nanobot.cron.action_store import ActionStoreStaleGenerationError, CronActionStore
-from nanobot.cron.definition_store import (
+from kohaku.cron.action_store import ActionStoreStaleGenerationError, CronActionStore
+from kohaku.cron.definition_store import (
     CronDefinitionStore,
     DefinitionStoreConflictError,
 )
-from nanobot.cron.service import (
+from kohaku.cron.service import (
     CRON_DEFINITION_ONLY_DIAGNOSTIC,
     CronDefinitionConflictError,
     CronDefinitionServiceError,
     CronDefinitionTokenRequiredError,
     CronService,
 )
-from nanobot.cron.types import CronDestination, CronSchedule
+from kohaku.cron.types import CronDestination, CronSchedule
 
 NAMESPACE = "cron:c3-service-tests"
 

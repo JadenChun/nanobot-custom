@@ -4,8 +4,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from nanobot.agent.tools.context import RequestContext
-from nanobot.runtime_context import (
+from kohaku.agent.tools.context import RequestContext
+from kohaku.runtime_context import (
     MAX_WEBUI_QUOTE_CHARS,
     RUNTIME_CONTEXT_HISTORY_META,
     RUNTIME_CONTEXT_INPUT_META,
@@ -19,10 +19,10 @@ from nanobot.runtime_context import (
     runtime_context_blocks_from_metadata,
     webui_quote_runtime_context,
 )
-from nanobot.sdk.types import snapshot_from_session
-from nanobot.session.manager import Session, _message_preview_text
-from nanobot.session.webui_turns import _title_inputs
-from nanobot.webui.transcript import _session_user_event
+from kohaku.sdk.types import snapshot_from_session
+from kohaku.session.manager import Session, _message_preview_text
+from kohaku.session.webui_turns import _title_inputs
+from kohaku.webui.transcript import _session_user_event
 
 
 @pytest.mark.asyncio

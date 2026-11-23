@@ -7,13 +7,13 @@ from pathlib import Path
 
 import pytest
 
-from nanobot.agent.context import ContextBuilder
-from nanobot.agent.tools.context import RequestContext, request_context
-from nanobot.context_repo import ContextRepoManager, ResourceAccessPolicy
-from nanobot.context_repo.policy import FolderAccessNeededError
-from nanobot.security.desktop_permissions import DesktopPermissionOwner
-from nanobot.security.folder_grants import FolderGrantStore
-from nanobot.security.workspace_access import (
+from kohaku.agent.context import ContextBuilder
+from kohaku.agent.tools.context import RequestContext, request_context
+from kohaku.context_repo import ContextRepoManager, ResourceAccessPolicy
+from kohaku.context_repo.policy import FolderAccessNeededError
+from kohaku.security.desktop_permissions import DesktopPermissionOwner
+from kohaku.security.folder_grants import FolderGrantStore
+from kohaku.security.workspace_access import (
     bind_workspace_scope,
     build_workspace_scope,
     reset_workspace_scope,
@@ -489,7 +489,7 @@ def test_managed_private_runtime_precedes_configured_repository_allow(
         with pytest.raises(PermissionError) as denied:
             policy.validate_path(sentinel, action)
         assert type(denied.value) is PermissionError
-        assert "private nanobot runtime storage" in str(denied.value)
+        assert "private Kohaku runtime storage" in str(denied.value)
 
 
 def test_managed_prompt_tolerates_missing_memory_file_and_rejects_existing_escape(tmp_path):

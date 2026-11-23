@@ -219,7 +219,7 @@ wheels = [
 ]
 
 [[package]]
-name = "nanobot-mobile-fixture"
+name = "kohaku-mobile-fixture"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [

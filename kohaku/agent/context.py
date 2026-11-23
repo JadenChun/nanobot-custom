@@ -1,0 +1,671 @@
+"""Context builder for assembling agent prompts."""
+
+import json
+import platform
+import re
+import uuid
+from dataclasses import dataclass
+from enum import Enum
+from pathlib import Path
+from typing import Any, Mapping, Sequence, cast
+
+from kohaku.agent.memory import MemoryStore
+from kohaku.agent.skills import SkillsLoader
+from kohaku.agent.tools import image_generation as image_generation_tools
+from kohaku.agent.tools import mcp as mcp_tools
+from kohaku.agent.tools import sessions as session_tools
+from kohaku.agent.tools.registry import ToolRegistry
+from kohaku.apps.cli import utils as cli_app_utils
+from kohaku.attachments.context import AttachmentContext
+from kohaku.bus.events import (
+    INBOUND_META_RUNTIME_CONTROL,
+    RUNTIME_CONTROL_SESSION_DISCARD,
+    InboundMessage,
+)
+from kohaku.context_repo import ContextRepoManager
+from kohaku.context_repo.catalog import RepositoryCatalog
+from kohaku.context_repo.policy import ResourceAccessPolicy
+from kohaku.runtime_context import (
+    RUNTIME_CONTEXT_MESSAGE_META,
+    RUNTIME_CONTEXT_TAG,
+    RuntimeContextBlock,
+    append_runtime_context,
+    wrap_runtime_context_lines,
+)
+from kohaku.security.folder_grants import FolderGrantsUnavailableError, FolderGrantView
+from kohaku.security.workspace_access import (
+    WorkspaceScopeResolver,
+    current_tool_workspace,
+    current_workspace_scope,
+)
+from kohaku.session.keys import last_channel_from_metadata
+from kohaku.session.manager import Session
+from kohaku.session.source_projection import CheckpointNode, RuntimeNode, SourceNode
+from kohaku.session.source_request import RequestNode, SourceTranscript
+from kohaku.session.summary import SessionSummary
+from kohaku.utils import helpers
+from kohaku.utils.helpers import load_bundled_template
+from kohaku.utils.prompt_templates import render_template
+
+
+class _LegacyChatIdDefault(Enum):
+    OMITTED = "omitted"
+
+
+def _legacy_metadata_value(value: str) -> str:
+    """Keep legacy metadata on one data line, without allowing prompt delimiters."""
+    return json.dumps(value)[1:-1].replace("[", "\\u005b").replace("]", "\\u005d")
+
+
+def session_extra(metadata: Mapping[str, Any] | None) -> dict[str, Any]:
+    """Return persisted kwargs for turn-attached capabilities."""
+    return (
+        cli_app_utils.session_extra(metadata)
+        | mcp_tools.session_extra(metadata)
+        | session_tools.session_extra(metadata)
+    )
+
+
+async def handle_runtime_control(state: Any, msg: InboundMessage, tools: ToolRegistry) -> bool:
+    if msg.metadata.get(INBOUND_META_RUNTIME_CONTROL) == RUNTIME_CONTROL_SESSION_DISCARD:
+        await state.discard_session(msg.session_key)
+        return True
+    return await image_generation_tools.handle_runtime_control(state, msg, tools)
+
+
+@dataclass(frozen=True, slots=True)
+class PersistedPromptContextResolver:
+    """Restore prompt routing context when no inbound message is available."""
+
+    workspace_scopes: WorkspaceScopeResolver
+    unified_session: bool = False
+
+    def __call__(self, session: Session) -> tuple[str | None, Path]:
+        channel = session.key.split(":", 1)[0] if ":" in session.key else None
+        if self.unified_session:
+            route = last_channel_from_metadata(session.metadata)
+            if route is not None:
+                channel = route[0]
+        scope = self.workspace_scopes.for_turn(
+            channel=channel,
+            message_metadata=None,
+            session_metadata=session.metadata,
+        )
+        return channel, scope.project_path
+
+
+@dataclass(frozen=True, slots=True)
+class TranscriptInput:
+    """Raw turn inputs from which ``ContextBuilder`` assembles a transcript."""
+
+    history: list[dict[str, Any]]
+    current_message: str | None
+    media: Sequence[str] | None = None
+    current_role: str = "user"
+    session_summary: SessionSummary | None = None
+    runtime_context_blocks: Sequence[RuntimeContextBlock] | None = None
+
+    @property
+    def message_count(self) -> int:
+        """Number of boundary-preserving messages in the assembled transcript."""
+        summary_count = int(
+            self.session_summary is not None
+            and self.session_summary["text"] != "(nothing)"
+        )
+        return 1 + summary_count + len(self.history) + (self.current_message is not None)
+
+
+_TOOL_GUIDANCE_NAMES = frozenset({
+    "apply_patch",
+    "cron",
+    "edit_file",
+    "exec",
+    "exec_session",
+    "generate_image",
+    "list_dir",
+    "list_exec_sessions",
+    "message",
+    "read_artifact",
+    "read_file",
+    "repository_catalog",
+    "request_folder_access",
+    "run_cli_app",
+    "save_knowledge",
+    "select_workspace",
+    "web_fetch",
+    "web_search",
+    "write_file",
+})
+_TOOL_REFERENCE_RE = re.compile(r"[`'\"]([a-z][a-z0-9_]+)[`'\"]")
+
+
+def _filter_tool_guidance(
+    text: str,
+    tool_names: frozenset[str] | None,
+) -> str:
+    """Remove guidance lines that name a tool this turn cannot use."""
+    if tool_names is None:
+        return text
+    unavailable = sorted(_TOOL_GUIDANCE_NAMES - tool_names)
+    if not unavailable:
+        return text
+    pattern = re.compile(r"\b(?:" + "|".join(map(re.escape, unavailable)) + r")\b")
+    return "\n".join(line for line in text.splitlines() if not pattern.search(line))
+
+
+def _render_tool_contract(tool_names: frozenset[str] | None) -> str:
+    """Render tool guidance against the tools admitted for this turn."""
+    template = render_template("agent/tool_contract.md")
+    if tool_names is None:
+        return template
+    lines: list[str] = []
+    for line in template.splitlines():
+        referenced = {
+            name for name in _TOOL_REFERENCE_RE.findall(line)
+            if name in _TOOL_GUIDANCE_NAMES
+        }
+        if referenced and not referenced.issubset(tool_names):
+            continue
+        lines.append(line)
+    return "\n".join(lines)
+
+
+class ContextBuilder:
+    """Builds the context (system prompt + messages) for the agent."""
+
+    BOOTSTRAP_FILES = ["AGENTS.md", "SOUL.md", "USER.md", "TOOLS.md", "IDENTITY.md"]
+    _SKIPPABLE_DEFAULTS = {"AGENTS.md", "USER.md"}
+    _RUNTIME_CONTEXT_TAG = RUNTIME_CONTEXT_TAG
+
+    def __init__(
+        self,
+        workspace: Path,
+        timezone: str | None = None,
+        disabled_skills: list[str] | None = None,
+        *,
+        context_paths: list[Path] | None = None,
+        context_manager: ContextRepoManager | None = None,
+        sessions_root: Path | None = None,
+        resource_policy: ResourceAccessPolicy | None = None,
+        folder_grants: FolderGrantView | None = None,
+        attachment_context: AttachmentContext | None = None,
+    ):
+        self.workspace = workspace
+        self.timezone = timezone
+        self.memory = MemoryStore(workspace, sessions_root=sessions_root)
+        self.context_manager = context_manager or ContextRepoManager.from_config(context_paths=context_paths)
+        self.context_paths = self.context_manager.paths
+        self.repositories = RepositoryCatalog.for_workspace(workspace, sessions_root=sessions_root)
+        self.resource_policy = resource_policy
+        self.folder_grants = folder_grants
+        self.attachments = attachment_context or AttachmentContext()
+        self.skills = SkillsLoader(
+            workspace,
+            disabled_skills=set(disabled_skills) if disabled_skills else None,
+            extra_paths=self.context_manager.skill_roots(),
+            resource_policy=resource_policy,
+        )
+
+    def build_system_prompt(
+        self,
+        *,
+        channel: str | None = None,
+        workspace: Path | None = None,
+        include_memory: bool = True,
+        tool_names: frozenset[str] | None = None,
+    ) -> str:
+        """Build the system prompt from identity, bootstrap files, memory, and skills."""
+        root = workspace or self.workspace
+        managed = bool(self.resource_policy and self.resource_policy.managed_mode)
+        if managed:
+            root = self.workspace
+        current_scope = current_workspace_scope() if managed else None
+        focus = current_scope.project_path if current_scope is not None else root
+        parts = [self._get_identity(channel=channel, workspace=root)]
+
+        bootstrap = self._load_bootstrap_files(root, managed=managed)
+        if bootstrap:
+            parts.append(bootstrap)
+
+        if self.context_paths:
+            parts.append("# Context Repositories\n\n" + self.context_manager.prompt_summary()
+                         + "\nFollow each repository's writable, protected, store and proposal policies.")
+        access = current_tool_workspace(root)
+        allowed_roots = None if managed else (
+            [access.allowed_root, *self.context_manager.read_roots()]
+            if access.allowed_root is not None else None
+        )
+        catalog = self.repositories.prompt_summary(allowed_roots=allowed_roots,
+                                                   access_for_path=self._folder_map_access if managed else None)
+        if managed:
+            metadata = self._managed_prompt_metadata(catalog)
+            if metadata:
+                parts.append(metadata)
+        elif catalog:
+            parts.append("# Repository Catalog\n\nMetadata for discovery; read the selected repository's "
+                         "instructions and relevant files on demand. Use absolute paths when switching work.\n" + catalog)
+        parts.append(_render_tool_contract(tool_names))
+
+        project_path = focus.expanduser().resolve()
+        if project_path != self.workspace.expanduser().resolve():
+            parts.append(
+                "# Current Project\n\n"
+                f"Working directory: {project_path}\n"
+                "Use it as the default root for project files and relative tool paths."
+            )
+
+            if managed:
+                instructions = project_path / "AGENTS.md"
+                if instructions.is_file():
+                    resolved = instructions.resolve(strict=True)
+                    if not resolved.is_relative_to(project_path):
+                        raise PermissionError("project instructions resolve outside the current folder")
+                    self._validate_managed_prompt_file(resolved, managed=True)
+                    content = resolved.read_text(encoding="utf-8")
+                    if content.strip():
+                        parts.append(f"## Current folder instructions (AGENTS.md)\n\n{content}")
+
+        if include_memory:
+            if managed and self.memory.memory_file.exists():
+                self._validate_home_prompt_file(self.memory.memory_file)
+            memory = self.memory.read_memory()
+            if memory and not self._is_template_content(memory, "memory/MEMORY.md"):
+                parts.append(f"# Memory\n\n## Long-term Memory\n{memory}")
+
+        # Managed repositories retain their supplemental durable context.
+        for memory_file in self.context_manager.memory_files():
+            self._validate_managed_prompt_file(memory_file, managed=managed)
+            content = memory_file.read_text(encoding="utf-8")
+            if content.strip():
+                parts.append(f"# Context Memory ({memory_file.parent.parent.name})\n\n{content}")
+        run_summaries: list[str] = []
+        for run_file in self.context_manager.run_summary_files():
+            self._validate_managed_prompt_file(run_file, managed=managed)
+            content = run_file.read_text(encoding="utf-8").strip()
+            if content:
+                run_summaries.append(
+                    f"## {run_file.parent.parent.name}/{run_file.relative_to(run_file.parent.parent)}\n\n{content}"
+                )
+        if run_summaries:
+            parts.append("# Context Repo Run State\n\n" + "\n\n".join(run_summaries))
+
+        active_skills = self.skills.get_always_skills()
+        if active_skills:
+            active_content = self.skills.load_skills_for_context(active_skills)
+            if active_content:
+                parts.append(f"# Active Skills\n\n{active_content}")
+
+        skills_summary = self.skills.build_skills_summary(
+            exclude=set(active_skills),
+            workspace=root,
+        )
+        if skills_summary:
+            parts.append(render_template("agent/skills_section.md", skills_summary=skills_summary))
+
+        return _filter_tool_guidance("\n\n---\n\n".join(parts), tool_names)
+
+    def _managed_prompt_roots(self) -> list[Path]:
+        roots = [self.workspace.expanduser().resolve(strict=False)]
+        policy = self.resource_policy
+        if policy is not None:
+            roots.extend(policy.context_manager.read_roots())
+        grants = self.folder_grants
+        if grants is not None and policy is not None and policy.folder_grants_allowed:
+            try:
+                snapshot = grants.snapshot()
+            except FolderGrantsUnavailableError:
+                return list(dict.fromkeys(root.resolve(strict=False) for root in roots))
+            if snapshot.enabled:
+                for grant in snapshot.grants:
+                    candidate = Path(grant.path)
+                    if not candidate.is_dir() or candidate.resolve(strict=True) != candidate:
+                        continue
+                    try:
+                        policy.validate_path(
+                            candidate,
+                            "read",
+                            managed=True,
+                            allow_folder_grants=True,
+                        )
+                    except (OSError, PermissionError, RuntimeError, ValueError):
+                        continue
+                    roots.append(candidate)
+        return list(dict.fromkeys(root.expanduser().resolve(strict=False) for root in roots))
+
+    def _folder_map_access(self, path: Path) -> str | None:
+        policy = self.resource_policy
+        if policy is None or not path.is_dir() or path.resolve(strict=True) != path:
+            return None
+        try:
+            policy.validate_path(path, "read")
+        except (OSError, PermissionError, RuntimeError, ValueError):
+            return None
+        try:
+            policy.validate_path(path, "write")
+        except (OSError, PermissionError, RuntimeError, ValueError):
+            return "read_only"
+        return "read_write"
+
+    def _managed_prompt_metadata(self, catalog: str) -> str:
+        roots = self._managed_prompt_roots()
+        root_lines = [json.dumps({"path": str(root), "effective_access": self._folder_map_access(root)}, ensure_ascii=True) for root in roots[:8]]
+        sections = [
+            "# Sandbox Folder Rules\n\n"
+            "Sandbox allows ordinary OS-account reads and commands. Writes are limited to approved "
+            "folders (including their unmapped descendants), the agent home, and private temporary/cache storage. "
+            "More-specific read-only rules override writable parents. Full access uses normal OS permissions. "
+            "Private Kohaku authority and configured context policies remain protected. "
+            "These saved roots describe capabilities, not an exclusive navigation list. Call "
+            '`repository_catalog(action="roots")`; use `discover` on a path when needed.\n'
+            + "\n".join(f"- {line}" for line in root_lines)
+        ]
+        if catalog:
+            sections.append(
+                "# Agent Folder Map\n\nMetadata only; read each folder's "
+                "instructions and relevant files on demand. Work across folders using absolute paths; "
+                "`select_workspace` only changes the default for relative paths. New map entries need user approval.\n"
+                + catalog
+            )
+        bounded: list[str] = []
+        total_bytes = 0
+        for index, section in enumerate(sections):
+            encoded = section.encode("utf-8")
+            remaining = 8192 - total_bytes
+            if remaining <= 0:
+                break
+            if len(encoded) <= remaining:
+                bounded.append(section)
+                total_bytes += len(encoded) + 2
+                continue
+            if index == 1:
+                lines: list[str] = []
+                for line in section.splitlines():
+                    candidate = "\n".join([*lines, line])
+                    if len(candidate.encode("utf-8")) > remaining:
+                        break
+                    lines.append(line)
+                if lines:
+                    bounded.append("\n".join(lines))
+            break
+        return "\n\n".join(bounded)
+
+    def _get_identity(self, channel: str | None = None, workspace: Path | None = None) -> str:
+        """Get the core identity section."""
+        root = workspace or self.workspace
+        workspace_path = str(root.expanduser().resolve())
+        agent_workspace_path = str(self.workspace.expanduser().resolve())
+        system = platform.system()
+        runtime = f"{'macOS' if system == 'Darwin' else system} {platform.machine()}, Python {platform.python_version()}"
+
+        return render_template(
+            "agent/identity.md",
+            workspace_path=workspace_path,
+            agent_workspace_path=agent_workspace_path,
+            runtime=runtime,
+            platform_policy=render_template("agent/platform_policy.md", system=system),
+            channel=channel or "",
+        )
+
+    @staticmethod
+    def _merge_message_content(left: Any, right: Any) -> str | list[dict[str, Any]]:
+        if isinstance(left, str) and isinstance(right, str):
+            if not left:
+                return right
+            if not right:
+                return left
+            return f"{left}\n\n{right}"
+
+        def _to_blocks(value: Any) -> list[dict[str, Any]]:
+            if isinstance(value, list):
+                return [
+                    cast(dict[str, Any], item)
+                    if isinstance(item, dict)
+                    else {"type": "text", "text": str(item)}
+                    for item in cast(list[Any], value)
+                ]
+            if value is None:
+                return []
+            return [{"type": "text", "text": str(value)}]
+
+        return _to_blocks(left) + _to_blocks(right)
+
+    def _load_bootstrap_files(
+        self,
+        workspace: Path | None = None,
+        *,
+        managed: bool = False,
+    ) -> str:
+        """Load project instructions plus the agent's global profile files."""
+        parts: list[str] = []
+        project_root = workspace or self.workspace
+        sources = [
+            ("AGENTS.md", project_root),
+            ("SOUL.md", self.workspace),
+            ("USER.md", self.workspace),
+            ("TOOLS.md", self.workspace),
+            ("IDENTITY.md", self.workspace),
+        ]
+
+        for filename, root in sources:
+            file_path = root / filename
+            if file_path.exists():
+                if managed:
+                    self._validate_home_prompt_file(file_path)
+                content = file_path.read_text(encoding="utf-8")
+                if filename == "SOUL.md" and self._is_template_content(
+                    content,
+                    "legacy/SOUL.md",
+                ):
+                    content = load_bundled_template("SOUL.md") or content
+                if not content.strip():
+                    continue
+                if filename in self._SKIPPABLE_DEFAULTS and self._is_template_content(
+                    content, filename
+                ):
+                    continue
+                parts.append(f"## {filename}\n\n{content}")
+
+        for context_file in self.context_manager.context_files():
+            self._validate_managed_prompt_file(context_file, managed=managed)
+            repo = self.context_manager.find_repo_for_path(context_file)
+            suffix = f" ({repo.name})" if repo else ""
+            parts.append(f"## {context_file.name}{suffix}\n\n{context_file.read_text(encoding='utf-8')}")
+        return "\n\n".join(parts) if parts else ""
+
+    def _validate_managed_prompt_file(self, path: Path, *, managed: bool) -> None:
+        if not managed or self.resource_policy is None:
+            return
+        self.resource_policy.validate_path(
+            path.resolve(strict=True),
+            "read",
+            managed=True,
+            allow_folder_grants=self.resource_policy.folder_grants_allowed,
+        )
+
+    def _validate_home_prompt_file(self, path: Path) -> None:
+        resolved = path.resolve(strict=True)
+        try:
+            resolved.relative_to(self.workspace.resolve(strict=False))
+        except ValueError as exc:
+            raise PermissionError("agent-home prompt file resolves outside agent home") from exc
+        if self.resource_policy is not None:
+            self.resource_policy.validate_path(
+                resolved,
+                "read",
+                managed=True,
+                allow_folder_grants=False,
+            )
+
+    @staticmethod
+    def _is_template_content(content: str, template_path: str) -> bool:
+        """Check if *content* is identical to the bundled template (user hasn't customized it)."""
+        tpl = load_bundled_template(template_path)
+        if tpl is not None:
+            return content.strip() == tpl.strip()
+        return False
+
+    def build_messages(
+        self,
+        history: list[dict[str, Any]],
+        current_message: str | None,
+        *,
+        media: list[str] | None = None,
+        channel: str | None = None,
+        chat_id: str | None | _LegacyChatIdDefault = _LegacyChatIdDefault.OMITTED,
+        current_role: str = "user",
+        session_summary: SessionSummary | None = None,
+        runtime_context_blocks: Sequence[RuntimeContextBlock] | None = None,
+        workspace: Path | None = None,
+        include_memory: bool = True,
+        tool_names: frozenset[str] | None = None,
+    ) -> list[dict[str, Any]]:
+        """Compatibility wrapper for callers that need merged adjacent roles."""
+        blocks = runtime_context_blocks
+        if (current_message is not None and current_role == "user"
+                and not isinstance(chat_id, _LegacyChatIdDefault)):
+            # Only explicit legacy calls acquire routing/time context. Canonical
+            # transcripts remain metadata-free unless their caller supplies it.
+            lines = [f"Current Time: {_legacy_metadata_value(helpers.current_time_str(self.timezone))}"]
+            if channel and chat_id:
+                lines.extend([
+                    f"Channel: {_legacy_metadata_value(channel)}",
+                    f"Chat ID: {_legacy_metadata_value(chat_id)}",
+                ])
+            blocks = [
+                RuntimeContextBlock("legacy_session", wrap_runtime_context_lines(lines)),
+                *(runtime_context_blocks or ()),
+            ]
+        messages = self.build_transcript(
+            TranscriptInput(
+                history=history,
+                current_message=current_message,
+                media=media,
+                current_role=current_role,
+                session_summary=session_summary,
+                runtime_context_blocks=blocks,
+            ),
+            channel=channel,
+            workspace=workspace,
+            include_memory=include_memory,
+        )
+        if current_message is None:
+            return messages
+        current = messages[-1]
+        if len(messages) < 2 or messages[-2].get("role") != current.get("role"):
+            return messages
+
+        merged = dict(messages[-2])
+        merged["content"] = self._merge_message_content(
+            merged.get("content"),
+            current.get("content"),
+        )
+        current_meta = current.get("_meta")
+        if current.get("role") == "user" and isinstance(current_meta, dict):
+            internal_meta = dict(merged.get("_meta") or {})
+            internal_meta.update(cast(dict[str, Any], current_meta))
+            merged["_meta"] = internal_meta
+        return [*messages[:-2], merged]
+
+    def build_transcript(
+        self,
+        transcript: TranscriptInput,
+        *,
+        channel: str | None = None,
+        workspace: Path | None = None,
+        include_memory: bool = True,
+        tool_names: frozenset[str] | None = None,
+    ) -> list[dict[str, Any]]:
+        """Build a model transcript while preserving the fresh-turn boundary."""
+        root = workspace or self.workspace
+        messages: list[dict[str, Any]] = [
+            {
+                "role": "system",
+                "content": self.build_system_prompt(
+                    channel=channel,
+                    workspace=root,
+                    include_memory=include_memory,
+                    tool_names=tool_names,
+                ),
+            },
+        ]
+        summary = transcript.session_summary
+        if summary and summary["text"] != "(nothing)":
+            summary_text = (
+                f"Previous conversation summary (last active {summary['last_active']}):\n"
+                f"{summary['text']}"
+            )
+            messages.append(CheckpointNode("legacy-summary", summary_text).message())
+        messages.extend(transcript.history)
+        if transcript.current_message is None:
+            return messages
+
+        current = self.build_current_message(
+            transcript.current_message,
+            media=list(transcript.media) if transcript.media else None,
+            current_role=transcript.current_role,
+            runtime_context_blocks=transcript.runtime_context_blocks,
+        )
+        messages.append(current)
+        return messages
+
+    def build_source_transcript(
+        self, transcript: TranscriptInput, *, history: SourceTranscript,
+        input_event_id: str | None, channel: str | None = None,
+        workspace: Path | None = None, include_memory: bool = True,
+        tool_names: frozenset[str] | None = None,
+        system_prompt_override: str | None = None,
+        include_skill_context: bool = True,
+    ) -> SourceTranscript:
+        """Bind source identities at construction, never by message offsets."""
+        system_content = (
+            system_prompt_override
+            if system_prompt_override is not None
+            else self.build_system_prompt(
+                channel=channel, workspace=workspace or self.workspace,
+                include_memory=include_memory, tool_names=tool_names)
+        )
+        nodes: list[RequestNode] = [RuntimeNode(uuid.uuid4().hex, {
+            'role': 'system', 'content': system_content,
+        }), *history.nodes]
+        if transcript.current_message is not None:
+            current = self.build_current_message(
+                transcript.current_message, media=list(transcript.media) if transcript.media else None,
+                current_role=transcript.current_role, runtime_context_blocks=transcript.runtime_context_blocks,
+                include_skill_context=include_skill_context)
+            nodes.append(SourceNode(input_event_id, current) if input_event_id is not None
+                         else RuntimeNode(uuid.uuid4().hex, current))
+        return SourceTranscript(tuple(nodes))
+
+    def build_current_message(
+        self,
+        current_message: str,
+        *,
+        media: list[str] | None = None,
+        current_role: str = "user",
+        runtime_context_blocks: Sequence[RuntimeContextBlock] | None = None,
+        include_skill_context: bool = True,
+    ) -> dict[str, Any]:
+        """Build only the fresh turn message without merging it into history."""
+        content = self.build_user_content(current_message, image_paths=media)
+        blocks: list[RuntimeContextBlock] = []
+        if current_role == "user":
+            blocks.extend(runtime_context_blocks or ())
+            if include_skill_context:
+                skill_context = self.skills.build_explicit_skill_runtime_context(current_message)
+                if skill_context is not None and skill_context not in blocks:
+                    blocks.append(skill_context)
+        merged, runtime_context_meta = append_runtime_context(content, blocks)
+        current: dict[str, Any] = {"role": current_role, "content": merged}
+        if current_role == "user" and runtime_context_meta is not None:
+            current["_meta"] = {
+                RUNTIME_CONTEXT_MESSAGE_META: runtime_context_meta,
+            }
+        return current
+
+    def build_user_content(
+        self,
+        text: str,
+        image_paths: list[str] | None,
+    ) -> str | list[dict[str, Any]]:
+        """Build user message content from prefiltered image paths."""
+        return self.attachments.user_content_from_paths(text, image_paths)

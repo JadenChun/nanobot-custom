@@ -8,20 +8,20 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-import nanobot.session.webui_turns as titles
-import nanobot.webui.forking as forking
-from nanobot.providers.base import LLMResponse
-from nanobot.sdk.clients import SessionClient
-from nanobot.sdk.types import SessionSnapshot
-from nanobot.security.workspace_access import build_workspace_scope
-from nanobot.session.execution_owner import (
+import kohaku.session.webui_turns as titles
+import kohaku.webui.forking as forking
+from kohaku.providers.base import LLMResponse
+from kohaku.sdk.clients import SessionClient
+from kohaku.sdk.types import SessionSnapshot
+from kohaku.security.workspace_access import build_workspace_scope
+from kohaku.session.execution_owner import (
     ExecutionBusyError,
     ExecutionOwnershipError,
     acquire_execution,
 )
-from nanobot.session.manager import SessionManager
-from nanobot.session.runtime_authority import OfflineSessionOperator
-from nanobot.webui.workspaces import WebUIWorkspaceController
+from kohaku.session.manager import SessionManager
+from kohaku.session.runtime_authority import OfflineSessionOperator
+from kohaku.webui.workspaces import WebUIWorkspaceController
 
 
 @asynccontextmanager
@@ -69,7 +69,7 @@ def seed(manager, key="shared:chat", *, user="hello", title=None):
     # The same manager-owned frozen reset seam installs copied canonical test events.
     if manager.has_managed_authority:
         manager.admit_persistent_write(key)
-        from nanobot.session.source import new_source_event
+        from kohaku.session.source import new_source_event
 
         manager.reset_session(key, replacement_events=[
             new_source_event({"role": "user", "content": user}, run_id="fixture"),

@@ -1,7 +1,7 @@
-# Build a WhatsApp AI Agent with nanobot
+# Build a WhatsApp AI Agent with Kohaku
 
-This guide connects nanobot to WhatsApp through the `whatsapp` channel. The
-channel links as a WhatsApp device and uses the same nanobot agent runtime,
+This guide connects Kohaku to WhatsApp through the `whatsapp` channel. The
+channel links as a WhatsApp device and uses the same kohaku agent runtime,
 tools, memory, and workspace as the CLI and WebUI.
 
 ## What this guide builds
@@ -13,20 +13,21 @@ tools, memory, and workspace as the CLI and WebUI.
 
 ## Prerequisites
 
-- A working local nanobot reply:
+- A working local Kohaku reply:
 
 ```bash
-nanobot agent -m "Hello!"
+kohaku agent -m "Hello!"
 ```
 
 - A WhatsApp account that can link a new device.
-- A machine that can keep `nanobot gateway` running.
+- A machine that can keep `kohaku gateway` running.
 
-## Install nanobot
+## Install Kohaku
 
 ```bash
-python -m pip install nanobot-ai
-nanobot onboard --wizard
+# Run from the root of a clone of this repository
+python -m pip install -e .
+kohaku onboard --wizard
 ```
 
 ## Enable the WhatsApp channel
@@ -34,18 +35,18 @@ nanobot onboard --wizard
 Install the optional channel dependency:
 
 ```bash
-nanobot plugins enable whatsapp
+kohaku plugins enable whatsapp
 ```
 
 Link WhatsApp as a device:
 
 ```bash
-nanobot channels login whatsapp
+kohaku channels login whatsapp
 ```
 
 Scan the QR code from WhatsApp -> Settings -> Linked Devices.
 
-Merge this snippet into `~/.nanobot/config.json`:
+Merge this snippet into `~/.kohaku/config.json`:
 
 ```json
 {
@@ -62,11 +63,11 @@ Omitting `allowFrom` enables pairing-only mode for private chats. `groupPolicy`
 defaults to `"open"` in the channel, but `"mention"` is safer for a first
 deployment.
 
-## Run nanobot gateway
+## Run kohaku gateway
 
 ```bash
-nanobot channels status
-nanobot gateway
+kohaku channels status
+kohaku gateway
 ```
 
 ## Test a message
@@ -75,7 +76,7 @@ Send the bot a private WhatsApp message. It should return a pairing code.
 Approve it from a trusted local surface:
 
 ```bash
-nanobot agent -m "/pairing approve ABCD-EFGH"
+kohaku agent -m "/pairing approve ABCD-EFGH"
 ```
 
 Send the message again after approval. The reply should use the same model and
@@ -91,10 +92,10 @@ workspace as your local CLI check.
 
 ## Troubleshooting
 
-- If QR linking fails, rerun `nanobot channels login whatsapp`.
+- If QR linking fails, rerun `kohaku channels login whatsapp`.
 - If you are migrating from the old bridge, remove `bridgeUrl` and
   `bridgeToken`, then re-login.
-- If a sender appears as a LID instead of a phone number, let nanobot learn the
+- If a sender appears as a LID instead of a phone number, let Kohaku learn the
   mapping at runtime or use `lidMappings` in the full reference.
 - If a first private message returns a pairing code, approve it before testing
   normal replies.

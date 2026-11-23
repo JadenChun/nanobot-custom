@@ -14,7 +14,7 @@ from typing import Any
 
 import pytest
 
-from nanobot.agent import memory_recovery_storage as storage
+from kohaku.agent import memory_recovery_storage as storage
 
 _RECEIPT = ".consolidation.pending.json"
 
@@ -328,7 +328,7 @@ def test_receipt_snapshot_weakref_cleanup_is_safe_during_cycle_collection(
         import sys
         from pathlib import Path
 
-        from nanobot.agent import memory_recovery_storage as storage
+        from kohaku.agent import memory_recovery_storage as storage
 
         workspace = Path(sys.argv[1])
         memory = workspace / "memory"

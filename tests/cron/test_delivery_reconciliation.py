@@ -11,12 +11,12 @@ from pathlib import Path
 
 import pytest
 
-import nanobot.cron.delivery_reconciliation as reconciliation_module
-from nanobot.channels.delivery_contract import ChannelTextPartReceipt, ChannelTextReceipt
-from nanobot.cron.action_store import CronActionStore
-from nanobot.cron.completion import CronCompletionProjector
-from nanobot.cron.definition_store import CronDefinitionStore
-from nanobot.cron.delivery_reconciliation import (
+import kohaku.cron.delivery_reconciliation as reconciliation_module
+from kohaku.channels.delivery_contract import ChannelTextPartReceipt, ChannelTextReceipt
+from kohaku.cron.action_store import CronActionStore
+from kohaku.cron.completion import CronCompletionProjector
+from kohaku.cron.definition_store import CronDefinitionStore
+from kohaku.cron.delivery_reconciliation import (
     ReconciliationConflictError,
     ReconciliationUnsafeError,
     apply_plan,
@@ -25,10 +25,10 @@ from nanobot.cron.delivery_reconciliation import (
     inspect_reconciliation,
     show_plan,
 )
-from nanobot.cron.delivery_store import CronDeliveryOutboxStore, DeliverySendBusyError
-from nanobot.cron.occurrence_store import CronOccurrenceStore
-from nanobot.cron.service import CronService
-from nanobot.cron.types import CronSchedule
+from kohaku.cron.delivery_store import CronDeliveryOutboxStore, DeliverySendBusyError
+from kohaku.cron.occurrence_store import CronOccurrenceStore
+from kohaku.cron.service import CronService
+from kohaku.cron.types import CronSchedule
 
 NAMESPACE = "cron:offline-reconciliation-tests"
 

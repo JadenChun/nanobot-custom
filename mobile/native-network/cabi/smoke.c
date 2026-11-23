@@ -127,7 +127,7 @@ static void *c2_negative_b(void *arg) {
 
 int main(void) {
     char buffer[512];
-    expect(nanobot_network_abi_version() == NANOBOT_NETWORK_ABI_VERSION, "ABI version");
+    expect(nanobot_network_abi_version() == KOHAKU_NETWORK_ABI_VERSION, "ABI version");
     expect(nanobot_network_start("{}") == 0, "invalid config must not create a handle");
     expect(strstr(nanobot_network_last_error(), "origin") != NULL, "last error names the invalid config");
     expect(nanobot_network_start("{\"origin\":\"http://evil.example\",\"installation_id\":\"i\",\"hostname\":\"h\",\"state_dir\":\"/tmp/nanobot-cabi\"}") == 0,
@@ -190,6 +190,6 @@ int main(void) {
     if (failures != 0) {
         return 1;
     }
-    printf("NANOBOT_CABI_SMOKE_OK version=%d\n", nanobot_network_abi_version());
+    printf("KOHAKU_CABI_SMOKE_OK version=%d\n", nanobot_network_abi_version());
     return 0;
 }

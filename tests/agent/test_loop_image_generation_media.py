@@ -6,11 +6,11 @@ from typing import Any
 
 import pytest
 
-from nanobot.agent.loop import AgentLoop
-from nanobot.config.loader import set_config_path
-from nanobot.config.schema import ImageGenerationToolConfig, ProviderConfig, ToolsConfig
-from nanobot.providers.base import LLMResponse, ToolCallRequest
-from nanobot.providers.image_generation import GeneratedImageResponse
+from kohaku.agent.loop import AgentLoop
+from kohaku.config.loader import set_config_path
+from kohaku.config.schema import ImageGenerationToolConfig, ProviderConfig, ToolsConfig
+from kohaku.providers.base import LLMResponse, ToolCallRequest
+from kohaku.providers.image_generation import GeneratedImageResponse
 from tests.agent.p6_admitted_fixtures import AgentInputs, AsyncAdmittedFactory
 from tests.agent.p6_admitted_fixtures import admitted_async as admitted_async
 from tests.agent.test_migration_engine import ScriptedProvider
@@ -38,7 +38,7 @@ async def test_outbound_no_longer_carries_generated_media(
     """Media delivery is now the LLM's responsibility via the message tool."""
     set_config_path(tmp_path / "config.json")
     monkeypatch.setattr(
-        "nanobot.agent.tools.image_generation.get_image_gen_provider",
+        "kohaku.agent.tools.image_generation.get_image_gen_provider",
         lambda name: FakeImageClient if name == "openrouter" else None,
     )
     provider = ScriptedProvider([
@@ -84,8 +84,8 @@ async def test_outbound_no_longer_carries_generated_media(
 
 
 def test_image_loop_construction_rejects_pending_startup_receipt(tmp_path: Path) -> None:
-    from nanobot.agent.memory_recovery_startup_admission import StartupReceiptAdmissionError
-    from nanobot.bus.queue import MessageBus
+    from kohaku.agent.memory_recovery_startup_admission import StartupReceiptAdmissionError
+    from kohaku.bus.queue import MessageBus
 
     workspace = tmp_path / "workspace"
     pending = workspace / "memory" / ".consolidation.pending.json"

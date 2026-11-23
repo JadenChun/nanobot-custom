@@ -9,8 +9,8 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 import pytest_asyncio
 
-from nanobot.agent.turn import TraceMode, TurnResult, TurnSource
-from nanobot.api.server import (
+from kohaku.agent.turn import TraceMode, TurnResult, TurnSource
+from kohaku.api.server import (
     API_CHAT_ID,
     API_SESSION_KEY,
     _chat_completion_response,
@@ -18,8 +18,8 @@ from nanobot.api.server import (
     create_app,
     handle_chat_completions,
 )
-from nanobot.providers.base import LLMUsage
-from nanobot.utils.runtime import EMPTY_FINAL_RESPONSE_MESSAGE
+from kohaku.providers.base import LLMUsage
+from kohaku.utils.runtime import EMPTY_FINAL_RESPONSE_MESSAGE
 from tests.api_http_client import InProcessApiClient
 
 try:

@@ -10,30 +10,30 @@ from typing import Any
 
 import pytest
 
-from nanobot.agent.loop import AgentLoop
-from nanobot.agent.tools.base import Tool, tool_parameters
-from nanobot.agent.tools.registry import ToolRegistry
-from nanobot.agent.turn import (
+from kohaku.agent.loop import AgentLoop
+from kohaku.agent.tools.base import Tool, tool_parameters
+from kohaku.agent.tools.registry import ToolRegistry
+from kohaku.agent.turn import (
     DeliveryTarget,
     HistoryMode,
     ScheduledTurnLink,
     TurnRequest,
     TurnSource,
 )
-from nanobot.cli.gateway_runtime import (
+from kohaku.cli.gateway_runtime import (
     _close_gateway_runtime,
     _install_gateway_shutdown_handlers,
 )
-from nanobot.config.schema import Config, GatewayCronConfig
-from nanobot.cron.action_store import CronActionStore
-from nanobot.cron.definition_store import CronDefinitionStore
-from nanobot.cron.gateway import GatewayCron
-from nanobot.cron.runtime import CronWorkFailedError
-from nanobot.cron.service import CronService
-from nanobot.cron.types import CronSchedule
-from nanobot.providers.base import LLMProvider, LLMResponse, ToolCallRequest
-from nanobot.session.manager import Session, SessionManager
-from nanobot.session.source import validate_execution_links
+from kohaku.config.schema import Config, GatewayCronConfig
+from kohaku.cron.action_store import CronActionStore
+from kohaku.cron.definition_store import CronDefinitionStore
+from kohaku.cron.gateway import GatewayCron
+from kohaku.cron.runtime import CronWorkFailedError
+from kohaku.cron.service import CronService
+from kohaku.cron.types import CronSchedule
+from kohaku.providers.base import LLMProvider, LLMResponse, ToolCallRequest
+from kohaku.session.manager import Session, SessionManager
+from kohaku.session.source import validate_execution_links
 
 
 class _FakeLoop:
@@ -79,7 +79,7 @@ class _ReceiptChannel:
         action_id: str,
         request_digest: str,
     ) -> Any:
-        from nanobot.channels.delivery_contract import ChannelTextPartReceipt, ChannelTextReceipt
+        from kohaku.channels.delivery_contract import ChannelTextPartReceipt, ChannelTextReceipt
 
         del messages
         return ChannelTextReceipt(
@@ -363,7 +363,7 @@ async def test_second_sigint_cancels_owned_work_and_retains_recovery_fence(tmp_p
         await _wait_event(tool.cancelled)
 
         close = asyncio.create_task(gateway.aclose())
-        from nanobot.runtime_errors import RuntimeOwnedWorkError
+        from kohaku.runtime_errors import RuntimeOwnedWorkError
 
         with pytest.raises(RuntimeOwnedWorkError):
             await close
@@ -510,7 +510,7 @@ async def test_joined_cron_failure_still_finishes_shared_gateway_teardown() -> N
 
 
 async def test_owned_work_failure_retains_shared_gateway_dependencies() -> None:
-    from nanobot.runtime_errors import RuntimeOwnedWorkError
+    from kohaku.runtime_errors import RuntimeOwnedWorkError
 
     events: list[str] = []
     owned_error = RuntimeOwnedWorkError("cron work still owns shared resources")

@@ -8,8 +8,8 @@ from typing import Any
 
 import pytest
 
-import nanobot.webui.transcript as transcript_module
-from nanobot.webui.transcript import (
+import kohaku.webui.transcript as transcript_module
+from kohaku.webui.transcript import (
     active_transcript_path,
     append_transcript_object,
     read_transcript_lines,
@@ -21,15 +21,15 @@ _QUESTION_PREFIX = "question"
 
 
 def _force_small_transcript_budget(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("nanobot.webui.transcript._MAX_TRANSCRIPT_FILE_BYTES", 520)
-    monkeypatch.setattr("nanobot.webui.transcript._ACTIVE_TRANSCRIPT_ROTATE_BYTES", 520)
-    monkeypatch.setattr("nanobot.webui.transcript._TARGET_ACTIVE_TRANSCRIPT_BYTES", 260)
+    monkeypatch.setattr("kohaku.webui.transcript._MAX_TRANSCRIPT_FILE_BYTES", 520)
+    monkeypatch.setattr("kohaku.webui.transcript._ACTIVE_TRANSCRIPT_ROTATE_BYTES", 520)
+    monkeypatch.setattr("kohaku.webui.transcript._TARGET_ACTIVE_TRANSCRIPT_BYTES", 260)
 
 
 def _force_large_transcript_budget(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("nanobot.webui.transcript._MAX_TRANSCRIPT_FILE_BYTES", 10_000_000)
-    monkeypatch.setattr("nanobot.webui.transcript._ACTIVE_TRANSCRIPT_ROTATE_BYTES", 10_000_000)
-    monkeypatch.setattr("nanobot.webui.transcript._TARGET_ACTIVE_TRANSCRIPT_BYTES", 5_000_000)
+    monkeypatch.setattr("kohaku.webui.transcript._MAX_TRANSCRIPT_FILE_BYTES", 10_000_000)
+    monkeypatch.setattr("kohaku.webui.transcript._ACTIVE_TRANSCRIPT_ROTATE_BYTES", 10_000_000)
+    monkeypatch.setattr("kohaku.webui.transcript._TARGET_ACTIVE_TRANSCRIPT_BYTES", 5_000_000)
 
 
 def _append_numbered_turn(key: str, chat_id: str, idx: int) -> None:
@@ -97,7 +97,7 @@ def test_rotation_manifest_failure_leaves_old_active_readable_once(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr("nanobot.config.paths.get_data_dir", lambda: tmp_path)
+    monkeypatch.setattr("kohaku.config.paths.get_data_dir", lambda: tmp_path)
     key = "websocket:crash-manifest"
     chat = "crash-manifest"
     turn_count = 5
@@ -141,7 +141,7 @@ def test_rotation_ignores_stale_legacy_active_after_manifest_commit(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr("nanobot.config.paths.get_data_dir", lambda: tmp_path)
+    monkeypatch.setattr("kohaku.config.paths.get_data_dir", lambda: tmp_path)
     key = "websocket:crash-legacy"
     chat = "crash-legacy"
     turn_count = 5
@@ -187,7 +187,7 @@ def test_crash_before_tail_publication_reads_each_turn_once(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """U4: crash after four published segments and before the active tail."""
-    monkeypatch.setattr("nanobot.config.paths.get_data_dir", lambda: tmp_path)
+    monkeypatch.setattr("kohaku.config.paths.get_data_dir", lambda: tmp_path)
     key = "websocket:crash-segment-tail"
     chat = "crash-segment-tail"
     turn_count = 5
@@ -266,7 +266,7 @@ def test_normal_rotation_and_post_tail_crash_read_once(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """U5: Part A normal rotation, Part B crash after tail and manifest."""
-    monkeypatch.setattr("nanobot.config.paths.get_data_dir", lambda: tmp_path)
+    monkeypatch.setattr("kohaku.config.paths.get_data_dir", lambda: tmp_path)
     turn_count = 5
     expected = [_question_text(idx) for idx in range(1, turn_count + 1)]
 

@@ -7,7 +7,7 @@
     },
     "error": {
       "title": "Couldn't reach Kohaku",
-      "gatewayHint": "Make sure the gateway is running (`nanobot gateway`) and that this page is open on the same machine."
+      "gatewayHint": "Make sure the gateway is running (`kohaku gateway`) and that this page is open on the same machine."
     },
     "auth": {
       "label": "Password",
@@ -1576,7 +1576,7 @@
     "close": "Close file preview",
     "loading": "Loading preview...",
     "failed": "Could not preview this file.",
-    "routeMissing": "File preview needs the latest gateway. Restart nanobot gateway and try again.",
+    "routeMissing": "File preview needs the latest gateway. Restart kohaku gateway and try again.",
     "resize": "Resize file preview",
     "truncated": "Preview is truncated because this file is large."
   },

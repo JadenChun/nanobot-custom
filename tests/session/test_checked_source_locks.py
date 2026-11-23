@@ -11,13 +11,13 @@ from pathlib import Path
 import pytest
 from filelock import FileLock, Timeout
 
-import nanobot.session.checked_source as checked_source
-from nanobot.session.checked_source import (
+import kohaku.session.checked_source as checked_source
+from kohaku.session.checked_source import (
     CheckedSessionAuthority,
     CheckedSessionAuthorityError,
     open_checked_session,
 )
-from nanobot.session.manager import JsonlSessionStore
+from kohaku.session.manager import JsonlSessionStore
 
 
 def _backend(tmp_path: Path, name: str = "sessions") -> JsonlSessionStore:
@@ -588,7 +588,7 @@ def test_authority_import_has_no_filesystem_side_effects(tmp_path: Path) -> None
     script = """
 import importlib
 import os
-import nanobot.session.checked_source as module
+import kohaku.session.checked_source as module
 
 def forbidden(*args, **kwargs):
     raise AssertionError('module import attempted filesystem I/O')

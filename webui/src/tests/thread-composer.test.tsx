@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { ThreadComposer } from "@/components/thread/ThreadComposer";
 import { SESSION_DRAG_TYPE } from "@/lib/session-drag";
-import type { QueuedAttemptBinding, QueuedAttemptOutcome } from "@/lib/nanobot-client";
+import type { QueuedAttemptBinding, QueuedAttemptOutcome } from "@/lib/kohaku-client";
 import {
   installMobileRuntime,
   resetMobileRuntime,

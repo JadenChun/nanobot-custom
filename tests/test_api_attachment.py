@@ -9,8 +9,8 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 import pytest_asyncio
 
-from nanobot.agent.turn import TurnResult, TurnSource
-from nanobot.api.server import (
+from kohaku.agent.turn import TurnResult, TurnSource
+from kohaku.api.server import (
     _FileSizeExceeded,
     _parse_json_content,
     _save_base64_data_url,

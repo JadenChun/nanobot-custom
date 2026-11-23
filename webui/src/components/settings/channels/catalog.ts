@@ -77,10 +77,12 @@ type ChannelConfigOption = {
   label: string;
 };
 
-const NANOBOT_DOCS_URL = "https://nanobot.wiki/docs/latest";
-const CHAT_APPS_DOCS_URL = `${NANOBOT_DOCS_URL}/getting-started/chat-apps`;
+const KOHAKU_DOCS_URL = "https://github.com/JadenChun/nanobot-custom/blob/staging/docs";
+const CHAT_APPS_DOCS_URL = `${KOHAKU_DOCS_URL}/chat-apps.md`;
 
 export function chatAppGuideUrl(sectionId: string): string {
+  if (sectionId === "websocket") return `${KOHAKU_DOCS_URL}/websocket.md`;
+  if (sectionId === "mattermost") return `${KOHAKU_DOCS_URL}/guides/mattermost-ai-agent.md`;
   return `${CHAT_APPS_DOCS_URL}#${sectionId}`;
 }
 

@@ -6,9 +6,9 @@ import json
 
 import pytest
 
-from nanobot.agent.tools import social_crawl as crawl
-from nanobot.agent.tools import trend_vpn as vpn
-from nanobot.agent.turn import ToolOutcome
+from kohaku.agent.tools import social_crawl as crawl
+from kohaku.agent.tools import trend_vpn as vpn
+from kohaku.agent.turn import ToolOutcome
 
 
 class _Socket:

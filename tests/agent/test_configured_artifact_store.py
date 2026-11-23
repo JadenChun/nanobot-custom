@@ -7,13 +7,13 @@ from pathlib import Path
 
 import pytest
 
-from nanobot.agent.loop import AgentLoop
-from nanobot.agent.tools.registry import ToolRegistry
-from nanobot.agent.turn import TurnRequest
-from nanobot.context_repo import ContextRepoManager
-from nanobot.providers.base import LLMResponse
-from nanobot.session.artifact import ArtifactValidationError
-from nanobot.session.manager import SessionPolicy
+from kohaku.agent.loop import AgentLoop
+from kohaku.agent.tools.registry import ToolRegistry
+from kohaku.agent.turn import TurnRequest
+from kohaku.context_repo import ContextRepoManager
+from kohaku.providers.base import LLMResponse
+from kohaku.session.artifact import ArtifactValidationError
+from kohaku.session.manager import SessionPolicy
 from tests.agent.test_migration_engine import ScriptedProvider
 from tests.agent.test_migration_engine import engine_config as engine_config
 from tests.agent.test_migration_source_engine import upgrade

@@ -4,8 +4,8 @@ from unittest.mock import patch
 
 import pytest
 
-from nanobot.config.loader import load_config, save_config
-from nanobot.security.network import validate_url_target
+from kohaku.config.loader import load_config, save_config
+from kohaku.security.network import validate_url_target
 
 
 def _fake_resolve(host: str, results: list[str]):
@@ -19,8 +19,8 @@ def _fake_resolve(host: str, results: list[str]):
 
 def test_onboard_refresh_backfills_missing_channel_fields(tmp_path, monkeypatch) -> None:
     # Temporary-config integration only; production activation stays guarded.
-    monkeypatch.setattr("nanobot.migration_guard.require_runtime_ready", lambda: None)
-    from nanobot.channels.plugin import load_channel_package
+    monkeypatch.setattr("kohaku.migration_guard.require_runtime_ready", lambda: None)
+    from kohaku.channels.plugin import load_channel_package
 
     config_path = tmp_path / "config.json"
     workspace = tmp_path / "workspace"
@@ -40,19 +40,19 @@ def test_onboard_refresh_backfills_missing_channel_fields(tmp_path, monkeypatch)
         encoding="utf-8",
     )
 
-    monkeypatch.setattr("nanobot.config.loader.get_config_path", lambda: config_path)
+    monkeypatch.setattr("kohaku.config.loader.get_config_path", lambda: config_path)
     monkeypatch.setattr(
-        "nanobot.channels.registry.discover_plugins",
+        "kohaku.channels.registry.discover_plugins",
         lambda: {"qq": load_channel_package("qq")},
     )
     monkeypatch.setattr(
-        "nanobot.channels.registry.discover_all",
+        "kohaku.channels.registry.discover_all",
         lambda: pytest.fail("onboarding must not import channel runtimes"),
     )
 
     from typer.testing import CliRunner
 
-    from nanobot.cli.commands import app
+    from kohaku.cli.commands import app
     runner = CliRunner()
     result = runner.invoke(app, ["onboard", "--workspace", str(workspace)], input="n\n")
 
@@ -137,12 +137,12 @@ def test_load_config_resets_ssrf_whitelist_when_next_config_is_empty(tmp_path) -
     defaulted.write_text(json.dumps({}), encoding="utf-8")
 
     load_config(whitelisted)
-    with patch("nanobot.security.network.socket.getaddrinfo", _fake_resolve("ts.local", ["100.100.1.1"])):
+    with patch("kohaku.security.network.socket.getaddrinfo", _fake_resolve("ts.local", ["100.100.1.1"])):
         ok, err = validate_url_target("http://ts.local/api")
         assert ok, err
 
     load_config(defaulted)
-    with patch("nanobot.security.network.socket.getaddrinfo", _fake_resolve("ts.local", ["100.100.1.1"])):
+    with patch("kohaku.security.network.socket.getaddrinfo", _fake_resolve("ts.local", ["100.100.1.1"])):
         ok, _ = validate_url_target("http://ts.local/api")
         assert not ok
 

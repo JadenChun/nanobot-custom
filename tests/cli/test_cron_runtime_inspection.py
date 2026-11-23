@@ -5,17 +5,17 @@ import shutil
 import pytest
 from typer.testing import CliRunner
 
-from nanobot.cli.cron_runtime import cron_runtime_app
-from nanobot.cron import scheduler_store
-from nanobot.cron.occurrence_store import CronOccurrenceStore
-from nanobot.cron.runtime_inspection import (
+from kohaku.cli.cron_runtime import cron_runtime_app
+from kohaku.cron import scheduler_store
+from kohaku.cron.occurrence_store import CronOccurrenceStore
+from kohaku.cron.runtime_inspection import (
     inspect_occurrences,
     inspect_scheduler,
     reconcile_occurrence,
 )
-from nanobot.cron.scheduler import Scheduler
-from nanobot.cron.scheduler_store import SchedulerStore
-from nanobot.cron.service import CronOccurrenceRuntime
+from kohaku.cron.scheduler import Scheduler
+from kohaku.cron.scheduler_store import SchedulerStore
+from kohaku.cron.service import CronOccurrenceRuntime
 from tests.cron.stage3_fixtures import offline_denial, runtime  # noqa: F401
 from tests.cron.test_scheduler import prebegin_crash, reconcile
 
@@ -183,8 +183,8 @@ async def test_exact_predecessor_reconciliation_no_successor_effect(tmp_path):
 
 @pytest.mark.parametrize("boundary", ["before-occurrence", "occurrence-lost-ack", "between-authorities", "bridge-lost-ack"])
 async def test_operator_crash_exact_retry_retains_authorities_without_extra_reclaim(tmp_path, monkeypatch, boundary):
-    from nanobot.cron.occurrence_store import CronOccurrenceStore
-    from nanobot.cron.scheduler_store import SchedulerConflictError, SchedulerStore
+    from kohaku.cron.occurrence_store import CronOccurrenceStore
+    from kohaku.cron.scheduler_store import SchedulerConflictError, SchedulerStore
 
     graph, item, clock, calls, channels = await prebegin_crash(tmp_path, monkeypatch)
     original = graph.service.occurrence_store.inspect_records()[0]
@@ -243,7 +243,7 @@ async def test_operator_crash_exact_retry_retains_authorities_without_extra_recl
 
 
 async def test_next_reconciliation_cannot_overwrite_unretained_attestation(tmp_path, monkeypatch):
-    from nanobot.cron.scheduler_store import SchedulerConflictError, SchedulerStore
+    from kohaku.cron.scheduler_store import SchedulerConflictError, SchedulerStore
 
     graph, item, clock, calls, channels = await prebegin_crash(tmp_path, monkeypatch)
     original = graph.service.occurrence_store.inspect_records()[0]
@@ -265,8 +265,8 @@ async def test_next_reconciliation_cannot_overwrite_unretained_attestation(tmp_p
 
 
 async def test_operator_active_scheduler_and_live_execution_exclude_mutation(tmp_path, monkeypatch):
-    from nanobot.cron.occurrence_store import OccurrenceExecutionBusyError
-    from nanobot.cron.scheduler_store import SchedulerConflictError
+    from kohaku.cron.occurrence_store import OccurrenceExecutionBusyError
+    from kohaku.cron.scheduler_store import SchedulerConflictError
 
     graph, item, clock, calls, channels = runtime(tmp_path)
     claim = graph.service.claim_scheduled_occurrence(item.job_id, 1100, owner="before")
@@ -291,9 +291,9 @@ async def test_operator_active_scheduler_and_live_execution_exclude_mutation(tmp
 
 @pytest.mark.parametrize("bound", ["records", "bytes"])
 async def test_bridge_bounds_reject_before_occurrence_mutation(tmp_path, monkeypatch, bound):
-    import nanobot.cron.scheduler_store as module
-    from nanobot.cron.occurrence_store import CronOccurrenceStore, OccurrenceCorruptError
-    from nanobot.cron.scheduler_store import SchedulerConflictError
+    import kohaku.cron.scheduler_store as module
+    from kohaku.cron.occurrence_store import CronOccurrenceStore, OccurrenceCorruptError
+    from kohaku.cron.scheduler_store import SchedulerConflictError
 
     graph, item, clock, calls, channels = await prebegin_crash(tmp_path, monkeypatch)
     original = graph.service.occurrence_store.inspect_records()[0]
@@ -310,7 +310,7 @@ async def test_bridge_bounds_reject_before_occurrence_mutation(tmp_path, monkeyp
 
 @pytest.mark.parametrize("authority", ["scheduler", "occurrence"])
 async def test_reconciliation_unsafe_residue_preserves_forensic_bytes(tmp_path, monkeypatch, authority):
-    from nanobot.cron.occurrence_store import OccurrenceCorruptError
+    from kohaku.cron.occurrence_store import OccurrenceCorruptError
 
     graph, item, clock, calls, channels = await prebegin_crash(tmp_path, monkeypatch)
     original = graph.service.occurrence_store.inspect_records()[0]
@@ -327,7 +327,7 @@ async def test_reconciliation_unsafe_residue_preserves_forensic_bytes(tmp_path, 
 
 @pytest.mark.parametrize("field", ["owner", "generation", "resolution"])
 async def test_exact_reconciliation_retry_rejects_conflicting_request(tmp_path, monkeypatch, field):
-    from nanobot.cron.scheduler_store import SchedulerConflictError
+    from kohaku.cron.scheduler_store import SchedulerConflictError
 
     graph, item, clock, calls, channels = await prebegin_crash(tmp_path, monkeypatch)
     original = graph.service.occurrence_store.inspect_records()[0]

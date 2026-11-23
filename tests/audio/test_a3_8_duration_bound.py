@@ -7,8 +7,8 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from nanobot.audio import transcription
-from nanobot.audio.transcription import (
+from kohaku.audio import transcription
+from kohaku.audio.transcription import (
     EffectiveTranscriptionConfig,
     TranscriptionIngressError,
     measure_audio_duration,

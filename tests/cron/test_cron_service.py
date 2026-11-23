@@ -4,9 +4,9 @@ import time
 
 import pytest
 
-from nanobot.cron.service import CronJobSkippedError, CronService
-from nanobot.cron.types import CronJob, CronPayload, CronSchedule
-from nanobot.runtime_context import RUNTIME_CONTEXT_INPUT_META
+from kohaku.cron.service import CronJobSkippedError, CronService
+from kohaku.cron.types import CronJob, CronPayload, CronSchedule
+from kohaku.runtime_context import RUNTIME_CONTEXT_INPUT_META
 from tests.cron import p6_compat_fixtures as cases
 from tests.cron.stage3_fixtures import offline_denial  # noqa: F401
 

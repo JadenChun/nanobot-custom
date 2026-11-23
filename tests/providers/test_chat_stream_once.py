@@ -8,15 +8,15 @@ from typing import Any
 
 import pytest
 
-from nanobot.providers.base import (
+from kohaku.providers.base import (
     LLMProvider,
     LLMResponse,
     ProviderCallContext,
 )
-from nanobot.providers.fallback_provider import FallbackProvider
-from nanobot.providers.legacy_fallback_provider import LegacyFallbackProvider
-from nanobot.providers.pooled_provider import PooledProvider
-from nanobot.providers.request_budget import LocalRequestUsageReceipt, ProviderRequestLimits
+from kohaku.providers.fallback_provider import FallbackProvider
+from kohaku.providers.legacy_fallback_provider import LegacyFallbackProvider
+from kohaku.providers.pooled_provider import PooledProvider
+from kohaku.providers.request_budget import LocalRequestUsageReceipt, ProviderRequestLimits
 
 
 class StreamLeaf(LLMProvider):

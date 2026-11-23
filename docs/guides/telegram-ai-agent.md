@@ -1,31 +1,32 @@
-# Connect Telegram to nanobot
+# Connect Telegram to Kohaku
 
-This guide connects one Telegram bot to nanobot. Messages sent to that bot use
-your normal nanobot model, tools, memory, and workspace.
+This guide connects one Telegram bot to Kohaku. Messages sent to that bot use
+your normal Kohaku model, tools, memory, and workspace.
 
 ## What this guide builds
 
 - a Telegram bot created through BotFather
-- the `telegram` channel enabled in nanobot
-- a running nanobot gateway
+- the `telegram` channel enabled in Kohaku
+- a running kohaku gateway
 - one pairing-approved Telegram account
 
 ## Prerequisites
 
-- A working nanobot CLI reply:
+- A working Kohaku CLI reply:
 
 ```bash
-nanobot agent -m "Hello!"
+kohaku agent -m "Hello!"
 ```
 
 - A Telegram account.
 - A bot token from `@BotFather`.
 
-## Install nanobot
+## Install Kohaku
 
 ```bash
-python -m pip install nanobot-ai
-nanobot onboard --wizard
+# Run from the root of a clone of this repository
+python -m pip install -e .
+kohaku onboard --wizard
 ```
 
 ## Connect Telegram in the WebUI
@@ -33,7 +34,7 @@ nanobot onboard --wizard
 Start the WebUI:
 
 ```bash
-nanobot webui
+kohaku webui
 ```
 
 Open **Settings → Channels → Telegram**:
@@ -58,10 +59,10 @@ the connection check and for normal Telegram traffic.
 For a headless installation, install Telegram support:
 
 ```bash
-nanobot plugins enable telegram
+kohaku plugins enable telegram
 ```
 
-Then merge this snippet into `~/.nanobot/config.json`:
+Then merge this snippet into `~/.kohaku/config.json`:
 
 ```json
 {
@@ -83,11 +84,11 @@ gets a pairing code instead of agent access.
 Telegram uses long polling by default. Webhook mode is available for public
 HTTPS deployments; start with long polling for the first test.
 
-## Run nanobot gateway
+## Run kohaku gateway
 
 ```bash
-nanobot channels status
-nanobot gateway
+kohaku channels status
+kohaku gateway
 ```
 
 Leave the gateway running while you test messages.
@@ -104,7 +105,7 @@ The bot should reply with a pairing code. Approve it from an already trusted
 surface, such as the local CLI:
 
 ```bash
-nanobot agent -m "/pairing approve ABCD-EFGH"
+kohaku agent -m "/pairing approve ABCD-EFGH"
 ```
 
 Send the message again after approval. The reply should use the same model and
@@ -120,14 +121,14 @@ workspace as your local CLI check.
 
 ## Troubleshooting
 
-- If the channel is not listed, run `nanobot plugins enable telegram` again in
+- If the channel is not listed, run `kohaku plugins enable telegram` again in
   the same Python environment.
 - If the WebUI shows a saved configuration but the live check cannot reach Telegram,
   the token is still saved. Confirm the gateway can reach `api.telegram.org`,
   or open **Advanced → Network proxy** and enter a proxy.
 - If Telegram rejects the token, copy the current token from BotFather or
   regenerate it.
-- If messages do not arrive, run `nanobot gateway --verbose` and confirm the
+- If messages do not arrive, run `kohaku gateway --verbose` and confirm the
   Telegram channel is enabled.
 - If a first DM returns a pairing code, that is expected. Approve the code before
   testing normal agent replies.

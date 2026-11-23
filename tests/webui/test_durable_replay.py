@@ -5,7 +5,7 @@ import stat
 from pathlib import Path
 from types import SimpleNamespace
 
-from nanobot.webui.replay_store import DurableWebUIReplay
+from kohaku.webui.replay_store import DurableWebUIReplay
 
 
 def _result(value: object):

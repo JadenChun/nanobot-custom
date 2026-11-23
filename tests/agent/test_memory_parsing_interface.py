@@ -10,10 +10,10 @@ from pathlib import Path
 
 import pytest
 
-from nanobot.agent import memory_recovery as codec
-from nanobot.agent import memory_recovery_quarantine_storage as quarantine
-from nanobot.agent import memory_recovery_transaction_prepare as preparation
-from nanobot.session import legacy_receipt_source as legacy
+from kohaku.agent import memory_recovery as codec
+from kohaku.agent import memory_recovery_quarantine_storage as quarantine
+from kohaku.agent import memory_recovery_transaction_prepare as preparation
+from kohaku.session import legacy_receipt_source as legacy
 from tests.session.test_legacy_receipt_source import PINNED_CHUNK_DIGEST, PINNED_MESSAGES
 
 _WRAPPERS = (

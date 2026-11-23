@@ -8,32 +8,32 @@ from typing import cast
 
 import pytest
 
-from nanobot.agent.hook import AgentHook, AgentHookContext
-from nanobot.agent.tools.base import Tool, ToolResult
-from nanobot.agent.tools.context import (
+from kohaku.agent.hook import AgentHook, AgentHookContext
+from kohaku.agent.tools.base import Tool, ToolResult
+from kohaku.agent.tools.context import (
     ForkToolDependencies,
     RequestContext,
     ToolContext,
     request_context,
 )
-from nanobot.agent.tools.execution import KnownToolResult, execute_tool_calls
-from nanobot.agent.tools.filesystem import (
+from kohaku.agent.tools.execution import KnownToolResult, execute_tool_calls
+from kohaku.agent.tools.filesystem import (
     EditFileTool,
     ListDirTool,
     ReadFileTool,
     WriteFileTool,
 )
-from nanobot.agent.tools.registry import ToolRegistry
-from nanobot.agent.tools.sandbox import managed_bwrap_available
-from nanobot.agent.tools.shell import ExecTool
-from nanobot.agent.tools.workspace import RequestFolderAccessTool
-from nanobot.agent.turn import ToolOutcome
-from nanobot.config.schema import ToolsConfig
-from nanobot.context_repo import ContextRepoManager, ResourceAccessPolicy
-from nanobot.context_repo.catalog import RepositoryCatalog
-from nanobot.providers.base import ToolCallRequest
-from nanobot.security.folder_grants import FolderGrantStore
-from nanobot.security.workspace_access import (
+from kohaku.agent.tools.registry import ToolRegistry
+from kohaku.agent.tools.sandbox import managed_bwrap_available
+from kohaku.agent.tools.shell import ExecTool
+from kohaku.agent.tools.workspace import RequestFolderAccessTool
+from kohaku.agent.turn import ToolOutcome
+from kohaku.config.schema import ToolsConfig
+from kohaku.context_repo import ContextRepoManager, ResourceAccessPolicy
+from kohaku.context_repo.catalog import RepositoryCatalog
+from kohaku.providers.base import ToolCallRequest
+from kohaku.security.folder_grants import FolderGrantStore
+from kohaku.security.workspace_access import (
     bind_workspace_scope,
     build_workspace_scope,
     reset_workspace_scope,
@@ -100,8 +100,8 @@ async def test_need_stops_batch_except_exact_first_party_catalog_list(tmp_path: 
     registry = ToolRegistry()
     registry.register(_NeedsFolderTool())
     catalog = RepositoryCatalog(tmp_path / "catalog", runtime_root=tmp_path / "instance")
-    from nanobot.agent.tools.filesystem import ReadFileTool
-    from nanobot.agent.tools.repositories import RepositoryCatalogTool
+    from kohaku.agent.tools.filesystem import ReadFileTool
+    from kohaku.agent.tools.repositories import RepositoryCatalogTool
 
     registry.register(RepositoryCatalogTool(catalog, ReadFileTool(workspace=home)))
     registry.register(_AfterTool("write_file", calls))
@@ -226,7 +226,7 @@ async def test_configured_private_runtime_is_terminal_for_file_adapters(
     monkeypatch: pytest.MonkeyPatch,
     repo_kind: str,
 ) -> None:
-    from nanobot.config.loader import set_config_path
+    from kohaku.config.loader import set_config_path
 
     instance = tmp_path / "instance"
     home = instance / "workspace"

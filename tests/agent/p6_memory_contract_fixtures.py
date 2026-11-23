@@ -14,23 +14,23 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
-from nanobot.agent.context_governance import (
+from kohaku.agent.context_governance import (
     ContextGovernanceConfig,
     ContextGovernor,
     ModelRequestState,
     SourceCompactionState,
 )
-from nanobot.agent.tools.registry import ToolRegistry
-from nanobot.providers.base import GenerationSettings, LLMProvider, LLMResponse, ProviderCallContext
-from nanobot.providers.conversation_state import ProviderConversationStateController
-from nanobot.providers.openai_compat_provider import OpenAICompatProvider
-from nanobot.providers.request_budget import ProviderRequestLimits
-from nanobot.session.execution_owner import acquire_execution
-from nanobot.session.manager import JsonlSessionStore, Session
-from nanobot.session.source_projection import RuntimeNode, source_nodes
-from nanobot.session.source_request import SourceRequestLedger, SourceTranscript
-from nanobot.session.turn_writer import SourceTurnWriter
-from nanobot.utils.llm_runtime import LLMRuntime
+from kohaku.agent.tools.registry import ToolRegistry
+from kohaku.providers.base import GenerationSettings, LLMProvider, LLMResponse, ProviderCallContext
+from kohaku.providers.conversation_state import ProviderConversationStateController
+from kohaku.providers.openai_compat_provider import OpenAICompatProvider
+from kohaku.providers.request_budget import ProviderRequestLimits
+from kohaku.session.execution_owner import acquire_execution
+from kohaku.session.manager import JsonlSessionStore, Session
+from kohaku.session.source_projection import RuntimeNode, source_nodes
+from kohaku.session.source_request import SourceRequestLedger, SourceTranscript
+from kohaku.session.turn_writer import SourceTurnWriter
+from kohaku.utils.llm_runtime import LLMRuntime
 
 
 class SummaryProvider(LLMProvider):
@@ -176,7 +176,7 @@ def provider_limits(total):
 
 async def fitting_prefix(root, rows, boundary):
     """Construct an exact synthetic auxiliary boundary, never a production cap."""
-    from nanobot.agent.memory import Consolidator
+    from kohaku.agent.memory import Consolidator
 
     backend = source_store(root)
     provider = SummaryProvider([LLMResponse(content="retained facts")])

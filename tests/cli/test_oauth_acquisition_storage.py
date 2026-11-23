@@ -4,15 +4,15 @@ from types import SimpleNamespace
 
 import pytest
 
-from nanobot.cli import onboard, provider
-from nanobot.config.schema import Config
+from kohaku.cli import onboard, provider
+from kohaku.config.schema import Config
 
 
 @pytest.mark.parametrize("entrypoint", ["provider", "onboard"])
 def test_interactive_login_uses_acquisition_only_storage(monkeypatch, entrypoint):
     import oauth_cli_kit
 
-    from nanobot.providers import codex_auth, oauth_model_catalog
+    from kohaku.providers import codex_auth, oauth_model_catalog
 
     events = []
     generation = "login-generation"
@@ -45,7 +45,7 @@ def test_interactive_login_uses_acquisition_only_storage(monkeypatch, entrypoint
 
     monkeypatch.setattr(codex_auth, "get_codex_authority", lambda _owner=None: Authority())
     monkeypatch.setattr(oauth_cli_kit, "login_oauth_interactive", login)
-    monkeypatch.setattr("nanobot.config.loader.load_config", lambda: Config())
+    monkeypatch.setattr("kohaku.config.loader.load_config", lambda: Config())
     monkeypatch.setattr(oauth_model_catalog, "invalidate_oauth_model_catalog",
                         lambda name, **_kwargs: events.append(("invalidate", name)))
 

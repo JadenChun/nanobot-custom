@@ -28,25 +28,25 @@ import { Button } from "@/components/ui/button";
 import { useLogoFallback } from "@/hooks/useLogoFallback";
 import {
   configureChannel,
-  disableNanobotFeature,
-  enableNanobotFeature,
+  disableKohakuFeature,
+  enableKohakuFeature,
 } from "@/lib/api";
 import { logoFallbackUrls } from "@/lib/provider-brand";
 import type {
-  NanobotChannelInstanceInfo,
-  NanobotFeatureInfo,
-  NanobotFeaturesPayload,
+  KohakuChannelInstanceInfo,
+  KohakuFeatureInfo,
+  KohakuFeaturesPayload,
 } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { useClient } from "@/providers/ClientProvider";
 
 export type ChannelInstancesPanelCustomization = {
   countLabel?: (runningCount: number) => string;
-  toggleAriaLabel?: (instance: NanobotChannelInstanceInfo) => string;
+  toggleAriaLabel?: (instance: KohakuChannelInstanceInfo) => string;
   configuredLabel?: string;
   needsSetupLabel?: string;
-  renderInstanceSummary?: (instance: NanobotChannelInstanceInfo) => ReactNode;
-  renderInstanceAction?: (instance: NanobotChannelInstanceInfo) => ReactNode;
+  renderInstanceSummary?: (instance: KohakuChannelInstanceInfo) => ReactNode;
+  renderInstanceAction?: (instance: KohakuChannelInstanceInfo) => ReactNode;
   footer?: ReactNode;
 };
 
@@ -58,11 +58,11 @@ export function ChannelInstancesPanel({
   onFeaturesUpdate,
   customization = {},
 }: {
-  feature: NanobotFeatureInfo;
+  feature: KohakuFeatureInfo;
   showBrandLogos: boolean;
   chatAppsDocsUrl?: string;
-  instances?: NanobotChannelInstanceInfo[];
-  onFeaturesUpdate: (payload: NanobotFeaturesPayload) => void;
+  instances?: KohakuChannelInstanceInfo[];
+  onFeaturesUpdate: (payload: KohakuFeaturesPayload) => void;
   customization?: ChannelInstancesPanelCustomization;
 }) {
   const { client } = useClient();
@@ -106,13 +106,13 @@ export function ChannelInstancesPanel({
     setVisibleSecrets({});
   }, [instanceFields, selected?.id, selectedValuesKey]);
 
-  const toggleInstance = async (instance: NanobotChannelInstanceInfo, checked: boolean) => {
+  const toggleInstance = async (instance: KohakuChannelInstanceInfo, checked: boolean) => {
     setBusyInstanceId(instance.id);
     setNotice(null);
     try {
       const payload = checked
-        ? await enableNanobotFeature(client, feature.name, { instanceId: instance.id })
-        : await disableNanobotFeature(client, feature.name, { instanceId: instance.id });
+        ? await enableKohakuFeature(client, feature.name, { instanceId: instance.id })
+        : await disableKohakuFeature(client, feature.name, { instanceId: instance.id });
       onFeaturesUpdate(payload);
     } catch (err) {
       setNotice((err as Error).message);
@@ -321,7 +321,7 @@ export function ChannelInstancesPanel({
   );
 }
 
-function channelInstanceDisplayName(instance: NanobotChannelInstanceInfo): string {
+function channelInstanceDisplayName(instance: KohakuChannelInstanceInfo): string {
   const displayName = instance.display_name?.trim();
   if (displayName) return displayName;
   const localName = instance.name?.trim();
@@ -329,7 +329,7 @@ function channelInstanceDisplayName(instance: NanobotChannelInstanceInfo): strin
   return instance.id;
 }
 
-function instanceToggleChecked(instance: NanobotChannelInstanceInfo): boolean {
+function instanceToggleChecked(instance: KohakuChannelInstanceInfo): boolean {
   return instance.runtime_status === "running" || instance.runtime_status === "starting";
 }
 
@@ -338,7 +338,7 @@ function ChannelInstanceStatusBadge({
   configuredLabel,
   needsSetupLabel,
 }: {
-  instance: NanobotChannelInstanceInfo;
+  instance: KohakuChannelInstanceInfo;
   configuredLabel?: string;
   needsSetupLabel?: string;
 }) {
@@ -377,8 +377,8 @@ function ChannelInstanceAvatar({
   instance,
   showBrandLogos,
 }: {
-  feature: NanobotFeatureInfo;
-  instance: NanobotChannelInstanceInfo;
+  feature: KohakuFeatureInfo;
+  instance: KohakuChannelInstanceInfo;
   showBrandLogos: boolean;
 }) {
   const presentation = channelUiPresentation(feature.name, feature.webui);
@@ -430,7 +430,7 @@ function ChannelInstanceAvatar({
 }
 
 function channelInstanceFields(
-  feature: NanobotFeatureInfo,
+  feature: KohakuFeatureInfo,
   fields: ChannelConfigField[] | undefined,
   manualFields: ChannelConfigField[] | undefined,
 ): ChannelConfigField[] {

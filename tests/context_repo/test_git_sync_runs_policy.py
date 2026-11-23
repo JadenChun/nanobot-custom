@@ -12,11 +12,11 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
-from nanobot.context_repo.manager import (
+from kohaku.context_repo.manager import (
     ContextRepoRuntimeConfig,
     ManagedContextRepo,
 )
-from nanobot.utils.git_sync import (
+from kohaku.utils.git_sync import (
     _select_changed_paths,
     _validate_ahead_commits,
     matches_sync_path,

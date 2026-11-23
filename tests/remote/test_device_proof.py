@@ -10,14 +10,14 @@ import pytest
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 
-from nanobot.remote.device_proof import (
+from kohaku.remote.device_proof import (
     DeviceProofClaims,
     DeviceProofError,
     canonical_device_proof_bytes,
     device_proof_fingerprint,
     verify_device_proof,
 )
-from nanobot.remote.pairing import (
+from kohaku.remote.pairing import (
     PairingConsumedError,
     PairingExpiredError,
     PairingRejectedError,

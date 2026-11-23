@@ -4,8 +4,8 @@ import shutil
 
 import pytest
 
-from nanobot.cron.occurrence_store import OccurrenceCorruptError
-from nanobot.cron.scheduler_store import SchedulerConflictError, SchedulerStore
+from kohaku.cron.occurrence_store import OccurrenceCorruptError
+from kohaku.cron.scheduler_store import SchedulerConflictError, SchedulerStore
 from tests.cron.stage3_fixtures import POSIX_FORK, offline_denial  # noqa: F401
 
 
@@ -106,7 +106,7 @@ def test_two_process_contention_and_fork_child_cannot_release(tmp_path, monkeypa
 
 
 def test_request_bound_is_not_pruned(tmp_path, monkeypatch):
-    import nanobot.cron.scheduler_store as module
+    import kohaku.cron.scheduler_store as module
 
     monkeypatch.setattr(module, "MAX_REQUESTS", 1)
     authority = store(tmp_path)

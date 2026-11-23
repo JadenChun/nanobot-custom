@@ -7,13 +7,13 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from nanobot.agent.hook import AgentHook, AgentHookContext
-from nanobot.agent.policy import ToolPolicy, ToolPolicyDecision
-from nanobot.agent.progress_hook import AgentProgressHook
-from nanobot.bus.outbound_events import ProgressEvent, StreamDeltaEvent, StreamEndEvent
-from nanobot.config.schema import AgentDefaults
-from nanobot.events import EventSink
-from nanobot.providers.base import LLMResponse, ToolCallRequest
+from kohaku.agent.hook import AgentHook, AgentHookContext
+from kohaku.agent.policy import ToolPolicy, ToolPolicyDecision
+from kohaku.agent.progress_hook import AgentProgressHook
+from kohaku.bus.outbound_events import ProgressEvent, StreamDeltaEvent, StreamEndEvent
+from kohaku.config.schema import AgentDefaults
+from kohaku.events import EventSink
+from kohaku.providers.base import LLMResponse, ToolCallRequest
 from tests.agent.runner_helpers import make_run_spec
 
 _MAX_TOOL_RESULT_CHARS = AgentDefaults().max_tool_result_chars
@@ -46,7 +46,7 @@ async def test_runner_policy_block_closes_resumed_stream_segment() -> None:
                 response="Approval required before continuing.",
             )
 
-    from nanobot.agent.runner import AgentRunner
+    from kohaku.agent.runner import AgentRunner
 
     result = await AgentRunner().run(make_run_spec(
         provider,
@@ -81,7 +81,7 @@ async def test_runner_provider_error_does_not_emit_stream_end() -> None:
         async def on_stream_end(self, context: AgentHookContext, *, resuming: bool) -> None:
             endings.append(resuming)
 
-    from nanobot.agent.runner import AgentRunner
+    from kohaku.agent.runner import AgentRunner
 
     with pytest.raises(RuntimeError, match="provider down"):
         await AgentRunner().run(make_run_spec(
@@ -118,7 +118,7 @@ async def test_runner_cancellation_reraises_without_stream_end() -> None:
         async def on_stream_end(self, context: AgentHookContext, *, resuming: bool) -> None:
             endings.append(resuming)
 
-    from nanobot.agent.runner import AgentRunner
+    from kohaku.agent.runner import AgentRunner
 
     task = asyncio.create_task(AgentRunner().run(make_run_spec(
         provider,
@@ -157,7 +157,7 @@ async def test_runner_streaming_max_iterations_closes_only_intermediate_segment(
         async def on_stream_end(self, context: AgentHookContext, *, resuming: bool) -> None:
             endings.append(resuming)
 
-    from nanobot.agent.runner import AgentRunner
+    from kohaku.agent.runner import AgentRunner
 
     result = await AgentRunner().run(make_run_spec(
         provider,
@@ -175,7 +175,7 @@ async def test_runner_streaming_max_iterations_closes_only_intermediate_segment(
 
 @pytest.mark.asyncio
 async def test_runner_stream_filters_think_prefix_before_visible_delta() -> None:
-    from nanobot.agent.runner import AgentRunner
+    from kohaku.agent.runner import AgentRunner
 
     provider = MagicMock()
 
@@ -210,7 +210,7 @@ async def test_runner_stream_filters_think_prefix_before_visible_delta() -> None
 
 @pytest.mark.asyncio
 async def test_runner_does_not_repeat_streamed_tool_preamble_in_progress() -> None:
-    from nanobot.agent.runner import AgentRunner
+    from kohaku.agent.runner import AgentRunner
 
     provider = MagicMock()
     call_count = 0

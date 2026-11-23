@@ -5,9 +5,9 @@ from unittest.mock import patch
 
 import pytest
 
-from nanobot.agent.tools.base import Tool
-from nanobot.agent.tools.registry import ToolRegistry, is_tool_error_result
-from nanobot.agent.tools.shell import _WORKSPACE_BOUNDARY_NOTE, ExecTool
+from kohaku.agent.tools.base import Tool
+from kohaku.agent.tools.registry import ToolRegistry, is_tool_error_result
+from kohaku.agent.tools.shell import _WORKSPACE_BOUNDARY_NOTE, ExecTool
 
 
 class SampleTool(Tool):
@@ -475,8 +475,8 @@ async def test_exec_git_push_sets_noninteractive_env(monkeypatch) -> None:
 
     monkeypatch.delenv("GIT_TERMINAL_PROMPT", raising=False)
     monkeypatch.delenv("GIT_SSH_COMMAND", raising=False)
-    monkeypatch.setenv("NANOBOT_SECRET_TOKEN", "must-not-leak")
-    monkeypatch.setattr("nanobot.agent.tools.shell._reap_pid", lambda _pid: None)
+    monkeypatch.setenv("KOHAKU_SECRET_TOKEN", "must-not-leak")
+    monkeypatch.setattr("kohaku.agent.tools.shell._reap_pid", lambda _pid: None)
 
     with patch.object(ExecTool, "_spawn", side_effect=_fake_spawn):
         tool = ExecTool()
@@ -486,7 +486,7 @@ async def test_exec_git_push_sets_noninteractive_env(monkeypatch) -> None:
     assert captured_env["GIT_TERMINAL_PROMPT"] == "0"
     assert "BatchMode=yes" in captured_env["GIT_SSH_COMMAND"]
     assert "ConnectTimeout=10" in captured_env["GIT_SSH_COMMAND"]
-    assert "NANOBOT_SECRET_TOKEN" not in captured_env
+    assert "KOHAKU_SECRET_TOKEN" not in captured_env
 
 
 async def test_exec_git_push_keeps_existing_ssh_command(monkeypatch) -> None:
@@ -513,7 +513,7 @@ async def test_exec_git_push_keeps_existing_ssh_command(monkeypatch) -> None:
 
     monkeypatch.setenv("GIT_SSH_COMMAND", "ssh -i /tmp/bot-key")
     monkeypatch.delenv("GIT_TERMINAL_PROMPT", raising=False)
-    monkeypatch.setattr("nanobot.agent.tools.shell._reap_pid", lambda _pid: None)
+    monkeypatch.setattr("kohaku.agent.tools.shell._reap_pid", lambda _pid: None)
 
     with patch.object(ExecTool, "_spawn", side_effect=_fake_spawn):
         tool = ExecTool()

@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from nanobot.remote.management import RemoteAccessManager
-from nanobot.remote.owner import RemoteAccessOwner
+from kohaku.remote.management import RemoteAccessManager
+from kohaku.remote.owner import RemoteAccessOwner
 
 
 def test_local_manager_pair_devices_and_toggle(tmp_path: Path) -> None:

@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from nanobot.crawler.worker import _VIEWPORT_HTML_JS, Crawl4AIWorker, WorkerRequestError
+from kohaku.crawler.worker import _VIEWPORT_HTML_JS, Crawl4AIWorker, WorkerRequestError
 
 _VIEWPORT = '<section data-crawl4ai-viewport="true">visible</section>'
 
@@ -240,7 +240,7 @@ def test_startup_probe_missing_dependency_keeps_original_error_and_cause(tmp_pat
     with pytest.raises(RuntimeError) as caught:
         worker._validate_browser_setup()
 
-    assert str(caught.value) == "crawl4ai is not installed; install nanobot-ai[crawler-worker]"
+    assert str(caught.value) == "crawl4ai is not installed; install Kohaku with the crawler-worker extra"
     assert isinstance(caught.value.__cause__, ImportError)
     assert worker._crawler is None
     assert worker.sessions == {}
@@ -252,7 +252,7 @@ def test_startup_probe_missing_dependency_keeps_original_error_and_cause(tmp_pat
 async def test_serve_signal_paths_preserve_scheduling_and_cleanup(
     tmp_path, monkeypatch, fallback, transport, signal_name,
 ):
-    import nanobot.crawler.worker as worker_module
+    import kohaku.crawler.worker as worker_module
 
     worker = Crawl4AIWorker(
         str(tmp_path / "unused.sock"), {"example.com"},

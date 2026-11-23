@@ -7,22 +7,22 @@ def _read(path: str) -> str:
     return (ROOT / path).read_text(encoding="utf-8")
 
 
-def test_nanobot_systemd_service_uses_context_repo_and_secrets() -> None:
-    service = _read("deploy/systemd/nanobot-gateway.service")
+def test_kohaku_systemd_service_uses_context_repo_and_secrets() -> None:
+    service = _read("deploy/systemd/kohaku-gateway.service")
 
     assert "User=marketing-agent" in service
     assert "WorkingDirectory=/opt/marketing-agent/client-marketing-assistance" in service
-    assert "EnvironmentFile=/opt/marketing-agent/secrets/nanobot.env" in service
-    assert "--config /opt/marketing-agent/.nanobot/config.json" in service
-    assert "--log-file /opt/marketing-agent/logs/nanobot-gateway.log" in service
+    assert "EnvironmentFile=/opt/marketing-agent/secrets/kohaku.env" in service
+    assert "--config /opt/marketing-agent/.kohaku/config.json" in service
+    assert "--log-file /opt/marketing-agent/logs/kohaku-gateway.log" in service
     assert (
-        "ReadWritePaths=/opt/marketing-agent/.nanobot /opt/marketing-agent/client-marketing-assistance /opt/marketing-agent/logs /opt/marketing-agent/.cache /opt/marketing-agent/.codex /opt/marketing-agent/.local"
+        "ReadWritePaths=/opt/marketing-agent/.kohaku /opt/marketing-agent/client-marketing-assistance /opt/marketing-agent/logs /opt/marketing-agent/.cache /opt/marketing-agent/.codex /opt/marketing-agent/.local"
         in service
     )
 
 
-def test_nanobot_config_example_attaches_marketing_context_repo() -> None:
-    config = _read("deploy/nanobot-config.example.json")
+def test_kohaku_config_example_attaches_marketing_context_repo() -> None:
+    config = _read("deploy/kohaku-config.example.json")
 
     assert '"/opt/marketing-agent/client-marketing-assistance"' in config
     assert '"contextRepos"' in config
@@ -35,8 +35,8 @@ def test_nanobot_config_example_attaches_marketing_context_repo() -> None:
     assert '"/connection_status"' in config
 
 
-def test_nanobot_deploy_script_supports_checkout_as_install_directory() -> None:
-    script = _read("deploy/scripts/deploy_nanobot_gateway.sh")
+def test_kohaku_deploy_script_supports_checkout_as_install_directory() -> None:
+    script = _read("deploy/scripts/deploy_kohaku_gateway.sh")
 
     assert 'SOURCE_REALPATH="$(realpath -m "${SOURCE_DIR}")"' in script
     assert 'INSTALL_REALPATH="$(realpath -m "${INSTALL_DIR}")"' in script
@@ -47,16 +47,16 @@ def test_nanobot_deploy_script_supports_checkout_as_install_directory() -> None:
     assert 'chmod 0640 "${CONFIG_FILE}" "${ENV_FILE}"' in script
 
 
-def test_nanobot_update_script_skips_unchanged_running_service() -> None:
-    script = _read("deploy/scripts/update_nanobot_gateway.sh")
+def test_kohaku_update_script_skips_unchanged_running_service() -> None:
+    script = _read("deploy/scripts/update_kohaku_gateway.sh")
 
-    assert 'NANOBOT_BRANCH="${MARKETING_AGENT_NANOBOT_BRANCH:-main}"' in script
-    assert 'before_head="$(run_as_deploy_user git -C "${NANOBOT_DIR}" rev-parse HEAD)"' in script
-    assert 'after_head="$(run_as_deploy_user git -C "${NANOBOT_DIR}" rev-parse HEAD)"' in script
-    assert "systemctl is-active --quiet nanobot-gateway" in script
-    assert "skipping Nanobot redeploy" in script
+    assert 'KOHAKU_BRANCH="${MARKETING_AGENT_KOHAKU_BRANCH:-main}"' in script
+    assert 'before_head="$(run_as_deploy_user git -C "${KOHAKU_DIR}" rev-parse HEAD)"' in script
+    assert 'after_head="$(run_as_deploy_user git -C "${KOHAKU_DIR}" rev-parse HEAD)"' in script
+    assert "systemctl is-active --quiet kohaku-gateway" in script
+    assert "skipping Kohaku redeploy" in script
     assert 'switch --detach "${before_head}"' in script
-    assert "Rolling back Nanobot" in script
+    assert "Rolling back Kohaku" in script
     assert "Rollback restored" in script
     assert "ROLLBACK FAILED" in script
 
@@ -75,9 +75,9 @@ def test_crawl4ai_worker_is_isolated_and_memory_bounded() -> None:
     assert "CRAWL4AI_ALLOWED_HOSTS=" in env_example
 
 
-def test_nanobot_example_keeps_crawler_disabled_until_worker_is_ready() -> None:
-    config = _read("deploy/nanobot-config.example.json")
-    gateway_env = _read("deploy/nanobot.env.example")
+def test_kohaku_example_keeps_crawler_disabled_until_worker_is_ready() -> None:
+    config = _read("deploy/kohaku-config.example.json")
+    gateway_env = _read("deploy/kohaku.env.example")
 
     assert '"crawler"' in config
     assert '"maxToolIterations": 20' in config
@@ -100,5 +100,5 @@ def test_local_marketing_launcher_uses_dedicated_authenticated_profile() -> None
     assert "tiktok.com" in launcher
     assert "Microsoft\\Edge\\Application\\msedge.exe" in setup
     assert "Start-Process -FilePath $chrome" in setup
-    assert ".nanobot-profile-ready" in setup
+    assert ".kohaku-profile-ready" in setup
     assert "close every window" in setup

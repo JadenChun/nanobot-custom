@@ -5,21 +5,21 @@ from datetime import datetime, timezone
 
 import pytest
 
-from nanobot.agent.tools.artifact import ReadArtifactTool
-from nanobot.agent.tools.execution import KnownToolResult
-from nanobot.agent.tools.registry import ToolRegistry
-from nanobot.session.artifact import ArtifactValidationError
-from nanobot.session.artifact_projection import ArtifactProjector
-from nanobot.session.artifact_reader import ArtifactReader
-from nanobot.session.artifact_store import ArtifactStorageError, PrivateArtifactStore
-from nanobot.session.checkpoint_dependencies import ConsumedSummaryChunk, SummaryDependencyProof
-from nanobot.session.execution_owner import ExecutionOwnershipError
-from nanobot.session.manager import SessionWriteConflict
-from nanobot.session.source import SourceValidationError, prefix_digest
-from nanobot.session.source_compaction import SourceCompactionCandidate
-from nanobot.session.source_projection import source_nodes
-from nanobot.session.source_request import SourceTranscript
-from nanobot.session.source_store import SourceSessionStore
+from kohaku.agent.tools.artifact import ReadArtifactTool
+from kohaku.agent.tools.execution import KnownToolResult
+from kohaku.agent.tools.registry import ToolRegistry
+from kohaku.session.artifact import ArtifactValidationError
+from kohaku.session.artifact_projection import ArtifactProjector
+from kohaku.session.artifact_reader import ArtifactReader
+from kohaku.session.artifact_store import ArtifactStorageError, PrivateArtifactStore
+from kohaku.session.checkpoint_dependencies import ConsumedSummaryChunk, SummaryDependencyProof
+from kohaku.session.execution_owner import ExecutionOwnershipError
+from kohaku.session.manager import SessionWriteConflict
+from kohaku.session.source import SourceValidationError, prefix_digest
+from kohaku.session.source_compaction import SourceCompactionCandidate
+from kohaku.session.source_projection import source_nodes
+from kohaku.session.source_request import SourceTranscript
+from kohaku.session.source_store import SourceSessionStore
 from tests.session.test_artifact_reader import setup_read
 
 

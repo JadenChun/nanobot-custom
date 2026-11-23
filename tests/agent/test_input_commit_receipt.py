@@ -10,24 +10,24 @@ import pytest
 from websockets.datastructures import Headers
 from websockets.http11 import Request
 
-from nanobot.agent.loop import AgentLoop, TurnContext, TurnKind
-from nanobot.agent.tools.registry import ToolRegistry
-from nanobot.agent.turn import DeliveryTarget, TurnRequest
-from nanobot.agent.turn_delivery import TurnDeliveryFactory
-from nanobot.bus.events import InboundMessage, OutboundMessage
-from nanobot.bus.outbound_events import MessageAdmittedEvent
-from nanobot.bus.queue import MessageBus
-from nanobot.bus.runtime_events import UserInputCommitted
-from nanobot.channels.websocket.runtime import WebSocketChannel
-from nanobot.channels.websocket.tests.test_websocket_channel import (
+from kohaku.agent.loop import AgentLoop, TurnContext, TurnKind
+from kohaku.agent.tools.registry import ToolRegistry
+from kohaku.agent.turn import DeliveryTarget, TurnRequest
+from kohaku.agent.turn_delivery import TurnDeliveryFactory
+from kohaku.bus.events import InboundMessage, OutboundMessage
+from kohaku.bus.outbound_events import MessageAdmittedEvent
+from kohaku.bus.queue import MessageBus
+from kohaku.bus.runtime_events import UserInputCommitted
+from kohaku.channels.websocket.runtime import WebSocketChannel
+from kohaku.channels.websocket.tests.test_websocket_channel import (
     _authenticate_local_webui_connection,
     _basic_handler,
     _sent_ws_payloads,
 )
-from nanobot.command.builtin import USER_SHELL_COMMAND
-from nanobot.providers.base import LLMResponse
-from nanobot.session.manager import SessionManager, SessionPolicy
-from nanobot.session.webui_turns import WebuiTurnCoordinator
+from kohaku.command.builtin import USER_SHELL_COMMAND
+from kohaku.providers.base import LLMResponse
+from kohaku.session.manager import SessionManager, SessionPolicy
+from kohaku.session.webui_turns import WebuiTurnCoordinator
 from tests.agent import test_migration_engine as engine_fixtures
 from tests.agent.test_migration_engine import ScriptedProvider
 from tests.agent.test_migration_source_engine import upgrade
@@ -39,7 +39,7 @@ engine_config = engine_fixtures.engine_config
 async def test_interrupted_exec_refuses_the_next_browser_send_with_its_turn_id(
     engine_config, monkeypatch,
 ):
-    monkeypatch.setattr("nanobot.agent.tools.sandbox.managed_bwrap_available", lambda: False)
+    monkeypatch.setattr("kohaku.agent.tools.sandbox.managed_bwrap_available", lambda: False)
     chat_id = "chat-recovery"
     key = f"websocket:{chat_id}"
     provider = ScriptedProvider([])

@@ -9,10 +9,10 @@ from typing import Any
 
 import pytest
 
-from nanobot.agent import memory_recovery_storage as storage
-from nanobot.agent.memory import MemoryStore
-from nanobot.agent.memory_recovery import MemoryReceiptRecoveryRequiredError
-from nanobot.agent.memory_recovery_storage import WorkspaceMemoryAuthority
+from kohaku.agent import memory_recovery_storage as storage
+from kohaku.agent.memory import MemoryStore
+from kohaku.agent.memory_recovery import MemoryReceiptRecoveryRequiredError
+from kohaku.agent.memory_recovery_storage import WorkspaceMemoryAuthority
 
 
 def _posix_gate_supported() -> bool:
@@ -52,8 +52,8 @@ def _memory_store_worker(
     continue_gate: Any,
     result: Any,
 ) -> None:
-    from nanobot.agent import memory_recovery_startup_admission as admission
-    from nanobot.agent.memory_recovery_storage import open_workspace_memory_lock
+    from kohaku.agent import memory_recovery_startup_admission as admission
+    from kohaku.agent.memory_recovery_storage import open_workspace_memory_lock
 
     def observed_gate(path: Path | str) -> object:
         gate_requested.set()
@@ -76,7 +76,7 @@ def _paused_migration_worker(
     continue_migration: Any,
     result: Any,
 ) -> None:
-    from nanobot.agent.memory import MemoryStore
+    from kohaku.agent.memory import MemoryStore
 
     migrate = MemoryStore._maybe_migrate_legacy_history
 
@@ -101,7 +101,7 @@ def _authority_worker(
     authority_entered: Any,
     result: Any,
 ) -> None:
-    from nanobot.agent.memory_recovery_storage import WorkspaceMemoryAuthority
+    from kohaku.agent.memory_recovery_storage import WorkspaceMemoryAuthority
 
     authority = WorkspaceMemoryAuthority(Path(workspace))
     authority_attempting.set()
@@ -258,7 +258,7 @@ def test_memory_gate_is_released_when_git_store_construction_fails(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from nanobot.agent import memory
+    from kohaku.agent import memory
 
     def fail_git_store(*args: object, **kwargs: object) -> object:
         raise RuntimeError("injected GitStore failure")
@@ -281,7 +281,7 @@ def test_windows_noop_gate_preserves_both_receipt_checks(
 ) -> None:
     from types import SimpleNamespace
 
-    from nanobot.agent import memory_recovery_startup_admission as admission
+    from kohaku.agent import memory_recovery_startup_admission as admission
 
     monkeypatch.setattr(admission, "os", SimpleNamespace(name="nt"))
     memory_dir = tmp_path / "memory"
@@ -323,7 +323,7 @@ def test_unavailable_posix_gate_is_not_silently_ignored(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from nanobot.agent import memory_recovery_startup_admission as admission
+    from kohaku.agent import memory_recovery_startup_admission as admission
 
     def unavailable_gate(path: Path | str) -> object:
         raise storage.MemoryStorageUnavailableError()

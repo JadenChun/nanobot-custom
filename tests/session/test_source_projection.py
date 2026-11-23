@@ -4,9 +4,9 @@ from copy import deepcopy
 
 import pytest
 
-from nanobot.session.source import SourceValidationError, new_source_event
-from nanobot.session.source_projection import eligible_boundaries, project_source, source_nodes
-from nanobot.session.source_store import SourceSnapshot, SourceState
+from kohaku.session.source import SourceValidationError, new_source_event
+from kohaku.session.source_projection import eligible_boundaries, project_source, source_nodes
+from kohaku.session.source_store import SourceSnapshot, SourceState
 
 
 def event(role, content, *, stream='root', parent=None, **extra):
@@ -124,8 +124,8 @@ def test_invalid_execution_evidence_is_not_treated_as_an_open_prefix():
 def test_checkpoint_projection_survives_real_store_reload(tmp_path):
     from datetime import datetime, timezone
 
-    from nanobot.session.manager import JsonlSessionStore, Session
-    from nanobot.session.source import prefix_digest
+    from kohaku.session.manager import JsonlSessionStore, Session
+    from kohaku.session.source import prefix_digest
 
     backend = JsonlSessionStore(tmp_path / 'workspace', sessions_root=tmp_path / 'private')
     session = Session('test:projection')

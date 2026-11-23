@@ -269,10 +269,10 @@ describe("Settings channels", () => {
     renderSettingsView({ initialSection: "channels" });
 
     expect(await screen.findByRole("button", { name: "View Feishu settings" })).toBeInTheDocument();
-    expect(screen.queryByText("nanobot channels login feishu")).not.toBeInTheDocument();
+    expect(screen.queryByText("kohaku channels login feishu")).not.toBeInTheDocument();
     fireEvent.click(await screen.findByRole(
       "button",
-      { name: "nanobot" },
+      { name: "Kohaku" },
       { timeout: 3_000 },
     ));
     fireEvent.click(screen.getByRole("button", { name: "Connect" }));
@@ -330,7 +330,7 @@ describe("Settings channels", () => {
     expect(await screen.findByRole("button", { name: "View Feishu settings" })).toBeInTheDocument();
     fireEvent.click(await screen.findByRole(
       "button",
-      { name: "nanobot" },
+      { name: "Kohaku" },
       { timeout: 3_000 },
     ));
     fireEvent.click(screen.getByRole("button", { name: "Connect" }));
@@ -386,7 +386,7 @@ describe("Settings channels", () => {
             configured: true,
             instances: [{
               id: "default",
-              name: "nanobot",
+              name: "Kohaku",
               enabled: true,
               running: true,
               runtime_status: "running",
@@ -416,8 +416,8 @@ describe("Settings channels", () => {
 
     renderSettingsView({ initialSection: "channels" });
 
-    fireEvent.click(await screen.findByRole("button", { name: "nanobot" }));
-    fireEvent.click(await screen.findByRole("switch", { name: "nanobot assistant" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Kohaku" }));
+    fireEvent.click(await screen.findByRole("switch", { name: "Kohaku assistant" }));
 
     await waitFor(() =>
       expect(requestMutationMock).toHaveBeenCalledWith(
@@ -429,7 +429,7 @@ describe("Settings channels", () => {
     expect(requestMutationMock.mock.calls.some(([action]) => (
       action === "settings.channel.connect.start"
     ))).toBe(false);
-    expect(screen.getByRole("switch", { name: "nanobot assistant" })).toHaveAttribute(
+    expect(screen.getByRole("switch", { name: "Kohaku assistant" })).toHaveAttribute(
       "aria-checked",
       "true",
     );
@@ -461,7 +461,7 @@ describe("Settings channels", () => {
               instances: [
                 {
                   id: "default",
-                  name: "nanobot",
+                  name: "Kohaku",
                   display_name: "Support Bot",
                   avatar_url: "https://example.com/support.png",
                   enabled: true,
@@ -634,7 +634,7 @@ describe("Settings channels", () => {
         requires_restart: true,
         instances: [{
           id: "default",
-          name: "nanobot",
+          name: "Kohaku",
           display_name: "Support Bot",
           avatar_url: "https://example.com/support.png",
           enabled: true,
@@ -932,7 +932,7 @@ describe("Settings channels", () => {
     expect(await screen.findByRole("button", { name: "View Discord settings" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Open Discord setup" })).toHaveAttribute(
       "href",
-      "https://nanobot.wiki/docs/0.2.2/getting-started/chat-apps#discord",
+      "https://github.com/JadenChun/nanobot-custom/blob/staging/docs/chat-apps.md#discord",
     );
     expect(screen.getByRole("switch", { name: "Discord channel" })).toBeDisabled();
     fireEvent.change(screen.getByPlaceholderText("Discord bot token"), {
@@ -1098,7 +1098,7 @@ describe("Settings channels", () => {
     expect(await screen.findByRole("button", { name: "View Telegram settings" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Open Telegram setup" })).toHaveAttribute(
       "href",
-      "https://nanobot.wiki/docs/0.2.2/getting-started/chat-apps#telegram",
+      "https://github.com/JadenChun/nanobot-custom/blob/staging/docs/chat-apps.md#telegram",
     );
   });
 
@@ -1168,7 +1168,7 @@ describe("Settings channels", () => {
       if (displayName === "Feishu") {
         fireEvent.click(await screen.findByRole(
           "button",
-          { name: "nanobot" },
+          { name: "Kohaku" },
           { timeout: 3_000 },
         ));
       }
@@ -1221,7 +1221,7 @@ describe("Settings channels", () => {
     expect(screen.queryByPlaceholderText("true")).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "View Feishu settings" }));
-    fireEvent.click(screen.getByRole("button", { name: "nanobot" }));
+    fireEvent.click(screen.getByRole("button", { name: "Kohaku" }));
     fireEvent.click(screen.getByText("Advanced"));
     const region = screen.getByRole("radiogroup", { name: "Region" });
     expect(within(region).getByRole("radio", { name: "Feishu" })).toHaveAttribute(

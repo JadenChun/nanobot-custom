@@ -14,7 +14,7 @@ boundary applies as soon as a chat is in Sandbox, before any folder has been
 saved. A working Linux Bubblewrap installation is required for Sandbox commands;
 failures identify that requirement.
 
-Private Nanobot authority, sessions and runtime credentials remain protected by
+Private Kohaku authority, sessions and runtime credentials remain protected by
 file tools and hidden inside Sandbox commands. Host process memory/environment
 trees are also unavailable to Sandbox file tools; confined commands inspect
 their own PID namespace. Configured context/target

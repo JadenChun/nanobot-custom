@@ -7,17 +7,17 @@ from dataclasses import replace
 
 import pytest
 
-from nanobot.agent.tools.base import Tool, ToolResult
-from nanobot.agent.tools.filesystem import ReadFileTool
-from nanobot.agent.tools.producer_adapters import accepted_producer_receipt
-from nanobot.agent.tools.read_provenance import (
+from kohaku.agent.tools.base import Tool, ToolResult
+from kohaku.agent.tools.filesystem import ReadFileTool
+from kohaku.agent.tools.producer_adapters import accepted_producer_receipt
+from kohaku.agent.tools.read_provenance import (
     FilesystemReadProducer,
     FilesystemReadReceipt,
     parse_read_receipt,
 )
-from nanobot.agent.tools.registry import ToolRegistry
-from nanobot.agent.turn import ToolOutcome
-from nanobot.session.artifact import FilesystemArtifactOrigin
+from kohaku.agent.tools.registry import ToolRegistry
+from kohaku.agent.turn import ToolOutcome
+from kohaku.session.artifact import FilesystemArtifactOrigin
 
 
 def _receipt(content: str, *, producer: FilesystemReadProducer = "builtin_read_file_text") -> FilesystemReadReceipt:

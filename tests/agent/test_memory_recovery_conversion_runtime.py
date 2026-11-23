@@ -8,11 +8,11 @@ from pathlib import Path
 
 import pytest
 
-from nanobot.agent import memory_recovery_conversion_runtime as runtime
-from nanobot.agent import memory_recovery_marker_stage as marker_stage
-from nanobot.agent import memory_recovery_storage as storage
-from nanobot.agent.memory_recovery_conversion import capture_conversion_payload
-from nanobot.agent.memory_recovery_manifest import MemoryRecoveryManifest
+from kohaku.agent import memory_recovery_conversion_runtime as runtime
+from kohaku.agent import memory_recovery_marker_stage as marker_stage
+from kohaku.agent import memory_recovery_storage as storage
+from kohaku.agent.memory_recovery_conversion import capture_conversion_payload
+from kohaku.agent.memory_recovery_manifest import MemoryRecoveryManifest
 
 _WORKSPACE_ID = "a" * 32
 _MARKER = "receipt-marker"
@@ -200,8 +200,8 @@ def test_prepared_replay_rejects_copied_stat_identity(tmp_path: Path) -> None:
 def test_v1_evidence_quarantines_without_marker_mutation(tmp_path: Path) -> None:
     memory, _ = _workspace(tmp_path)
     # Derive the v1 identity via the same detached receipt capture, without modifying history.
-    from nanobot.agent import memory_recovery as receipt_codec
-    from nanobot.agent import memory_recovery_transaction as transaction
+    from kohaku.agent import memory_recovery as receipt_codec
+    from kohaku.agent import memory_recovery_transaction as transaction
 
     with storage.open_workspace_memory(tmp_path) as authority, authority.operation() as operation:
         raw = authority.snapshot_target(".consolidation.pending.json").content
@@ -307,8 +307,8 @@ def test_later_conversion_phase_quarantines_without_target_mutation(tmp_path: Pa
 
 def test_later_transaction_phase_quarantines_before_marker(tmp_path: Path) -> None:
     memory, raw = _workspace(tmp_path)
-    from nanobot.agent import memory_recovery as receipt_codec
-    from nanobot.agent import memory_recovery_transaction as transaction
+    from kohaku.agent import memory_recovery as receipt_codec
+    from kohaku.agent import memory_recovery_transaction as transaction
 
     with storage.open_workspace_memory(tmp_path) as authority, authority.operation() as operation:
         receipt = receipt_codec._validate_payload(receipt_codec._decode(raw), raw)

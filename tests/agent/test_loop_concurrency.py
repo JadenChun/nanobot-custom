@@ -7,9 +7,9 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from nanobot.agent.loop import AgentLoop
-from nanobot.agent.runner import AgentRunResult
-from nanobot.agent.turn import TurnRequest
+from kohaku.agent.loop import AgentLoop
+from kohaku.agent.runner import AgentRunResult
+from kohaku.agent.turn import TurnRequest
 from tests.agent.p6_admitted_fixtures import AgentInputs
 from tests.agent.p6_admitted_fixtures import admitted_async as admitted_async
 from tests.agent.p6_admitted_fixtures import admitted_sync as admitted_sync
@@ -51,9 +51,9 @@ def test_retired_concurrency_environment_does_not_block_loop_construction(
     value: str | None,
 ) -> None:
     if value is None:
-        monkeypatch.delenv("NANOBOT_MAX_CONCURRENT_REQUESTS", raising=False)
+        monkeypatch.delenv("KOHAKU_MAX_CONCURRENT_REQUESTS", raising=False)
     else:
-        monkeypatch.setenv("NANOBOT_MAX_CONCURRENT_REQUESTS", value)
+        monkeypatch.setenv("KOHAKU_MAX_CONCURRENT_REQUESTS", value)
 
     loop = admitted_sync(tmp_path, _make_loop)
 
@@ -66,7 +66,7 @@ async def test_retired_concurrency_environment_does_not_serialize_unrelated_sess
     tmp_path: Path,
     value: str,
 ) -> None:
-    monkeypatch.setenv("NANOBOT_MAX_CONCURRENT_REQUESTS", value)
+    monkeypatch.setenv("KOHAKU_MAX_CONCURRENT_REQUESTS", value)
     loop = host(tmp_path)
     entered, release = asyncio.Event(), asyncio.Event()
     calls: list[str] = []

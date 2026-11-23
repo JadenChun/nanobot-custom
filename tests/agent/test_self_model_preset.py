@@ -3,13 +3,13 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from nanobot.agent.loop import AgentLoop
-from nanobot.agent.tools.context import RequestContext, request_context
-from nanobot.agent.tools.runtime_control import AgentRuntimeControl
-from nanobot.agent.tools.self import MyTool
-from nanobot.config.schema import ModelPresetConfig
-from nanobot.providers.factory import ProviderSnapshot
-from nanobot.session.model_selection import model_preset_from_metadata
+from kohaku.agent.loop import AgentLoop
+from kohaku.agent.tools.context import RequestContext, request_context
+from kohaku.agent.tools.runtime_control import AgentRuntimeControl
+from kohaku.agent.tools.self import MyTool
+from kohaku.config.schema import ModelPresetConfig
+from kohaku.providers.factory import ProviderSnapshot
+from kohaku.session.model_selection import model_preset_from_metadata
 from tests.agent.p6_admitted_fixtures import (
     AgentInputs,
 )
@@ -419,12 +419,12 @@ def test_self_tool_set_model_clears_active_preset(admitted_sync, tmp_path) -> No
 def test_from_config_injects_default_preset(admitted_sync, tmp_path) -> None:
     from unittest.mock import patch
 
-    from nanobot.config.schema import Config
+    from kohaku.config.schema import Config
     config = Config.model_validate({
         "agents": {"defaults": {"model": "openai/gpt-4.1", "workspace": str(tmp_path)}},
     })
     fake_provider = _provider("openai/gpt-4.1")
-    with patch("nanobot.providers.factory.make_provider", return_value=fake_provider):
+    with patch("kohaku.providers.factory.make_provider", return_value=fake_provider):
         def build(inputs: AgentInputs) -> AgentLoop:
             return AgentLoop.from_config(
                 inputs.config, inputs.bus, tool_registry=inputs.tools,
@@ -442,13 +442,13 @@ def test_from_config_injects_default_preset(admitted_sync, tmp_path) -> None:
 def test_from_config_static_preset_loader_does_not_enable_hot_reload(admitted_sync, tmp_path) -> None:
     from unittest.mock import patch
 
-    from nanobot.config.schema import Config
+    from kohaku.config.schema import Config
     config = Config.model_validate({
         "agents": {"defaults": {"model": "openai/gpt-4.1", "workspace": str(tmp_path)}},
         "model_presets": {"fast": {"model": "openai/gpt-4.1-mini"}},
     })
     fake_provider = _provider("openai/gpt-4.1")
-    with patch("nanobot.providers.factory.make_provider", return_value=fake_provider):
+    with patch("kohaku.providers.factory.make_provider", return_value=fake_provider):
         def build(inputs: AgentInputs) -> AgentLoop:
             return AgentLoop.from_config(
                 inputs.config, inputs.bus, tool_registry=inputs.tools,
@@ -467,9 +467,9 @@ def test_admitted_fixture_failed_acquire_releases_writer_and_restores_patches(tm
     import asyncio
     from pathlib import Path
 
-    from nanobot.config import loader
-    from nanobot.migration_guard import require_runtime_ready
-    from nanobot.runtime_composition import RuntimeState
+    from kohaku.config import loader
+    from kohaku.migration_guard import require_runtime_ready
+    from kohaku.runtime_composition import RuntimeState
     from tests.agent.p6_admitted_fixtures import AdmittedGraphs
 
     original_guard = require_runtime_ready
@@ -497,14 +497,14 @@ def test_admitted_fixture_failed_acquire_releases_writer_and_restores_patches(tm
         assert owner_loop.is_closed()
     assert loader._current_config_path == original_config_path
     assert Path.home() == original_home
-    from nanobot import migration_guard
+    from kohaku import migration_guard
     assert migration_guard.require_runtime_ready is original_guard
 
 
 def test_admitted_fixture_sync_acquire_close_retains_owner_loop(admitted_sync, tmp_path) -> None:
     import asyncio
 
-    from nanobot.runtime_composition import RuntimeState
+    from kohaku.runtime_composition import RuntimeState
 
     loop = _make_loop(admitted_sync, tmp_path, presets={"fast": ModelPresetConfig(model="fast-model")})
     graph = admitted_sync.graphs.graphs[0][0]

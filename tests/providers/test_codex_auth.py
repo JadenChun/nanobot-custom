@@ -6,8 +6,8 @@ from pathlib import Path
 
 import pytest
 
-from nanobot.providers import codex_auth
-from nanobot.providers.codex_auth import (
+from kohaku.providers import codex_auth
+from kohaku.providers.codex_auth import (
     _load_official_codex_token,
     _nanobot_token_path,
     _official_codex_auth_path,
@@ -59,7 +59,7 @@ def test_load_official_codex_token_from_tokens_block(tmp_path: Path, monkeypatch
 def test_get_token_imports_official_codex_auth(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.delenv("CODEX_HOME", raising=False)
-    from nanobot.config import loader
+    from kohaku.config import loader
 
     # Only the default instance owns the shared legacy location.
     loader.set_config_path(tmp_path / ".nanobot" / "config.json")
@@ -107,9 +107,9 @@ def test_authority_path_rejects_final_symlink_without_touching_target(
     before = target.read_bytes()
     if use_override:
         link = tmp_path / "codex.json"
-        monkeypatch.setenv("NANOBOT_CODEX_AUTH_PATH", str(link))
+        monkeypatch.setenv("KOHAKU_CODEX_AUTH_PATH", str(link))
     else:
-        monkeypatch.delenv("NANOBOT_CODEX_AUTH_PATH", raising=False)
+        monkeypatch.delenv("KOHAKU_CODEX_AUTH_PATH", raising=False)
         link = codex_auth._nanobot_token_path()
     link.parent.mkdir(parents=True, exist_ok=True)
     link.symlink_to(target)
@@ -140,7 +140,7 @@ def test_refresh_token_keeps_existing_refresh_when_endpoint_omits_it(
                 )
             }
 
-    monkeypatch.setattr("nanobot.providers.codex_auth.httpx.post", lambda *args, **kwargs: _Response())
+    monkeypatch.setattr("kohaku.providers.codex_auth.httpx.post", lambda *args, **kwargs: _Response())
 
     token = _refresh_token("refresh_existing", "acct_refresh")
 
@@ -168,8 +168,8 @@ def test_get_codex_usage_uses_oauth_account_headers(monkeypatch: pytest.MonkeyPa
         captured.update(kwargs)
         return _Response()
 
-    monkeypatch.setattr("nanobot.providers.codex_auth.get_token", lambda: _Token())
-    monkeypatch.setattr("nanobot.providers.codex_auth.httpx.get", _get)
+    monkeypatch.setattr("kohaku.providers.codex_auth.get_token", lambda: _Token())
+    monkeypatch.setattr("kohaku.providers.codex_auth.httpx.get", _get)
 
     payload = get_codex_usage()
 
@@ -184,7 +184,7 @@ def test_get_codex_usage_uses_oauth_account_headers(monkeypatch: pytest.MonkeyPa
 
 
 def test_format_codex_usage_renders_windows_and_reset_time(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("nanobot.providers.codex_auth.time.time", lambda: 1_700_000_000)
+    monkeypatch.setattr("kohaku.providers.codex_auth.time.time", lambda: 1_700_000_000)
 
     content = format_codex_usage(
         {

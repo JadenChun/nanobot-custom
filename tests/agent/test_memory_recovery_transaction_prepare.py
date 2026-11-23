@@ -10,9 +10,9 @@ from typing import Any
 
 import pytest
 
-from nanobot.agent import memory_recovery_transaction_prepare as prepare
-from nanobot.agent.memory_recovery_manifest import MemoryRecoveryManifest
-from nanobot.session.manager import JsonlSessionStore
+from kohaku.agent import memory_recovery_transaction_prepare as prepare
+from kohaku.agent.memory_recovery_manifest import MemoryRecoveryManifest
+from kohaku.session.manager import JsonlSessionStore
 
 _WORKSPACE_ID = "a" * 32
 _SESSION_KEY = "telegram:receipt-prepare"
@@ -82,9 +82,9 @@ def _workspace(
     reference_only: bool | None = None,
     jsonl: bytes | None = None,
 ):
-    from nanobot.agent import memory_recovery_conversion_apply as apply_conversion
-    from nanobot.agent import memory_recovery_conversion_finalize as finalize_conversion
-    from nanobot.agent import memory_recovery_conversion_runtime as prepare_conversion
+    from kohaku.agent import memory_recovery_conversion_apply as apply_conversion
+    from kohaku.agent import memory_recovery_conversion_finalize as finalize_conversion
+    from kohaku.agent import memory_recovery_conversion_runtime as prepare_conversion
 
     workspace = tmp_path / "workspace"
     workspace.mkdir(mode=0o700)
@@ -136,9 +136,9 @@ def _prepare(workspace: Path, sessions_root: Path):
 def _transaction_chain(
     workspace: Path, *, receipt_bytes: bytes | None = None,
 ) -> tuple[MemoryRecoveryManifest, tuple[Any, ...]]:
-    from nanobot.agent import memory_recovery as receipt_codec
-    from nanobot.agent import memory_recovery_storage as storage
-    from nanobot.agent import memory_recovery_transaction as transaction
+    from kohaku.agent import memory_recovery as receipt_codec
+    from kohaku.agent import memory_recovery_storage as storage
+    from kohaku.agent import memory_recovery_transaction as transaction
 
     with storage.open_workspace_memory(workspace) as authority, authority.operation() as operation:
         raw = receipt_bytes
@@ -226,7 +226,7 @@ def test_prepared_proposal_is_deterministic_and_does_not_apply_it(tmp_path: Path
     assert prepared["source"]["new_cursor"] == 2
     assert prepared["source"]["action"] == "advance"
     assert prepared["memory_action"] == "replace"
-    from nanobot.agent import memory_recovery_storage as storage
+    from kohaku.agent import memory_recovery_storage as storage
 
     with storage.open_workspace_memory(workspace) as authority, authority.operation():
         assert authority.read_blob(
@@ -317,7 +317,7 @@ def test_source_proposal_is_blob_bound_and_targets_are_no_op_proposals(tmp_path:
     source_path = sessions_root / _WORKSPACE_ID / f"{JsonlSessionStore.storage_key(_SESSION_KEY)}.jsonl"
     current_session = source_path.read_bytes()
 
-    from nanobot.agent import memory_recovery_storage as storage
+    from kohaku.agent import memory_recovery_storage as storage
 
     with storage.open_workspace_memory(workspace) as authority, authority.operation():
         proposed = authority.read_blob(payload["source"]["new_digest"])
@@ -372,7 +372,7 @@ def test_marker_corruption_fails_before_prepared(tmp_path: Path, *, duplicate: b
 def test_publication_crash_is_replayable(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, crash_after: str,
 ) -> None:
-    from nanobot.agent import memory_recovery_storage as storage
+    from kohaku.agent import memory_recovery_storage as storage
 
     workspace, sessions_root, _, _ = _workspace(tmp_path)
     if crash_after == "blob":
@@ -457,7 +457,7 @@ def test_unsafe_session_source_path_fails_before_prepared(tmp_path: Path) -> Non
 def test_source_change_during_preparation_fails_before_prepared(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from nanobot.session import checked_source
+    from kohaku.session import checked_source
 
     workspace, sessions_root, _, _ = _workspace(tmp_path)
     session_path = sessions_root / _WORKSPACE_ID / f"{JsonlSessionStore.storage_key(_SESSION_KEY)}.jsonl"
@@ -483,10 +483,10 @@ def test_source_change_during_preparation_fails_before_prepared(
 
 
 def test_corrupt_completed_conversion_manifest_fails_before_prepared(tmp_path: Path) -> None:
-    from nanobot.agent import memory_recovery as receipt_codec
-    from nanobot.agent import memory_recovery_conversion as conversion
-    from nanobot.agent import memory_recovery_storage as storage
-    from nanobot.agent import memory_recovery_transaction as transaction
+    from kohaku.agent import memory_recovery as receipt_codec
+    from kohaku.agent import memory_recovery_conversion as conversion
+    from kohaku.agent import memory_recovery_storage as storage
+    from kohaku.agent import memory_recovery_transaction as transaction
 
     workspace, sessions_root, memory, receipt_path = _workspace(tmp_path)
     with storage.open_workspace_memory(workspace) as authority, authority.operation() as operation:

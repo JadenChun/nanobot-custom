@@ -1,6 +1,6 @@
-# How to Connect an AI Agent to Chat Apps with nanobot
+# How to Connect an AI Agent to Chat Apps with Kohaku
 
-nanobot can run as a self-hosted chatbot or AI agent in Telegram, Discord,
+Kohaku can run as a self-hosted chatbot or AI agent in Telegram, Discord,
 Slack, WeChat, Email, Mattermost, and other chat apps. The gateway receives chat
 messages, runs the agent, and sends replies back to the same channel.
 
@@ -19,9 +19,10 @@ private DMs, team channels, group chats, email threads, or bot workspaces.
 ## Install
 
 ```bash
-python -m pip install nanobot-ai
-nanobot onboard --wizard
-nanobot webui
+# Run from the root of a clone of this repository
+python -m pip install -e .
+kohaku onboard --wizard
+kohaku webui
 ```
 
 Send `Hello!` in the WebUI before adding a channel. Then choose one platform guide for the bot/account prerequisites:
@@ -53,13 +54,13 @@ If your installed release does not show **Settings → Channels**, use the full 
 Check status from the terminal when you need a lower-level confirmation:
 
 ```bash
-nanobot channels status
+kohaku channels status
 ```
 
-The `nanobot webui` command already runs the gateway. For a chat-only or server deployment, start it directly:
+The `kohaku webui` command already runs the gateway. For a chat-only or server deployment, start it directly:
 
 ```bash
-nanobot gateway
+kohaku gateway
 ```
 
 Use the full [Chat Apps reference](../chat-apps.md) when you manage `config.json` directly or need platform-specific advanced settings.
@@ -81,14 +82,14 @@ Use the full [Chat Apps reference](../chat-apps.md) when you manage `config.json
 
 ## Troubleshooting
 
-- If `nanobot channels status` does not show the channel, the config key or
+- If `kohaku channels status` does not show the channel, the config key or
   optional dependency is likely missing.
 - If the first DM returns a pairing code, approve the pending request in the WebUI or use `/pairing approve <code>` from an authorized chat.
-- If messages do not arrive, run `nanobot gateway --verbose` and compare
+- If messages do not arrive, run `kohaku gateway --verbose` and compare
   platform credentials, event permissions, and allow lists.
 - If group replies are unexpected, review that channel's group policy.
 
-## Related nanobot docs
+## Related Kohaku docs
 
 - [Chat Apps](../chat-apps.md)
 - [Configuration](../configuration.md#channel-settings)

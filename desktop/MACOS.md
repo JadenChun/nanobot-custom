@@ -2,13 +2,13 @@
 
 Kohaku uses AppKit and WKWebView through Tauri. It does not bundle a
 second backend or a browser, change the existing CLI installation, or add a
-LaunchAgent. On first launch, the setup window suggests `~/.nanobot/config.json`
-and a managed Python install (`~/.local/share/nanobot/desktop-current` first,
+LaunchAgent. On first launch, the setup window suggests `~/.kohaku/config.json`
+and a managed Python install (`~/.local/share/kohaku/desktop-current` first,
 then `current`). It remembers the resolved release rather than the moving
 selector. You can choose different paths before clicking **Connect**.
 
 If the standard config is missing, **Connect** creates a private loopback
-config with a generated WebUI auth secret and the usual Nanobot defaults.
+config with a generated WebUI auth secret and the usual Kohaku defaults.
 It never replaces an existing file, uses the fallback for a missing custom
 path, or rewrites a config that fails validation. No gateway starts before
 the normal provider and runtime checks pass; a fresh profile still needs a
@@ -20,7 +20,7 @@ of `0.0.0.0` is not eligible, even if WebSocket is already on loopback. The app
 does not rewrite either listener setting.
 
 The shell remembers selectors under
-`~/Library/Application Support/nanobot-desktop/preferences.json` (or the
+`~/Library/Application Support/kohaku-desktop/preferences.json` (or the
 explicit `XDG_CONFIG_HOME`). Chat's website data uses a nonpersistent
 WKWebView store; backend chat history remains in the selected profile. The
 host grants navigation only to the packaged setup page and the verified

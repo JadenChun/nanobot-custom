@@ -7,12 +7,9 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-$Package = "nanobot-ai"
-$InstallTarget = $Package
-$InstallSource = "PyPI"
-$script:NanobotRunner = $null
-$script:NanobotPython = $null
-$script:NanobotPipxBin = $null
+$script:KohakuRunner = $null
+$script:KohakuPython = $null
+$script:KohakuPipxBin = $null
 $script:LastInstallSucceeded = $false
 
 function Write-Info {
@@ -26,24 +23,22 @@ function Fail {
 }
 
 function Show-InstallFailureHint {
-    [Console]::Error.WriteLine("Error: could not install nanobot from $InstallSource.")
+    [Console]::Error.WriteLine("Error: could not install kohaku from $InstallSource.")
     [Console]::Error.WriteLine("If pip mentioned externally-managed-environment, use uv, pipx, or a virtual environment instead of system pip.")
     [Console]::Error.WriteLine("You can also run manually:")
     [Console]::Error.WriteLine("  uv tool install --force --upgrade $InstallTarget")
-    [Console]::Error.WriteLine("  $Python -m venv `$HOME\.nanobot\venv")
-    [Console]::Error.WriteLine("  `$HOME\.nanobot\venv\Scripts\python.exe -m pip install --upgrade $InstallTarget")
+    [Console]::Error.WriteLine("  $Python -m venv `$HOME\.kohaku\venv")
+    [Console]::Error.WriteLine("  `$HOME\.kohaku\venv\Scripts\python.exe -m pip install --upgrade $InstallTarget")
     [Console]::Error.WriteLine("Then start setup with:")
-    [Console]::Error.WriteLine("  nanobot onboard --wizard")
-    throw "could not install nanobot from $InstallSource"
+    [Console]::Error.WriteLine("  kohaku onboard --wizard")
+    throw "could not install kohaku from $InstallSource"
 }
 
 function Show-Usage {
     Write-Host "Usage: install.ps1 [-DryRun|--dry-run]"
     Write-Host ""
-    Write-Host "By default this installs or upgrades nanobot-ai from PyPI."
+    Write-Host "This installs or upgrades Kohaku from this checkout."
     Write-Host "Use --dry-run to print what would happen without installing or starting setup."
-    Write-Host ""
-    Write-Host "For current main, clone the repository and run 'python -m pip install -e .'."
 }
 
 function Test-Python {
@@ -116,10 +111,10 @@ function Get-PipxBinDir {
     return $null
 }
 
-function Resolve-PipxNanobot {
+function Resolve-PipxKohaku {
     $BinDir = Get-PipxBinDir
     if ($BinDir) {
-        foreach ($Name in @("nanobot.exe", "nanobot")) {
+        foreach ($Name in @("kohaku.exe", "kohaku")) {
             $Candidate = Join-Path $BinDir $Name
             if (Test-Path -LiteralPath $Candidate) {
                 return $Candidate
@@ -128,59 +123,59 @@ function Resolve-PipxNanobot {
         return $null
     }
 
-    $Command = Get-Command nanobot -ErrorAction SilentlyContinue
+    $Command = Get-Command kohaku -ErrorAction SilentlyContinue
     if ($Command) {
         return $Command.Source
     }
     return $null
 }
 
-function Invoke-Nanobot {
-    param([string[]]$NanobotArgs)
+function Invoke-Kohaku {
+    param([string[]]$KohakuArgs)
 
-    switch ($script:NanobotRunner) {
+    switch ($script:KohakuRunner) {
         "uv" {
-            & uv tool run --from $InstallTarget nanobot @NanobotArgs
+            & uv tool run --from $InstallTarget kohaku @KohakuArgs
         }
         "pipx" {
-            if (-not $script:NanobotPipxBin) {
+            if (-not $script:KohakuPipxBin) {
                 Fail "the installed pipx executable for $InstallTarget was not found. Reinstall it with 'pipx install --force $InstallTarget' and check 'pipx environment --value PIPX_BIN_DIR'."
             }
-            & $script:NanobotPipxBin @NanobotArgs
+            & $script:KohakuPipxBin @KohakuArgs
         }
         "python" {
-            & $script:NanobotPython -m nanobot @NanobotArgs
+            & $script:KohakuPython -m kohaku @KohakuArgs
         }
         default {
-            Fail "nanobot was installed, but no runner was configured."
+            Fail "kohaku was installed, but no runner was configured."
         }
     }
 }
 
-function Get-NanobotCommand {
-    switch ($script:NanobotRunner) {
-        "uv" { return "uv tool run --from $InstallTarget nanobot" }
+function Get-KohakuCommand {
+    switch ($script:KohakuRunner) {
+        "uv" { return "uv tool run --from $InstallTarget kohaku" }
         "pipx" {
-            if ($script:NanobotPipxBin) {
-                return $script:NanobotPipxBin
+            if ($script:KohakuPipxBin) {
+                return $script:KohakuPipxBin
             }
             $BinDir = Get-PipxBinDir
             if ($BinDir) {
-                return (Join-Path $BinDir "nanobot")
+                return (Join-Path $BinDir "kohaku")
             }
-            return "the installed pipx nanobot executable"
+            return "the installed pipx kohaku executable"
         }
-        "python" { return "$script:NanobotPython -m nanobot" }
-        default { return "nanobot" }
+        "python" { return "$script:KohakuPython -m kohaku" }
+        default { return "kohaku" }
     }
 }
 
-function Test-FreshNanobotInstall {
+function Test-FreshKohakuInstall {
     $HomeDir = [Environment]::GetFolderPath([Environment+SpecialFolder]::UserProfile)
     if (-not $HomeDir) {
         return $false
     }
-    return -not (Test-Path -LiteralPath (Join-Path $HomeDir ".nanobot\config.json"))
+    return -not (Test-Path -LiteralPath (Join-Path $HomeDir ".kohaku\config.json"))
 }
 
 function Test-BrowserSession {
@@ -202,30 +197,30 @@ function Install-WithActivePython {
     if ($LASTEXITCODE -ne 0) {
         Show-InstallFailureHint
     }
-    $script:NanobotRunner = "python"
-    $script:NanobotPython = $Python
+    $script:KohakuRunner = "python"
+    $script:KohakuPython = $Python
 }
 
 function Install-WithUv {
     $script:LastInstallSucceeded = $false
-    Write-Info "Installing or upgrading nanobot from $InstallSource with uv tool..."
+    Write-Info "Installing or upgrading kohaku from $InstallSource with uv tool..."
     & uv tool install --python $Python --force --upgrade $InstallTarget
     if ($LASTEXITCODE -ne 0) {
         return
     }
-    $script:NanobotRunner = "uv"
+    $script:KohakuRunner = "uv"
     $script:LastInstallSucceeded = $true
 }
 
 function Install-WithPipx {
     $script:LastInstallSucceeded = $false
-    Write-Info "Installing or upgrading nanobot from $InstallSource with pipx..."
+    Write-Info "Installing or upgrading kohaku from $InstallSource with pipx..."
     & pipx install --python $Python --force $InstallTarget
     if ($LASTEXITCODE -ne 0) {
         return
     }
-    $script:NanobotRunner = "pipx"
-    $script:NanobotPipxBin = Resolve-PipxNanobot
+    $script:KohakuRunner = "pipx"
+    $script:KohakuPipxBin = Resolve-PipxKohaku
     $script:LastInstallSucceeded = $true
 }
 
@@ -235,7 +230,7 @@ function Install-WithManagedVenv {
         Fail "HOME is not set; cannot create a managed virtual environment."
     }
 
-    $VenvDir = if ($env:NANOBOT_VENV) { $env:NANOBOT_VENV } else { Join-Path $HomeDir ".nanobot\venv" }
+    $VenvDir = if ($env:KOHAKU_VENV) { $env:KOHAKU_VENV } else { Join-Path $HomeDir ".kohaku\venv" }
     $VenvPython = Join-Path $VenvDir "Scripts\python.exe"
 
     if (-not (Test-Path $VenvPython)) {
@@ -251,18 +246,18 @@ function Install-WithManagedVenv {
     }
 
     if (-not (Test-Python $VenvPython)) {
-        Fail "The managed venv uses Python older than 3.11. Remove it or set NANOBOT_VENV to a new path."
+        Fail "The managed venv uses Python older than 3.11. Remove it or set KOHAKU_VENV to a new path."
     }
 
-    Write-Info "Installing or upgrading nanobot from $InstallSource in $VenvDir..."
+    Write-Info "Installing or upgrading kohaku from $InstallSource in $VenvDir..."
     Ensure-Pip $VenvPython
     & $VenvPython -m pip install --upgrade $InstallTarget
     if ($LASTEXITCODE -ne 0) {
         Show-InstallFailureHint
     }
 
-    $script:NanobotRunner = "python"
-    $script:NanobotPython = $VenvPython
+    $script:KohakuRunner = "python"
+    $script:KohakuPython = $VenvPython
 }
 
 foreach ($Arg in $RemainingArgs) {
@@ -291,36 +286,42 @@ if ($Dev) {
     Fail "--dev installed an untracked main snapshot and is no longer supported; clone the repository and run 'python -m pip install -e .' instead."
 }
 
+$InstallTarget = Split-Path -Parent $PSScriptRoot
+if (-not (Test-Path -PathType Leaf (Join-Path $InstallTarget "pyproject.toml"))) {
+    Fail "Run this script from a Kohaku source checkout."
+}
+$InstallSource = $InstallTarget
+
 $Python = Find-Python
 $Version = & $Python --version
 Write-Info "Using Python: $Version"
 
 if ($DryRun) {
-    Write-Info "Dry run: would install or upgrade nanobot from $InstallSource."
+    Write-Info "Dry run: would install or upgrade kohaku from $InstallSource."
     if (Test-VirtualEnv $Python) {
         Write-Info "Dry run: active virtual environment detected; would run: $Python -m pip install --upgrade $InstallTarget"
-        Write-Info "Dry run: would run nanobot as: $Python -m nanobot"
+        Write-Info "Dry run: would run kohaku as: $Python -m kohaku"
     } elseif (Get-Command uv -ErrorAction SilentlyContinue) {
         Write-Info "Dry run: would run: uv tool install --python $Python --force --upgrade $InstallTarget"
-        Write-Info "Dry run: would run nanobot as: uv tool run --from $InstallTarget nanobot"
+        Write-Info "Dry run: would run kohaku as: uv tool run --from $InstallTarget kohaku"
     } elseif (Get-Command pipx -ErrorAction SilentlyContinue) {
         Write-Info "Dry run: would run: pipx install --python $Python --force $InstallTarget"
         $PipxDir = Get-PipxBinDir
         if ($PipxDir) {
-            Write-Info "Dry run: would run nanobot as: $(Join-Path $PipxDir 'nanobot')"
+            Write-Info "Dry run: would run kohaku as: $(Join-Path $PipxDir 'kohaku')"
         } else {
-            Write-Info "Dry run: would run nanobot as: the installed pipx nanobot executable"
+            Write-Info "Dry run: would run kohaku as: the installed pipx kohaku executable"
         }
     } else {
         $HomeDir = if ($env:HOME) { $env:HOME } elseif ($env:USERPROFILE) { $env:USERPROFILE } else { "~" }
-        $VenvDir = if ($env:NANOBOT_VENV) { $env:NANOBOT_VENV } else { Join-Path $HomeDir ".nanobot\venv" }
+        $VenvDir = if ($env:KOHAKU_VENV) { $env:KOHAKU_VENV } else { Join-Path $HomeDir ".kohaku\venv" }
         Write-Info "Dry run: would create or reuse a dedicated virtual environment: $VenvDir"
         Write-Info "Dry run: would run: $VenvDir\Scripts\python.exe -m pip install --upgrade $InstallTarget"
-        Write-Info "Dry run: would run nanobot as: $VenvDir\Scripts\python.exe -m nanobot"
+        Write-Info "Dry run: would run kohaku as: $VenvDir\Scripts\python.exe -m kohaku"
     }
-    if ($env:NANOBOT_SKIP_WIZARD -eq "1") {
-        Write-Info "Dry run: would skip automatic setup because NANOBOT_SKIP_WIZARD=1."
-    } elseif ((Test-FreshNanobotInstall) -and (Test-BrowserSession)) {
+    if ($env:KOHAKU_SKIP_WIZARD -eq "1") {
+        Write-Info "Dry run: would skip automatic setup because KOHAKU_SKIP_WIZARD=1."
+    } elseif ((Test-FreshKohakuInstall) -and (Test-BrowserSession)) {
         Write-Info "Dry run: would start the WebUI for this fresh desktop install."
         Write-Info "Dry run: would fall back to the setup wizard for older releases."
     } else {
@@ -357,41 +358,41 @@ if (Test-VirtualEnv $Python) {
     }
 }
 
-Write-Info "Installed nanobot:"
-if ($script:NanobotRunner -eq "pipx" -and $script:NanobotPipxBin) {
-    Write-Info "Using installed executable: $script:NanobotPipxBin"
+Write-Info "Installed kohaku:"
+if ($script:KohakuRunner -eq "pipx" -and $script:KohakuPipxBin) {
+    Write-Info "Using installed executable: $script:KohakuPipxBin"
 }
-Invoke-Nanobot @("--version")
+Invoke-Kohaku @("--version")
 if ($LASTEXITCODE -ne 0) {
-    Fail "nanobot was installed, but the command could not be started."
+    Fail "kohaku was installed, but the command could not be started."
 }
 
-if ($env:NANOBOT_SKIP_WIZARD -eq "1") {
-    Write-Info "Skipping automatic setup because NANOBOT_SKIP_WIZARD=1."
-    Write-Info "Run this later: $(Get-NanobotCommand) webui"
+if ($env:KOHAKU_SKIP_WIZARD -eq "1") {
+    Write-Info "Skipping automatic setup because KOHAKU_SKIP_WIZARD=1."
+    Write-Info "Run this later: $(Get-KohakuCommand) webui"
     return
 }
 
-if ((Test-FreshNanobotInstall) -and (Test-BrowserSession)) {
-    Invoke-Nanobot @("webui", "--help") *> $null
+if ((Test-FreshKohakuInstall) -and (Test-BrowserSession)) {
+    Invoke-Kohaku @("webui", "--help") *> $null
     if ($LASTEXITCODE -eq 0) {
-        Write-Info "Starting nanobot WebUI..."
+        Write-Info "Starting kohaku WebUI..."
         Write-Info "Configure your first provider and model in Settings > Models."
-        Write-Info "Run this later: $(Get-NanobotCommand) webui"
-        Invoke-Nanobot @("webui", "--yes")
+        Write-Info "Run this later: $(Get-KohakuCommand) webui"
+        Invoke-Kohaku @("webui", "--yes")
         if ($LASTEXITCODE -ne 0) {
             Fail "WebUI did not start."
         }
         return
     }
-    Write-Info "The installed release does not support nanobot webui yet."
+    Write-Info "The installed release does not support kohaku webui yet."
     Write-Info "Falling back to the setup wizard..."
 }
 
 Write-Info "Starting setup wizard..."
-Invoke-Nanobot @("onboard", "--wizard")
+Invoke-Kohaku @("onboard", "--wizard")
 if ($LASTEXITCODE -ne 0) {
     Fail "Setup wizard did not complete."
 }
 
-Write-Info "Done. Try: $(Get-NanobotCommand) agent -m `"Hello!`""
+Write-Info "Done. Try: $(Get-KohakuCommand) agent -m `"Hello!`""

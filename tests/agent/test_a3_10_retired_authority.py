@@ -9,12 +9,12 @@ import inspect
 
 import pytest
 
-import nanobot.agent
-from nanobot.agent.subagent import RetiredSubagentAuthority, SubagentManager
+import kohaku.agent
+from kohaku.agent.subagent import RetiredSubagentAuthority, SubagentManager
 
 
 def test_compatibility_import_remains_available() -> None:
-    assert nanobot.agent.SubagentManager is SubagentManager
+    assert kohaku.agent.SubagentManager is SubagentManager
 
 
 def test_retired_authority_owns_no_task_and_refuses_launch() -> None:

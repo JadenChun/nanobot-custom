@@ -10,7 +10,7 @@ from typing import Any
 
 import pytest
 
-from nanobot.providers.oauth_credentials import (
+from kohaku.providers.oauth_credentials import (
     CredentialError,
     CredentialFlavor,
     CredentialNeedsRefreshError,
@@ -833,7 +833,7 @@ def test_copilot_derived_bearer_is_generation_bound(tmp_path: Path) -> None:
 def test_read_recovers_target_published_before_final_active_state(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from nanobot.providers import oauth_credentials as credential_module
+    from kohaku.providers import oauth_credentials as credential_module
 
     canonical = tmp_path / "codex.json"
     coordinator = OAuthCredentialCoordinator(canonical, CredentialFlavor.CODEX)
@@ -905,7 +905,7 @@ def test_multiprocess_refresh_and_exchange_are_single_flight(
 def test_windows_publication_seam_retains_verified_handle_across_swaps(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from nanobot.providers import oauth_credentials as credential_module
+    from kohaku.providers import oauth_credentials as credential_module
 
     target = tmp_path / "codex.json"
     attacker = tmp_path / "attacker.json"
@@ -953,7 +953,7 @@ def test_windows_publication_seam_retains_verified_handle_across_swaps(
 def test_windows_publication_seam_failures_preserve_existing_target(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: str
 ) -> None:
-    from nanobot.providers import oauth_credentials as credential_module
+    from kohaku.providers import oauth_credentials as credential_module
 
     target = tmp_path / "codex.json"
     temporary = tmp_path / ".codex.tmp"
@@ -983,7 +983,7 @@ def test_windows_publication_seam_failures_preserve_existing_target(
 def test_windows_publication_post_rename_fault_never_publishes_attacker_bytes(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: str
 ) -> None:
-    from nanobot.providers import oauth_credentials as credential_module
+    from kohaku.providers import oauth_credentials as credential_module
 
     target = tmp_path / "codex.json"
     attacker = tmp_path / "attacker.json"
@@ -1032,7 +1032,7 @@ def test_windows_publication_post_rename_fault_never_publishes_attacker_bytes(
 def test_windows_handle_publication_blocks_temp_swap_and_replaces_target_entry(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from nanobot.providers import oauth_credentials as credential_module
+    from kohaku.providers import oauth_credentials as credential_module
 
     target = tmp_path / "codex.json"
     attacker = tmp_path / "attacker.json"
@@ -1096,7 +1096,7 @@ def test_windows_reparse_entries_and_lock_swaps_are_rejected(tmp_path: Path) -> 
 def test_windows_verified_open_failure_fails_closed_without_mutation(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from nanobot.providers import oauth_credentials as credential_module
+    from kohaku.providers import oauth_credentials as credential_module
 
     canonical = tmp_path / "codex.json"
     coordinator = OAuthCredentialCoordinator(canonical, CredentialFlavor.CODEX)

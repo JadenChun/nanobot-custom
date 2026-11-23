@@ -4,15 +4,15 @@ from pathlib import Path
 
 import pytest
 
-from nanobot.remote.auth import TokenService
-from nanobot.remote.delegation import (
+from kohaku.remote.auth import TokenService
+from kohaku.remote.delegation import (
     DelegatedAdminOperation,
     DelegationError,
     OwnerDelegationService,
     current_digest,
 )
-from nanobot.remote.pairing import PairingRejectedError, PairingService
-from nanobot.remote.store import RemoteAccessStore
+from kohaku.remote.pairing import PairingRejectedError, PairingService
+from kohaku.remote.store import RemoteAccessStore
 
 
 class Clock:
@@ -350,8 +350,8 @@ def test_audit_is_bounded_sanitized_and_distinguishes_devices(tmp_path) -> None:
 
 
 def test_product_pairing_path_grants_owner_via_ipc(tmp_path) -> None:
-    from nanobot.remote.client import RemoteAccessClient
-    from nanobot.remote.owner import RemoteAccessOwner
+    from kohaku.remote.client import RemoteAccessClient
+    from kohaku.remote.owner import RemoteAccessOwner
 
     owner = RemoteAccessOwner(tmp_path / "remote-access", serve_verifier=lambda _origin: True)
     owner.start()
@@ -367,7 +367,7 @@ def test_product_pairing_path_grants_owner_via_ipc(tmp_path) -> None:
             shared_history_consent=True,
         )
         assert "owner" in offer["scopes"]
-        from nanobot.remote.device_proof import DeviceProofClaims
+        from kohaku.remote.device_proof import DeviceProofClaims
         from tests.remote.proof_helpers import (
             encode_proof_base64url,
             new_device_key,
@@ -404,8 +404,8 @@ def test_product_pairing_path_grants_owner_via_ipc(tmp_path) -> None:
 
 
 def test_product_pairing_without_owner_consent_is_rejected(tmp_path) -> None:
-    from nanobot.remote.client import OwnerRequestError, RemoteAccessClient
-    from nanobot.remote.owner import RemoteAccessOwner
+    from kohaku.remote.client import OwnerRequestError, RemoteAccessClient
+    from kohaku.remote.owner import RemoteAccessOwner
 
     owner = RemoteAccessOwner(tmp_path / "remote-access", serve_verifier=lambda _origin: True)
     owner.start()
@@ -437,8 +437,8 @@ def test_audit_records_acting_owner_for_device_revoke(tmp_path) -> None:
 
 
 def test_ipc_revoke_audits_acting_device(tmp_path) -> None:
-    from nanobot.remote.client import RemoteAccessClient
-    from nanobot.remote.owner import RemoteAccessOwner
+    from kohaku.remote.client import RemoteAccessClient
+    from kohaku.remote.owner import RemoteAccessOwner
 
     owner = RemoteAccessOwner(tmp_path / "remote-access", serve_verifier=lambda _origin: True)
     owner.start()

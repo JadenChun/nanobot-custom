@@ -5,12 +5,12 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from nanobot.agent.runner import AgentRunResult
-from nanobot.agent.subagent import SubagentManager, SubagentStatus
-from nanobot.agent.tools.registry import ToolRegistry
-from nanobot.bus.queue import MessageBus
-from nanobot.providers.base import GenerationSettings
-from nanobot.utils.llm_runtime import LLMRuntime
+from kohaku.agent.runner import AgentRunResult
+from kohaku.agent.subagent import SubagentManager, SubagentStatus
+from kohaku.agent.tools.registry import ToolRegistry
+from kohaku.bus.queue import MessageBus
+from kohaku.providers.base import GenerationSettings
+from kohaku.utils.llm_runtime import LLMRuntime
 
 
 @pytest.mark.asyncio

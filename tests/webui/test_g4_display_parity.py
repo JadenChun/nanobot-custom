@@ -18,16 +18,16 @@ from typing import Any, cast
 
 import pytest
 
-from nanobot.bus.events import CommittedUserInput
-from nanobot.session.execution_owner import acquire_execution
-from nanobot.session.input_attempt import find_input_attempt
-from nanobot.session.manager import JsonlSessionStore, Session
-from nanobot.session.source import new_source_event
-from nanobot.session.source_store import SourceState
-from nanobot.session.turn_writer import SourceTurnWriter
-from nanobot.webui import transcript as tr
-from nanobot.webui.metadata import WEBUI_DISPLAY_SOURCE_KEY, WEBUI_TURN_METADATA_KEY
-from nanobot.webui.transcript import (
+from kohaku.bus.events import CommittedUserInput
+from kohaku.session.execution_owner import acquire_execution
+from kohaku.session.input_attempt import find_input_attempt
+from kohaku.session.manager import JsonlSessionStore, Session
+from kohaku.session.source import new_source_event
+from kohaku.session.source_store import SourceState
+from kohaku.session.turn_writer import SourceTurnWriter
+from kohaku.webui import transcript as tr
+from kohaku.webui.metadata import WEBUI_DISPLAY_SOURCE_KEY, WEBUI_TURN_METADATA_KEY
+from kohaku.webui.transcript import (
     WEBUI_FORK_MARKER_EVENT,
     WebUITranscriptRecorder,
     _bounded_tool_event,
@@ -55,7 +55,7 @@ from nanobot.webui.transcript import (
     validate_retained_webui_thread,
     webui_transcript_segments_dir,
 )
-from nanobot.webui.transcript_index import (
+from kohaku.webui.transcript_index import (
     delete_transcript_index,
     read_history_window,
     read_preindex_latest_tail,
@@ -77,13 +77,13 @@ CHAT_ID = "g4-parity"
 
 @pytest.fixture
 def isolated_webui(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    import nanobot.webui.thread_disk  # noqa: F401 - bind the real dir before patching
+    import kohaku.webui.thread_disk  # noqa: F401 - bind the real dir before patching
 
     webui_dir = tmp_path / "webui"
     webui_dir.mkdir(parents=True, exist_ok=True)
-    monkeypatch.setattr("nanobot.config.paths.get_webui_dir", lambda: webui_dir)
-    monkeypatch.setattr("nanobot.config.paths.get_data_dir", lambda: tmp_path)
-    monkeypatch.setattr("nanobot.webui.transcript.get_webui_dir", lambda: webui_dir)
+    monkeypatch.setattr("kohaku.config.paths.get_webui_dir", lambda: webui_dir)
+    monkeypatch.setattr("kohaku.config.paths.get_data_dir", lambda: tmp_path)
+    monkeypatch.setattr("kohaku.webui.transcript.get_webui_dir", lambda: webui_dir)
     return webui_dir
 
 
@@ -254,7 +254,7 @@ async def test_display_row_is_not_proof_of_canonical_admission(
         "principal": "0" * 64,
         "intent": "new",
     }
-    from nanobot.session.input_attempt import InputAttempt
+    from kohaku.session.input_attempt import InputAttempt
 
     assert find_input_attempt(canonical.events, InputAttempt.parse_evidence(attempt_evidence)) is None
     # Nothing in the canonical projection claims this prompt.
@@ -1048,7 +1048,7 @@ async def test_canonical_only_session_has_no_display_fact_to_lose(
 
 def test_new_source_event_rejects_noncanonical_payload() -> None:
     """Canonical admission refuses payloads that cannot be persisted safely."""
-    from nanobot.session.source import SourceValidationError
+    from kohaku.session.source import SourceValidationError
 
     with pytest.raises(SourceValidationError):
         new_source_event({"role": "user", "content": object()}, run_id="run")
@@ -1074,7 +1074,7 @@ async def test_live_turn_display_matches_canonical_then_survives_restart(
     from tests.webui.test_managed_display_origin import _gateway, _submit
 
     async with _gateway(engine_config, tmp_path, "Canonical answer") as (loop, channel, conn, _):
-        from nanobot.session.source_store import SourceSessionStore
+        from kohaku.session.source_store import SourceSessionStore
 
         chat_key = f"websocket:{_LIVE_CHAT_ID}"
         await _submit(channel, conn, "Canonical prompt", turn_id="g4-live-turn")
@@ -1086,7 +1086,7 @@ async def test_live_turn_display_matches_canonical_then_survives_restart(
 
         await loop._dispatch(await loop.bus.consume_inbound())
         while loop.bus.outbound_size:
-            from nanobot.channels.manager import ChannelManager
+            from kohaku.channels.manager import ChannelManager
 
             await ChannelManager._send_once(channel, await loop.bus.consume_outbound())
 

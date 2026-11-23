@@ -2,10 +2,10 @@ from pathlib import Path
 
 import pytest
 
-from nanobot.session.execution_owner import acquire_execution
-from nanobot.session.runtime_authority import DurableSessionAuthority
-from nanobot.session.session_mode import SessionModeError
-from nanobot.session.source import new_source_event
+from kohaku.session.execution_owner import acquire_execution
+from kohaku.session.runtime_authority import DurableSessionAuthority
+from kohaku.session.session_mode import SessionModeError
+from kohaku.session.source import new_source_event
 
 
 async def test_new_canonical_session_is_immediately_usable_in_its_runtime(

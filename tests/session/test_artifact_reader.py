@@ -7,18 +7,18 @@ from types import SimpleNamespace
 
 import pytest
 
-from nanobot.agent.tools.artifact import ReadArtifactTool
-from nanobot.agent.tools.execution import KnownToolResult
-from nanobot.agent.tools.filesystem import ReadFileTool
-from nanobot.agent.tools.registry import ToolRegistry
-from nanobot.session.artifact import ArtifactValidationError, parse_artifact_descriptor
-from nanobot.session.artifact_reader import ArtifactReader
-from nanobot.session.artifact_store import ArtifactStorageError, PrivateArtifactStore
-from nanobot.session.execution_owner import ExecutionOwnershipError, acquire_execution
-from nanobot.session.manager import JsonlSessionStore, Session
-from nanobot.session.source import SourceValidationError
-from nanobot.session.source_store import SourceSessionStore
-from nanobot.session.turn_writer import SourceTurnWriter
+from kohaku.agent.tools.artifact import ReadArtifactTool
+from kohaku.agent.tools.execution import KnownToolResult
+from kohaku.agent.tools.filesystem import ReadFileTool
+from kohaku.agent.tools.registry import ToolRegistry
+from kohaku.session.artifact import ArtifactValidationError, parse_artifact_descriptor
+from kohaku.session.artifact_reader import ArtifactReader
+from kohaku.session.artifact_store import ArtifactStorageError, PrivateArtifactStore
+from kohaku.session.execution_owner import ExecutionOwnershipError, acquire_execution
+from kohaku.session.manager import JsonlSessionStore, Session
+from kohaku.session.source import SourceValidationError
+from kohaku.session.source_store import SourceSessionStore
+from kohaku.session.turn_writer import SourceTurnWriter
 from tests.session.test_artifact import fixture
 
 
@@ -162,7 +162,7 @@ async def test_unregistered_task_cannot_use_reader(tmp_path):
 
 
 async def test_namespace_replacement_before_return_rejects_bytes(tmp_path, monkeypatch):
-    from nanobot.session.artifact_store import ArtifactBlobTransaction
+    from kohaku.session.artifact_store import ArtifactBlobTransaction
 
     async with setup_read(tmp_path) as (writer, tool, store, descriptor, _):
         reader = ArtifactReader(writer, 'root_history', store, tool)
@@ -188,7 +188,7 @@ async def test_opaque_reference_cannot_select_other_authority(tmp_path, referenc
 async def test_reader_registration_requires_invocation_file_capability(tmp_path):
     from unittest.mock import AsyncMock, Mock
 
-    from nanobot.agent.runner import AgentRunner, AgentRunSpec
+    from kohaku.agent.runner import AgentRunner, AgentRunSpec
 
     async with setup_read(tmp_path) as (writer, tool, store, _, _):
         reader = ArtifactReader(writer, 'root_history', store, tool)
@@ -211,7 +211,7 @@ async def test_reader_registration_requires_invocation_file_capability(tmp_path)
 
 
 async def test_dynamic_project_and_new_read_roots_cannot_expose_private_store(tmp_path):
-    from nanobot.security.workspace_access import (
+    from kohaku.security.workspace_access import (
         bind_workspace_scope,
         build_workspace_scope,
         reset_workspace_scope,
@@ -235,8 +235,8 @@ async def test_dynamic_project_and_new_read_roots_cannot_expose_private_store(tm
 def test_complete_json_response_is_bounded_without_losing_next_page():
     import json
 
-    from nanobot.agent.tools.artifact import bounded_artifact_response
-    from nanobot.session.artifact_reader import ArtifactReadResult
+    from kohaku.agent.tools.artifact import bounded_artifact_response
+    from kohaku.session.artifact_reader import ArtifactReadResult
 
     text = '\x00' * 16000 + '🌟'
     original = text.encode()
@@ -257,7 +257,7 @@ def test_complete_json_response_is_bounded_without_losing_next_page():
 @pytest.mark.parametrize('field,value', [('reference', 'artifact:../escape'), ('start_offset', True),
     ('start_offset', -1), ('next_offset', -1), ('next_offset', False)])
 def test_retrieval_receipts_reject_invalid_authority_and_ranges(field, value):
-    from nanobot.agent.tools.artifact import ArtifactRetrievalReceipt, parse_retrieval_receipt
+    from kohaku.agent.tools.artifact import ArtifactRetrievalReceipt, parse_retrieval_receipt
 
     raw = ArtifactRetrievalReceipt('artifact:' + 'b' * 32, 0, 4, 'a' * 64).to_dict()
     raw[field] = value
@@ -266,7 +266,7 @@ def test_retrieval_receipts_reject_invalid_authority_and_ranges(field, value):
 
 
 async def test_invalid_retrieval_receipt_does_not_mark_or_discard_inline_evidence(tmp_path):
-    from nanobot.agent.tools.artifact import ArtifactRetrievalReceipt
+    from kohaku.agent.tools.artifact import ArtifactRetrievalReceipt
 
     async with setup_read(tmp_path) as (writer, _, _, _, _):
         receipt = ArtifactRetrievalReceipt('artifact:../forged', True, -1,
@@ -342,7 +342,7 @@ async def test_artifact_file_policy_preserves_existing_guard_and_resolver_order(
 async def test_file_tool_artifact_validation_uses_current_policy_without_returning_text(
     tmp_path, operation, policy_changed,
 ):
-    from nanobot.session.artifact import attested_artifact_origin
+    from kohaku.session.artifact import attested_artifact_origin
 
     async with setup_read(tmp_path) as (writer, tool, store, descriptor, _):
         snapshot = writer.owner.read_snapshot()

@@ -7,21 +7,21 @@ from contextlib import contextmanager
 
 import pytest
 
-from nanobot.session.execution_owner import (
+from kohaku.session.execution_owner import (
     ExecutionOwner,
     ExecutionOwnershipError,
     acquire_execution,
     execution_lock_guard,
     execution_transaction,
 )
-from nanobot.session.manager import (
+from kohaku.session.manager import (
     JsonlSessionStore,
     Session,
     SessionStorageError,
     SessionWriteConflict,
 )
-from nanobot.session.source_root import SourceRootAuthority
-from nanobot.session.source_store import SourceSessionStore
+from kohaku.session.source_root import SourceRootAuthority
+from kohaku.session.source_store import SourceSessionStore
 
 
 @pytest.fixture

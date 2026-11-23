@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from nanobot.config.schema import Config, RemoteAccessConfig
+from kohaku.config.schema import Config, RemoteAccessConfig
 
 
 def test_remote_access_defaults_off() -> None:

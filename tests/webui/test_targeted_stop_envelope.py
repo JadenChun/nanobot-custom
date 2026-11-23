@@ -6,12 +6,12 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from nanobot.channels.websocket.tests.test_websocket_channel import (
+from kohaku.channels.websocket.tests.test_websocket_channel import (
     _authenticate_local_webui_connection,
     _ch,
 )
-from nanobot.session import webui_turns as wth
-from nanobot.webui.metadata import WEBUI_TARGET_TURN_METADATA_KEY
+from kohaku.session import webui_turns as wth
+from kohaku.webui.metadata import WEBUI_TARGET_TURN_METADATA_KEY
 
 
 @pytest.fixture(autouse=True)
@@ -23,7 +23,7 @@ def _isolate(tmp_path, monkeypatch):
         "_WEBSOCKET_TURN_OWNERS",
     ):
         getattr(wth, name).clear()
-    monkeypatch.setattr("nanobot.config.paths.get_data_dir", lambda: tmp_path)
+    monkeypatch.setattr("kohaku.config.paths.get_data_dir", lambda: tmp_path)
     yield
     for name in (
         "_WEBSOCKET_ACTIVE_TURNS",

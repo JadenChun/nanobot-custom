@@ -10,18 +10,18 @@ from unittest.mock import AsyncMock, patch
 import httpx
 import pytest
 
-from nanobot.audio.transcription import (
+from kohaku.audio.transcription import (
     EffectiveTranscriptionConfig,
     resolve_transcription_config,
     transcribe_audio_file,
 )
-from nanobot.audio.transcription_registry import (
+from kohaku.audio.transcription_registry import (
     get_transcription_provider,
     resolve_transcription_provider,
     transcription_provider_names,
 )
-from nanobot.config.schema import Config
-from nanobot.providers.transcription import (
+from kohaku.config.schema import Config
+from kohaku.providers.transcription import (
     AssemblyAITranscriptionProvider,
     GroqTranscriptionProvider,
     OpenAITranscriptionProvider,
@@ -255,7 +255,7 @@ def test_resolver_accepts_legacy_xiaomi_transcription_alias() -> None:
 def test_transcription_registry_lists_providers_and_aliases() -> None:
     siliconflow = get_transcription_provider("siliconflow")
     assert siliconflow is not None
-    assert siliconflow.adapter == "nanobot.providers.transcription:OpenAITranscriptionProvider"
+    assert siliconflow.adapter == "kohaku.providers.transcription:OpenAITranscriptionProvider"
     assert siliconflow.load_adapter() is OpenAITranscriptionProvider
     assert siliconflow.default_model == "FunAudioLLM/SenseVoiceSmall"
     assert resolve_transcription_provider("silicon").name == "siliconflow"
@@ -285,7 +285,7 @@ def test_resolver_supports_assemblyai_provider_config() -> None:
 @pytest.mark.asyncio
 async def test_transcribe_audio_file_routes_openrouter_provider(audio_file: Path, monkeypatch) -> None:
     monkeypatch.setattr(
-        "nanobot.audio.transcription.measure_audio_duration",
+        "kohaku.audio.transcription.measure_audio_duration",
         AsyncMock(return_value=1.0),
     )
     captured: dict[str, object] = {}
@@ -309,7 +309,7 @@ async def test_transcribe_audio_file_routes_openrouter_provider(audio_file: Path
         max_upload_mb=25,
     )
 
-    with patch("nanobot.providers.transcription.OpenRouterTranscriptionProvider", StubOpenRouter):
+    with patch("kohaku.providers.transcription.OpenRouterTranscriptionProvider", StubOpenRouter):
         result = await transcribe_audio_file(audio_file, config)
 
     assert result == "openrouter ok"
@@ -325,7 +325,7 @@ async def test_transcribe_audio_file_routes_openrouter_provider(audio_file: Path
 @pytest.mark.asyncio
 async def test_transcribe_audio_file_routes_xiaomi_mimo_provider(audio_file: Path, monkeypatch) -> None:
     monkeypatch.setattr(
-        "nanobot.audio.transcription.measure_audio_duration",
+        "kohaku.audio.transcription.measure_audio_duration",
         AsyncMock(return_value=1.0),
     )
     captured: dict[str, object] = {}
@@ -349,7 +349,7 @@ async def test_transcribe_audio_file_routes_xiaomi_mimo_provider(audio_file: Pat
         max_upload_mb=25,
     )
 
-    with patch("nanobot.providers.transcription.XiaomiMiMoTranscriptionProvider", StubXiaomiMiMo):
+    with patch("kohaku.providers.transcription.XiaomiMiMoTranscriptionProvider", StubXiaomiMiMo):
         result = await transcribe_audio_file(audio_file, config)
 
     assert result == "mimo ok"
@@ -365,7 +365,7 @@ async def test_transcribe_audio_file_routes_xiaomi_mimo_provider(audio_file: Pat
 @pytest.mark.asyncio
 async def test_transcribe_audio_file_routes_assemblyai_provider(audio_file: Path, monkeypatch) -> None:
     monkeypatch.setattr(
-        "nanobot.audio.transcription.measure_audio_duration",
+        "kohaku.audio.transcription.measure_audio_duration",
         AsyncMock(return_value=1.0),
     )
     captured: dict[str, object] = {}
@@ -389,7 +389,7 @@ async def test_transcribe_audio_file_routes_assemblyai_provider(audio_file: Path
         max_upload_mb=25,
     )
 
-    with patch("nanobot.providers.transcription.AssemblyAITranscriptionProvider", StubAssemblyAI):
+    with patch("kohaku.providers.transcription.AssemblyAITranscriptionProvider", StubAssemblyAI):
         result = await transcribe_audio_file(audio_file, config)
 
     assert result == "assembly ok"

@@ -5,11 +5,11 @@ from types import SimpleNamespace
 
 import pytest
 
-from nanobot.bus.events import InboundMessage
-from nanobot.command.builtin import build_help_text, register_builtin_commands
-from nanobot.command.router import CommandContext, CommandRouter
-from nanobot.session.keys import UNIFIED_SESSION_KEY
-from nanobot.triggers.local_store import LocalTriggerStore
+from kohaku.bus.events import InboundMessage
+from kohaku.command.builtin import build_help_text, register_builtin_commands
+from kohaku.command.router import CommandContext, CommandRouter
+from kohaku.session.keys import UNIFIED_SESSION_KEY
+from kohaku.triggers.local_store import LocalTriggerStore
 
 
 @pytest.mark.asyncio
@@ -43,7 +43,7 @@ async def test_trigger_command_creates_session_bound_local_trigger(tmp_path: Pat
     assert trigger.channel == "websocket"
     assert trigger.chat_id == "chat-1"
     assert trigger.session_key == "websocket:chat-1"
-    assert f"nanobot trigger {trigger.id} \"message\"" in response.content
+    assert f"kohaku trigger {trigger.id} \"message\"" in response.content
 
 
 @pytest.mark.asyncio

@@ -8,10 +8,10 @@ from dataclasses import replace
 
 import pytest
 
-from nanobot.agent import memory_recovery as codec
-from nanobot.agent import memory_recovery_transaction as transaction
-from nanobot.agent import memory_recovery_transaction_memory as memory_stage
-from nanobot.agent.memory_recovery_manifest import MAX_INT
+from kohaku.agent import memory_recovery as codec
+from kohaku.agent import memory_recovery_transaction as transaction
+from kohaku.agent import memory_recovery_transaction_memory as memory_stage
+from kohaku.agent.memory_recovery_manifest import MAX_INT
 
 _FIELDS = ("start_offset", "end_offset", "session_generation", "session_key")
 

@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from nanobot.agent.tools.agent_browser import AgentBrowserTool
+from kohaku.agent.tools.agent_browser import AgentBrowserTool
 
 
 def _process() -> AsyncMock:
@@ -23,10 +23,10 @@ def _process() -> AsyncMock:
 
 
 def _prepare(monkeypatch, process: AsyncMock) -> None:
-    monkeypatch.setattr("nanobot.agent.tools.agent_browser._resolve_npx", lambda: "npx")
-    monkeypatch.setattr("nanobot.agent.tools.agent_browser.run_owned_process", process)
+    monkeypatch.setattr("kohaku.agent.tools.agent_browser._resolve_npx", lambda: "npx")
+    monkeypatch.setattr("kohaku.agent.tools.agent_browser.run_owned_process", process)
     monkeypatch.setattr(
-        "nanobot.agent.tools.agent_browser.asyncio.sleep", AsyncMock(return_value=None)
+        "kohaku.agent.tools.agent_browser.asyncio.sleep", AsyncMock(return_value=None)
     )
 
 
@@ -76,7 +76,7 @@ async def test_launch_command_starts_shared_browser(monkeypatch):
     ready = AsyncMock(side_effect=[False, False, True])
     monkeypatch.setattr(tool, "_cdp_ready", ready)
     popen = MagicMock()
-    monkeypatch.setattr("nanobot.agent.tools.agent_browser.subprocess.Popen", popen)
+    monkeypatch.setattr("kohaku.agent.tools.agent_browser.subprocess.Popen", popen)
 
     payload = json.loads(await tool.execute(["get", "url"]))
 

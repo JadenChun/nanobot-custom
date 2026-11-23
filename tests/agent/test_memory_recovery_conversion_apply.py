@@ -8,12 +8,12 @@ from pathlib import Path
 
 import pytest
 
-from nanobot.agent import memory_recovery_conversion_apply as apply
-from nanobot.agent import memory_recovery_conversion_runtime as prepare
-from nanobot.agent import memory_recovery_quarantine_storage as quarantine
-from nanobot.agent import memory_recovery_target_mutation as mutation
-from nanobot.agent import memory_recovery_transaction_prepare as transaction_prepare
-from nanobot.agent.memory_recovery_manifest import MemoryRecoveryManifest
+from kohaku.agent import memory_recovery_conversion_apply as apply
+from kohaku.agent import memory_recovery_conversion_runtime as prepare
+from kohaku.agent import memory_recovery_quarantine_storage as quarantine
+from kohaku.agent import memory_recovery_target_mutation as mutation
+from kohaku.agent import memory_recovery_transaction_prepare as transaction_prepare
+from kohaku.agent.memory_recovery_manifest import MemoryRecoveryManifest
 
 _WORKSPACE_ID = "a" * 32
 
@@ -319,10 +319,10 @@ def test_unsafe_target_is_rejected(tmp_path: Path, mode: str) -> None:
 @pytest.mark.parametrize("claim", ["receipt", "source", "output", "canonical_row"])
 def test_immutable_blob_tamper_is_rejected(tmp_path: Path, claim: str) -> None:
     _workspace(tmp_path)
-    from nanobot.agent import memory_recovery as receipt_codec
-    from nanobot.agent import memory_recovery_conversion as conversion
-    from nanobot.agent import memory_recovery_storage as storage
-    from nanobot.agent import memory_recovery_transaction as transaction
+    from kohaku.agent import memory_recovery as receipt_codec
+    from kohaku.agent import memory_recovery_conversion as conversion
+    from kohaku.agent import memory_recovery_storage as storage
+    from kohaku.agent import memory_recovery_transaction as transaction
 
     with storage.open_workspace_memory(tmp_path) as authority:
         raw = authority.snapshot_target(".consolidation.pending.json").content

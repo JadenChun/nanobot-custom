@@ -22,11 +22,11 @@ func TestEncryptedStateStoreRoundTripAndFailureModes(t *testing.T) {
 	if _, err := store.ReadState(ipn.StateKey("profile")); !errors.Is(err, ipn.ErrStateNotExist) {
 		t.Fatalf("empty read: %v", err)
 	}
-	if err := store.WriteState(ipn.StateKey("profile"), []byte("NANOBOT_SECRET")); err != nil {
+	if err := store.WriteState(ipn.StateKey("profile"), []byte("KOHAKU_SECRET")); err != nil {
 		t.Fatalf("write: %v", err)
 	}
 	value, err := store.ReadState(ipn.StateKey("profile"))
-	if err != nil || string(value) != "NANOBOT_SECRET" {
+	if err != nil || string(value) != "KOHAKU_SECRET" {
 		t.Fatalf("read: %q %v", value, err)
 	}
 	info, err := os.Stat(filepath.Join(dir, "state.enc"))
@@ -40,8 +40,8 @@ func TestEncryptedStateStoreRoundTripAndFailureModes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read raw: %v", err)
 	}
-	for index := 0; index+len("NANOBOT_SECRET") <= len(raw); index++ {
-		if string(raw[index:index+len("NANOBOT_SECRET")]) == "NANOBOT_SECRET" {
+	for index := 0; index+len("KOHAKU_SECRET") <= len(raw); index++ {
+		if string(raw[index:index+len("KOHAKU_SECRET")]) == "KOHAKU_SECRET" {
 			t.Fatal("plaintext secret appeared in state file")
 		}
 	}
@@ -50,7 +50,7 @@ func TestEncryptedStateStoreRoundTripAndFailureModes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reopen: %v", err)
 	}
-	if value, err := reopened.ReadState(ipn.StateKey("profile")); err != nil || string(value) != "NANOBOT_SECRET" {
+	if value, err := reopened.ReadState(ipn.StateKey("profile")); err != nil || string(value) != "KOHAKU_SECRET" {
 		t.Fatalf("reopen read: %q %v", value, err)
 	}
 
@@ -70,7 +70,7 @@ func TestEncryptedStateStoreRoundTripAndFailureModes(t *testing.T) {
 	if _, err := store.ReadState(ipn.StateKey("profile")); !errors.Is(err, ipn.ErrStateNotExist) {
 		t.Fatalf("delete read: %v", err)
 	}
-	if err := store.WriteState(ipn.StateKey("profile"), []byte("NANOBOT_SECRET")); err != nil {
+	if err := store.WriteState(ipn.StateKey("profile"), []byte("KOHAKU_SECRET")); err != nil {
 		t.Fatalf("rewrite: %v", err)
 	}
 	raw, err = os.ReadFile(filepath.Join(dir, "state.enc"))

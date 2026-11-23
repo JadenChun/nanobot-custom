@@ -11,18 +11,18 @@ from pathlib import Path
 
 import pytest
 
-from nanobot.agent.loop import AgentLoop
-from nanobot.channels.manager import ChannelManager
-from nanobot.config.schema import Config
-from nanobot.cron.runtime import CronRuntimeInjection
-from nanobot.cron.service import CronService
-from nanobot.runtime_composition import (
+from kohaku.agent.loop import AgentLoop
+from kohaku.channels.manager import ChannelManager
+from kohaku.config.schema import Config
+from kohaku.cron.runtime import CronRuntimeInjection
+from kohaku.cron.service import CronService
+from kohaku.runtime_composition import (
     ChannelBuildOptions,
     RuntimeComposition,
     RuntimeFactories,
     RuntimeState,
 )
-from nanobot.session.runtime_authority import DurableSessionAuthority, SessionAuthority
+from kohaku.session.runtime_authority import DurableSessionAuthority, SessionAuthority
 
 
 def _denied(*_args: object, **_kwargs: object) -> None:

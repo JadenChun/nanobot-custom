@@ -10,20 +10,20 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from nanobot.agent.hook import AgentHook, AgentHookContext
-from nanobot.agent.loop import AgentLoop
-from nanobot.agent.runner import AgentRunner
-from nanobot.agent.tools.base import (
+from kohaku.agent.hook import AgentHook, AgentHookContext
+from kohaku.agent.loop import AgentLoop
+from kohaku.agent.runner import AgentRunner
+from kohaku.agent.tools.base import (
     Tool,
     ToolPreparationError,
     ToolPreparationErrorKind,
     ToolResult,
 )
-from nanobot.agent.tools.registry import ToolRegistry
-from nanobot.agent.turn import TurnContext, TurnRequest
-from nanobot.providers.base import LLMProvider, LLMResponse, LLMUsage, ToolCallRequest
-from nanobot.security.folder_grants import FolderGrantStore
-from nanobot.session.source_projection import project_events
+from kohaku.agent.tools.registry import ToolRegistry
+from kohaku.agent.turn import TurnContext, TurnRequest
+from kohaku.providers.base import LLMProvider, LLMResponse, LLMUsage, ToolCallRequest
+from kohaku.security.folder_grants import FolderGrantStore
+from kohaku.session.source_projection import project_events
 from tests.agent.runner_helpers import make_run_spec
 from tests.agent.test_migration_engine import engine_config as _engine_config_factory
 
@@ -79,7 +79,7 @@ class _FailureTool(Tool):
         if self.mode == "raw_error_text":
             return "Error: Tool 'reply' not found"
         if self.mode == "metadata_spoof":
-            from nanobot.agent.turn import ToolOutcome
+            from kohaku.agent.turn import ToolOutcome
 
             return ToolOutcome(
                 ToolResult.error("Error: Tool 'reply' not found"),

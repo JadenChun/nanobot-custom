@@ -16,20 +16,20 @@ from typing import Any
 
 import pytest
 
-from nanobot.agent.tools import native_process
-from nanobot.agent.tools.exec_session import (
+from kohaku.agent.tools import native_process
+from kohaku.agent.tools.exec_session import (
     ExecSessionManager,
     _ExecSession,  # pyright: ignore[reportPrivateUsage]
 )
-from nanobot.agent.tools.native_process import NativeProcessHandle, spawn_native_process
-from nanobot.agent.tools.shell import ExecTool
-from nanobot.security import native_admission
-from nanobot.security.desktop_permissions import (
+from kohaku.agent.tools.native_process import NativeProcessHandle, spawn_native_process
+from kohaku.agent.tools.shell import ExecTool
+from kohaku.security import native_admission
+from kohaku.security.desktop_permissions import (
     DesktopPermissionOwner,
     WorkspacePermissionConflictError,
     WorkspacePermissionUnavailableError,
 )
-from nanobot.security.native_admission import NativeAdmissionLedger
+from kohaku.security.native_admission import NativeAdmissionLedger
 
 _SLOW_INPUT_BYTES = 256 * 1024
 _DUPLEX_BYTES = 512 * 1024
@@ -610,7 +610,7 @@ async def test_reserved_shell_launch_never_falls_back_without_supervisor(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    import nanobot.agent.tools.shell as shell_module
+    import kohaku.agent.tools.shell as shell_module
 
     ledger = NativeAdmissionLedger(tmp_path / "admissions.json")
     reservation = ledger.begin(managed=lambda: False)
@@ -662,7 +662,7 @@ async def test_root_stdio_drains_while_another_receipt_publisher_holds_fsync(
     publisher_a_bootstrap.write_text(
         "import os,runpy,sys,time\n"
         "from pathlib import Path\n"
-        "from nanobot.security import native_admission as admission\n"
+        "from kohaku.security import native_admission as admission\n"
         f"receipt_dir=Path({str(ledger.receipt_dir)!r})\n"
         f"paused=Path({str(publisher_paused)!r})\n"
         f"release=Path({str(release_publisher)!r})\n"
@@ -677,7 +677,7 @@ async def test_root_stdio_drains_while_another_receipt_publisher_holds_fsync(
         " real_fsync(path)\n"
         "admission._fsync_directory=pause_receipt_fsync\n"
         "sys.argv=[sys.argv[3]]+sys.argv[4:]\n"
-        "module=runpy.run_module('nanobot.agent.tools.native_process_supervisor',"
+        "module=runpy.run_module('kohaku.agent.tools.native_process_supervisor',"
         "run_name='native_supervisor_test')\n"
         "raise SystemExit(module['main']())\n",
         encoding="utf-8",
@@ -689,7 +689,7 @@ async def test_root_stdio_drains_while_another_receipt_publisher_holds_fsync(
         f"started=Path({str(publisher_b_started)!r})\n"
         f"controlled=Path({str(publisher_b_controlled)!r})\n"
         "sys.argv=[sys.argv[3]]+sys.argv[4:]\n"
-        "module=runpy.run_module('nanobot.agent.tools.native_process_supervisor',"
+        "module=runpy.run_module('kohaku.agent.tools.native_process_supervisor',"
         "run_name='native_supervisor_test')\n"
         "real_publish=module['write_quiescence_receipt']\n"
         "def note_publish(receipt_dir,payload):\n"

@@ -5,8 +5,8 @@ from pathlib import Path
 
 import pytest
 
-from nanobot.remote.auth import AuthRejectedError, TokenService
-from nanobot.remote.store import RemoteAccessStore
+from kohaku.remote.auth import AuthRejectedError, TokenService
+from kohaku.remote.store import RemoteAccessStore
 
 
 class Clock:

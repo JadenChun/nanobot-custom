@@ -4,9 +4,9 @@ import { readFileSync } from "node:fs";
 import { act, cleanup, fireEvent, render, renderHook, screen } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { useNanobotStream } from "@/hooks/useNanobotStream";
+import { useKohakuStream } from "@/hooks/useKohakuStream";
 import { ThreadComposer } from "@/components/thread/ThreadComposer";
-import { NanobotClient } from "@/lib/nanobot-client";
+import { KohakuClient } from "@/lib/kohaku-client";
 import { ClientProvider } from "@/providers/ClientProvider";
 import type { UIMessage } from "@/lib/types";
 
@@ -22,7 +22,7 @@ const attached = { event: "attached", chat_id: "attempt-chat", input_attempt_sou
   input_attempt_result: { version: 1, turn_id: "attempt-1", disposition: "admitted", proof } };
 // Qualification supplies the unmodified real backend bridge. The fallback keeps
 // the repository suite independently runnable without a machine-local QA path.
-const bridgePath = process.env.NANOBOT_INPUT_ATTEMPT_BRIDGE;
+const bridgePath = process.env.KOHAKU_INPUT_ATTEMPT_BRIDGE;
 const bridge = bridgePath ? JSON.parse(readFileSync(bridgePath, "utf8")) : {
   capability: { event: "attached", chat_id: "attempt-chat", input_attempt_source: capability },
   query: { type: "attach", chat_id: "attempt-chat", input_attempt_query: {
@@ -32,7 +32,7 @@ const bridge = bridgePath ? JSON.parse(readFileSync(bridgePath, "utf8")) : {
 };
 const CHAT = "attempt-chat";
 const EMPTY: UIMessage[] = [];
-const clients: NanobotClient[] = [];
+const clients: KohakuClient[] = [];
 class Socket {
   static all: Socket[] = [];
   readyState = 0;
@@ -49,7 +49,7 @@ class Socket {
 }
 async function flush() { for (let i = 0; i < 8; i += 1) await Promise.resolve(); }
 function make(negotiated = true) {
-  const client = new NanobotClient({ url: "ws://qa-no-network", maxBackoffMs: 1,
+  const client = new KohakuClient({ url: "ws://qa-no-network", maxBackoffMs: 1,
     socketFactory: () => new Socket() as unknown as WebSocket });
   clients.push(client);
   client.connect();
@@ -58,7 +58,7 @@ function make(negotiated = true) {
   function Wrapper({ children }: { children: ReactNode }) {
     return <ClientProvider client={client} token="qa-fixture">{children}</ClientProvider>;
   }
-  const hook = renderHook(({ chatId, messages }) => useNanobotStream(chatId, messages), {
+  const hook = renderHook(({ chatId, messages }) => useKohakuStream(chatId, messages), {
     wrapper: Wrapper, initialProps: { chatId: CHAT, messages: EMPTY },
   });
   if (negotiated) act(() => socket.message(bridge.capability));

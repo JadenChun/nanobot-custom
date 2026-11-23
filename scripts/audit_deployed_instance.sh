@@ -15,7 +15,7 @@
 set -uo pipefail
 
 ROOT="${1:-/opt/marketing-agent}"
-CONFIG="${NANOBOT_CONFIG:-}"
+CONFIG="${KOHAKU_CONFIG:-}"
 
 say() { printf '\n===== %s =====\n' "$*"; }
 have() { command -v "$1" >/dev/null 2>&1; }
@@ -52,7 +52,7 @@ if have systemctl; then
 fi
 
 # --- source checkout --------------------------------------------------------
-REPO="${NANOBOT_REPO:-}"
+REPO="${KOHAKU_REPO:-}"
 if [ -z "$REPO" ]; then
   for candidate in "$ROOT" "$ROOT/nanobot" "$ROOT/nanobot-custom" "$ROOT/repo" "$ROOT/app" "$ROOT/src"; do
     if [ -d "$candidate/.git" ]; then REPO="$candidate"; break; fi

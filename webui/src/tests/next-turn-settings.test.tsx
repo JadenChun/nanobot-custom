@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ReactNode } from "react";
 
-import { NanobotClient } from "@/lib/nanobot-client";
+import { KohakuClient } from "@/lib/kohaku-client";
 import { ClientProvider } from "@/providers/ClientProvider";
 import { ThreadComposer } from "@/components/thread/ThreadComposer";
 import { ThreadShell } from "@/components/thread/ThreadShell";
@@ -293,7 +293,7 @@ function makeClient() {
 
 function wrap(client: ReturnType<typeof makeClient>, children: ReactNode) {
   return (
-    <ClientProvider client={client as unknown as NanobotClient} token="tok" modelName={null}>
+    <ClientProvider client={client as unknown as KohakuClient} token="tok" modelName={null}>
       {children}
     </ClientProvider>
   );
@@ -364,9 +364,9 @@ describe("next-turn settings ordering tracker", () => {
   });
 });
 
-describe("NanobotClient detached next-turn settings", () => {
+describe("KohakuClient detached next-turn settings", () => {
   it("sends next_turn without mutating the active scope and resolves on its acknowledgement", async () => {
-    const client = new NanobotClient({
+    const client = new KohakuClient({
       url: "ws://test",
       reconnect: false,
       socketFactory: (url) => new FakeSocket(url) as unknown as WebSocket,
@@ -406,7 +406,7 @@ describe("NanobotClient detached next-turn settings", () => {
   });
 
   it("rejects the ordering promise when the gateway refuses the next folder", async () => {
-    const client = new NanobotClient({
+    const client = new KohakuClient({
       url: "ws://test",
       reconnect: false,
       socketFactory: (url) => new FakeSocket(url) as unknown as WebSocket,
@@ -426,7 +426,7 @@ describe("NanobotClient detached next-turn settings", () => {
   });
 
   it("ignores a stale next-turn reply so it cannot overwrite a newer selection", async () => {
-    const client = new NanobotClient({
+    const client = new KohakuClient({
       url: "ws://test",
       reconnect: false,
       socketFactory: (url) => new FakeSocket(url) as unknown as WebSocket,

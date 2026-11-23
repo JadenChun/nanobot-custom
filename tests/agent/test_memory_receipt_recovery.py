@@ -10,9 +10,9 @@ from pathlib import Path
 
 import pytest
 
-import nanobot.agent.memory_recovery as memory_recovery
-from nanobot.agent.memory import MemoryStore
-from nanobot.agent.memory_recovery import (
+import kohaku.agent.memory_recovery as memory_recovery
+from kohaku.agent.memory import MemoryStore
+from kohaku.agent.memory_recovery import (
     MemoryReceipt,
     MemoryReceiptRecoveryRequired,
     MemoryReceiptValidationError,
@@ -512,7 +512,7 @@ def test_constructor_rejection_has_no_forbidden_mutations(
     def forbidden(*_args, **_kwargs):
         attempts.append("forbidden mutation")
 
-    monkeypatch.setattr("nanobot.agent.memory.ensure_dir", forbidden)
+    monkeypatch.setattr("kohaku.agent.memory.ensure_dir", forbidden)
     for owner, name in (
         (Path, "mkdir"),
         (Path, "write_text"),

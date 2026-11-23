@@ -18,7 +18,7 @@ function Get-LocalCrawl4AiPaths {
         RootPath = $root
         ProfilePath = $profilePath
         LogDirectory = Join-Path $root "logs"
-        MarkerPath = Join-Path $profilePath ".nanobot-profile-ready"
+        MarkerPath = Join-Path $profilePath ".kohaku-profile-ready"
     }
 }
 

@@ -1,6 +1,6 @@
-from nanobot.bus.events import OutboundMessage
-from nanobot.cron.delivery import build_explicit_fanout_messages, build_result_messages
-from nanobot.cron.types import CronDestination, CronPayload
+from kohaku.bus.events import OutboundMessage
+from kohaku.cron.delivery import build_explicit_fanout_messages, build_result_messages
+from kohaku.cron.types import CronDestination, CronPayload
 
 
 def test_delivery_destinations_include_primary_and_deduplicate() -> None:

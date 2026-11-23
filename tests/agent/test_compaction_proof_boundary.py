@@ -4,15 +4,15 @@ from dataclasses import replace
 
 import pytest
 
-import nanobot.session.checkpoint_dependencies as dependencies
-from nanobot.agent.context_governance import ContextGovernor
-from nanobot.session.artifact_projection import ArtifactProjector
-from nanobot.session.artifact_reader import ArtifactReader
-from nanobot.session.checkpoint_dependencies import ConsumedSummaryChunk, SummaryDependencyProof
-from nanobot.session.execution_owner import acquire_execution
-from nanobot.session.source import SourceValidationError
-from nanobot.session.source_store import SourceSessionStore
-from nanobot.session.turn_writer import SourceTurnWriter
+import kohaku.session.checkpoint_dependencies as dependencies
+from kohaku.agent.context_governance import ContextGovernor
+from kohaku.session.artifact_projection import ArtifactProjector
+from kohaku.session.artifact_reader import ArtifactReader
+from kohaku.session.checkpoint_dependencies import ConsumedSummaryChunk, SummaryDependencyProof
+from kohaku.session.execution_owner import acquire_execution
+from kohaku.session.source import SourceValidationError
+from kohaku.session.source_store import SourceSessionStore
+from kohaku.session.turn_writer import SourceTurnWriter
 from tests.agent.test_source_compaction_publication import capture, state_for
 from tests.agent.test_source_compaction_publication import store as store
 from tests.agent.test_source_dependency_compaction import _prepare, _record_retrieval, _state

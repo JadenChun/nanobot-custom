@@ -6,7 +6,7 @@ import {
   type TestRendererSetup,
 } from "@opentui/core/testing"
 
-import { NanobotTui, type AppOptions } from "./app"
+import { KohakuTui, type AppOptions } from "./app"
 import type { MessageOptions, WorkspaceScopePayload } from "./protocol"
 import type { ClipboardImageReader } from "./clipboard-image"
 
@@ -77,11 +77,11 @@ async function mount(
   client: ReturnType<typeof makeClient>,
   appOptions: AppOptions = options,
   clipboard?: ClipboardImageReader,
-): Promise<{ app: NanobotTui; ui: InspectableApp }> {
+): Promise<{ app: KohakuTui; ui: InspectableApp }> {
   setup = await createTestRenderer({
     width: 88, height: 24, screenMode: "alternate-screen", exitOnCtrlC: false,
   })
-  const app = NanobotTui.mount(
+  const app = KohakuTui.mount(
     setup.renderer,
     appOptions,
     client,
@@ -98,14 +98,14 @@ async function mount(
   return { app, ui: app as unknown as InspectableApp }
 }
 
-async function queueFollowUp(app: NanobotTui, ui: InspectableApp, content: string): Promise<void> {
+async function queueFollowUp(app: KohakuTui, ui: InspectableApp, content: string): Promise<void> {
   app.accept({ event: "goal_status", chat_id: "chat", status: "running", turn_id: "turn-1" })
   ui.composer.setText(content)
   setup!.mockInput.pressTab()
   await waitUntil(() => ui.composer.plainText === "")
 }
 
-function admitOwner(app: NanobotTui, turnId: string): void {
+function admitOwner(app: KohakuTui, turnId: string): void {
   app.accept({
     event: "message_admitted",
     chat_id: "chat",

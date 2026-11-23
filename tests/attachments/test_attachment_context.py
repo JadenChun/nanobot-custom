@@ -3,13 +3,13 @@ from __future__ import annotations
 import base64
 from pathlib import Path
 
-from nanobot.attachments.context import (
+from kohaku.attachments.context import (
     AttachmentContext,
     StoreAttachmentResolver,
     content_with_media_breadcrumbs,
     media_paths_for_message,
 )
-from nanobot.attachments.store import AttachmentStore
+from kohaku.attachments.store import AttachmentStore
 
 _PNG = base64.b64decode(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+yF9kAAAAASUVORK5CYII="

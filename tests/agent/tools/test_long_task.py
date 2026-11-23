@@ -9,25 +9,25 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from nanobot.agent.goal_permission import goal_mutation_allowed, goal_mutation_permission
-from nanobot.agent.loop import AgentLoop
-from nanobot.agent.tools.context import (
+from kohaku.agent.goal_permission import goal_mutation_allowed, goal_mutation_permission
+from kohaku.agent.loop import AgentLoop
+from kohaku.agent.tools.context import (
     RequestContext,
     current_request_context,
     request_context,
 )
-from nanobot.agent.tools.long_task import (
+from kohaku.agent.tools.long_task import (
     CreateGoalTool,
     UpdateGoalTool,
 )
-from nanobot.agent.tools.registry import ToolRegistry
-from nanobot.bus.outbound_events import GoalStateSyncEvent
-from nanobot.bus.queue import MessageBus
-from nanobot.providers.base import GenerationSettings
-from nanobot.session.goal_state import GOAL_STATE_KEY, MAX_GOAL_OBJECTIVE_CHARS
-from nanobot.session.manager import SessionManager
-from nanobot.session.turn_continuation import should_finalize_on_max_iterations
-from nanobot.session.webui_turns import WebuiTurnCoordinator
+from kohaku.agent.tools.registry import ToolRegistry
+from kohaku.bus.outbound_events import GoalStateSyncEvent
+from kohaku.bus.queue import MessageBus
+from kohaku.providers.base import GenerationSettings
+from kohaku.session.goal_state import GOAL_STATE_KEY, MAX_GOAL_OBJECTIVE_CHARS
+from kohaku.session.manager import SessionManager
+from kohaku.session.turn_continuation import should_finalize_on_max_iterations
+from kohaku.session.webui_turns import WebuiTurnCoordinator
 from tests.agent import p6_admitted_fixtures
 
 admitted_async = p6_admitted_fixtures.admitted_async

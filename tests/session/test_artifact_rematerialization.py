@@ -4,12 +4,12 @@ from dataclasses import replace
 
 import pytest
 
-from nanobot.session.artifact_reader import ArtifactReader
-from nanobot.session.artifact_rematerialization import (
+from kohaku.session.artifact_reader import ArtifactReader
+from kohaku.session.artifact_rematerialization import (
     ArtifactRematerializationError,
     ArtifactRematerializer,
 )
-from nanobot.session.artifact_store import PrivateArtifactStore
+from kohaku.session.artifact_store import PrivateArtifactStore
 from tests.session.test_artifact_reader import setup_read
 
 
@@ -92,7 +92,7 @@ async def test_install_fault_is_retry_safe_and_source_is_unchanged(tmp_path, mon
         before = source_path.read_bytes()
         next(store.root.rglob('*.blob')).unlink()
 
-        import nanobot.session.artifact_store as artifact_store
+        import kohaku.session.artifact_store as artifact_store
 
         real_link = artifact_store.os.link
         monkeypatch.setattr(

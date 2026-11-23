@@ -6,8 +6,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from nanobot.providers import codex_auth
-from nanobot.providers.image_generation import CodexImageGenerationClient, ImageGenerationError
+from kohaku.providers import codex_auth
+from kohaku.providers.image_generation import CodexImageGenerationClient, ImageGenerationError
 
 
 @pytest.mark.parametrize("proxy", [None, "", "http://proxy.invalid:8080"])

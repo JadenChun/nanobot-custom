@@ -8,8 +8,8 @@ from types import SimpleNamespace
 
 import pytest
 
-import nanobot.cron.delivery_store as delivery
-import nanobot.cron.occurrence_store as occurrence
+import kohaku.cron.delivery_store as delivery
+import kohaku.cron.occurrence_store as occurrence
 from tests.cron.test_cron_delivery_store import _prepare
 from tests.cron.test_occurrence_store import _claim, _store
 

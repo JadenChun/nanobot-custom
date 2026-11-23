@@ -16,9 +16,9 @@ import pytest
 from websockets.datastructures import Headers
 from websockets.http11 import Request
 
-from nanobot.session.runtime_authority import DurableSessionAuthority
-from nanobot.webui import transcript
-from nanobot.webui.transcript import (
+from kohaku.session.runtime_authority import DurableSessionAuthority
+from kohaku.webui import transcript
+from kohaku.webui.transcript import (
     append_transcript_object,
     build_webui_thread_response,
     session_turn_index,
@@ -40,7 +40,7 @@ def _seed_turns(key: str, chat_id: str, turns: int) -> None:
 
 
 def _seed(key: str, turns: int, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    monkeypatch.setattr("nanobot.config.paths.get_data_dir", lambda: tmp_path)
+    monkeypatch.setattr("kohaku.config.paths.get_data_dir", lambda: tmp_path)
     _seed_turns(key, key.split(":", 1)[1], turns)
 
 
@@ -127,7 +127,7 @@ def test_thread_window_and_index_count_only_structural_turn_ends(
 ) -> None:
     key = "websocket:literal-turn-end"
     chat_id = "literal-turn-end"
-    monkeypatch.setattr("nanobot.config.paths.get_data_dir", lambda: tmp_path)
+    monkeypatch.setattr("kohaku.config.paths.get_data_dir", lambda: tmp_path)
     prefix_turns = 4 if segmented else 0
     if segmented:
         # Force real rotations, then keep the two probe turns in the active file.
@@ -157,7 +157,7 @@ def test_thread_window_and_index_count_only_structural_turn_ends(
 def test_turn_index_is_absent_for_an_unknown_session(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr("nanobot.config.paths.get_data_dir", lambda: tmp_path)
+    monkeypatch.setattr("kohaku.config.paths.get_data_dir", lambda: tmp_path)
     assert session_turn_index("websocket:missing") is None
 
 
@@ -222,7 +222,7 @@ def test_turns_route_rejects_an_invalid_query(
     from websockets.datastructures import Headers
     from websockets.http11 import Request
 
-    from nanobot.webui.ws_http import GatewayHTTPHandler
+    from kohaku.webui.ws_http import GatewayHTTPHandler
 
     key = "websocket:turn-route-bad"
     _seed(key, 2, monkeypatch, tmp_path)

@@ -8,8 +8,8 @@ from pathlib import Path
 
 import pytest
 
-from nanobot.session.runtime_authority import OfflineSessionOperator
-from nanobot.session.session_mode import SessionModeError
+from kohaku.session.runtime_authority import OfflineSessionOperator
+from kohaku.session.session_mode import SessionModeError
 
 
 async def test_frozen_legacy_reset_journal_continues_without_rewriting_prefix(tmp_path):

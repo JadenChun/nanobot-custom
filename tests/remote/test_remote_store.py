@@ -7,7 +7,7 @@ import threading
 
 import pytest
 
-from nanobot.remote.store import (
+from kohaku.remote.store import (
     RemoteAccessStore,
     StoreCorruptError,
     StoreError,

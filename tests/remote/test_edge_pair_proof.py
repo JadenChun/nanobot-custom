@@ -11,15 +11,15 @@ from cryptography.hazmat.primitives.asymmetric import ec
 from websockets.datastructures import Headers
 from websockets.http11 import Request as WsRequest
 
-from nanobot.bus.queue import MessageBus
-from nanobot.channels.websocket.runtime import WebSocketConfig
-from nanobot.config.schema import RemoteAccessConfig
-from nanobot.remote.device_proof import (
+from kohaku.bus.queue import MessageBus
+from kohaku.channels.websocket.runtime import WebSocketConfig
+from kohaku.config.schema import RemoteAccessConfig
+from kohaku.remote.device_proof import (
     DeviceProofClaims,
     canonical_device_proof_bytes,
 )
-from nanobot.remote.owner import RemoteAccessOwner
-from nanobot.webui.gateway_services import build_gateway_services
+from kohaku.remote.owner import RemoteAccessOwner
+from kohaku.webui.gateway_services import build_gateway_services
 from tests.remote.proof_helpers import encode_proof_base64url
 
 ORIGIN = "https://fixture.example:8443"

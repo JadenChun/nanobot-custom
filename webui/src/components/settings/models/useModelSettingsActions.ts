@@ -27,7 +27,7 @@ import {
   updateModelConfiguration,
   updateProviderSettings,
 } from "@/lib/api";
-import type { NanobotClient } from "@/lib/nanobot-client";
+import type { KohakuClient } from "@/lib/kohaku-client";
 import type {
   ProviderOAuthAuthorizationRequired,
   ProviderOAuthCompletionResult,
@@ -52,7 +52,7 @@ function isProviderOAuthPending(
 interface ModelSettingsActionsOptions {
   state: ModelSettingsState;
   settings: SettingsPayload | null;
-  client: NanobotClient;
+  client: KohakuClient;
   t: TFunction;
   applyPayload: ApplySettingsPayload;
   maybeRestartHostEngine: MaybeRestartHostEngine;

@@ -11,8 +11,8 @@ import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 
-from nanobot.agent.turn import TurnResult
-from nanobot.api.server import create_app
+from kohaku.agent.turn import TurnResult
+from kohaku.api.server import create_app
 from tests.api_http_client import InProcessApiClient
 
 

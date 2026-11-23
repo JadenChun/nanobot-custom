@@ -1,7 +1,7 @@
 import pytest
 
-from nanobot.cron.delivery_store import DeliveryOutboxCorruptError, _validate_occurrence_identity
-from nanobot.cron.occurrence_store import (
+from kohaku.cron.delivery_store import DeliveryOutboxCorruptError, _validate_occurrence_identity
+from kohaku.cron.occurrence_store import (
     CronOccurrenceStore,
     OccurrenceAlreadyCompletedError,
     OccurrenceCorruptError,
@@ -90,7 +90,7 @@ async def test_changed_copied_foreign_controller_allocates_nothing(tmp_path):
 
 
 async def test_allocated_crash_request_is_not_execution_authority_after_restart(tmp_path):
-    from nanobot.cron.scheduler_store import SchedulerConflictError, SchedulerStore
+    from kohaku.cron.scheduler_store import SchedulerConflictError, SchedulerStore
 
     graph, item, clock, calls, channels = runtime(tmp_path)
     graph.store.allocate_request(source="manual", controller=None, request_id="crashed",
@@ -107,7 +107,7 @@ async def test_allocated_crash_request_is_not_execution_authority_after_restart(
 
 @pytest.mark.parametrize("source", ["manual", "system"])
 async def test_allocated_request_clock_cannot_be_reauthorized_at_new_time(tmp_path, monkeypatch, source):
-    from nanobot.cron.scheduler_store import SchedulerConflictError
+    from kohaku.cron.scheduler_store import SchedulerConflictError
 
     graph, item, clock, calls, channels = runtime(tmp_path)
     controller = graph.construct_internal_controller("clock-test")

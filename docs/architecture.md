@@ -1,6 +1,6 @@
 # Architecture
 
-This page maps nanobot's runtime behavior to source files. Use it when you are debugging internals, reviewing a PR, adding a provider/channel/tool, or trying to understand where a user-visible behavior comes from.
+This page maps Kohaku's runtime behavior to source files. Use it when you are debugging internals, reviewing a PR, adding a provider/channel/tool, or trying to understand where a user-visible behavior comes from.
 
 For the product-level mental model, read [`concepts.md`](./concepts.md) first.
 
@@ -37,12 +37,12 @@ Main files:
 
 | Area | Files |
 |---|---|
-| Message events and queue | `nanobot/bus/events.py`, `nanobot/bus/queue.py` |
-| Turn orchestration | `nanobot/agent/loop.py` |
-| Provider/tool conversation loop | `nanobot/agent/runner.py` |
-| Context construction | `nanobot/agent/context.py` |
-| Session storage and compaction | `nanobot/session/manager.py` |
-| Long-term memory and Dream | `nanobot/agent/memory.py` |
+| Message events and queue | `kohaku/bus/events.py`, `kohaku/bus/queue.py` |
+| Turn orchestration | `kohaku/agent/loop.py` |
+| Provider/tool conversation loop | `kohaku/agent/runner.py` |
+| Context construction | `kohaku/agent/context.py` |
+| Session storage and compaction | `kohaku/session/manager.py` |
+| Long-term memory and Dream | `kohaku/agent/memory.py` |
 
 ## Agent Loop vs Agent Runner
 
@@ -100,7 +100,7 @@ pricing code consumes policy values rather than provider names.
 
 ## Providers
 
-Provider metadata is centralized in `nanobot/providers/registry.py`. Configuration fields live in `nanobot/config/schema.py`.
+Provider metadata is centralized in `kohaku/providers/registry.py`. Configuration fields live in `kohaku/config/schema.py`.
 
 Provider selection uses:
 
@@ -110,7 +110,7 @@ Provider selection uses:
 - local provider fallback when `apiBase` is configured;
 - gateway fallback for providers that can route many model families.
 
-Provider implementations live in `nanobot/providers/`. Most hosted providers use the OpenAI-compatible implementation, while Anthropic, Azure OpenAI, AWS Bedrock, OpenAI Codex, and GitHub Copilot have specialized paths.
+Provider implementations live in `kohaku/providers/`. Most hosted providers use the OpenAI-compatible implementation, while Anthropic, Azure OpenAI, AWS Bedrock, OpenAI Codex, and GitHub Copilot have specialized paths.
 
 Useful docs:
 
@@ -125,16 +125,16 @@ Main files:
 
 | Area | Files |
 |---|---|
-| Base channel contract | `nanobot/channels/base.py` |
-| Channel packages | `nanobot/channels/<channel>/` |
-| Discovery and lifecycle | `nanobot/channels/manager.py` |
-| WebSocket/WebUI channel | `nanobot/channels/websocket/` |
+| Base channel contract | `kohaku/channels/base.py` |
+| Channel packages | `kohaku/channels/<channel>/` |
+| Discovery and lifecycle | `kohaku/channels/manager.py` |
+| WebSocket/WebUI channel | `kohaku/channels/websocket/` |
 
-Channels are discovered by scanning self-contained packages under `nanobot/channels/`. Add a channel by contributing one package that follows [`channel-package-guide.md`](./channel-package-guide.md).
+Channels are discovered by scanning self-contained packages under `kohaku/channels/`. Add a channel by contributing one package that follows [`channel-package-guide.md`](./channel-package-guide.md).
 
 ## WebUI and Gateway
 
-`nanobot gateway` starts:
+`kohaku gateway` starts:
 
 - enabled chat channels;
 - the WebSocket channel when configured;
@@ -149,7 +149,7 @@ The packaged WebUI is served by the WebSocket channel, not the health endpoint:
 | Health endpoint | `http://127.0.0.1:18790/health` |
 | WebUI/WebSocket | `http://127.0.0.1:8765` |
 
-WebUI source lives in `webui/`. The production build is written to `nanobot/web/dist/` and bundled into the wheel.
+WebUI source lives in `webui/`. The production build is written to `kohaku/web/dist/` and bundled into the wheel.
 
 Useful docs:
 
@@ -160,23 +160,23 @@ Useful docs:
 ## Tools
 
 Built-in tools are composed by the explicit foreground factories in
-`nanobot/agent/tools/fork_factories.py`. Installed tool packages may add a
-runtime tool through the `nanobot.tools` Python entry-point group. The loader
+`kohaku/agent/tools/fork_factories.py`. Installed tool packages may add a
+runtime tool through the `kohaku.tools` Python entry-point group. The loader
 validates and stages the complete manifest before changing the registry.
 
 Important files:
 
 | Tool area | Files |
 |---|---|
-| Tool base and schema | `nanobot/agent/tools/base.py`, `nanobot/agent/tools/schema.py` |
-| Discovery and entry-point construction | `nanobot/agent/tools/loader.py`, `nanobot/agent/tools/plugin_context.py` |
-| Shell execution | `nanobot/agent/tools/shell.py` |
-| Filesystem tools | `nanobot/agent/tools/filesystem.py` |
-| Web search/fetch | `nanobot/agent/tools/web.py` |
-| MCP tools | `nanobot/agent/tools/mcp.py` |
-| Cron | `nanobot/agent/tools/cron.py`, `nanobot/cron/` |
-| Image generation | `nanobot/agent/tools/image_generation.py` |
-| Runtime self-inspection | `nanobot/agent/tools/self.py` |
+| Tool base and schema | `kohaku/agent/tools/base.py`, `kohaku/agent/tools/schema.py` |
+| Discovery and entry-point construction | `kohaku/agent/tools/loader.py`, `kohaku/agent/tools/plugin_context.py` |
+| Shell execution | `kohaku/agent/tools/shell.py` |
+| Filesystem tools | `kohaku/agent/tools/filesystem.py` |
+| Web search/fetch | `kohaku/agent/tools/web.py` |
+| MCP tools | `kohaku/agent/tools/mcp.py` |
+| Cron | `kohaku/agent/tools/cron.py`, `kohaku/cron/` |
+| Image generation | `kohaku/agent/tools/image_generation.py` |
+| Runtime self-inspection | `kohaku/agent/tools/self.py` |
 
 Entry-point callbacks receive a fresh, frozen, slotted
 `ExternalToolContext` containing a validated `ToolsConfig`, workspace and
@@ -199,15 +199,15 @@ Tool behavior is part of the model contract. Keep user-visible tool names, schem
 
 ## Config and Paths
 
-The config schema lives in `nanobot/config/schema.py`. Loading and saving live in `nanobot/config/loader.py`. Runtime path helpers live in `nanobot/config/paths.py`.
+The config schema lives in `kohaku/config/schema.py`. Loading and saving live in `kohaku/config/loader.py`. Runtime path helpers live in `kohaku/config/paths.py`.
 
 Defaults:
 
 | Path | Default |
 |---|---|
-| Config | `~/.nanobot/config.json` |
-| Workspace | `~/.nanobot/workspace/` |
-| Sessions | `<config-dir>/sessions/<workspace-id>/*.jsonl` (default: `~/.nanobot/sessions/...`) |
+| Config | `~/.kohaku/config.json` |
+| Workspace | `~/.kohaku/workspace/` |
+| Sessions | `<config-dir>/sessions/<workspace-id>/*.jsonl` (default: `~/.kohaku/sessions/...`) |
 | Memory | `<workspace>/memory/` |
 | Cron store | `<workspace>/cron/jobs.json` |
 | WebUI/media/log runtime data | config directory subdirectories such as `webui/`, `media/`, and `logs/` |
@@ -241,9 +241,9 @@ Session history is the near-term conversation replay. Memory is the longer-term 
 | Session JSONL files | `<config-dir>/sessions/<workspace-id>/` |
 | Long-term memory | `<workspace>/memory/MEMORY.md` |
 | Consolidation source history | `<workspace>/memory/history.jsonl` |
-| Bootstrap identity files | `<workspace>/SOUL.md`, `<workspace>/USER.md`, templates under `nanobot/templates/` |
+| Bootstrap identity files | `<workspace>/SOUL.md`, `<workspace>/USER.md`, templates under `kohaku/templates/` |
 
-Dream is implemented in `nanobot/agent/memory.py` and scheduled by the runtime when enabled.
+Dream is implemented in `kohaku/agent/memory.py` and scheduled by the runtime when enabled.
 
 ## Security Boundaries
 
@@ -251,11 +251,11 @@ Security-sensitive code paths include:
 
 | Boundary | Files |
 |---|---|
-| Workspace scope | `nanobot/security/workspace_access.py`, `nanobot/security/workspace_policy.py` |
-| Shell sandboxing | `nanobot/agent/tools/shell.py` |
-| SSRF/network checks | `nanobot/security/network.py`, `nanobot/agent/tools/web.py` |
-| PTH guard and CLI startup security | `nanobot/security/` and CLI entrypoints |
-| Channel access control | channel config in `nanobot/channels/*.py` |
+| Workspace scope | `kohaku/security/workspace_access.py`, `kohaku/security/workspace_policy.py` |
+| Shell sandboxing | `kohaku/agent/tools/shell.py` |
+| SSRF/network checks | `kohaku/security/network.py`, `kohaku/agent/tools/web.py` |
+| PTH guard and CLI startup security | `kohaku/security/` and CLI entrypoints |
+| Channel access control | channel config in `kohaku/channels/*.py` |
 
 When changing tools, channels, file access, WebUI workspace behavior, or network fetching, treat security as part of the functional behavior and update docs if the user-facing boundary changes.
 
@@ -268,7 +268,7 @@ When changing tools, channels, file access, WebUI workspace behavior, or network
 | Tool | Implement a tool under `agent/tools/` or expose a plugin entry point |
 | Agent Plugin | Add a v1 package under `<workspace>/plugins/` and enable it from Apps |
 | MCP | Add `tools.mcpServers` config or bundle the server in an Agent Plugin |
-| Skill | Add workspace skills under `<workspace>/skills/`, bundle them in an Agent Plugin, or add built-in skills under `nanobot/skills/` |
+| Skill | Add workspace skills under `<workspace>/skills/`, bundle them in an Agent Plugin, or add built-in skills under `kohaku/skills/` |
 | CLI App | Add it to the CLI Apps catalog; the installer owns its executable lifecycle and writes a skills-only Agent Plugin |
 
 Prefer existing registry/discovery patterns over ad hoc wiring.
@@ -288,8 +288,8 @@ Choose tests based on the changed surface:
 
 | Change | Minimum useful verification |
 |---|---|
-| Provider behavior | Provider unit tests or a mocked API path; `nanobot agent -m "Hello!"` with safe config when possible |
-| Channel behavior | Channel tests plus `nanobot gateway` startup path |
+| Provider behavior | Provider unit tests or a mocked API path; `kohaku agent -m "Hello!"` with safe config when possible |
+| Channel behavior | Channel tests plus `kohaku gateway` startup path |
 | WebUI behavior | WebUI tests/build and, for routing/settings/chat changes, browser-level verification through the gateway |
 | Tool behavior | Tool unit tests and an agent-run path when schema or model-facing behavior changes |
 | Docs | Link checks, command accuracy against CLI/schema, and `git diff --check` |

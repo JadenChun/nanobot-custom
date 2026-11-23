@@ -12,9 +12,9 @@ import type { SystemSettingsState } from "@/components/settings/system/useSystem
 import {
   cancelMcpOAuth,
   completeMcpOAuth,
-  disableNanobotFeature,
-  enableNanobotFeature,
-  fetchNanobotFeatures,
+  disableKohakuFeature,
+  enableKohakuFeature,
+  fetchKohakuFeatures,
   fetchSettings,
   fetchMcpOAuthStatus,
   fetchMcpPresets,
@@ -31,12 +31,12 @@ import {
 } from "@/lib/api";
 import { notifyCliAppsChanged } from "@/lib/cli-app-events";
 import { notifyMcpPresetsChanged } from "@/lib/mcp-preset-events";
-import type { NanobotClient } from "@/lib/nanobot-client";
+import type { KohakuClient } from "@/lib/kohaku-client";
 import type {
   AutomationUpdatePayload,
   McpOAuthFlowPayload,
   McpPresetsPayload,
-  NanobotFeatureInfo,
+  KohakuFeatureInfo,
   SessionAutomationJob,
 } from "@/lib/types";
 
@@ -67,8 +67,8 @@ function isExpectedMcpOAuthPendingReloadFailure(
 
 interface SystemSettingsActionsOptions {
   state: SystemSettingsState;
-  featureCatalog: NanobotFeatureInfo[];
-  client: NanobotClient;
+  featureCatalog: KohakuFeatureInfo[];
+  client: KohakuClient;
   token: string;
   getToken: () => string;
   t: TFunction;
@@ -124,10 +124,10 @@ export function createSystemSettingsActions({
     setMcpOAuthPopupBlocked,
     setMcpPresetAction,
     setMcpPresets,
-    setNanobotFeatureAction,
-    setNanobotFeatureConfirm,
-    setNanobotFeatures,
-    setNanobotFeaturesError,
+    setKohakuFeatureAction,
+    setKohakuFeatureConfirm,
+    setKohakuFeatures,
+    setKohakuFeaturesError,
   } = state;
 
   const installCapabilities = async (names: string[]): Promise<boolean> => {
@@ -135,23 +135,23 @@ export function createSystemSettingsActions({
       (name) => !featureCatalog.find((feature) => feature.name === name)?.installed,
     );
     if (!missing.length) return true;
-    setNanobotFeatureAction(`enable:${names.join("+")}`);
-    setNanobotFeaturesError(null);
+    setKohakuFeatureAction(`enable:${names.join("+")}`);
+    setKohakuFeaturesError(null);
     try {
       let latest = nanobotFeatures;
       for (const name of missing) {
-        latest = await enableNanobotFeature(client, name);
+        latest = await enableKohakuFeature(client, name);
         if (latest.requires_restart) {
           setPendingRestartSections((prev) => ({ ...prev, runtime: true }));
         }
       }
-      if (latest) setNanobotFeatures(latest);
+      if (latest) setKohakuFeatures(latest);
       return true;
     } catch (err) {
-      setNanobotFeaturesError((err as Error).message);
+      setKohakuFeaturesError((err as Error).message);
       return false;
     } finally {
-      setNanobotFeatureAction(null);
+      setKohakuFeatureAction(null);
     }
   };
 
@@ -167,8 +167,8 @@ export function createSystemSettingsActions({
         ? await startApiService(client, values!)
         : await stopApiService(client);
       setApiService(payload);
-      const refreshed = await fetchNanobotFeatures(token);
-      setNanobotFeatures(refreshed);
+      const refreshed = await fetchKohakuFeatures(token);
+      setKohakuFeatures(refreshed);
       const nextSettings = await fetchSettings(token);
       applyPayload(nextSettings);
     } catch (err) {
@@ -201,33 +201,33 @@ export function createSystemSettingsActions({
     }
   };
 
-  const handleNanobotFeatureAction = async (
+  const handleKohakuFeatureAction = async (
     action: "enable" | "disable",
     name: string,
     confirmed = false,
   ) => {
     const feature = featureCatalog.find((item) => item.name === name);
     if (action === "enable" && !confirmed && feature && !feature.installed && feature.install_supported) {
-      setNanobotFeaturesError(null);
-      setNanobotFeatureConfirm(feature);
+      setKohakuFeaturesError(null);
+      setKohakuFeatureConfirm(feature);
       return;
     }
     const key = `${action}:${name}`;
-    setNanobotFeatureAction(key);
-    setNanobotFeatureConfirm(null);
-    setNanobotFeaturesError(null);
+    setKohakuFeatureAction(key);
+    setKohakuFeatureConfirm(null);
+    setKohakuFeaturesError(null);
     try {
       const payload = action === "enable"
-        ? await enableNanobotFeature(client, name)
-        : await disableNanobotFeature(client, name);
-      setNanobotFeatures(payload);
+        ? await enableKohakuFeature(client, name)
+        : await disableKohakuFeature(client, name);
+      setKohakuFeatures(payload);
       if (payload.requires_restart) {
         setPendingRestartSections((prev) => ({ ...prev, runtime: true }));
       }
     } catch (err) {
-      setNanobotFeaturesError((err as Error).message);
+      setKohakuFeaturesError((err as Error).message);
     } finally {
-      setNanobotFeatureAction(null);
+      setKohakuFeatureAction(null);
     }
   };
 
@@ -649,7 +649,7 @@ export function createSystemSettingsActions({
     handleMcpOAuthOpen,
     handleMcpPresetAction,
     handleMcpToolsChange,
-    handleNanobotFeatureAction,
+    handleKohakuFeatureAction,
     handleSaveCustomMcp,
     installCapabilities,
   };

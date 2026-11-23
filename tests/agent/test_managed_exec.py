@@ -15,28 +15,28 @@ from pathlib import Path
 
 import pytest
 
-from nanobot.agent.tools.base import Tool, ToolResult
-from nanobot.agent.tools.context import RequestContext, request_context
-from nanobot.agent.tools.exec_session import ExecSessionManager, ExecSessionTool
-from nanobot.agent.tools.filesystem import ReadFileTool
-from nanobot.agent.tools.native_process import native_supervisor_available
-from nanobot.agent.tools.registry import ManagedToolDispatchGuard, ToolRegistry
-from nanobot.agent.tools.sandbox import managed_bwrap_available, wrap_managed_command
-from nanobot.agent.tools.shell import ExecTool
-from nanobot.agent.turn import ToolOutcome
-from nanobot.context_repo import ContextRepoManager, ResourceAccessPolicy
-from nanobot.security import native_admission
-from nanobot.security.desktop_permissions import (
+from kohaku.agent.tools.base import Tool, ToolResult
+from kohaku.agent.tools.context import RequestContext, request_context
+from kohaku.agent.tools.exec_session import ExecSessionManager, ExecSessionTool
+from kohaku.agent.tools.filesystem import ReadFileTool
+from kohaku.agent.tools.native_process import native_supervisor_available
+from kohaku.agent.tools.registry import ManagedToolDispatchGuard, ToolRegistry
+from kohaku.agent.tools.sandbox import managed_bwrap_available, wrap_managed_command
+from kohaku.agent.tools.shell import ExecTool
+from kohaku.agent.turn import ToolOutcome
+from kohaku.context_repo import ContextRepoManager, ResourceAccessPolicy
+from kohaku.security import native_admission
+from kohaku.security.desktop_permissions import (
     DesktopPermissionOwner,
     PermissionSourceBinding,
     WorkspacePermissionUnavailableError,
 )
-from nanobot.security.folder_grants import (
+from kohaku.security.folder_grants import (
     FolderGrantStore,
     NativeProcessesActiveError,
     NativeProcessesUnknownError,
 )
-from nanobot.security.workspace_access import (
+from kohaku.security.workspace_access import (
     bind_workspace_scope,
     build_workspace_scope,
     reset_workspace_scope,
@@ -103,8 +103,8 @@ def _legacy_exec_tool(tmp_path: Path) -> tuple[Path, FolderGrantStore, ExecTool]
 @pytest.mark.asyncio
 @pytest.mark.skipif(not managed_bwrap_available(), reason="managed bwrap unavailable")
 async def test_exec_input_files_exposes_only_exact_approved_files(tmp_path: Path) -> None:
-    from nanobot.agent.tools.filesystem import ReadFileTool
-    from nanobot.config.paths import get_media_dir
+    from kohaku.agent.tools.filesystem import ReadFileTool
+    from kohaku.config.paths import get_media_dir
 
     home, project, _store, policy = _managed_tools(tmp_path, access="read_write")
     media = get_media_dir()
@@ -186,7 +186,7 @@ async def test_exec_input_files_exposes_only_exact_approved_files(tmp_path: Path
 @pytest.mark.asyncio
 @pytest.mark.skipif(not managed_bwrap_available(), reason="managed bwrap unavailable")
 async def test_exec_input_files_admits_workspace_nested_in_instance(tmp_path: Path) -> None:
-    from nanobot.agent.tools.filesystem import ReadFileTool
+    from kohaku.agent.tools.filesystem import ReadFileTool
 
     instance = tmp_path / "instance"
     home = instance / "workspace"
@@ -1125,7 +1125,7 @@ async def test_managed_exec_configured_bwrap_does_not_wrap_managed_launch_twice(
 @pytest.mark.parametrize("excluded", [Path("/"), Path("/usr")])
 def test_managed_exec_rejects_unmaskable_repository_root(tmp_path, monkeypatch, excluded):
     home, store, _tool = _legacy_exec_tool(tmp_path)
-    monkeypatch.setattr("nanobot.agent.tools.sandbox.managed_bwrap_available", lambda: True)
+    monkeypatch.setattr("kohaku.agent.tools.sandbox.managed_bwrap_available", lambda: True)
 
     with pytest.raises(ValueError, match="configured repository root cannot be masked"):
         wrap_managed_command(

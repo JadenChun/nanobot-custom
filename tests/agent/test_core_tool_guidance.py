@@ -2,11 +2,11 @@
 
 from importlib.resources import files as pkg_files
 
-from nanobot.agent.context import ContextBuilder
+from kohaku.agent.context import ContextBuilder
 
 
 def _template_text(name: str) -> str:
-    return (pkg_files("nanobot") / "templates" / "agent" / name).read_text(encoding="utf-8")
+    return (pkg_files("kohaku") / "templates" / "agent" / name).read_text(encoding="utf-8")
 
 
 def test_tool_contract_uses_only_registered_core_tool_names():

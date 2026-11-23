@@ -8,13 +8,13 @@ from dataclasses import replace
 import pytest
 from pydantic import ValidationError
 
-from nanobot.config.schema import Config, ProviderConfig
-from nanobot.providers.base import ProviderCallContext
-from nanobot.providers.capabilities import default_model_capabilities
-from nanobot.providers.factory import build_provider_snapshot
-from nanobot.providers.image_pricing import ImageOccurrence, image_request_pricing
-from nanobot.providers.openai_compat_provider import OpenAICompatProvider
-from nanobot.providers.provider_policy import (
+from kohaku.config.schema import Config, ProviderConfig
+from kohaku.providers.base import ProviderCallContext
+from kohaku.providers.capabilities import default_model_capabilities
+from kohaku.providers.factory import build_provider_snapshot
+from kohaku.providers.image_pricing import ImageOccurrence, image_request_pricing
+from kohaku.providers.openai_compat_provider import OpenAICompatProvider
+from kohaku.providers.provider_policy import (
     DEFAULT_ESTIMATED_COMPAT_MAX_REQUEST_BYTES,
     ESTIMATED_COMPAT_POLICY,
     OPENAI_COMPAT_DEFAULT_POLICY,
@@ -22,12 +22,12 @@ from nanobot.providers.provider_policy import (
     RequestAccountingPolicy,
     resolve_provider_policy,
 )
-from nanobot.providers.registry import (
+from kohaku.providers.registry import (
     ProviderSpec,
     create_dynamic_spec,
     find_by_name,
 )
-from nanobot.providers.request_budget import (
+from kohaku.providers.request_budget import (
     ProviderRequestLimits,
     RequestPayloadBytesExceeded,
     TransportIdentity,

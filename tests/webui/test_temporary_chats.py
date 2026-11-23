@@ -12,16 +12,16 @@ from types import SimpleNamespace
 
 import pytest
 
-from nanobot.bus.queue import MessageBus
-from nanobot.bus.runtime_events import (
+from kohaku.bus.queue import MessageBus
+from kohaku.bus.runtime_events import (
     RuntimeEventContext,
     SessionTurnStarted,
     TurnCompleted,
 )
-from nanobot.security.folder_grants import FolderGrantStore
-from nanobot.session.manager import SessionManager
-from nanobot.webui.temporary_chats import TemporaryChatError, WebUITemporaryChats
-from nanobot.webui.workspaces import WebUIWorkspaceController
+from kohaku.security.folder_grants import FolderGrantStore
+from kohaku.session.manager import SessionManager
+from kohaku.webui.temporary_chats import TemporaryChatError, WebUITemporaryChats
+from kohaku.webui.workspaces import WebUIWorkspaceController
 
 SETTLE_GRACE_SECONDS = 6.0
 
@@ -41,7 +41,7 @@ def _build(
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> tuple[WebUITemporaryChats, MessageBus, SessionManager, _Clock]:
-    monkeypatch.setattr("nanobot.config.paths.get_data_dir", lambda: tmp_path)
+    monkeypatch.setattr("kohaku.config.paths.get_data_dir", lambda: tmp_path)
     home = tmp_path / "home"
     home.mkdir()
     instance = tmp_path / "instance"

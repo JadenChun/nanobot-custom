@@ -10,18 +10,18 @@ import pytest
 from websockets.datastructures import Headers
 from websockets.http11 import Request
 
-from nanobot.agent.tools.base import ToolResult
-from nanobot.agent.tools.cron import CronTool
-from nanobot.cron.definition_store import DefinitionStoreConflictError
-from nanobot.cron.service import (
+from kohaku.agent.tools.base import ToolResult
+from kohaku.agent.tools.cron import CronTool
+from kohaku.cron.definition_store import DefinitionStoreConflictError
+from kohaku.cron.service import (
     CronDefinitionConflictError,
     CronDefinitionTokenRequiredError,
     CronService,
 )
-from nanobot.cron.types import CronJob, CronPayload, CronSchedule
-from nanobot.triggers.local_types import LocalTrigger
-from nanobot.webui.http_utils import http_json_response
-from nanobot.webui.ws_http import GatewayHTTPHandler
+from kohaku.cron.types import CronJob, CronPayload, CronSchedule
+from kohaku.triggers.local_types import LocalTrigger
+from kohaku.webui.http_utils import http_json_response
+from kohaku.webui.ws_http import GatewayHTTPHandler
 
 
 def _bound_job() -> CronJob:
@@ -297,10 +297,10 @@ def _cascade_handler(monkeypatch, service, triggers, calls, cleanup_mask: int = 
         calls.append((kind, key))
         return bool(cleanup_mask & {"draft": 1, "session": 2, "transcript": 4}[kind])
 
-    from nanobot.webui.transcript import TranscriptDeletionResult
+    from kohaku.webui.transcript import TranscriptDeletionResult
 
     monkeypatch.setattr(
-        "nanobot.webui.ws_http.delete_webui_transcript_result",
+        "kohaku.webui.ws_http.delete_webui_transcript_result",
         lambda key: TranscriptDeletionResult(
             deleted=cleanup("transcript", key),
             complete=True,

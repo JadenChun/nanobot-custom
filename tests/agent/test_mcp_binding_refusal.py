@@ -6,7 +6,7 @@ from mcp import types as mcp_types
 from mcp.shared.exceptions import McpError
 from mcp.types import ErrorData
 
-from nanobot.agent.tools.mcp import MCPToolWrapper
+from kohaku.agent.tools.mcp import MCPToolWrapper
 
 
 class DeadSession:

@@ -5,6 +5,8 @@ __pycache__
 *.egg-info
 dist/
 build/
+kohaku/web/dist/
+# Keep old local build output out of Docker context during the transition.
 nanobot/web/dist/
 .git
 .env

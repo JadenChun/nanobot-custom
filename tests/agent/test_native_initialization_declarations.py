@@ -11,18 +11,18 @@ from types import ModuleType
 
 import pytest
 
-from nanobot.agent import memory_recovery_conversion_runtime as recovery
-from nanobot.agent import memory_recovery_storage as storage
-from nanobot.agent.memory_recovery_manifest import (
+from kohaku.agent import memory_recovery_conversion_runtime as recovery
+from kohaku.agent import memory_recovery_storage as storage
+from kohaku.agent.memory_recovery_manifest import (
     JsonValue,
     ManifestRecord,
     MemoryManifestError,
     MemoryRecoveryManifest,
     derive_manifest_identity,
 )
-from nanobot.agent.tools import desktop_use as desktop
+from kohaku.agent.tools import desktop_use as desktop
 
-_ENV_KEY = "NANOBOT_DESKTOP_USE_MAX_INLINE_BYTES"
+_ENV_KEY = "KOHAKU_DESKTOP_USE_MAX_INLINE_BYTES"
 _DEFAULT_LIMIT = 900 * 1024
 
 
@@ -152,7 +152,7 @@ def test_inline_payload_uses_published_limit_at_exact_boundary(
         assert block is None
         assert reason == (
             "image 5 bytes exceeds inline cap 4 bytes (override with "
-            "NANOBOT_DESKTOP_USE_MAX_INLINE_BYTES env)"
+            "KOHAKU_DESKTOP_USE_MAX_INLINE_BYTES env)"
         )
     else:
         encoded = base64.b64encode(content).decode("ascii")

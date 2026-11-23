@@ -10,11 +10,11 @@ from typing import Any
 import pytest
 import websockets
 
-from nanobot.bus.queue import MessageBus
-from nanobot.channels.websocket.runtime import WebSocketChannel, WebSocketConfig
-from nanobot.security.folder_grants import FolderGrantStore, FolderGrantUpsertResult
-from nanobot.session.manager import SessionManager
-from nanobot.webui.gateway_services import build_gateway_services
+from kohaku.bus.queue import MessageBus
+from kohaku.channels.websocket.runtime import WebSocketChannel, WebSocketConfig
+from kohaku.security.folder_grants import FolderGrantStore, FolderGrantUpsertResult
+from kohaku.session.manager import SessionManager
+from kohaku.webui.gateway_services import build_gateway_services
 
 
 async def _webui_mutation(
@@ -54,7 +54,7 @@ async def test_noop_alias_receipt_stays_bound_across_concurrent_grant_update(
     alias_a.symlink_to(project_a, target_is_directory=True)
 
     config_path = instance / "config.json"
-    monkeypatch.setattr("nanobot.config.loader._current_config_path", config_path)
+    monkeypatch.setattr("kohaku.config.loader._current_config_path", config_path)
     session_manager = SessionManager(home, sessions_root=instance / "sessions")
     config = WebSocketConfig.model_validate({
         "enabled": True,

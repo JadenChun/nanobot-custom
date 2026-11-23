@@ -5,15 +5,15 @@ from dataclasses import replace
 
 import pytest
 
-from nanobot.agent.stop_target import (
+from kohaku.agent.stop_target import (
     MAX_STOP_TARGET_PENDING_RECORDS,
     StopSourceOrigin,
     StopTargetUnavailableError,
     parse_stop_expectation,
     pending_work_digest,
 )
-from nanobot.channels.websocket.runtime import _parse_envelope
-from nanobot.session.pending_followups import PendingChildFollowup, PendingFollowupRecord
+from kohaku.channels.websocket.runtime import _parse_envelope
+from kohaku.session.pending_followups import PendingChildFollowup, PendingFollowupRecord
 
 
 def target_value():

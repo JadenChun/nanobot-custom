@@ -12,8 +12,8 @@ from typing import Any
 
 import pytest
 
-from nanobot.agent import memory_recovery_storage as storage
-from nanobot.agent import memory_recovery_target_verify as verifier
+from kohaku.agent import memory_recovery_storage as storage
+from kohaku.agent import memory_recovery_target_verify as verifier
 
 _TARGET_NAMES = ("HISTORY.md", "history.jsonl", ".cursor", ".dream_cursor")
 

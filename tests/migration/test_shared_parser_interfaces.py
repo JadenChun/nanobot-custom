@@ -4,8 +4,8 @@ from importlib import metadata
 
 import pytest
 
-from nanobot import _migration_preflight as preflight
-from nanobot.channels import plugin, registry
+from kohaku import _migration_preflight as preflight
+from kohaku.channels import plugin, registry
 
 
 @pytest.mark.parametrize("target", ["module:factory", "pkg.module:Factory", "for:class"])

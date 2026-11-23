@@ -12,7 +12,7 @@ import {
   fetchCliApps,
   fetchInstalledCliApps,
   fetchMcpPresets,
-  fetchNanobotFeatures,
+  fetchKohakuFeatures,
 } from "@/lib/api";
 
 interface SystemSettingsEffectsOptions {
@@ -44,9 +44,9 @@ export function useSystemSettingsEffects({
     setMcpError,
     setMcpPresets,
     setMcpPresetsLoading,
-    setNanobotFeatures,
-    setNanobotFeaturesError,
-    setNanobotFeaturesLoading,
+    setKohakuFeatures,
+    setKohakuFeaturesError,
+    setKohakuFeaturesLoading,
   } = state;
   const hasCliAppsRef = useRef(false);
   const hasFeaturesRef = useRef(false);
@@ -113,19 +113,19 @@ export function useSystemSettingsEffects({
     const refresh = async (showLoading = false): Promise<void> => {
       if (refreshing) return;
       refreshing = true;
-      if (showLoading) setNanobotFeaturesLoading(true);
+      if (showLoading) setKohakuFeaturesLoading(true);
       try {
-        const payload = await fetchNanobotFeatures(getToken());
+        const payload = await fetchKohakuFeatures(getToken());
         if (!cancelled) {
-          setNanobotFeatures(payload);
-          setNanobotFeaturesError(null);
+          setKohakuFeatures(payload);
+          setKohakuFeaturesError(null);
         }
       } catch (err) {
         const message = (err as Error).message;
-        if (!cancelled && message !== "HTTP 404") setNanobotFeaturesError(message);
+        if (!cancelled && message !== "HTTP 404") setKohakuFeaturesError(message);
       } finally {
         refreshing = false;
-        if (!cancelled && showLoading) setNanobotFeaturesLoading(false);
+        if (!cancelled && showLoading) setKohakuFeaturesLoading(false);
       }
     };
     void refresh(!hasFeaturesRef.current);

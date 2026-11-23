@@ -1,0 +1,1479 @@
+"""Built-in slash command handlers."""
+
+from __future__ import annotations
+
+import asyncio
+import inspect
+import json
+import os
+import subprocess
+import sys
+import time
+from contextlib import suppress
+from dataclasses import dataclass, replace
+from typing import TYPE_CHECKING, Any, Literal, cast
+
+from loguru import logger
+
+from kohaku import __version__
+from kohaku.agent.child_sessions import OriginalChatStopAdmission
+from kohaku.agent.stop_target import StopExpectation, parse_stop_expectation
+from kohaku.bus.events import (
+    INBOUND_META_STOP_CLIENT,
+    INBOUND_META_STOP_EXPECTATION,
+    INBOUND_META_USER_SHELL,
+    InboundMessage,
+    OutboundMessage,
+)
+from kohaku.bus.outbound_events import WebUIAdmissionRejectedEvent
+from kohaku.command.router import CommandContext, CommandRouter, normalize_command_text
+from kohaku.providers.base import LLMUsage
+from kohaku.session.pending_followups import PendingFollowupStopError
+from kohaku.utils.helpers import build_status_content
+from kohaku.utils.restart import set_restart_notice_to_env
+from kohaku.utils.workspace_prompts import initialize_workspace_prompt
+
+if TYPE_CHECKING:
+    from kohaku.agent.loop import AgentLoop
+    from kohaku.session.manager import JsonlSessionStore, Session
+    from kohaku.utils.gitstore import CommitInfo
+
+# WebUI protocol contract for how a slash command participates in turn state:
+# - side_channel: returns control text without starting or ending an agent turn.
+# - finalize_active_turn: side-channel command that also closes the active UI turn.
+# - stop_active_turn: cancels the active turn; WebUI may intercept exact submits.
+# - agent_turn: always enters the normal agent path.
+# - agent_turn_with_args: no args is side-channel usage; args enter the agent path.
+CommandLifecycle = Literal[
+    "side_channel",
+    "finalize_active_turn",
+    "stop_active_turn",
+    "agent_turn",
+    "agent_turn_with_args",
+]
+
+USER_SHELL_COMMAND = "/__shell"
+
+
+@dataclass(frozen=True)
+class BuiltinCommandSpec:
+    command: str
+    title: str
+    description: str
+    icon: str
+    arg_hint: str = ""
+    lifecycle: CommandLifecycle = "side_channel"
+    accepts_args: bool = False
+
+    def as_dict(self) -> dict[str, str | bool]:
+        return {
+            "command": self.command,
+            "title": self.title,
+            "description": self.description,
+            "icon": self.icon,
+            "arg_hint": self.arg_hint,
+            "lifecycle": self.lifecycle,
+            "accepts_args": self.accepts_args,
+        }
+
+
+BUILTIN_COMMAND_SPECS: tuple[BuiltinCommandSpec, ...] = (
+    BuiltinCommandSpec(
+        "/new",
+        "New chat",
+        "Reset this chat and start a fresh conversation.",
+        "square-pen",
+        lifecycle="finalize_active_turn",
+    ),
+    BuiltinCommandSpec(
+        "/compact",
+        "Compact context",
+        "Compact this chat's context and continue the conversation.",
+        "archive",
+    ),
+    BuiltinCommandSpec(
+        "/stop",
+        "Stop current task",
+        "Cancel the active agent turn for this chat.",
+        "square",
+        lifecycle="stop_active_turn",
+    ),
+    BuiltinCommandSpec(
+        "/restart",
+        "Restart Kohaku",
+        "Restart the bot process.",
+        "rotate-cw",
+    ),
+    BuiltinCommandSpec(
+        "/status",
+        "Show status",
+        "Display runtime, provider, and channel status.",
+        "activity",
+    ),
+    BuiltinCommandSpec("/quota", "Show Codex quota", "Show Codex OAuth quota and reset windows.", "activity"),
+    BuiltinCommandSpec(
+        "/model",
+        "Switch model preset",
+        "Show or switch the active model preset.",
+        "brain",
+        "[preset]",
+        accepts_args=True,
+    ),
+    BuiltinCommandSpec(
+        "/history",
+        "Show conversation history",
+        "Print the last N persisted conversation messages.",
+        "history",
+        "[n]",
+        accepts_args=True,
+    ),
+    BuiltinCommandSpec(
+        "/goal",
+        "Start long-running goal",
+        "Tell the agent to treat the request as a long-running goal.",
+        "activity",
+        "<goal>",
+        lifecycle="agent_turn_with_args",
+        accepts_args=True,
+    ),
+    BuiltinCommandSpec(
+        "/trigger",
+        "Create named local trigger",
+        "Create a named CLI trigger bound to this chat session.",
+        "zap",
+        "<name>",
+        accepts_args=True,
+    ),
+    BuiltinCommandSpec(
+        "/dream",
+        "Run Dream",
+        "Manually trigger memory consolidation.",
+        "sparkles",
+    ),
+    BuiltinCommandSpec(
+        "/dream-log",
+        "Show Dream log",
+        "Show what the last Dream consolidation changed.",
+        "book-open",
+        accepts_args=True,
+    ),
+    BuiltinCommandSpec(
+        "/dream-restore",
+        "Restore memory",
+        "Revert memory to a previous Dream snapshot.",
+        "undo-2",
+        accepts_args=True,
+    ),
+    BuiltinCommandSpec(
+        "/dream-prompt",
+        "Dream memory",
+        "Tell Dream how to organize this workspace's memory.",
+        "file-text",
+        "[init]",
+        accepts_args=True,
+    ),
+    BuiltinCommandSpec(
+        "/evaluator-prompt",
+        "Heartbeat evaluator",
+        "Customize the heartbeat notification gate prompt for this workspace.",
+        "file-text",
+        "[init]",
+        accepts_args=True,
+    ),
+    BuiltinCommandSpec(
+        "/skill",
+        "List skills",
+        "List all enabled skills available to the agent.",
+        "wrench",
+    ),
+    BuiltinCommandSpec(
+        "/help",
+        "Show help",
+        "List available slash commands.",
+        "circle-help",
+    ),
+    BuiltinCommandSpec(
+        "/pairing",
+        "Manage pairing",
+        "List, approve, deny or revoke pairing requests.",
+        "shield",
+        "[list|approve <code>|deny <code>|revoke <user_id>]",
+        accepts_args=True,
+    ),
+)
+
+
+def builtin_command_palette() -> list[dict[str, str | bool]]:
+    """Return structured command metadata for UI command palettes."""
+    return [spec.as_dict() for spec in BUILTIN_COMMAND_SPECS]
+
+
+def builtin_command_starts_agent_turn(text: str) -> bool:
+    """Return whether WebUI ingress should expect a normal agent lifecycle."""
+    normalized = normalize_command_text(text)
+    command, separator, args = normalized.partition(" ")
+    spec = next(
+        (item for item in BUILTIN_COMMAND_SPECS if item.command == command.lower()),
+        None,
+    )
+    if spec is None or (separator and not spec.accepts_args):
+        return True
+    if spec.lifecycle == "agent_turn":
+        return True
+    return spec.lifecycle == "agent_turn_with_args" and bool(args.strip())
+
+
+def _source_media_stop_disposition(loop: AgentLoop, key: str) -> str | None:
+    """Read only the latest canonical Stop result for this chat."""
+    try:
+        backend: JsonlSessionStore | None = loop.sessions.source_backend(key)
+        if backend is None:
+            return None
+        snapshot = backend.source.load_source_snapshot(key)
+        metadata = cast(dict[str, object], snapshot.header["metadata"])
+        execution_lease = metadata.get("execution_lease")
+        recovery_fenced = (
+            "execution_recovery_required" in metadata
+            or (
+                isinstance(execution_lease, dict)
+                and cast(dict[str, object], execution_lease).get("recovery_required") is True
+            )
+        )
+        if recovery_fenced:
+            return "unconfirmed"
+        events = cast(list[dict[str, object]], snapshot.events)
+        latest_run_value = events[-1].get("_run_id") if events else None
+        latest_run = latest_run_value if isinstance(latest_run_value, str) else None
+        if not isinstance(latest_run, str):
+            return None
+        for event in reversed(events):
+            if event.get("_run_id") != latest_run:
+                break
+            if (
+                event.get("role") != "tool"
+                or event.get("name") != "mcp_comfy_generate_video"
+                or event.get("_outcome_status") != "stopped"
+            ):
+                continue
+            content = event.get("content")
+            if not isinstance(content, str):
+                continue
+            payload = json.loads(content)
+            if not isinstance(payload, dict):
+                continue
+            payload_mapping = cast(dict[str, object], payload)
+            media_call_value = payload_mapping.get("media_call")
+            if not isinstance(media_call_value, dict):
+                continue
+            media_call = cast(dict[str, object], media_call_value)
+            call_id = media_call.get("call_id")
+            outcome = media_call.get("outcome")
+            disposition: str | None = (
+                "stopped" if outcome == "stopped"
+                else "completed" if outcome == "completed"
+                else None
+            )
+            result_is_error = media_call.get("result_is_error")
+            if (
+                isinstance(call_id, str)
+                and call_id
+                and media_call.get("stop_status") == "settled"
+                and disposition is not None
+                and type(result_is_error) is bool
+            ):
+                return (
+                    f"{disposition}_error"
+                    if result_is_error
+                    else disposition
+                )
+    except Exception as exc:
+        logger.debug("Stop source result could not be read for {}: {}", key, type(exc).__name__)
+    return None
+
+
+async def cmd_stop(ctx: CommandContext) -> OutboundMessage:
+    """Cancel all active tasks and subagents for the session."""
+    loop = ctx.loop
+    msg = ctx.msg
+    metadata = dict(msg.metadata or {})
+    from kohaku.session.webui_turns import websocket_turn_id
+    from kohaku.webui.metadata import WEBUI_TARGET_TURN_METADATA_KEY
+
+    target_turn_id = metadata.get(WEBUI_TARGET_TURN_METADATA_KEY)
+    protocol_client = metadata.get(INBOUND_META_STOP_CLIENT) is True
+    expectation_present = INBOUND_META_STOP_EXPECTATION in metadata
+    if protocol_client:
+        raw_expectation = metadata.get(INBOUND_META_STOP_EXPECTATION)
+        if expectation_present and type(raw_expectation) is not StopExpectation:
+            return _webui_admission_rejection(
+                msg,
+                metadata,
+                "invalid_stop_expectation",
+            )
+        if not expectation_present:
+            current_turn_id = websocket_turn_id(str(msg.chat_id))
+            # Older clients may still use the guarded turn-targeted root path.
+            # They cannot use omission to stop children or pending-only work.
+            if (
+                not isinstance(target_turn_id, str)
+                or not target_turn_id
+                or current_turn_id != target_turn_id
+            ):
+                return _webui_admission_rejection(msg, metadata, "stale_stop_target")
+        else:
+            current_target_fn = getattr(type(loop), "stop_target_for_key", None)
+            current_target = (
+                current_target_fn(loop, ctx.key)
+                if callable(current_target_fn)
+                else None
+            )
+            try:
+                current_expectation = (
+                    parse_stop_expectation(current_target)
+                    if current_target is not None else None
+                )
+            except (TypeError, ValueError):
+                current_expectation = None
+            if (
+                current_expectation != raw_expectation
+                or (
+                    isinstance(target_turn_id, str)
+                    and target_turn_id
+                    and websocket_turn_id(str(msg.chat_id)) != target_turn_id
+                )
+            ):
+                return _webui_admission_rejection(msg, metadata, "stale_stop_target")
+    if isinstance(target_turn_id, str) and target_turn_id:
+        current_turn_id = websocket_turn_id(str(msg.chat_id))
+        if current_turn_id != target_turn_id:
+            # A repeated or late Stop must not stop a later turn.
+            return OutboundMessage(
+                channel=msg.channel,
+                chat_id=msg.chat_id,
+                content="No active task to stop.",
+                metadata=metadata,
+            )
+
+    capture_stop = getattr(type(loop), "_capture_original_chat_stop", None)
+    try:
+        stop_admission = cast(
+            OriginalChatStopAdmission | None,
+            capture_stop(
+                loop,
+                ctx.key,
+                target_turn_id if isinstance(target_turn_id, str) else None,
+                **({"require_root_only": True} if protocol_client and not expectation_present else {}),
+            )
+            if callable(capture_stop)
+            else None
+        )
+    except Exception:
+        logger.exception("Stop request could not capture its source lifetime for {}", ctx.key)
+        if protocol_client:
+            return _webui_admission_rejection(msg, metadata, "stale_stop_target")
+        return OutboundMessage(
+            channel=msg.channel,
+            chat_id=msg.chat_id,
+            content="Could not complete the stop request. Please retry.",
+            metadata=metadata,
+        )
+    if protocol_client and stop_admission is None:
+        return _webui_admission_rejection(msg, metadata, "stale_stop_target")
+    pending_at_admission = getattr(loop, "_pending_queues", {}).get(ctx.key)
+
+    if protocol_client:
+        # The exact expectation and source/queue viability were checked above,
+        # synchronously with Stop admission. Only this admitted input may retire
+        # the captured source's authority and access request.
+        try:
+            loop.retire_workspace_task_after_stop_admission(
+                ctx.key, active_turn=pending_at_admission is not None,
+            )
+            loop.sessions.invalidate_workspace_access_request(ctx.key)
+        except Exception:
+            logger.exception("Admitted Stop could not retire workspace authority for {}", ctx.key)
+            return OutboundMessage(
+                channel=msg.channel, chat_id=msg.chat_id,
+                content="Could not complete the stop request. Please retry.", metadata=metadata,
+            )
+
+    publisher = getattr(loop, "runtime_event_publisher", None)
+
+    async def project(status: str) -> None:
+        if publisher is None:
+            return
+        with suppress(Exception):
+            await publisher.run_status_changed(msg, ctx.key, status)
+
+    await project("stopping")
+    try:
+        if stop_admission is None:
+            total = await loop._cancel_active_tasks(ctx.key)  # pyright: ignore[reportPrivateUsage]
+        else:
+            total = await loop._cancel_active_tasks(  # pyright: ignore[reportPrivateUsage]
+                ctx.key,
+                _stop_admission=stop_admission,
+            )
+    except PendingFollowupStopError:
+        logger.exception("Stop request failed for session {}", ctx.key)
+        return OutboundMessage(
+            channel=msg.channel, chat_id=msg.chat_id,
+            content="Could not complete the stop request. Please retry.",
+            metadata=metadata,
+        )
+    if stop_admission is not None:
+        validate_stop = getattr(type(loop), "_validate_original_chat_stop", None)
+        current_queue = getattr(loop, "_pending_queues", {}).get(ctx.key)
+        queue_replaced = current_queue is not None and current_queue is not pending_at_admission
+        stop_is_current = (
+            callable(validate_stop)
+            and validate_stop(loop, ctx.key, stop_admission)
+            and not queue_replaced
+        )
+        if not stop_is_current:
+            return OutboundMessage(
+                channel=msg.channel,
+                chat_id=msg.chat_id,
+                content="No active task to stop.",
+                metadata=metadata,
+            )
+    stop_pending = False
+    if stop_admission is None:
+        await project("interrupted")
+    else:
+        live_owner_check = getattr(type(loop), "_original_chat_stop_has_live_owner", None)
+        stop_pending = bool(
+            callable(live_owner_check)
+            and live_owner_check(loop, ctx.key, stop_admission)
+        )
+        if not stop_pending:
+            await project("interrupted")
+    # Also drain pending queue to prevent mid-turn injection deadlock
+    pending = (
+        loop._pending_queues.pop(ctx.key, None)  # pyright: ignore[reportPrivateUsage]
+        if stop_admission is None
+        else (
+            loop._pending_queues.pop(ctx.key, None)  # pyright: ignore[reportPrivateUsage]
+            if loop._pending_queues.get(ctx.key) is pending_at_admission  # pyright: ignore[reportPrivateUsage]
+            else None
+        )
+    )
+    if pending is not None:
+        while not pending.empty():
+            try:
+                pending.get_nowait()
+                total += 1
+            except Exception:
+                break
+    media_stop_disposition = (
+        _source_media_stop_disposition(loop, ctx.key)
+        if stop_admission is not None
+        and stop_admission.active_root_identity
+        and not stop_pending
+        else None
+    )
+    if stop_admission is not None and stop_pending:
+        content = "Stop is still pending. The active task is settling."
+    elif media_stop_disposition == "stopped":
+        content = "ComfyUI stopped the video after cleanup and GPU restoration."
+    elif media_stop_disposition == "completed":
+        content = "The ComfyUI video completed before Stop took effect. Its output files remain available."
+    elif media_stop_disposition in {"stopped_error", "completed_error"}:
+        content = "The ComfyUI call settled, but its original reply reported an error."
+    elif media_stop_disposition == "unconfirmed":
+        content = "Stop could not confirm cleanup. This chat needs recovery."
+    else:
+        content = f"Stopped {total} task(s)." if total else "No active task to stop."
+    publish_target = getattr(type(loop), "_publish_stop_target_for_key", None)
+    if callable(publish_target):
+        with suppress(Exception):
+            publication = publish_target(loop, ctx.key)
+            if inspect.isawaitable(publication):
+                await publication
+    return OutboundMessage(
+        channel=msg.channel, chat_id=msg.chat_id, content=content,
+        metadata=metadata
+    )
+
+
+def _webui_admission_rejection(
+    msg: InboundMessage,
+    metadata: dict[str, Any],
+    reason: str,
+) -> OutboundMessage:
+    """Return a typed refusal for a WebUI command."""
+    turn_id = metadata.get("webui_turn_id")
+    return OutboundMessage(
+        channel=msg.channel,
+        chat_id=msg.chat_id,
+        content="",
+        metadata=metadata,
+        event=WebUIAdmissionRejectedEvent(
+            detail="not_admitted",
+            reason=reason,
+            turn_id=turn_id if isinstance(turn_id, str) and turn_id else None,
+        ),
+    )
+
+
+async def cmd_restart(ctx: CommandContext) -> OutboundMessage:
+    """Restart the process."""
+    msg = ctx.msg
+    set_restart_notice_to_env(
+        channel=msg.channel,
+        chat_id=msg.chat_id,
+        metadata=dict(msg.metadata or {}),
+    )
+
+    async def _do_restart():
+        await asyncio.sleep(1)
+        argv = [sys.executable, "-m", "kohaku"] + sys.argv[1:]
+        mode = ctx.loop.restart_mode or "auto"
+        if mode == "auto":
+            mode = "spawn" if sys.platform == "win32" else "exec"
+        if mode == "exec":
+            os.execv(sys.executable, argv)
+            return
+        if mode == "spawn":
+            kwargs: dict[str, Any] = {}
+            if sys.platform == "win32":
+                kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
+            subprocess.Popen(argv, **kwargs)
+        os._exit(0)
+
+    asyncio.create_task(_do_restart())
+    return OutboundMessage(
+        channel=msg.channel, chat_id=msg.chat_id, content="Restarting...",
+        metadata=dict(msg.metadata or {})
+    )
+
+
+async def cmd_quota(ctx: CommandContext) -> OutboundMessage:
+    """Display quota windows without starting an agent turn."""
+    from kohaku.providers.codex_auth import format_codex_usage, get_codex_usage
+    try:
+        content = format_codex_usage(await asyncio.to_thread(get_codex_usage))
+    except Exception:
+        # Credential transport errors may contain sensitive response bodies.
+        content = "Unable to check Codex quota. Check the configured Codex login and connection."
+    return OutboundMessage(channel=ctx.msg.channel, chat_id=ctx.msg.chat_id,
+                           content=content, metadata={**(ctx.msg.metadata or {}), "render_as": "text"})
+
+
+async def cmd_status(ctx: CommandContext) -> OutboundMessage:
+    """Build an outbound status message for a session."""
+    loop = ctx.loop
+    session = ctx.session or loop.sessions.get_or_create(ctx.key)
+    runtime = ctx.runtime or loop.runtime_for_session(session)
+    ctx_est = 0
+    with suppress(Exception):
+        ctx_est, _ = loop.consolidator.estimate_session_prompt_tokens(
+            session,
+            runtime=runtime,
+        )
+    last_usage = LLMUsage.from_dict(session.metadata.get("_last_usage"))
+    if ctx_est <= 0:
+        ctx_est = last_usage.input_tokens if last_usage is not None else 0
+
+    # Fetch web search provider usage (best-effort, never blocks the response)
+    search_usage_text: str | None = None
+    # Never let usage fetch break /status
+    with suppress(Exception):
+        from kohaku.utils.searchusage import fetch_search_usage
+        search_cfg = loop.web_config.search
+        usage = await fetch_search_usage(
+            provider=search_cfg.provider,
+            api_key=search_cfg.api_key or None,
+        )
+        search_usage_text = usage.format()
+    active_tasks = loop._active_tasks.get(ctx.key, [])  # pyright: ignore[reportPrivateUsage]
+    task_count = sum(1 for t in active_tasks if not t.done())
+    with suppress(Exception):
+        task_count += loop.subagents.get_running_count_by_session(ctx.key)
+    return OutboundMessage(
+        channel=ctx.msg.channel,
+        chat_id=ctx.msg.chat_id,
+        content=build_status_content(
+            version=__version__, model=runtime.model,
+            start_time=loop._start_time, last_usage=last_usage,  # pyright: ignore[reportPrivateUsage]
+            context_window_tokens=runtime.context_window_tokens,
+            session_msg_count=len(session.get_history(max_messages=0)),
+            context_tokens_estimate=ctx_est,
+            search_usage_text=search_usage_text,
+            active_task_count=task_count,
+            max_completion_tokens=runtime.generation.max_tokens,
+        ),
+        metadata={**dict(ctx.msg.metadata or {}), "render_as": "text"},
+    )
+
+
+async def cmd_new(ctx: CommandContext) -> OutboundMessage:
+    """Stop active task and start a fresh session."""
+    loop = ctx.loop
+    await loop._cancel_active_tasks(ctx.key)  # pyright: ignore[reportPrivateUsage]
+    loop.discard_session_file_state(ctx.key)
+    session = ctx.session or loop.sessions.get_or_create(ctx.key)
+    snapshot = list(session.messages)
+    archive_snapshot = None
+    runtime = None
+    if session.last_archived < len(snapshot):
+        runtime = ctx.runtime or loop.runtime_for_session(session)
+        archive_snapshot = replace(
+            session,
+            messages=snapshot,
+            metadata=dict(session.metadata),
+            provider_state=None,
+        )
+    if not session.policy.persist:
+        session.clear()
+        archive_snapshot = None
+    elif loop.sessions.has_managed_authority:
+        loop.sessions.reset_session(session.key)
+    else:
+        session.clear()
+        loop.sessions.save(session)
+    if session.policy.persist:
+        loop.sessions.invalidate(session.key)
+    if archive_snapshot is not None and runtime is not None:
+        loop.schedule_background(
+            loop.consolidator.archive_session(  # pyright: ignore[reportUnknownMemberType]
+                archive_snapshot,
+                archive_end=len(snapshot),
+                runtime=runtime,
+            )
+        )
+    return OutboundMessage(
+        channel=ctx.msg.channel, chat_id=ctx.msg.chat_id,
+        content="New session started.",
+        metadata=dict(ctx.msg.metadata or {})
+    )
+
+
+async def cmd_compact(ctx: CommandContext) -> None:
+    """Compact the current session without resetting the conversation."""
+    loop = ctx.loop
+    session = ctx.session or loop.sessions.get_or_create(ctx.key)
+    runtime = ctx.runtime or loop.runtime_for_session(session)
+    delivery = loop.turn_delivery_factory.create(ctx.msg, ctx.key)
+
+    try:
+        summary = await loop.consolidator.compact_idle_session(
+            ctx.key,
+            runtime=runtime,
+            events=delivery.events,
+        )
+    except Exception:
+        logger.exception("Manual context compaction failed for {}", ctx.key)
+        return
+
+    if summary:
+        refreshed = loop.sessions.get_or_create(ctx.key)
+        refreshed.provider_state = None
+        loop.sessions.save(refreshed)
+
+
+def _format_preset_names(names: list[str]) -> str:
+    return ", ".join(f"`{name}`" for name in names) if names else "(none configured)"
+
+
+def _model_preset_names(loop: AgentLoop) -> list[str]:
+    names = set(loop.model_presets)
+    names.add("default")
+    return ["default", *sorted(name for name in names if name != "default")]
+
+
+def _command_error_message(exc: Exception) -> str:
+    return str(exc.args[0]) if isinstance(exc, KeyError) and exc.args else str(exc)
+
+
+def _model_command_status(loop: AgentLoop, session: Session) -> str:
+    names = _model_preset_names(loop)
+    try:
+        runtime = loop.runtime_for_session(session, recover_removed=False)
+    except (KeyError, ValueError) as exc:
+        return "\n".join([
+            "## Model",
+            f"- Current selection error: {_command_error_message(exc)}",
+            f"- Available presets: {_format_preset_names(names)}",
+            "- Switch with `/model <preset>`.",
+        ])
+    active = runtime.model_preset or "default"
+    return "\n".join([
+        "## Model",
+        f"- Current model: `{runtime.model}`",
+        f"- Current preset: `{active}`",
+        f"- Available presets: {_format_preset_names(names)}",
+    ])
+
+
+async def cmd_model(ctx: CommandContext) -> OutboundMessage:
+    """Show or switch model presets."""
+    loop = ctx.loop
+    args = ctx.args.strip()
+    metadata = {**dict(ctx.msg.metadata or {}), "render_as": "text"}
+
+    if not args:
+        session = ctx.session or loop.sessions.get_or_create(ctx.key)
+        return OutboundMessage(
+            channel=ctx.msg.channel,
+            chat_id=ctx.msg.chat_id,
+            content=_model_command_status(loop, session),
+            metadata=metadata,
+        )
+
+    effort_request = args.startswith("--effort=") and not any(
+        name.casefold() == args.casefold() for name in _model_preset_names(loop)
+    )
+    name = args
+    effort = None
+    if effort_request:
+        option, _, name = args.partition(" ")
+        value = option.removeprefix("--effort=")
+        effort = None if value == "default" else value
+    try:
+        runtime = loop.set_session_model_preset(
+            ctx.key, name, reasoning_effort=effort,
+            temporary_session=ctx.session if ctx.session is not None and not ctx.session.policy.persist else None,
+        )
+    except (KeyError, ValueError) as exc:
+        if effort_request and ctx.msg.channel == "websocket" and metadata.get("webui_turn_id"):
+            return _webui_admission_rejection(ctx.msg, metadata, "model_reasoning_effort_unavailable")
+        names = _model_preset_names(loop)
+        return OutboundMessage(
+            channel=ctx.msg.channel,
+            chat_id=ctx.msg.chat_id,
+            content=(
+                f"Could not switch model preset: {_command_error_message(exc)}\n\n"
+                f"Available presets: {_format_preset_names(names)}"
+            ),
+            metadata=metadata,
+        )
+
+    max_tokens = runtime.generation.max_tokens
+    lines = [
+        f"Switched model preset to `{runtime.model_preset}`.",
+        "- Scope: current session",
+        f"- Model: `{runtime.model}`",
+        f"- Context window: {runtime.context_window_tokens}",
+    ]
+    if effort_request:
+        lines.append(f"- Reasoning effort: `{runtime.generation.reasoning_effort or 'default'}`")
+    lines.append(f"- Max output tokens: {max_tokens}")
+    return OutboundMessage(
+        channel=ctx.msg.channel,
+        chat_id=ctx.msg.chat_id,
+        content="\n".join(lines),
+        metadata=metadata,
+    )
+
+
+async def cmd_dream(ctx: CommandContext) -> OutboundMessage:
+    """Manually trigger a Dream consolidation run."""
+    import time
+
+    loop = ctx.loop
+    msg = ctx.msg
+
+    async def _run_dream():
+        from kohaku.agent.memory import MemoryStore
+
+        async def _silent(*_args: Any, **_kwargs: Any) -> None:
+            pass
+
+        dream_session_key = MemoryStore.dream_session_key
+        build_dream_commit_message = MemoryStore.build_dream_commit_message
+        prune_dream_sessions = MemoryStore.prune_dream_sessions
+
+        store = loop.context.memory
+        content = ""
+        resp = None
+        diff_body = ""
+        operation_id: str | None = None
+        finalization_started = False
+        settled = False
+        t0 = time.monotonic()
+        try:
+            store.reconcile_dream_operation()
+            cursor_before = store.get_last_dream_cursor()
+            result = store.build_dream_prompt()
+            if result is None:
+                content = _format_dream_no_input_message()
+            else:
+                prompt, last_cursor = result
+                operation_id = store.reserve_dream_run(cursor_before, last_cursor)
+                key = dream_session_key()
+                dream_runtime = loop.dream_runtime()
+                resp = await loop.process_direct(
+                    prompt,
+                    session_key=key,
+                    ephemeral=True,
+                    tools=store.build_dream_tools(operation_id=operation_id),
+                    on_progress=_silent,
+                    runtime=dream_runtime,
+                )
+                elapsed = time.monotonic() - t0
+                # The real file delta grounds the audit record; normal completion
+                # decides whether this history batch has finished processing.
+                diff_body = store.dream_content_diff()
+                completed = MemoryStore.dream_run_completed(resp)
+                reason = MemoryStore.dream_incompletion_reason(resp)
+                commit_msg = build_dream_commit_message("dream: manual run", diff_body)
+                finalization_started = True
+                sha = store.finish_dream_run(
+                    operation_id,
+                    completed=completed,
+                    commit_message=commit_msg,
+                )
+                settled = True
+                if completed:
+                    if diff_body:
+                        content = f"Dream completed in {elapsed:.1f}s."
+                    else:
+                        content = f"Dream completed in {elapsed:.1f}s; no memory changes."
+                    if sha:
+                        content += f" (commit {sha})"
+                    try:
+                        store.compact_history()
+                        prune_dream_sessions(loop.sessions)
+                    except Exception:
+                        content += " History maintenance could not be completed."
+                else:
+                    content = (
+                        f"Dream did not complete after {elapsed:.1f}s ({reason}); "
+                        "memory cursor was not advanced."
+                    )
+                    if sha:
+                        content += f" (partial changes recorded in commit {sha})"
+        except Exception:
+            elapsed = time.monotonic() - t0
+            if operation_id is not None and not finalization_started:
+                try:
+                    diff_body = store.dream_content_diff()
+                    commit_msg = build_dream_commit_message("dream: manual run", diff_body)
+                    sha = store.finish_dream_run(
+                        operation_id,
+                        completed=False,
+                        commit_message=commit_msg,
+                    )
+                    settled = True
+                    content = (
+                        f"Dream did not complete after {elapsed:.1f}s; "
+                        "the history cursor was kept for review."
+                    )
+                    if sha:
+                        content += f" (partial changes recorded in commit {sha})"
+                except Exception:
+                    content = (
+                        "Dream outcome could not be safely settled. Its workspace remains fenced; "
+                        "use `/dream-restore <sha>` to recover a saved Dream snapshot."
+                    )
+            elif operation_id is not None and not settled:
+                content = (
+                    "Dream outcome could not be safely settled. Its workspace remains fenced; "
+                    "use `/dream-restore <sha>` to recover a saved Dream snapshot."
+                )
+            else:
+                content = (
+                    f"Dream could not start after {elapsed:.1f}s. "
+                    "Memory was not changed; confirm that memory versioning is available."
+                )
+        await loop.bus.publish_outbound(OutboundMessage(
+            channel=msg.channel, chat_id=msg.chat_id, content=content,
+        ))
+
+    asyncio.create_task(_run_dream())
+    return OutboundMessage(
+        channel=msg.channel, chat_id=msg.chat_id, content="Dreaming...",
+    )
+
+
+async def cmd_dream_prompt(ctx: CommandContext) -> OutboundMessage:
+    """Show or set up the workspace Dream memory instructions."""
+    store = ctx.loop.context.memory
+    path = store.dream_prompt_file
+    display_path = path.relative_to(store.workspace).as_posix()
+    args = ctx.args.strip().lower()
+
+    if args == "init":
+        if not initialize_workspace_prompt(
+            path,
+            store.default_dream_prompt(),
+            workspace=store.workspace,
+        ):
+            content = (
+                f"Dream memory instructions already exist at `{display_path}`.\n\n"
+                "Edit that file, or delete/empty it to return to Kohaku's default."
+            )
+        else:
+            content = (
+                f"Created Dream memory instructions at `{display_path}`.\n\n"
+                "Edit that file to teach Dream how to organize memory. "
+                "This fully replaces Kohaku's default Dream guide for this workspace. "
+                "Delete or empty it to return to Kohaku's default."
+            )
+    elif args:
+        content = "Usage: /dream-prompt [init]"
+    elif store.has_dream_prompt_override():
+        content = (
+            "Dream memory instructions: custom for this workspace\n\n"
+            f"- Path: `{display_path}`\n"
+            "- Delete or empty this file to return to Kohaku's default."
+        )
+    else:
+        content = (
+            "Dream memory instructions: Kohaku default\n\n"
+            f"- Editable file: `{display_path}`\n"
+            "- Run `/dream-prompt init` to create an editable copy."
+        )
+
+    return OutboundMessage(
+        channel=ctx.msg.channel,
+        chat_id=ctx.msg.chat_id,
+        content=content,
+        metadata={**dict(ctx.msg.metadata or {}), "render_as": "text"},
+    )
+
+
+async def cmd_evaluator_prompt(ctx: CommandContext) -> OutboundMessage:
+    """Show or set up the workspace heartbeat evaluator prompt."""
+    from kohaku.utils.evaluator import (
+        default_evaluator_prompt,
+        evaluator_prompt_file,
+        has_evaluator_prompt_override,
+    )
+
+    workspace = ctx.loop.context.memory.workspace
+    path = evaluator_prompt_file(workspace)
+    display_path = path.relative_to(workspace).as_posix()
+    args = ctx.args.strip().lower()
+
+    if args == "init":
+        if not initialize_workspace_prompt(
+            path,
+            default_evaluator_prompt(),
+            workspace=workspace,
+        ):
+            content = (
+                f"Heartbeat evaluator prompt already exists at `{display_path}`.\n\n"
+                "Edit that file, or delete/empty it to return to Kohaku's default."
+            )
+        else:
+            content = (
+                f"Created heartbeat evaluator prompt at `{display_path}`.\n\n"
+                "Edit that file to control when the heartbeat notification gate speaks. "
+                "It must still instruct the model to call the `evaluate_notification` tool, "
+                "otherwise the gate fails closed and stays silent. "
+                "Delete or empty it to return to Kohaku's default."
+            )
+    elif args:
+        content = "Usage: /evaluator-prompt [init]"
+    elif has_evaluator_prompt_override(workspace):
+        content = (
+            "Heartbeat evaluator prompt: custom for this workspace\n\n"
+            f"- Path: `{display_path}`\n"
+            "- Delete or empty this file to return to Kohaku's default."
+        )
+    else:
+        content = (
+            "Heartbeat evaluator prompt: Kohaku default\n\n"
+            f"- Editable file: `{display_path}`\n"
+            "- Run `/evaluator-prompt init` to create an editable copy."
+        )
+
+    return OutboundMessage(
+        channel=ctx.msg.channel,
+        chat_id=ctx.msg.chat_id,
+        content=content,
+        metadata={**dict(ctx.msg.metadata or {}), "render_as": "text"},
+    )
+
+
+def _format_dream_no_input_message() -> str:
+    return "\n".join([
+        "Dream has no conversation history to process yet.",
+        "",
+        "Dream reads new entries from `memory/history.jsonl` after the current Dream cursor.",
+        (
+            "Short chats only reach that file after token compaction or idle auto-compact, "
+            "so a fresh or short WebUI chat may leave Dream with no input."
+        ),
+        "",
+        "Next steps:",
+        "- Enable `agents.defaults.idleCompactAfterMinutes` so completed chats become Dream input automatically.",
+        "- Compact the current chat into memory once that manual action is available.",
+        "- If you expected history to exist, check whether `memory/history.jsonl` has new entries after the Dream cursor.",
+        "- Use `/dream-prompt` to see or change how Dream organizes memory.",
+    ])
+
+
+def _extract_changed_files(diff: str) -> list[str]:
+    """Extract changed file paths from a unified diff."""
+    files: list[str] = []
+    seen: set[str] = set()
+    for line in diff.splitlines():
+        if not line.startswith("diff --git "):
+            continue
+        parts = line.split()
+        if len(parts) < 4:
+            continue
+        path = parts[3]
+        if path.startswith("b/"):
+            path = path[2:]
+        if path in seen:
+            continue
+        seen.add(path)
+        files.append(path)
+    return files
+
+
+def _format_changed_files(diff: str) -> str:
+    files = _extract_changed_files(diff)
+    if not files:
+        return "No tracked memory files changed."
+    return ", ".join(f"`{path}`" for path in files)
+
+
+_DREAM_COMMIT_PREFIX = "dream:"
+
+
+def _format_dream_log_content(
+    commit: CommitInfo,
+    diff: str,
+    *,
+    requested_sha: str | None = None,
+) -> str:
+    files_line = _format_changed_files(diff)
+    lines = [
+        "## Dream Update",
+        "",
+        "Here is the selected Dream memory change." if requested_sha else "Here is the latest Dream memory change.",
+        "",
+        f"- Commit: `{commit.sha}`",
+        f"- Time: {commit.timestamp}",
+        f"- Changed files: {files_line}",
+    ]
+    if diff:
+        lines.extend([
+            "",
+            f"Use `/dream-restore {commit.sha}` to undo this change.",
+            "",
+            "```diff",
+            diff.rstrip(),
+            "```",
+        ])
+    else:
+        lines.extend([
+            "",
+            "Dream recorded this version, but there is no file diff to display.",
+        ])
+    return "\n".join(lines)
+
+
+def _format_dream_restore_list(commits: list[CommitInfo]) -> str:
+    lines = [
+        "## Dream Restore",
+        "",
+        "Choose a Dream memory version to restore. Latest first:",
+        "",
+    ]
+    for c in commits:
+        lines.append(f"- `{c.sha}` {c.timestamp} - {c.subject()}")
+    lines.extend([
+        "",
+        "Preview a version with `/dream-log <sha>` before restoring it.",
+        "Restore a version with `/dream-restore <sha>`.",
+    ])
+    return "\n".join(lines)
+
+
+async def cmd_dream_log(ctx: CommandContext) -> OutboundMessage:
+    """Show what the last Dream changed.
+
+    Default: diff of the latest Dream commit versus its parent.
+    With /dream-log <sha>: diff of that specific commit.
+    """
+    store = ctx.loop.consolidator.store
+    git = store.git
+
+    if not git.is_initialized():
+        if store.get_last_dream_cursor() == 0:
+            msg = (
+                "Dream has not run yet. Run `/dream` to consolidate memory.\n\n"
+                "Use `/dream-prompt` to see or change how Dream organizes memory."
+            )
+        else:
+            msg = "Dream history is not available because memory versioning is not initialized."
+        return OutboundMessage(
+            channel=ctx.msg.channel, chat_id=ctx.msg.chat_id,
+            content=msg, metadata={"render_as": "text"},
+        )
+
+    args = ctx.args.strip()
+
+    if args:
+        # Show diff of a specific commit
+        sha = args.split()[0]
+        result = git.show_commit_diff(sha)
+        if not result:
+            content = (
+                f"Couldn't find Dream change `{sha}`.\n\n"
+                "Use `/dream-restore` to list recent versions, "
+                "or `/dream-log` to inspect the latest one."
+            )
+        else:
+            commit, diff = result
+            content = _format_dream_log_content(commit, diff, requested_sha=sha)
+    else:
+        # Default: show the latest Dream commit's diff
+        commits = git.log(max_entries=1, message_prefix=_DREAM_COMMIT_PREFIX)
+        result = (
+            git.show_commit_diff(
+                commits[0].sha,
+                max_entries=1,
+                message_prefix=_DREAM_COMMIT_PREFIX,
+            )
+            if commits else None
+        )
+        if result:
+            commit, diff = result
+            content = _format_dream_log_content(commit, diff)
+        else:
+            content = (
+                "Dream memory has no saved versions yet.\n\n"
+                "Use `/dream-prompt` to see or change how Dream organizes memory."
+            )
+
+    return OutboundMessage(
+        channel=ctx.msg.channel, chat_id=ctx.msg.chat_id,
+        content=content, metadata={"render_as": "text"},
+    )
+
+
+async def cmd_dream_restore(ctx: CommandContext) -> OutboundMessage:
+    """Restore memory files from a previous dream commit.
+
+    Usage:
+        /dream-restore          — list recent commits
+        /dream-restore <sha>    — revert a specific commit
+    """
+    store = ctx.loop.consolidator.store
+    git = store.git
+    if not git.is_initialized():
+        return OutboundMessage(
+            channel=ctx.msg.channel, chat_id=ctx.msg.chat_id,
+            content="Dream history is not available because memory versioning is not initialized.",
+        )
+
+    args = ctx.args.strip()
+    if not args:
+        # Show recent Dream commits for the user to pick
+        commits = git.log(max_entries=10, message_prefix=_DREAM_COMMIT_PREFIX)
+        if not commits:
+            content = "Dream memory has no saved versions to restore yet."
+        else:
+            content = _format_dream_restore_list(commits)
+    else:
+        sha = args.split()[0]
+        result = git.show_commit_diff(sha, message_prefix=_DREAM_COMMIT_PREFIX)
+        if not result:
+            content = (
+                f"Couldn't restore Dream change `{sha}`.\n\n"
+                "Only Dream memory versions can be restored. "
+                "Use `/dream-restore` to list recent versions."
+            )
+        else:
+            changed_files = _format_changed_files(result[1])
+            new_sha = git.revert(sha, message_prefix=_DREAM_COMMIT_PREFIX)
+            if new_sha:
+                content = (
+                    f"Restored Dream memory to the state before `{sha}`.\n\n"
+                    f"- New safety commit: `{new_sha}`\n"
+                    f"- Restored files: {changed_files}\n\n"
+                    f"Use `/dream-log {new_sha}` to inspect the restore diff."
+                )
+            else:
+                content = (
+                    f"Couldn't restore Dream change `{sha}`.\n\n"
+                    "It may be the first saved version with no earlier state to restore."
+                )
+    return OutboundMessage(
+        channel=ctx.msg.channel, chat_id=ctx.msg.chat_id,
+        content=content, metadata={"render_as": "text"},
+    )
+
+
+_HISTORY_DEFAULT_COUNT = 10
+_HISTORY_MAX_COUNT = 50
+_HISTORY_MAX_CONTENT_CHARS = 200
+
+
+def _format_history_message(msg: dict[str, Any]) -> str | None:
+    """Format a single history message for display. Returns None to skip."""
+    role = msg.get("role")
+    if role not in ("user", "assistant"):
+        return None
+    content = msg.get("content") or ""
+    if isinstance(content, list):
+        parts = [
+            text
+            for block in cast(list[object], content)
+            if (item := cast(dict[str, Any], block) if isinstance(block, dict) else None)
+            and item.get("type") == "text"
+            and isinstance(text := item.get("text"), str)
+        ]
+        content = " ".join(parts)
+    content = str(content).strip()
+    if not content:
+        return None
+    if len(content) > _HISTORY_MAX_CONTENT_CHARS:
+        content = content[:_HISTORY_MAX_CONTENT_CHARS] + "…"
+    label = "👤 You" if role == "user" else "🤖 Bot"
+    return f"{label}: {content}"
+
+
+async def cmd_history(ctx: CommandContext) -> OutboundMessage:
+    """Show the last N messages of the current session (default 10, max 50).
+
+    Usage: /history [count]
+    """
+    count = _HISTORY_DEFAULT_COUNT
+    if ctx.args.strip():
+        try:
+            count = max(1, min(int(ctx.args.strip()), _HISTORY_MAX_COUNT))
+        except ValueError:
+            return OutboundMessage(
+                channel=ctx.msg.channel, chat_id=ctx.msg.chat_id,
+                content="Usage: /history [count] — e.g. /history 5 (default: 10, max: 50)",
+                metadata=dict(ctx.msg.metadata or {}),
+            )
+
+    session = ctx.session or ctx.loop.sessions.get_or_create(ctx.key)
+    if "source_schema_version" in session.metadata:
+        from kohaku.session.turn_writer import SourceTurnWriter
+        history = SourceTurnWriter.project_events(session.messages)[0]
+    else:
+        history = session.get_history(max_messages=0, include_runtime_context=False)
+    visible = [_format_history_message(m) for m in history]
+    visible = [m for m in visible if m is not None]
+    recent = visible[-count:]
+
+    if not recent:
+        return OutboundMessage(
+            channel=ctx.msg.channel, chat_id=ctx.msg.chat_id,
+            content="No conversation history yet.",
+            metadata=dict(ctx.msg.metadata or {}),
+        )
+
+    header = f"Last {len(recent)} message(s):\n"
+    return OutboundMessage(
+        channel=ctx.msg.channel, chat_id=ctx.msg.chat_id,
+        content=header + "\n".join(recent),
+        metadata={**dict(ctx.msg.metadata or {}), "render_as": "text"},
+    )
+
+
+async def cmd_goal(ctx: CommandContext) -> OutboundMessage | None:
+    """Mark this turn as an explicit sustained-goal request."""
+    from kohaku.agent.goal_permission import goal_mutation_permission
+
+    goal = ctx.args.strip()
+    if not goal:
+        return OutboundMessage(
+            channel=ctx.msg.channel,
+            chat_id=ctx.msg.chat_id,
+            content="Usage: /goal <long-running task description>",
+            metadata={**dict(ctx.msg.metadata or {}), "render_as": "text"},
+        )
+    if ctx.session is None:
+        return OutboundMessage(
+            channel=ctx.msg.channel,
+            chat_id=ctx.msg.chat_id,
+            content=(
+                "A task is already running for this chat. "
+                "Use `/stop` first, then send `/goal <long-running task description>` again."
+            ),
+            metadata={**dict(ctx.msg.metadata or {}), "render_as": "text"},
+        )
+    if not ctx.is_user_turn:
+        return OutboundMessage(
+            channel=ctx.msg.channel,
+            chat_id=ctx.msg.chat_id,
+            content="Goal mode can only be started by a user `/goal <task>` command.",
+            metadata={**dict(ctx.msg.metadata or {}), "render_as": "text"},
+        )
+
+    ctx.turn_scopes.append(goal_mutation_permission(True))
+    ctx.msg.metadata = {
+        **dict(ctx.msg.metadata or {}),
+        "original_command": "/goal",
+        "original_content": ctx.raw,
+        "goal_requested": True,
+        "goal_started_at": time.time(),
+    }
+    ctx.msg.content = ctx.raw
+    return None
+
+
+async def cmd_pairing(ctx: CommandContext) -> OutboundMessage:
+    """List, approve, deny or revoke pairing requests."""
+    from kohaku.pairing import PAIRING_COMMAND_META_KEY, handle_pairing_command
+
+    reply = handle_pairing_command(ctx.msg.channel, ctx.args)
+    return OutboundMessage(
+        channel=ctx.msg.channel,
+        chat_id=ctx.msg.chat_id,
+        content=reply,
+        metadata={PAIRING_COMMAND_META_KEY: True},
+    )
+
+
+async def cmd_skill(ctx: CommandContext) -> OutboundMessage:
+    """List all enabled skills (name and description only)."""
+    loop = ctx.loop
+    skills = loop.context.skills.list_skills(filter_unavailable=False)
+    if not skills:
+        content = "No skills available."
+    else:
+        lines = [f"Available skills ({len(skills)}):", ""]
+        for entry in skills:
+            desc = loop.context.skills.get_skill_description(entry["name"])
+            lines.append(f"- **{entry['name']}** — {desc}")
+        content = "\n".join(lines)
+    return OutboundMessage(
+        channel=ctx.msg.channel,
+        chat_id=ctx.msg.chat_id,
+        content=content,
+        metadata=dict(ctx.msg.metadata or {}),
+    )
+
+
+async def cmd_trigger(ctx: CommandContext) -> OutboundMessage:
+    """Create a local trigger bound to the current session."""
+    name = ctx.args.strip()
+    if not name:
+        return OutboundMessage(
+            channel=ctx.msg.channel,
+            chat_id=ctx.msg.chat_id,
+            content=(
+                "Usage: /trigger <name>\n\n"
+                "Create a named local trigger bound to this chat session."
+            ),
+            metadata={**dict(ctx.msg.metadata or {}), "render_as": "text"},
+        )
+
+    from kohaku.triggers.local_store import LocalTriggerStore
+
+    loop = ctx.loop
+    store = loop.local_trigger_store
+    if store is None:
+        store = LocalTriggerStore(loop.workspace)
+
+    from kohaku.session.keys import UNIFIED_SESSION_KEY
+
+    session_key = (
+        ctx.msg.session_key
+        if ctx.key == UNIFIED_SESSION_KEY
+        else ctx.key
+    )
+    trigger = store.create(
+        name=name,
+        channel=ctx.msg.channel,
+        chat_id=ctx.msg.chat_id,
+        session_key=session_key,
+        sender_id="trigger",
+        origin_metadata=dict(ctx.msg.metadata or {}),
+    )
+    command = f'kohaku trigger {trigger.id} "message"'
+    return OutboundMessage(
+        channel=ctx.msg.channel,
+        chat_id=ctx.msg.chat_id,
+        content=(
+            f"Trigger created: {trigger.name}\n"
+            f"ID: {trigger.id}\n\n"
+            f"Command:\n{command}\n\n"
+            + ("Local trigger delivery is active in this gateway."
+               if store.delivery_active else
+               "Delivery is inactive. Start a gateway with gateway.localTriggers=true; "
+               "queued messages are retained until delivery is enabled.")
+        ),
+        metadata={**dict(ctx.msg.metadata or {}), "render_as": "text"},
+    )
+
+async def cmd_help(ctx: CommandContext) -> OutboundMessage:
+    """Return available slash commands."""
+    return OutboundMessage(
+        channel=ctx.msg.channel,
+        chat_id=ctx.msg.chat_id,
+        content=build_help_text(),
+        metadata={**dict(ctx.msg.metadata or {}), "render_as": "text"},
+    )
+
+
+async def cmd_user_shell(ctx: CommandContext) -> OutboundMessage:
+    """Run a trusted local ``!command`` through Kohaku's exec policy."""
+    metadata = dict(ctx.msg.metadata or {})
+    if (
+        ctx.msg.channel != "websocket"
+        or metadata.get("webui") is not True
+        or metadata.get(INBOUND_META_USER_SHELL) is not True
+    ):
+        return OutboundMessage(
+            channel=ctx.msg.channel,
+            chat_id=ctx.msg.chat_id,
+            content="Shell commands are only available from a trusted local client.",
+            metadata={**metadata, "render_as": "text"},
+        )
+    if not ctx.args.strip():
+        return OutboundMessage(
+            channel=ctx.msg.channel,
+            chat_id=ctx.msg.chat_id,
+            content="Type a command after `!`, for example `!pwd`.",
+            metadata={**metadata, "render_as": "text"},
+        )
+    return await ctx.loop.execute_user_shell_command(ctx)
+
+
+def build_help_text() -> str:
+    """Build canonical help text shared across channels."""
+    lines = ["🐈 Kohaku commands:"]
+    for spec in BUILTIN_COMMAND_SPECS:
+        command = spec.command
+        if spec.arg_hint:
+            command = f"{command} {spec.arg_hint}"
+        lines.append(f"{command} — {spec.description}")
+    return "\n".join(lines)
+
+
+def register_builtin_commands(router: CommandRouter) -> None:
+    """Register the default set of slash commands."""
+    router.priority("/stop", cmd_stop)
+    router.priority("/restart", cmd_restart)
+    router.priority("/status", cmd_status)
+    router.priority("/quota", cmd_quota)
+    router.exact("/new", cmd_new)
+    router.exact("/compact", cmd_compact)
+    router.exact("/status", cmd_status)
+    router.exact("/quota", cmd_quota)
+    router.exact("/model", cmd_model)
+    router.prefix("/model ", cmd_model)
+    router.exact("/history", cmd_history)
+    router.prefix("/history ", cmd_history)
+    router.exact("/goal", cmd_goal)
+    router.prefix("/goal ", cmd_goal)
+    router.exact("/trigger", cmd_trigger)
+    router.prefix("/trigger ", cmd_trigger)
+    router.exact("/dream", cmd_dream)
+    router.exact("/dream-log", cmd_dream_log)
+    router.prefix("/dream-log ", cmd_dream_log)
+    router.exact("/dream-restore", cmd_dream_restore)
+    router.prefix("/dream-restore ", cmd_dream_restore)
+    router.exact("/dream-prompt", cmd_dream_prompt)
+    router.prefix("/dream-prompt ", cmd_dream_prompt)
+    router.exact("/evaluator-prompt", cmd_evaluator_prompt)
+    router.prefix("/evaluator-prompt ", cmd_evaluator_prompt)
+    router.exact("/skill", cmd_skill)
+    router.exact("/help", cmd_help)
+    router.exact("/pairing", cmd_pairing)
+    router.prefix("/pairing ", cmd_pairing)
+    router.exact(USER_SHELL_COMMAND, cmd_user_shell)
+    router.prefix(f"{USER_SHELL_COMMAND} ", cmd_user_shell)

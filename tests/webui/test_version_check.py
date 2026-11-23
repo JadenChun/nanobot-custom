@@ -4,7 +4,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-import nanobot.webui.version_check as version_check
+import kohaku.webui.version_check as version_check
 
 
 @pytest.fixture(autouse=True)
@@ -13,28 +13,28 @@ def _reset_version_cache(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(version_check.time, "monotonic", lambda: 1_000.0)
 
 
-def _pypi_response(latest: object) -> MagicMock:
+def _release_response(latest: object) -> MagicMock:
     response = MagicMock()
-    response.json.return_value = {"info": {"version": latest}}
+    response.json.return_value = {"tag_name": latest}
     return response
 
 
 def test_version_check_reports_only_a_newer_release_and_caches_it(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    get = MagicMock(return_value=_pypi_response("1.3.0"))
+    get = MagicMock(return_value=_release_response("v1.3.0"))
     monkeypatch.setattr(version_check, "__version__", "1.2.0")
     monkeypatch.setattr(version_check.httpx, "get", get)
 
     expected = {
         "currentVersion": "1.2.0",
         "latestVersion": "1.3.0",
-        "pypiUrl": "https://pypi.org/project/nanobot-ai/",
+        "releaseUrl": "https://github.com/JadenChun/nanobot-custom/releases",
     }
     assert version_check.check_for_update() == expected
     assert version_check.check_for_update() == expected
     get.assert_called_once_with(
-        "https://pypi.org/pypi/nanobot-ai/json",
+        "https://api.github.com/repos/JadenChun/nanobot-custom/releases/latest",
         timeout=5.0,
         follow_redirects=True,
     )
@@ -46,7 +46,7 @@ def test_version_check_ignores_non_newer_or_invalid_releases(
     latest: object,
 ) -> None:
     monkeypatch.setattr(version_check, "__version__", "1.2.0")
-    monkeypatch.setattr(version_check.httpx, "get", lambda *_args, **_kwargs: _pypi_response(latest))
+    monkeypatch.setattr(version_check.httpx, "get", lambda *_args, **_kwargs: _release_response(latest))
 
     assert version_check.check_for_update() is None
 

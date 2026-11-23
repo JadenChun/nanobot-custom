@@ -5,8 +5,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-import nanobot.webui.forking as forking
-from nanobot.session.webui_turns import WEBUI_TITLE_METADATA_KEY
+import kohaku.webui.forking as forking
+from kohaku.session.webui_turns import WEBUI_TITLE_METADATA_KEY
 
 
 def test_create_fork_rebuilds_missing_transcript_and_saves_clean_title(

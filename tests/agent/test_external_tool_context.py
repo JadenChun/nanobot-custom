@@ -13,19 +13,19 @@ from unittest.mock import MagicMock, patch
 import pytest
 from pydantic import SecretStr
 
-from nanobot.agent.tools.base import Tool
-from nanobot.agent.tools.context import ExternalToolContext, ToolContext
-from nanobot.agent.tools.loader import ToolLoader
-from nanobot.agent.tools.plugin_context import (
+from kohaku.agent.tools.base import Tool
+from kohaku.agent.tools.context import ExternalToolContext, ToolContext
+from kohaku.agent.tools.loader import ToolLoader
+from kohaku.agent.tools.plugin_context import (
     ExternalContextError,
     ExternalContextSnapshot,
     new_external_context,
     snapshot_external_context,
 )
-from nanobot.agent.tools.registry import ToolRegistry
-from nanobot.agent.tools.spawn import SpawnTool
-from nanobot.config.schema import ToolsConfig
-from nanobot.security.workspace_access import WorkspaceSandboxStatus
+from kohaku.agent.tools.registry import ToolRegistry
+from kohaku.agent.tools.spawn import SpawnTool
+from kohaku.config.schema import ToolsConfig
+from kohaku.security.workspace_access import WorkspaceSandboxStatus
 
 
 class _ResultTool(Tool):
@@ -125,9 +125,9 @@ def _load_plugin(
     loader = ToolLoader(test_classes=[])
     registry = ToolRegistry()
     with (
-        patch("nanobot.migration_guard.require_runtime_ready"),
-        patch("nanobot.agent.tools.fork_factories.construct_core_tools", return_value=[]),
-        patch("nanobot.agent.tools.loader.entry_points", return_value=[entry_point]),
+        patch("kohaku.migration_guard.require_runtime_ready"),
+        patch("kohaku.agent.tools.fork_factories.construct_core_tools", return_value=[]),
+        patch("kohaku.agent.tools.loader.entry_points", return_value=[entry_point]),
     ):
         source = _context(tmp_path) if source_config is None else _context(tmp_path, config=source_config)
         loader.load(source, registry)
@@ -296,9 +296,9 @@ def test_spawn_entry_point_cannot_receive_the_foreground_manager(tmp_path: Path)
     loader = ToolLoader(test_classes=[])
     registry = ToolRegistry()
     with (
-        patch("nanobot.migration_guard.require_runtime_ready"),
-        patch("nanobot.agent.tools.fork_factories.construct_core_tools", return_value=[]),
-        patch("nanobot.agent.tools.loader.entry_points", return_value=[entry_point]),
+        patch("kohaku.migration_guard.require_runtime_ready"),
+        patch("kohaku.agent.tools.fork_factories.construct_core_tools", return_value=[]),
+        patch("kohaku.agent.tools.loader.entry_points", return_value=[entry_point]),
         pytest.raises(ValueError, match="construction"),
     ):
         loader.load(source, registry)
@@ -369,10 +369,10 @@ def test_enabled_requires_exact_boolean_and_keeps_registry_clean(
     registry = ToolRegistry()
     source = _context(tmp_path)
     with (
-        patch("nanobot.migration_guard.require_runtime_ready"),
-        patch("nanobot.agent.tools.fork_factories.construct_core_tools", return_value=[]),
-        patch("nanobot.agent.tools.loader.entry_points", return_value=[entry_point]),
-        patch("nanobot.agent.tools.loader.logger.warning") as warning,
+        patch("kohaku.migration_guard.require_runtime_ready"),
+        patch("kohaku.agent.tools.fork_factories.construct_core_tools", return_value=[]),
+        patch("kohaku.agent.tools.loader.entry_points", return_value=[entry_point]),
+        patch("kohaku.agent.tools.loader.logger.warning") as warning,
     ):
         if expected_names is None:
             with pytest.raises(ValueError) as raised:
@@ -456,14 +456,14 @@ def test_external_setup_diagnostics_are_bounded_and_sanitized(
         entry_point.load.return_value = _Plugin
 
     snapshot_patch = (
-        patch("nanobot.agent.tools.loader.snapshot_external_context", side_effect=RuntimeError(secret))
+        patch("kohaku.agent.tools.loader.snapshot_external_context", side_effect=RuntimeError(secret))
         if stage == "configuration" else nullcontext()
     )
     with (
-        patch("nanobot.migration_guard.require_runtime_ready"),
-        patch("nanobot.agent.tools.fork_factories.construct_core_tools", return_value=[]),
-        patch("nanobot.agent.tools.loader.entry_points", return_value=[entry_point]),
-        patch("nanobot.agent.tools.loader.logger.warning") as warning,
+        patch("kohaku.migration_guard.require_runtime_ready"),
+        patch("kohaku.agent.tools.fork_factories.construct_core_tools", return_value=[]),
+        patch("kohaku.agent.tools.loader.entry_points", return_value=[entry_point]),
+        patch("kohaku.agent.tools.loader.logger.warning") as warning,
         snapshot_patch,
         pytest.raises(ValueError) as raised,
     ):
@@ -482,9 +482,9 @@ def test_reserved_entry_point_is_rejected_before_loading(tmp_path: Path) -> None
     entry_point.name = "spawn"
     loader = ToolLoader(test_classes=[])
     with (
-        patch("nanobot.migration_guard.require_runtime_ready"),
-        patch("nanobot.agent.tools.fork_factories.construct_core_tools", return_value=[]),
-        patch("nanobot.agent.tools.loader.entry_points", return_value=[entry_point]),
+        patch("kohaku.migration_guard.require_runtime_ready"),
+        patch("kohaku.agent.tools.fork_factories.construct_core_tools", return_value=[]),
+        patch("kohaku.agent.tools.loader.entry_points", return_value=[entry_point]),
         pytest.raises(ValueError, match="discovery"),
     ):
         loader.load(_context(tmp_path), ToolRegistry())

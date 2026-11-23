@@ -7,15 +7,15 @@ from pathlib import Path
 
 import pytest
 
-from nanobot.session.manager import SessionWriteConflict
-from nanobot.session.next_turn_preferences import (
+from kohaku.session.manager import SessionWriteConflict
+from kohaku.session.next_turn_preferences import (
     MAX_PREFERENCE_BYTES,
     NextTurnPreferenceError,
     preference_path,
 )
-from nanobot.session.runtime_authority import DurableSessionAuthority
-from nanobot.session.source import new_source_event
-from nanobot.session.source_store import SourceSessionStore
+from kohaku.session.runtime_authority import DurableSessionAuthority
+from kohaku.session.source import new_source_event
+from kohaku.session.source_store import SourceSessionStore
 
 KEY = "websocket:prefs"
 
@@ -228,28 +228,28 @@ async def test_active_turn_isolates_next_turn_folder_and_model_across_steer_stop
 ):
     import asyncio
 
-    from nanobot.agent.loop import AgentLoop
-    from nanobot.agent.turn import DeliveryTarget, TurnRequest, TurnSource
-    from nanobot.config.schema import Config, ModelPresetConfig
-    from nanobot.providers.base import GenerationSettings, LLMProvider, LLMResponse
-    from nanobot.providers.factory import ProviderSnapshot
-    from nanobot.runtime_composition import RuntimeComposition
-    from nanobot.security.folder_grants import FolderGrantStore
-    from nanobot.security.workspace_access import WorkspaceScopeError
-    from nanobot.session.model_selection import (
+    from kohaku.agent.loop import AgentLoop
+    from kohaku.agent.turn import DeliveryTarget, TurnRequest, TurnSource
+    from kohaku.config.schema import Config, ModelPresetConfig
+    from kohaku.providers.base import GenerationSettings, LLMProvider, LLMResponse
+    from kohaku.providers.factory import ProviderSnapshot
+    from kohaku.runtime_composition import RuntimeComposition
+    from kohaku.security.folder_grants import FolderGrantStore
+    from kohaku.security.workspace_access import WorkspaceScopeError
+    from kohaku.session.model_selection import (
         model_preset_from_metadata,
         reasoning_effort_from_metadata,
     )
-    from nanobot.session.webui_turns import (
+    from kohaku.session.webui_turns import (
         activate_queued_websocket_turn,
         bind_queued_websocket_turn_scope,
         clear_websocket_turn_if_current,
         register_queued_websocket_turn_if_idle,
     )
-    from nanobot.session.workspace_access_recovery import WorkspaceAccessRecoveryOwner
-    from nanobot.webui.inbound_commands import steering_target_error
-    from nanobot.webui.session_projection import WebUISessionProjection
-    from nanobot.webui.workspaces import WebUIWorkspaceController
+    from kohaku.session.workspace_access_recovery import WorkspaceAccessRecoveryOwner
+    from kohaku.webui.inbound_commands import steering_target_error
+    from kohaku.webui.session_projection import WebUISessionProjection
+    from kohaku.webui.workspaces import WebUIWorkspaceController
 
     class _GatedProvider(LLMProvider):
         def __init__(self, name: str) -> None:
@@ -295,7 +295,7 @@ async def test_active_turn_isolates_next_turn_folder_and_model_across_steer_stop
     fast_provider = _GatedProvider("openai/gpt-4.1")
     deep_provider = _GatedProvider("openai/o3")
     providers = {"fast": fast_provider, "deep": deep_provider}
-    monkeypatch.setattr("nanobot.providers.factory.make_provider", lambda _config: fast_provider)
+    monkeypatch.setattr("kohaku.providers.factory.make_provider", lambda _config: fast_provider)
 
     def load_preset(name: str) -> ProviderSnapshot:
         preset = presets[name]

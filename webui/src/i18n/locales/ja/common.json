@@ -7,7 +7,7 @@
     },
     "error": {
       "title": "Kohaku に接続できませんでした",
-      "gatewayHint": "gateway（`nanobot gateway`）が起動しており、このページが同じマシン上で開かれていることを確認してください。"
+      "gatewayHint": "gateway（`kohaku gateway`）が起動しており、このページが同じマシン上で開かれていることを確認してください。"
     },
     "auth": {
       "label": "パスワード",
@@ -1576,7 +1576,7 @@
     "close": "ファイルプレビューを閉じる",
     "loading": "プレビューを読み込み中...",
     "failed": "このファイルをプレビューできませんでした。",
-    "routeMissing": "ファイルプレビューには最新の gateway が必要です。nanobot gateway を再起動してから再試行してください。",
+    "routeMissing": "ファイルプレビューには最新の gateway が必要です。kohaku gateway を再起動してから再試行してください。",
     "resize": "ファイルプレビューの幅を変更",
     "truncated": "ファイルが大きいため、プレビューは途中まで表示されています。"
   },

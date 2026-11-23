@@ -5,8 +5,8 @@ from threading import Event
 
 import pytest
 
-from nanobot.session.manager import SessionManager
-from nanobot.session.session_handles import (
+from kohaku.session.manager import SessionManager
+from kohaku.session.session_handles import (
     SESSION_HANDLE_METADATA_KEY,
     SessionHandleResolver,
     _tier_size,

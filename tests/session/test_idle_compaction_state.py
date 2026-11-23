@@ -6,10 +6,10 @@ from datetime import datetime, timezone
 
 import pytest
 
-from nanobot.session.execution_owner import ExecutionOwnershipError, acquire_execution
-from nanobot.session.idle_compaction import IdleCaptureToken
-from nanobot.session.manager import JsonlSessionStore, Session, SessionWriteConflict
-from nanobot.session.source import SourceValidationError, new_source_event, prefix_digest
+from kohaku.session.execution_owner import ExecutionOwnershipError, acquire_execution
+from kohaku.session.idle_compaction import IdleCaptureToken
+from kohaku.session.manager import JsonlSessionStore, Session, SessionWriteConflict
+from kohaku.session.source import SourceValidationError, new_source_event, prefix_digest
 
 
 @pytest.fixture

@@ -8,29 +8,29 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from loguru import logger
 
-from nanobot.agent.context import ContextBuilder, TranscriptInput
-from nanobot.agent.loop import AgentLoop, TurnContext, TurnKind
-from nanobot.agent.runner import AgentRunResult
-from nanobot.agent.tools.context import RequestContext, request_context
-from nanobot.agent.tools.long_task import CreateGoalTool
-from nanobot.agent.tools.spawn import SpawnTool
-from nanobot.agent.turn import (
+from kohaku.agent.context import ContextBuilder, TranscriptInput
+from kohaku.agent.loop import AgentLoop, TurnContext, TurnKind
+from kohaku.agent.runner import AgentRunResult
+from kohaku.agent.tools.context import RequestContext, request_context
+from kohaku.agent.tools.long_task import CreateGoalTool
+from kohaku.agent.tools.spawn import SpawnTool
+from kohaku.agent.turn import (
     RunPolicyContext,
     TurnRequest,
     TurnSource,
 )
-from nanobot.agent.turn import TurnContext as RunTurnContext
-from nanobot.bus.events import InboundMessage
-from nanobot.bus.outbound_events import (
+from kohaku.agent.turn import TurnContext as RunTurnContext
+from kohaku.bus.events import InboundMessage
+from kohaku.bus.outbound_events import (
     GoalStatusEvent,
     StreamDeltaEvent,
     StreamedResponseEvent,
     StreamEndEvent,
     TurnEndEvent,
 )
-from nanobot.context_repo.manager import ContextRepoManager
-from nanobot.cron.session_turns import CRON_HISTORY_META, CRON_TRIGGER_META
-from nanobot.providers.base import (
+from kohaku.context_repo.manager import ContextRepoManager
+from kohaku.cron.session_turns import CRON_HISTORY_META, CRON_TRIGGER_META
+from kohaku.providers.base import (
     GenerationSettings,
     LLMProvider,
     LLMResponse,
@@ -38,14 +38,14 @@ from nanobot.providers.base import (
     ProviderConversationState,
     ProviderConversationTransportReceipt,
 )
-from nanobot.providers.conversation_state import (
+from kohaku.providers.conversation_state import (
     ConversationRequestBinding,
     ProviderConversationStateController,
     ProviderStateSettlement,
 )
-from nanobot.providers.factory import ProviderSnapshot
-from nanobot.providers.request_budget import FinalizedRequestBudgetExceeded
-from nanobot.runtime_context import (
+from kohaku.providers.factory import ProviderSnapshot
+from kohaku.providers.request_budget import FinalizedRequestBudgetExceeded
+from kohaku.runtime_context import (
     RUNTIME_CONTEXT_HISTORY_META,
     RUNTIME_CONTEXT_MESSAGE_META,
     RUNTIME_CONTEXT_TAG,
@@ -53,14 +53,14 @@ from nanobot.runtime_context import (
     append_runtime_context,
     public_history_message,
 )
-from nanobot.session.automation_turns import AUTOMATION_HISTORY_META
-from nanobot.session.goal_state import GOAL_STATE_KEY
-from nanobot.session.keys import (
+from kohaku.session.automation_turns import AUTOMATION_HISTORY_META
+from kohaku.session.goal_state import GOAL_STATE_KEY
+from kohaku.session.keys import (
     LAST_CHANNEL_METADATA_KEY,
     UNIFIED_SESSION_KEY,
 )
-from nanobot.session.manager import Session, SessionManager
-from nanobot.session.recovery import (
+from kohaku.session.manager import Session, SessionManager
+from kohaku.session.recovery import (
     PENDING_FOLLOWUP_ID_KEY,
     PENDING_FOLLOWUPS_KEY,
     PROVIDER_STATE_CHECKPOINT_VERSION,
@@ -68,15 +68,15 @@ from nanobot.session.recovery import (
     RUNTIME_CHECKPOINT_KEY,
     restore_runtime_checkpoint,
 )
-from nanobot.session.summary import (
+from kohaku.session.summary import (
     SUMMARY_CONTINUATION_TEXT,
     SessionSummaryCheckpoint,
 )
-from nanobot.session.turn_continuation import (
+from kohaku.session.turn_continuation import (
     INTERNAL_CONTINUATION_META,
     INTERNAL_CONTINUATION_RUN_STARTED_AT_META,
 )
-from nanobot.session.webui_turns import (
+from kohaku.session.webui_turns import (
     TITLE_GENERATION_MAX_TOKENS,
     TITLE_GENERATION_REASONING_EFFORT,
     WEBUI_SESSION_METADATA_KEY,
@@ -85,8 +85,8 @@ from nanobot.session.webui_turns import (
     maybe_generate_webui_title,
     maybe_generate_webui_title_after_turn,
 )
-from nanobot.triggers.local_session_turns import LOCAL_TRIGGER_META
-from nanobot.utils.llm_runtime import LLMRuntime
+from kohaku.triggers.local_session_turns import LOCAL_TRIGGER_META
+from kohaku.utils.llm_runtime import LLMRuntime
 from tests.agent import p5_preservation_fixtures
 from tests.agent.p5_preservation_fixtures import _execute_inbound
 
@@ -140,7 +140,7 @@ def _assembled_messages(
 
 def _mk_loop() -> AgentLoop:
     loop = AgentLoop.__new__(AgentLoop)
-    from nanobot.config.schema import AgentDefaults
+    from kohaku.config.schema import AgentDefaults
 
     loop.max_tool_result_chars = AgentDefaults().max_tool_result_chars
     return loop
@@ -1221,7 +1221,7 @@ async def test_persist_turn_discards_settlement_when_save_substitutes_private_st
     monkeypatch: pytest.MonkeyPatch,
     substitute,
 ) -> None:
-    monkeypatch.setattr("nanobot.migration_guard.require_runtime_ready", lambda: None)
+    monkeypatch.setattr("kohaku.migration_guard.require_runtime_ready", lambda: None)
     loop = await _make_full_loop(tmp_path, keys=('cli:private-state',))
     settlement, candidate = _provider_state_settlement()
     session = loop.sessions.get_or_create("cli:private-state")
@@ -1266,7 +1266,7 @@ async def test_runtime_checkpoint_keeps_provider_state_out_of_public_metadata(_m
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr("nanobot.migration_guard.require_runtime_ready", lambda: None)
+    monkeypatch.setattr("kohaku.migration_guard.require_runtime_ready", lambda: None)
     loop = await _make_full_loop(tmp_path, keys=('cli:private-checkpoint',))
     state = ProviderConversationState(
         kind="openai_responses",
@@ -1992,7 +1992,7 @@ async def test_process_message_uses_explicit_session_for_goal_context(_make_full
 async def test_run_agent_loop_continuation_reads_latest_goal_metadata(_make_full_loop,
     tmp_path: Path,
 ) -> None:
-    from nanobot.agent.runner import AgentRunResult
+    from kohaku.agent.runner import AgentRunResult
 
     loop = await _make_full_loop(tmp_path, keys=('websocket:late-goal',))
     session = loop.sessions.get_or_create("websocket:late-goal")
@@ -2134,8 +2134,8 @@ async def test_next_turn_after_crash_closes_pending_user_turn_before_new_input(_
 
 @pytest.mark.asyncio
 async def test_stop_preserves_runtime_checkpoint_for_next_turn(_make_full_loop, tmp_path: Path) -> None:
-    from nanobot.command.builtin import cmd_stop
-    from nanobot.command.router import CommandContext
+    from kohaku.command.builtin import cmd_stop
+    from kohaku.command.router import CommandContext
 
     loop = await _make_full_loop(tmp_path, keys=('feishu:c4',))
 

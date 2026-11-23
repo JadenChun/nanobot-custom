@@ -5,12 +5,12 @@ from types import SimpleNamespace
 
 import pytest
 
-from nanobot.agent.turn import TurnResult
-from nanobot.config.schema import GatewayCronConfig
-from nanobot.cron.gateway import GatewayCron
-from nanobot.cron.service import CronService
-from nanobot.cron.types import CronSchedule
-from nanobot.session.manager import SessionManager
+from kohaku.agent.turn import TurnResult
+from kohaku.config.schema import GatewayCronConfig
+from kohaku.cron.gateway import GatewayCron
+from kohaku.cron.service import CronService
+from kohaku.cron.types import CronSchedule
+from kohaku.session.manager import SessionManager
 from tests.cron.stage3_fixtures import FakeChannels, definitions
 
 

@@ -4,7 +4,7 @@ use std::{
     time::Duration,
 };
 
-use nanobot_desktop::{
+use kohaku_desktop::{
     controller::{self, Shared, Snapshot},
     microphone,
     native::{self, HostStart},
@@ -25,7 +25,7 @@ fn desktop_state(shared: State<'_, Arc<Shared>>) -> Snapshot {
 #[tauri::command(rename_all = "camelCase")]
 async fn choose_path(app: AppHandle<Wry>, kind: String) -> Result<Option<String>, String> {
     let mut dialog = app.dialog().file().set_title(match kind.as_str() {
-        "config" => "Select Nanobot config",
+        "config" => "Select Kohaku config",
         "python" => "Select Python interpreter",
         "workspace" => "Select workspace",
         _ => return Err("selection_invalid".to_owned()),
@@ -182,7 +182,7 @@ fn run() {
             Ok(())
         })
         .build(tauri::generate_context!())
-        .expect("failed to initialize Nanobot Desktop");
+        .expect("failed to initialize Kohaku Desktop");
     app.run(|_app, _event| {
         #[cfg(target_os = "macos")]
         match _event {
@@ -205,14 +205,14 @@ fn main() {
     let _program = args.next();
     match args.next().as_deref() {
         Some(arg) if arg == "--version" => {
-            println!("nanobot-desktop {}", env!("CARGO_PKG_VERSION"));
+            println!("kohaku-desktop {}", env!("CARGO_PKG_VERSION"));
             return;
         }
         Some(arg) if arg == "--check-install" => {
             if verify_install_manifest().is_ok() {
-                println!("nanobot-desktop install metadata available");
+                println!("kohaku-desktop install metadata available");
             } else {
-                eprintln!("nanobot-desktop install metadata invalid");
+                eprintln!("kohaku-desktop install metadata invalid");
                 std::process::exit(1);
             }
             return;

@@ -11,17 +11,17 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
-from nanobot.agent.loop import AgentLoop
-from nanobot.agent.tools.base import Tool
-from nanobot.agent.tools.registry import ToolRegistry
-from nanobot.agent.turn import RunStatus, ToolOutcome
-from nanobot.bus.events import OutboundMessage
-from nanobot.bus.outbound_events import ProgressEvent
-from nanobot.bus.queue import MessageBus
-from nanobot.channels.manager import ChannelManager
-from nanobot.channels.telegram.runtime import TelegramChannel
-from nanobot.config.schema import Config
-from nanobot.providers.base import GenerationSettings, LLMProvider, LLMResponse, ToolCallRequest
+from kohaku.agent.loop import AgentLoop
+from kohaku.agent.tools.base import Tool
+from kohaku.agent.tools.registry import ToolRegistry
+from kohaku.agent.turn import RunStatus, ToolOutcome
+from kohaku.bus.events import OutboundMessage
+from kohaku.bus.outbound_events import ProgressEvent
+from kohaku.bus.queue import MessageBus
+from kohaku.channels.manager import ChannelManager
+from kohaku.channels.telegram.runtime import TelegramChannel
+from kohaku.config.schema import Config
+from kohaku.providers.base import GenerationSettings, LLMProvider, LLMResponse, ToolCallRequest
 
 
 class _ScriptedProvider(LLMProvider):
@@ -244,21 +244,21 @@ class _FakeApplicationFactory:
 @pytest.fixture
 async def offline_composition(tmp_path, monkeypatch):
     """Build deterministic production objects while denying network/process escape."""
-    monkeypatch.setattr("nanobot.migration_guard.require_runtime_ready", lambda: None)
+    monkeypatch.setattr("kohaku.migration_guard.require_runtime_ready", lambda: None)
     # The fake Telegram transport never uses optional PTB Webhooks. Production
     # dependency preflight remains covered separately and must stay enabled.
     monkeypatch.setattr(
-        "nanobot.optional_features.check_enabled_channel_dependencies",
+        "kohaku.optional_features.check_enabled_channel_dependencies",
         lambda _names, _plugins: {},
     )
     lifecycle_started = asyncio.Event()
     _FakeApplicationFactory.started = lifecycle_started
     _FakeApplicationFactory.builders = []
     monkeypatch.setattr(
-        "nanobot.channels.telegram.runtime.Application", _FakeApplicationFactory
+        "kohaku.channels.telegram.runtime.Application", _FakeApplicationFactory
     )
     monkeypatch.setattr(
-        "nanobot.channels.telegram.runtime.HTTPXRequest", _FakeHTTPXRequest
+        "kohaku.channels.telegram.runtime.HTTPXRequest", _FakeHTTPXRequest
     )
     for target in (
         "socket.socket.connect",
@@ -296,8 +296,8 @@ async def offline_composition(tmp_path, monkeypatch):
 
     webui_dist = Mock(name="webui_dist")
     gateway_factory = Mock(name="gateway_factory")
-    monkeypatch.setattr("nanobot.channels.manager._default_webui_dist", webui_dist)
-    monkeypatch.setattr("nanobot.webui.gateway_services.build_gateway_services", gateway_factory)
+    monkeypatch.setattr("kohaku.channels.manager._default_webui_dist", webui_dist)
+    monkeypatch.setattr("kohaku.webui.gateway_services.build_gateway_services", gateway_factory)
 
     bus = MessageBus()
     provider = _ScriptedProvider([])
@@ -333,7 +333,7 @@ async def offline_composition(tmp_path, monkeypatch):
 
 async def test_missing_telegram_extra_still_fences_headless_activation(tmp_path, monkeypatch) -> None:
     """The offline composition seam must not weaken production dependency admission."""
-    monkeypatch.setattr("nanobot.optional_features.extra_installed", lambda *_args: False)
+    monkeypatch.setattr("kohaku.optional_features.extra_installed", lambda *_args: False)
     config = Config.model_validate({
         "channels": {
             "websocket": {"enabled": False},

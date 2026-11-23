@@ -10,7 +10,7 @@ Capacitor plugin. The phone never receives raw URL, dial, LocalAPI or filesystem
 - `include/nanobot_network.h` — hand-written ABI contract, version 1.
 - `cabi/smoke.c` — host C host smoke test (validation and error paths).
 - `../android/app/src/main/cpp/native_network_jni.c` — JNI shim.
-- `../android/app/src/main/java/ai/nanobot/mobile/network/` — Kotlin/Capacitor bridge.
+- `../android/app/src/main/java/ai/kohaku/mobile/network/` — Kotlin/Capacitor bridge.
 
 ## Build and test
 

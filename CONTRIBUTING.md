@@ -1,23 +1,6 @@
-# Contributing to nanobot
+# Contributing to Kohaku
 
-Thank you for being here.
-
-nanobot is built with a simple belief: good tools should feel calm, clear, and humane.
-We care deeply about useful features, but we also believe in achieving more with less:
-solutions should be powerful without becoming heavy, and ambitious without becoming
-needlessly complicated.
-
-This guide is not only about how to open a PR. It is also about how we hope to build
-software together: with care, clarity, and respect for the next person reading the code.
-
-## Maintainers
-
-Maintainers are community stewards who help review, organize, and maintain the project. The list below describes each maintainer's current open-source project responsibilities.
-
-| Maintainer | Role |
-|------------|------|
-| [@re-bin](https://github.com/re-bin) | Project lead; reviews community PRs and handles merges |
-| [@chengyongru](https://github.com/chengyongru) | Reviews community PRs and may approve them; merges are handled by the project lead |
+Kohaku accepts focused improvements to code and documentation. This guide explains how to prepare a change from a clone of this repository.
 
 ## Contribution Flow
 
@@ -37,17 +20,16 @@ shape of the work can be discussed before the implementation grows too large.
 
 ### Starting Work
 
-Before making changes, sync your local checkout and create a topic branch.
+Before you make changes, update your checkout and create a topic branch.
 
 ```bash
-git fetch upstream
+git fetch origin
 git switch main
-git pull --ff-only upstream main
+git pull --ff-only origin main
 git switch -c your-topic-branch
 ```
 
-Use your primary HKUDS/nanobot remote in place of `upstream` if your checkout
-uses a different remote name.
+Use the `origin` remote for this repository. Open an issue before a change that can break a public interface.
 
 Keep unrelated local changes out of the topic branch. If your checkout already has
 work in progress, use a separate worktree or finish that work before starting a
@@ -55,12 +37,12 @@ new branch.
 
 ## Development Setup
 
-Keep setup boring and reliable. The goal is to get you into the code quickly:
+Use this setup from the root of a clone of this repository:
 
 ```bash
-# Clone the repository
-git clone https://github.com/HKUDS/nanobot.git
-cd nanobot
+# Clone this repository
+git clone https://github.com/JadenChun/nanobot-custom.git kohaku
+cd kohaku
 
 # Install with dev dependencies
 pip install -e ".[dev]"
@@ -69,7 +51,7 @@ pip install -e ".[dev]"
 pytest
 
 # Lint code
-ruff check nanobot/
+ruff check kohaku/
 
 # Format code — optional. The existing tree predates `ruff format`,
 # so running it broadly produces large unrelated diffs.
@@ -99,7 +81,7 @@ and agree that it will be licensed under the project's MIT License.
 
 ## Code Style
 
-We care about more than passing lint. We want nanobot to stay small, calm, and readable.
+Keep Kohaku small, calm, and readable.
 
 When contributing, please aim for code that feels:
 
@@ -144,8 +126,8 @@ this order:
 1. Set the package version and publish the matching GitHub release tag (`vX.Y.Z`).
 2. Review the pinned Bun/OpenTUI licenses, source offer, and relinking materials for that tag.
 3. Manually run **Publish Terminal UI** for the exact tag and confirm the compliance review input.
-4. Wait for every platform archive and checksum to appear on the release, then publish the same
-   `X.Y.Z` package to PyPI.
+4. Wait for every platform archive and checksum to appear on the release, then publish the matching
+   `kohaku` wheel for that release.
 
 The wheel contains the built WebUI. The native TUI stays a platform-specific release sidecar so
 users download only the archive for their machine. Each archive must contain the executable,
@@ -161,12 +143,4 @@ their source materials.
 
 ## Questions?
 
-If you have questions, ideas, or half-formed insights, you are warmly welcome here.
-
-Please feel free to open an [issue](https://github.com/HKUDS/nanobot/issues), join the community, or simply reach out:
-
-- [Discord](https://discord.gg/MnCvHqpUGB)
-- [Feishu/WeChat](./COMMUNICATION.md)
-- Email: Xubin Ren (@Re-bin) — <xubinrencs@gmail.com>
-
-Thank you for spending your time and care on nanobot. We would love for more people to participate in this community, and we genuinely welcome contributions of all sizes.
+Open an [issue in this repository](https://github.com/JadenChun/nanobot-custom/issues) when you need to discuss a change. Include the command and output that show the problem.

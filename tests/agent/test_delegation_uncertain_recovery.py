@@ -1,18 +1,18 @@
 """Explicit owner-evidence settlement for uncertain delegated children."""
 
 
-from nanobot.agent.child_sessions import ChildAdmission, DelegationTree
-from nanobot.agent.delegation import ForegroundAgentManager
-from nanobot.agent.loop import AgentLoop
-from nanobot.agent.tools.registry import ToolRegistry
-from nanobot.agent.turn import (
+from kohaku.agent.child_sessions import ChildAdmission, DelegationTree
+from kohaku.agent.delegation import ForegroundAgentManager
+from kohaku.agent.loop import AgentLoop
+from kohaku.agent.tools.registry import ToolRegistry
+from kohaku.agent.turn import (
     RunRecord,
     RunStatus,
     SessionRunRef,
     TurnSource,
 )
-from nanobot.session.execution_owner import acquire_execution
-from nanobot.session.turn_writer import SourceTurnWriter
+from kohaku.session.execution_owner import acquire_execution
+from kohaku.session.turn_writer import SourceTurnWriter
 from tests.agent.test_migration_engine import ScriptedProvider
 from tests.agent.test_migration_source_engine import upgrade
 

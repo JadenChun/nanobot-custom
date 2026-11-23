@@ -6,10 +6,10 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from unittest.mock import MagicMock
 
-from nanobot.agent.loop import AgentLoop, _AdmittedTurnIO, _TurnExecutionOptions
-from nanobot.agent.turn import DeliveryTarget, TurnRequest, TurnResult
-from nanobot.bus.events import InboundMessage
-from nanobot.providers.base import GenerationSettings, LLMProvider
+from kohaku.agent.loop import AgentLoop, _AdmittedTurnIO, _TurnExecutionOptions
+from kohaku.agent.turn import DeliveryTarget, TurnRequest, TurnResult
+from kohaku.bus.events import InboundMessage
+from kohaku.providers.base import GenerationSettings, LLMProvider
 from tests.agent.p6_admitted_fixtures import AgentInputs, AsyncAdmittedFactory
 
 

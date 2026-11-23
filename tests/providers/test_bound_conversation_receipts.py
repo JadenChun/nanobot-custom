@@ -8,11 +8,11 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from nanobot.providers.azure_openai_provider import AzureOpenAIProvider
-from nanobot.providers.fallback_provider import FallbackProvider
-from nanobot.providers.openai_compat_provider import OpenAICompatProvider
-from nanobot.providers.pooled_provider import PooledProvider
-from nanobot.providers.registry import find_by_name
+from kohaku.providers.azure_openai_provider import AzureOpenAIProvider
+from kohaku.providers.fallback_provider import FallbackProvider
+from kohaku.providers.openai_compat_provider import OpenAICompatProvider
+from kohaku.providers.pooled_provider import PooledProvider
+from kohaku.providers.registry import find_by_name
 
 
 def _response(*, status: str = "completed") -> MagicMock:
@@ -179,7 +179,7 @@ async def test_supplied_transport_overrides_remain_ineligible_after_source_mutat
 
     client_factory = MagicMock()
     monkeypatch.setattr(
-        "nanobot.providers.openai_compat_provider.AsyncOpenAI",
+        "kohaku.providers.openai_compat_provider.AsyncOpenAI",
         client_factory,
     )
     await provider._ensure_client()

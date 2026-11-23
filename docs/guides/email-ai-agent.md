@@ -1,37 +1,38 @@
-# Build an Email AI Agent with nanobot
+# Build an Email AI Agent with Kohaku
 
-This guide turns nanobot into an email AI agent that polls IMAP for accepted
+This guide turns Kohaku into an email AI agent that polls IMAP for accepted
 messages and replies through SMTP.
 
 ## What this guide builds
 
-- a dedicated mailbox for nanobot
+- a dedicated mailbox for Kohaku
 - IMAP and SMTP credentials in `config.json`
 - an allowed sender list
 - a gateway process that polls and replies
 
 ## Prerequisites
 
-- A working local nanobot reply:
+- A working local Kohaku reply:
 
 ```bash
-nanobot agent -m "Hello!"
+kohaku agent -m "Hello!"
 ```
 
 - A mailbox for the bot.
 - IMAP and SMTP access. For Gmail, use an app password rather than your account
   password.
 
-## Install nanobot
+## Install Kohaku
 
 ```bash
-python -m pip install nanobot-ai
-nanobot onboard --wizard
+# Run from the root of a clone of this repository
+python -m pip install -e .
+kohaku onboard --wizard
 ```
 
 ## Enable the Email channel
 
-Merge this snippet into `~/.nanobot/config.json` and replace the addresses and
+Merge this snippet into `~/.kohaku/config.json` and replace the addresses and
 passwords:
 
 ```json
@@ -56,11 +57,11 @@ passwords:
 }
 ```
 
-## Run nanobot gateway
+## Run kohaku gateway
 
 ```bash
-nanobot channels status
-nanobot gateway
+kohaku channels status
+kohaku gateway
 ```
 
 ## Test a message

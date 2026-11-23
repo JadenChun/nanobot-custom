@@ -3,20 +3,20 @@
 import asyncio
 from unittest.mock import AsyncMock
 
-from nanobot.agent.child_sessions import DelegationTree
-from nanobot.agent.delegation import ForegroundAgentManager
-from nanobot.agent.turn import RunStatus
-from nanobot.bus.events import InboundMessage
-from nanobot.providers.base import LLMResponse
-from nanobot.session.execution_owner import acquire_execution
-from nanobot.session.pending_followups import (
+from kohaku.agent.child_sessions import DelegationTree
+from kohaku.agent.delegation import ForegroundAgentManager
+from kohaku.agent.turn import RunStatus
+from kohaku.bus.events import InboundMessage
+from kohaku.providers.base import LLMResponse
+from kohaku.session.execution_owner import acquire_execution
+from kohaku.session.pending_followups import (
     BACKGROUND_RESULT_INBOUND_METADATA_KEY,
     background_result_content,
     decode_pending_followups,
     mint_background_result_id,
     record_pending_followup,
 )
-from nanobot.session.source_store import SourceSessionStore
+from kohaku.session.source_store import SourceSessionStore
 from tests.agent.test_delegation_child_followups import (
     _FollowupProvider,
     _make_loop,

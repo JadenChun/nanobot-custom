@@ -1,35 +1,37 @@
 # Start Without Technical Background
 
-This walkthrough is for people who have not used a terminal, API key, or JSON config file before. The goal is only to get one reply in a browser. You do not need to understand nanobot's architecture or edit its config by hand.
+This walkthrough installs Kohaku from a clone of this repository. It helps you get one reply without editing a config file by hand.
 
-## What You Will Need
+If you already use Nanobot, read [Upgrade to Kohaku](./upgrade-to-kohaku.md) before you start. A fresh Kohaku install does not select the old profile automatically.
+
+## What You Need
 
 - A Windows, macOS, or Linux computer.
-- Python 3.11 or newer.
+- Python 3.11 or newer and Git.
 - An account or endpoint that can run an AI model.
-- The API key, login, endpoint, and model name required by that service. A local model such as Ollama may not require an API key.
+- The API key, endpoint, and model name required by that service.
 
-An API key is password-like. Do not post it in an issue, screenshot, chat, or public config file.
+An API key is secret. Do not post it in an issue, screenshot, chat, or public config file.
 
 ## A Few Useful Words
 
 | Word | Meaning |
 |---|---|
-| Terminal | A text window where you paste a command and press Enter |
-| Command | One instruction typed into the terminal |
-| Provider | The service or local server that runs the AI model |
-| Model ID | The exact model name expected by that provider |
-| API key | A secret credential that lets software call the provider |
-| Wizard | A question-and-answer setup menu |
-| WebUI | The local browser page where you use nanobot |
+| Terminal | A text window where you enter commands |
+| Command | One instruction that you enter in the terminal |
+| Provider | A service or local server that runs an AI model |
+| Model ID | The model name that the provider expects |
+| API key | A secret that lets software call a provider |
+| Wizard | A setup menu that asks you questions |
+| WebUI | The browser page where you use Kohaku |
 
-## 1. Install Python
+## 1. Install Python and Git
 
-Download Python from [python.org](https://www.python.org/downloads/) if you do not already have version 3.11 or newer. On Windows, enable **Add python.exe to PATH** if the installer shows that option.
+Install Python 3.11 or newer from [python.org](https://www.python.org/downloads/). Install Git from [git-scm.com](https://git-scm.com/downloads). On Windows, enable **Add python.exe to PATH** if the installer shows that option.
 
 Open a terminal:
 
-| System | How |
+| System | How to open it |
 |---|---|
 | Windows | Press `Win`, type `PowerShell`, and open Windows PowerShell |
 | macOS | Press `Command+Space`, type `Terminal`, and press Enter |
@@ -41,123 +43,116 @@ Check Python:
 python --version
 ```
 
-The result should start with `Python 3.11` or a newer number. If the command is not found, close and reopen the terminal. You can also try `python3 --version` on macOS/Linux or `py --version` on Windows.
+The result must show Python 3.11 or newer. On macOS or Linux, use `python3 --version` if `python` is not found. On Windows, use `py --version` if needed.
 
 ## 2. Prepare Your Model Details
 
-nanobot does not create an AI provider account for you. Before setup, have these details nearby:
+Before setup, find these details in your provider's account or documentation:
 
-1. The provider or company endpoint name.
+1. The provider or endpoint name.
 2. Its API key, if it requires one.
-3. Its base URL, if its documentation gives you one.
-4. A model ID your account can use.
+3. Its base URL, if it has one.
+4. A model ID that your account can use.
 
-The provider, credential, endpoint, and model must belong together. For example, an API key from one provider usually cannot call a model name copied from a different provider.
+Use a key, endpoint, and model from the same provider. Do not share your key with anyone.
 
-## 3. Install nanobot
+## 3. Clone and Install Kohaku
 
-Copy the command for your system, paste it into the terminal, and press Enter. Copy only the text inside the code block.
-
-**macOS / Linux**
+Clone this repository and create a private Python environment:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/HKUDS/nanobot/main/scripts/install.sh | sh
+git clone https://github.com/JadenChun/nanobot-custom.git kohaku
+cd kohaku
+python -m venv .venv
 ```
 
-**Windows PowerShell**
+Activate the environment on macOS or Linux:
+
+```bash
+source .venv/bin/activate
+```
+
+Activate the environment in Windows PowerShell:
 
 ```powershell
-irm https://raw.githubusercontent.com/HKUDS/nanobot/main/scripts/install.ps1 | iex
+.\.venv\Scripts\Activate.ps1
 ```
 
-The installer downloads the stable nanobot package into an isolated Python environment. On a fresh local desktop, it then starts the WebUI and opens your browser. This can take a few minutes on the first run. Keep the terminal open. It prints the exact command used to run nanobot; if `nanobot` is not found later, reuse that whole command instead of switching to a different Python command.
-
-If your organization blocks downloaded install scripts, use the [alternative install methods](./quick-start.md#other-install-methods) or ask your administrator to review the scripts first.
-
-## 4. Configure Your Model in the WebUI
-
-In the browser, open **Settings → Models**. Then:
-
-1. Choose your provider.
-2. Enter its API key and base URL when required.
-3. Create or select a model preset.
-4. Enter a model ID available to your provider account.
-5. Save the configuration.
-
-Treat every API key like a password. Do not include it in screenshots or support requests.
-
-If the installer finishes without opening the browser and `nanobot` is available, run:
+Install Kohaku:
 
 ```bash
-nanobot webui
+python -m pip install -e .
 ```
 
-If the terminal cannot find `nanobot`, take the exact command printed by the installer and replace its final arguments with `webui`. That command may begin with `uv tool run`, `pipx run`, or the full path to nanobot's private Python environment.
+## 4. Configure Your Model
 
-On SSH, a computer without a desktop, an existing configuration, or an older nanobot release, the installer may open the terminal wizard instead. Choose **Quick Start** there and follow its prompts.
+Run the Kohaku setup wizard:
+
+```bash
+kohaku onboard --wizard
+```
+
+Follow the prompts to choose your provider and model. Enter an API key or endpoint only when the provider requires it. Kohaku stores new default settings under `~/.kohaku/`.
+
+Keep your key private. Do not include it in a screenshot or support request.
 
 ## 5. Get the First Reply
 
-Leave the WebUI terminal open. If the browser did not open automatically, visit `http://127.0.0.1:8765`.
+Check the local setup:
 
-Send this message:
-
-```text
-Hello!
+```bash
+kohaku status
 ```
 
-A normal assistant reply means setup is complete. The exact reply does not matter.
+Ask Kohaku one question:
 
-The first-run address is local to your computer. It is not automatically available to other computers on your network.
+```bash
+kohaku -m "Hello!"
+```
 
-## 6. Add One Thing at a Time
+A normal reply means the setup works. The exact words do not matter.
 
-Do not configure every feature immediately. Choose one next goal:
+## 6. Open the Browser Workbench
 
-| Goal | What to do |
+The editable install does not include a WebUI build. Install [Bun](https://bun.sh/), then build and start the WebUI:
+
+```bash
+cd webui
+bun install
+bun run build
+cd ..
+kohaku webui
+```
+
+Open `http://127.0.0.1:8765` if your browser does not open. Leave the terminal open while you use the WebUI.
+
+## Choose One Next Step
+
+| Goal | Guide |
 |---|---|
-| Change the AI model | Open **Settings → Models** |
-| Add a provider credential | Open **Settings → Models**, then find the provider |
-| Connect Telegram, Discord, Slack, Feishu, WeChat, or another chat app | Open **Settings → Channels**, choose the platform, and follow its connection steps |
-| Add a tool integration | Open **Apps** and choose an App or MCP integration |
-| Schedule a reminder or recurring task | Ask nanobot in the target chat, then manage it in **Automations** |
-| Work with project files | Start a new chat, choose the project workspace, and review the access setting before sending the task |
-
-Repository docs show the current development version. If your stable package does not yet show **Settings → Channels**, use the [Chat Apps guide](./chat-apps.md) or update to a release that includes it.
-
-Some runtime changes ask you to restart nanobot. Use the restart action shown by the WebUI, or return to the terminal, press `Ctrl+C`, and run `nanobot webui` again.
-
-For a chat platform's account, bot, token, or permission prerequisites, use the [Chat Apps guide](./chat-apps.md). For local models and provider-specific recipes, use the [Provider Cookbook](./provider-cookbook.md).
+| Change the model or provider | [Provider Cookbook](./provider-cookbook.md) |
+| Connect Telegram, Discord, Slack, or another chat app | [Chat Apps](./chat-apps.md) |
+| Add a tool integration | Open **Apps** in the WebUI or follow the [MCP tools guide](./guides/configure-mcp-tools.md) |
+| Schedule a task | [Automations](./automations.md) |
+| Use a project workspace | [Concepts](./concepts.md) |
+| Deploy Kohaku | [Deployment](./deployment.md) |
 
 ## If Something Fails
 
 Run these commands one at a time:
 
 ```bash
-nanobot --version
-nanobot status
-nanobot agent -m "Hello!"
+kohaku --version
+kohaku status
+kohaku -m "Hello!"
 ```
 
-| What you see | What it usually means |
+| What you see | What to check |
 |---|---|
-| `nanobot: command not found` | Reuse the exact nanobot command printed by the installer; it points to the isolated environment that contains the package |
-| `401`, unauthorized, or invalid API key | The key is wrong, expired, or belongs to a different provider |
-| Model not found | The model ID is misspelled or unavailable to your provider account |
-| Browser does not open | Open `http://127.0.0.1:8765` yourself and keep the terminal running |
-| Browser opens but messages fail | Test `nanobot agent -m "Hello!"` to separate a model problem from a WebUI problem |
-| A change was saved but nothing changed | Restart nanobot so the running process reloads the config |
+| `kohaku: command not found` | Activate the `.venv` environment, then repeat the command. |
+| `401` or `unauthorized` | Check that the API key belongs to the selected provider. |
+| Model not found | Check the model ID in the provider's account or documentation. |
+| Browser does not open | Open `http://127.0.0.1:8765` and keep the terminal running. |
+| Browser opens but messages fail | Run `kohaku -m "Hello!"` to check the provider and model. |
 
-If you ask for help, include your operating system, `nanobot --version`, `nanobot status`, the exact command, and the exact error. Remove every API key, bot token, password, OAuth token, and private account ID first.
-
-Continue with the full [Troubleshooting guide](./troubleshooting.md) for an ordered diagnosis.
-
-## Open nanobot Later
-
-Run:
-
-```bash
-nanobot webui
-```
-
-Leave that launcher open while you use nanobot. Pressing `Ctrl+C` disconnects it; the shared gateway stops when it was the last local WebUI or TUI client. After the normal foreground start and model setup work, use `nanobot gateway --background` when you want the gateway to stay online with no clients; then manage it with `nanobot gateway status`, `logs`, `restart`, and `stop`.
+For more help, follow the [Troubleshooting guide](./troubleshooting.md). Remove credentials and private account details before you share diagnostic output.

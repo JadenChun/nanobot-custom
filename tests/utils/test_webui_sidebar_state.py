@@ -3,8 +3,8 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 
-import nanobot.webui.sidebar_state as sidebar_state
-from nanobot.webui.sidebar_state import (
+import kohaku.webui.sidebar_state as sidebar_state
+from kohaku.webui.sidebar_state import (
     default_webui_sidebar_state,
     read_webui_sidebar_state,
     webui_sidebar_state_path,
@@ -13,7 +13,7 @@ from nanobot.webui.sidebar_state import (
 
 
 def test_sidebar_state_defaults_when_file_missing(tmp_path, monkeypatch) -> None:
-    monkeypatch.setattr("nanobot.config.paths.get_data_dir", lambda: tmp_path)
+    monkeypatch.setattr("kohaku.config.paths.get_data_dir", lambda: tmp_path)
 
     state = read_webui_sidebar_state()
 
@@ -22,7 +22,7 @@ def test_sidebar_state_defaults_when_file_missing(tmp_path, monkeypatch) -> None
 
 
 def test_sidebar_state_normalizes_partial_payload(tmp_path, monkeypatch) -> None:
-    monkeypatch.setattr("nanobot.config.paths.get_data_dir", lambda: tmp_path)
+    monkeypatch.setattr("kohaku.config.paths.get_data_dir", lambda: tmp_path)
     path = webui_sidebar_state_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
@@ -91,7 +91,7 @@ def test_sidebar_state_normalizes_partial_payload(tmp_path, monkeypatch) -> None
 
 
 def test_sidebar_state_write_is_scoped_to_config_data_dir(tmp_path, monkeypatch) -> None:
-    monkeypatch.setattr("nanobot.config.paths.get_data_dir", lambda: tmp_path)
+    monkeypatch.setattr("kohaku.config.paths.get_data_dir", lambda: tmp_path)
 
     state = write_webui_sidebar_state(
         {
@@ -117,7 +117,7 @@ def test_sidebar_state_write_is_scoped_to_config_data_dir(tmp_path, monkeypatch)
 
 
 def test_sidebar_state_persists_only_visible_workbench_groups(tmp_path, monkeypatch) -> None:
-    monkeypatch.setattr("nanobot.config.paths.get_data_dir", lambda: tmp_path)
+    monkeypatch.setattr("kohaku.config.paths.get_data_dir", lambda: tmp_path)
     tabs = {
         f"tab:websocket:{index}": {
             "explicit": False,
@@ -136,7 +136,7 @@ def test_sidebar_state_persists_only_visible_workbench_groups(tmp_path, monkeypa
 
 
 def test_sidebar_state_requires_supported_workbench_version(tmp_path, monkeypatch) -> None:
-    monkeypatch.setattr("nanobot.config.paths.get_data_dir", lambda: tmp_path)
+    monkeypatch.setattr("kohaku.config.paths.get_data_dir", lambda: tmp_path)
 
     state = write_webui_sidebar_state(
         {

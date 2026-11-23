@@ -8,17 +8,17 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from nanobot.agent import memory as memory_module
-from nanobot.agent import memory_recovery_startup_admission as admission
-from nanobot.agent.context import ContextBuilder
-from nanobot.agent.loop import AgentLoop
-from nanobot.agent.memory import MemoryStore
-from nanobot.agent.memory_recovery_startup_admission import StartupReceiptAdmissionError
-from nanobot.agent.tools.registry import ToolRegistry
-from nanobot.bus.queue import MessageBus
-from nanobot.config import paths as config_paths
-from nanobot.config.schema import Config
-from nanobot.session.manager import JsonlSessionStore, SessionManager
+from kohaku.agent import memory as memory_module
+from kohaku.agent import memory_recovery_startup_admission as admission
+from kohaku.agent.context import ContextBuilder
+from kohaku.agent.loop import AgentLoop
+from kohaku.agent.memory import MemoryStore
+from kohaku.agent.memory_recovery_startup_admission import StartupReceiptAdmissionError
+from kohaku.agent.tools.registry import ToolRegistry
+from kohaku.bus.queue import MessageBus
+from kohaku.config import paths as config_paths
+from kohaku.config.schema import Config
+from kohaku.session.manager import JsonlSessionStore, SessionManager
 from tests.agent.test_memory_recovery_quarantine_storage import _real_layout, _seal_real_receipt
 
 _PURE_DEFAULT_SESSIONS_ROOT = config_paths.get_default_sessions_root
@@ -113,11 +113,11 @@ def test_loop_preflights_root_before_dependencies_and_configured_manager(
 ) -> None:
     workspace, sessions, receipt, binding = _real_layout(tmp_path)
     _seal_real_receipt(workspace, sessions, receipt, binding)
-    monkeypatch.setattr("nanobot.migration_guard.require_runtime_ready", lambda: None)
+    monkeypatch.setattr("kohaku.migration_guard.require_runtime_ready", lambda: None)
     wrong = tmp_path / "wrong-sessions"
     provider = MagicMock()
     provider.get_default_model.return_value = "test-model"
-    monkeypatch.setattr("nanobot.agent.loop.build_foreground_dependencies",
+    monkeypatch.setattr("kohaku.agent.loop.build_foreground_dependencies",
                         lambda **kwargs: pytest.fail("foreground setup entered before admission"))
     with pytest.raises(StartupReceiptAdmissionError, match="memory recovery required"):
         AgentLoop(MessageBus(), provider, workspace, sessions_root=wrong)
@@ -144,7 +144,7 @@ def test_direct_and_configured_loop_propagate_sealed_root(
     workspace, sessions, receipt, binding = _real_layout(tmp_path)
     _seal_real_receipt(workspace, sessions, receipt, binding)
     (workspace / "memory" / "MEMORY.md").write_text("later user edit\n")
-    monkeypatch.setattr("nanobot.migration_guard.require_runtime_ready", lambda: None)
+    monkeypatch.setattr("kohaku.migration_guard.require_runtime_ready", lambda: None)
     provider = MagicMock()
     provider.get_default_model.return_value = "test-model"
     direct = AgentLoop(MessageBus(), provider, workspace, model="test-model",

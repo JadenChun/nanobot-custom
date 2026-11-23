@@ -7,14 +7,14 @@ import re
 
 import pytest
 
-from nanobot.security.desktop_permissions import (
+from kohaku.security.desktop_permissions import (
     DesktopPermissionOwner,
     WorkspacePermissionConflictError,
     WorkspacePermissionUnavailableError,
 )
-from nanobot.session.manager import SessionManager
-from nanobot.webui.workspaces import WebUIWorkspaceController
-from nanobot.workspace_access_recovery import parse_workspace_access_once_payload
+from kohaku.session.manager import SessionManager
+from kohaku.webui.workspaces import WebUIWorkspaceController
+from kohaku.workspace_access_recovery import parse_workspace_access_once_payload
 
 
 def _source(generation: int = 0) -> dict[str, object]:

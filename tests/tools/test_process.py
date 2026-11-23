@@ -8,7 +8,7 @@ import sys
 
 import pytest
 
-from nanobot.agent.tools.process import run_owned_process
+from kohaku.agent.tools.process import run_owned_process
 
 
 @pytest.mark.asyncio

@@ -8,19 +8,19 @@ import zlib
 
 import pytest
 
-from nanobot.providers.capabilities import (
+from kohaku.providers.capabilities import (
     ModelCapabilities,
     default_model_capabilities,
 )
-from nanobot.providers.image_pricing import ImageOccurrence, ImagePrice
-from nanobot.providers.openai_compat_provider import OpenAICompatProvider
-from nanobot.providers.registry import ProviderModelSpec, ProviderSpec
-from nanobot.providers.request_budget import (
+from kohaku.providers.image_pricing import ImageOccurrence, ImagePrice
+from kohaku.providers.openai_compat_provider import OpenAICompatProvider
+from kohaku.providers.registry import ProviderModelSpec, ProviderSpec
+from kohaku.providers.request_budget import (
     ProviderRequestLimits,
     TransportIdentity,
     measure_finalized_request,
 )
-from nanobot.utils.llm_runtime import LLMRuntime
+from kohaku.utils.llm_runtime import LLMRuntime
 
 
 def _png_data_uri(width: int = 64, height: int = 64) -> str:

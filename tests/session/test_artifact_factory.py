@@ -6,11 +6,11 @@ from pathlib import Path
 
 import pytest
 
-from nanobot.agent.tools.filesystem import ReadFileTool
-from nanobot.context_repo import ContextRepoManager, ManagedContextRepo, ResourceAccessPolicy
-from nanobot.session.artifact import ArtifactValidationError
-from nanobot.session.artifact_factory import ConfiguredArtifactReaderFactory
-from nanobot.session.artifact_store import ArtifactStorageError
+from kohaku.agent.tools.filesystem import ReadFileTool
+from kohaku.context_repo import ContextRepoManager, ManagedContextRepo, ResourceAccessPolicy
+from kohaku.session.artifact import ArtifactValidationError
+from kohaku.session.artifact_factory import ConfiguredArtifactReaderFactory
+from kohaku.session.artifact_store import ArtifactStorageError
 from tests.session.test_artifact_reader import setup_read
 
 
@@ -129,7 +129,7 @@ async def test_factory_returns_no_reader_when_private_storage_is_unavailable(
         def unavailable(*_args, **_kwargs):
             raise ArtifactStorageError("unsupported")
 
-        monkeypatch.setattr("nanobot.session.artifact_factory.PrivateArtifactStore", unavailable)
+        monkeypatch.setattr("kohaku.session.artifact_factory.PrivateArtifactStore", unavailable)
         assert factory(writer, False, read_file) is None
     assert not root.exists()
 
@@ -180,7 +180,7 @@ async def test_factory_revalidates_repository_marker_during_store_construction(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from nanobot.session.artifact_store import PrivateArtifactStore
+    from kohaku.session.artifact_store import PrivateArtifactStore
 
     root = tmp_path / "private"
     async with setup_read(tmp_path) as (writer, read_file, _store, _descriptor, _content):
@@ -196,7 +196,7 @@ async def test_factory_revalidates_repository_marker_during_store_construction(
             return PrivateArtifactStore(*args, **kwargs)
 
         monkeypatch.setattr(
-            "nanobot.session.artifact_factory.PrivateArtifactStore",
+            "kohaku.session.artifact_factory.PrivateArtifactStore",
             introduce_worktree_marker,
         )
         assert factory(writer, False, read_file) is None

@@ -9,11 +9,11 @@ from pathlib import Path
 
 import pytest
 
-from nanobot.cron.action_store import ActionStoreCorruptError, CronActionStore
-from nanobot.cron.callback_store import CronCallbackConflictError, CronCallbackStore
-from nanobot.cron.completion import CronCompletionConflictError, CronCompletionProjector
-from nanobot.cron.delivery_reconciliation import ReconciliationUnsafeError
-from nanobot.cron.occurrence_store import CronOccurrenceStore
+from kohaku.cron.action_store import ActionStoreCorruptError, CronActionStore
+from kohaku.cron.callback_store import CronCallbackConflictError, CronCallbackStore
+from kohaku.cron.completion import CronCompletionConflictError, CronCompletionProjector
+from kohaku.cron.delivery_reconciliation import ReconciliationUnsafeError
+from kohaku.cron.occurrence_store import CronOccurrenceStore
 
 _CASES = (
     ("action", "require_held_store_binding", "_assert_binding", "held", "_HeldStore"),
@@ -48,7 +48,7 @@ def _binding_case(tmp_path: Path, request):
             )
             error = CronCompletionConflictError
         else:
-            from nanobot.cron import delivery_reconciliation as reconciliation
+            from kohaku.cron import delivery_reconciliation as reconciliation
 
             store = contexts.enter_context(reconciliation._ArtifactStore(root, create=True))
             binding = None

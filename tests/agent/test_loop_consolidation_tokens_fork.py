@@ -11,14 +11,14 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from nanobot.agent.context_governance import ContextGovernor
-from nanobot.agent.tools.execution import KnownToolResult
-from nanobot.providers.base import LLMResponse
-from nanobot.session.execution_owner import acquire_execution
-from nanobot.session.source import SourceValidationError
-from nanobot.session.source_projection import RuntimeNode, source_nodes
-from nanobot.session.source_request import SourceRequestLedger, SourceTranscript
-from nanobot.session.turn_writer import SourceTurnWriter
+from kohaku.agent.context_governance import ContextGovernor
+from kohaku.agent.tools.execution import KnownToolResult
+from kohaku.providers.base import LLMResponse
+from kohaku.session.execution_owner import acquire_execution
+from kohaku.session.source import SourceValidationError
+from kohaku.session.source_projection import RuntimeNode, source_nodes
+from kohaku.session.source_request import SourceRequestLedger, SourceTranscript
+from kohaku.session.turn_writer import SourceTurnWriter
 from tests.agent import p6_admitted_fixtures
 from tests.agent.test_loop_consolidation_tokens import _make_loop
 from tests.agent.test_source_compaction_publication import store as store

@@ -6,12 +6,12 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from nanobot.agent.loop import AgentLoop
-from nanobot.agent.skills import SkillsLoader
-from nanobot.bus.events import InboundMessage
-from nanobot.command.builtin import cmd_skill, register_builtin_commands
-from nanobot.command.router import CommandContext, CommandRouter
-from nanobot.config.schema import ModelPresetConfig
+from kohaku.agent.loop import AgentLoop
+from kohaku.agent.skills import SkillsLoader
+from kohaku.bus.events import InboundMessage
+from kohaku.command.builtin import cmd_skill, register_builtin_commands
+from kohaku.command.router import CommandContext, CommandRouter
+from kohaku.config.schema import ModelPresetConfig
 from tests.agent.p6_admitted_fixtures import AgentInputs, AsyncAdmittedFactory
 from tests.agent.p6_admitted_fixtures import admitted_async as admitted_async
 
@@ -159,9 +159,9 @@ async def test_skill_command_registered_on_router(tmp_path: Path, admitted_async
 
 
 def test_skill_command_unadmitted_loop_refuses_before_effects(tmp_path, monkeypatch) -> None:
-    from nanobot.agent.memory_recovery_startup_admission import StartupReceiptAdmissionError
-    from nanobot.bus.queue import MessageBus
-    from nanobot.session.manager import SessionManager
+    from kohaku.agent.memory_recovery_startup_admission import StartupReceiptAdmissionError
+    from kohaku.bus.queue import MessageBus
+    from kohaku.session.manager import SessionManager
 
     provider = _provider()
     bus = MessageBus()
@@ -191,7 +191,7 @@ def test_skill_command_unadmitted_loop_refuses_before_effects(tmp_path, monkeypa
 async def test_skill_command_owned_workspace_listing_has_no_optional_activity(
     tmp_path, admitted_async,
 ) -> None:
-    from nanobot.config.loader import load_config
+    from kohaku.config.loader import load_config
 
     prepared = tmp_path / "skills"
     _write_skill(prepared, "owned", description="Owned fixture skill")

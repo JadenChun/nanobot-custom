@@ -16,25 +16,25 @@ import httpx
 import pytest
 from openai import AsyncOpenAI
 
-from nanobot.agent.context_governance import (
+from kohaku.agent.context_governance import (
     SNIP_SAFETY_BUFFER,
     ContextGovernanceConfig,
     ContextGovernor,
 )
-from nanobot.agent.memory import Consolidator
-from nanobot.agent.tools.registry import ToolRegistry
-from nanobot.providers import request_budget as budget_module
-from nanobot.providers.base import (
+from kohaku.agent.memory import Consolidator
+from kohaku.agent.tools.registry import ToolRegistry
+from kohaku.providers import request_budget as budget_module
+from kohaku.providers.base import (
     GenerationSettings,
     LLMProvider,
     LLMResponse,
     ProviderCallContext,
 )
-from nanobot.providers.fallback_provider import FallbackProvider
-from nanobot.providers.openai_compat_provider import OpenAICompatProvider
-from nanobot.providers.pooled_provider import PooledProvider
-from nanobot.providers.registry import find_by_name
-from nanobot.providers.request_budget import (
+from kohaku.providers.fallback_provider import FallbackProvider
+from kohaku.providers.openai_compat_provider import OpenAICompatProvider
+from kohaku.providers.pooled_provider import PooledProvider
+from kohaku.providers.registry import find_by_name
+from kohaku.providers.request_budget import (
     ESTIMATED_COMPAT_POLICY,
     BackendContextOverflow,
     FinalizedRequestBudgetExceeded,
@@ -48,7 +48,7 @@ from nanobot.providers.request_budget import (
     TransportIdentity,
     validate_finalized_request,
 )
-from nanobot.utils.llm_runtime import LLMRuntime
+from kohaku.utils.llm_runtime import LLMRuntime
 
 MODEL = "Qwen3.8-27B-UD-Q6_K_XL"
 FIXTURE = Path(__file__).parent / "fixtures" / "local_manager_context_overflow.json"
@@ -121,7 +121,7 @@ def test_governor_declines_nonconcrete_provider_preview(monkeypatch: pytest.Monk
     provider = MagicMock(spec=LLMProvider)
     provider.preview_request_budget.return_value = object()
     monkeypatch.setattr(
-        "nanobot.agent.context_governance.estimate_prompt_tokens_chain",
+        "kohaku.agent.context_governance.estimate_prompt_tokens_chain",
         lambda *_args, **_kwargs: (8_000, "legacy_compatibility_estimate"),
     )
 
@@ -1081,7 +1081,7 @@ async def test_responses_sdk_stream_closes_on_completion_or_timeout(
     idle_deadline = clock + idle_timeout
     deadline = clock + (3.0 if outcome == "overall_timeout" else 10.0)
     monkeypatch.setattr(
-        "nanobot.providers.openai_compat_provider.time", SimpleNamespace(monotonic=lambda: clock),
+        "kohaku.providers.openai_compat_provider.time", SimpleNamespace(monotonic=lambda: clock),
     )
     stream = _TrackingStream(
         delta + completed, block=None if outcome == "success" else asyncio.Event(),

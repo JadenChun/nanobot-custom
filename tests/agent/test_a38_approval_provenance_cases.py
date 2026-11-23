@@ -9,15 +9,15 @@ kept from ``req-a38-cron/CASES.md``.
 
 import pytest
 
-from nanobot.agent.loop import AgentLoop
-from nanobot.agent.policy import RiskyActionPolicy
-from nanobot.agent.tools.registry import ToolRegistry
-from nanobot.agent.turn import ApprovalDecision, RunPolicyContext, TurnContext
-from nanobot.agent.turn_admission import ApprovalAdmission, ApprovalProvenance
-from nanobot.bus.events import InboundMessage
-from nanobot.cron.session_turns import CRON_TRIGGER_META
-from nanobot.providers.base import ToolCallRequest
-from nanobot.triggers.local_session_turns import LOCAL_TRIGGER_META
+from kohaku.agent.loop import AgentLoop
+from kohaku.agent.policy import RiskyActionPolicy
+from kohaku.agent.tools.registry import ToolRegistry
+from kohaku.agent.turn import ApprovalDecision, RunPolicyContext, TurnContext
+from kohaku.agent.turn_admission import ApprovalAdmission, ApprovalProvenance
+from kohaku.bus.events import InboundMessage
+from kohaku.cron.session_turns import CRON_TRIGGER_META
+from kohaku.providers.base import ToolCallRequest
+from kohaku.triggers.local_session_turns import LOCAL_TRIGGER_META
 from tests.agent import test_migration_engine as engine_fixtures
 from tests.agent.test_migration_engine import ScriptedProvider
 

@@ -1,8 +1,8 @@
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
-from nanobot.agent.loop import AgentLoop
-from nanobot.config.schema import Config
+from kohaku.agent.loop import AgentLoop
+from kohaku.config.schema import Config
 from tests.agent import p6_admitted_fixtures
 
 admitted_sync = p6_admitted_fixtures.admitted_sync

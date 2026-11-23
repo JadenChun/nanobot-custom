@@ -8,23 +8,23 @@ from contextlib import contextmanager
 import pytest
 import typer
 
-from nanobot.agent.loop import AgentLoop
-from nanobot.agent.memory import MemoryStore
-from nanobot.agent.tools.mcp import MCPProvider
-from nanobot.channels.delivery_contract import ChannelTextPartReceipt, ChannelTextReceipt
-from nanobot.channels.manager import ChannelManager
-from nanobot.cli import gateway_runtime
-from nanobot.config.schema import Config
-from nanobot.cron.gateway import GatewayCron, validate_gateway_job
-from nanobot.cron.occurrence_store import OccurrenceClaim
-from nanobot.cron.runtime import CronRuntime
-from nanobot.cron.service import CronService
-from nanobot.cron.types import CronSchedule
-from nanobot.providers.factory import ProviderSnapshot
-from nanobot.providers.unconfigured_provider import UnconfiguredProvider
-from nanobot.runtime_composition import RuntimeComposition, RuntimeState
-from nanobot.triggers.local_store import LocalTriggerStore
-from nanobot.webui.dev import WebUIDevError
+from kohaku.agent.loop import AgentLoop
+from kohaku.agent.memory import MemoryStore
+from kohaku.agent.tools.mcp import MCPProvider
+from kohaku.channels.delivery_contract import ChannelTextPartReceipt, ChannelTextReceipt
+from kohaku.channels.manager import ChannelManager
+from kohaku.cli import gateway_runtime
+from kohaku.config.schema import Config
+from kohaku.cron.gateway import GatewayCron, validate_gateway_job
+from kohaku.cron.occurrence_store import OccurrenceClaim
+from kohaku.cron.runtime import CronRuntime
+from kohaku.cron.service import CronService
+from kohaku.cron.types import CronSchedule
+from kohaku.providers.factory import ProviderSnapshot
+from kohaku.providers.unconfigured_provider import UnconfiguredProvider
+from kohaku.runtime_composition import RuntimeComposition, RuntimeState
+from kohaku.triggers.local_store import LocalTriggerStore
+from kohaku.webui.dev import WebUIDevError
 
 
 class _SignalLoop:
@@ -307,13 +307,13 @@ def _run_foreground_gateway(
     def foreground(*_args, **_kwargs):
         yield
 
-    monkeypatch.setattr("nanobot.migration_guard.require_runtime_ready", lambda: None)
-    monkeypatch.setattr("nanobot.config.loader.get_config_path", lambda: config_file)
+    monkeypatch.setattr("kohaku.migration_guard.require_runtime_ready", lambda: None)
+    monkeypatch.setattr("kohaku.config.loader.get_config_path", lambda: config_file)
     monkeypatch.setattr(RuntimeComposition, "define", capture_definition)
     monkeypatch.setattr(GatewayCron, "__init__", capture_gateway_init)
     monkeypatch.setattr(GatewayCron, "run", capture_gateway_run)
     monkeypatch.setattr(CronRuntime, "_dispatch", record_cron_dispatch)
-    monkeypatch.setattr("nanobot.providers.factory.build_provider_snapshot", lambda *_: snapshot)
+    monkeypatch.setattr("kohaku.providers.factory.build_provider_snapshot", lambda *_: snapshot)
     monkeypatch.setattr(UnconfiguredProvider, "chat", forbidden)
     monkeypatch.setattr(AgentLoop, "run", run_agent)
     monkeypatch.setattr(AgentLoop, "install_process_completion_sink", capture_process_sink)
@@ -342,9 +342,9 @@ def _run_foreground_gateway(
     monkeypatch.setattr("socket.socket.bind", forbidden)
     monkeypatch.setattr("subprocess.Popen.__init__", forbidden)
     monkeypatch.setattr(ChannelManager, "start_all", idle)
-    monkeypatch.setattr("nanobot.config.watcher.watch_config_file", idle)
-    monkeypatch.setattr("nanobot.gateway.runtime.monitor_gateway_clients", idle)
-    monkeypatch.setattr("nanobot.gateway.runtime.GatewayRuntime.foreground_instance", foreground)
+    monkeypatch.setattr("kohaku.config.watcher.watch_config_file", idle)
+    monkeypatch.setattr("kohaku.gateway.runtime.monitor_gateway_clients", idle)
+    monkeypatch.setattr("kohaku.gateway.runtime.GatewayRuntime.foreground_instance", foreground)
     monkeypatch.setattr(gateway_runtime, "_install_gateway_shutdown_handlers", install_handlers)
     monkeypatch.setattr(gateway_runtime, "_tcp_endpoint_reachable", lambda *_: False)
     monkeypatch.setattr(gateway_runtime, "_webui_endpoint_reachable", lambda *_: False)
@@ -419,14 +419,14 @@ def test_gateway_owns_explicit_process_completion_runtime(tmp_path, monkeypatch)
 def test_gateway_owns_explicit_scheduled_execution_runtime(tmp_path, monkeypatch):
     # croniter probes platform architecture once at import. Load dependencies
     # before this fixture denies all subprocess effects during gateway work.
-    import nanobot.cron.gateway  # noqa: F401
+    import kohaku.cron.gateway  # noqa: F401
 
     _run_foreground_gateway(tmp_path, monkeypatch, content="", dream=False, heartbeat=False,
                             cursor=0, scheduled_execution=True)
 
 
 def test_foreground_gateway_routes_first_sigint_to_its_gateway_cron(tmp_path, monkeypatch):
-    from nanobot.cron.gateway import GatewayCron
+    from kohaku.cron.gateway import GatewayCron
 
     reached = []
     begin_graceful_shutdown = GatewayCron.begin_graceful_shutdown
@@ -478,8 +478,8 @@ def test_startup_signal_is_latched_before_due_gateway_cron_can_claim(
 
 
 def test_joined_cron_cleanup_preserves_timer_error_and_closes_gateway(tmp_path, monkeypatch):
-    from nanobot.cron.gateway import GatewayCron
-    from nanobot.cron.runtime import CronWorkFailedError
+    from kohaku.cron.gateway import GatewayCron
+    from kohaku.cron.runtime import CronWorkFailedError
 
     evidence = {}
     cron_error = CronWorkFailedError("admitted cron work joined with a cleanup error")
@@ -532,7 +532,7 @@ def test_legacy_heartbeat_file_does_not_activate_gateway_execution(tmp_path, mon
 
 
 def test_bundled_heartbeat_template_does_not_activate_gateway_execution(tmp_path, monkeypatch):
-    from nanobot.utils.helpers import load_bundled_template
+    from kohaku.utils.helpers import load_bundled_template
 
     _run_foreground_gateway(
         tmp_path, monkeypatch, content=load_bundled_template("HEARTBEAT.md"),

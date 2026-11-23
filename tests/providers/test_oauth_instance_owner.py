@@ -15,17 +15,17 @@ from typing import Any
 
 import pytest
 
-from nanobot.config import loader
-from nanobot.nanobot import Nanobot
-from nanobot.providers import codex_auth, copilot_auth, xai_oauth
-from nanobot.providers.base import LLMResponse
-from nanobot.providers.oauth_credentials import (
+from kohaku.config import loader
+from kohaku.kohaku import Kohaku
+from kohaku.providers import codex_auth, copilot_auth, xai_oauth
+from kohaku.providers.base import LLMResponse
+from kohaku.providers.oauth_credentials import (
     CredentialOwner,
     CredentialStatus,
     OAuthToken,
 )
-from nanobot.session.manager import SessionManager
-from nanobot.session.runtime_authority import BorrowedSessionAuthority
+from kohaku.session.manager import SessionManager
+from kohaku.session.runtime_authority import BorrowedSessionAuthority
 
 FUTURE_MS = 9_999_999_999_999
 PROVIDERS = ("codex", "copilot", "xai")
@@ -289,8 +289,8 @@ def _isolated_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     home.mkdir()
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.delenv("CODEX_HOME", raising=False)
-    monkeypatch.delenv("NANOBOT_CODEX_AUTH_PATH", raising=False)
-    monkeypatch.delenv("NANOBOT_COPILOT_AUTH_PATH", raising=False)
+    monkeypatch.delenv("KOHAKU_CODEX_AUTH_PATH", raising=False)
+    monkeypatch.delenv("KOHAKU_COPILOT_AUTH_PATH", raising=False)
     monkeypatch.delenv("OAUTH_CLI_KIT_TOKEN_PATH", raising=False)
     monkeypatch.setattr(loader, "_current_config_path", home / ".nanobot" / "config.json")
     return home
@@ -305,8 +305,8 @@ def roots(tmp_path: Path) -> tuple[CredentialOwner, CredentialOwner]:
 async def test_sdk_keeps_the_configured_account_across_interleaved_bots(
     provider, roots, monkeypatch,
 ):
-    from nanobot.providers import openai_codex_provider, xai_grok_provider
-    from nanobot.providers.openai_compat_provider import OpenAICompatProvider
+    from kohaku.providers import openai_codex_provider, xai_grok_provider
+    from kohaku.providers.openai_compat_provider import OpenAICompatProvider
 
     providers = {
         "codex": ("openai_codex", "openai-codex/gpt-5.6-sol"),
@@ -329,7 +329,7 @@ async def test_sdk_keeps_the_configured_account_across_interleaved_bots(
         observed.append(self.api_key.split("-")[1])
         return LLMResponse(content="ok")
 
-    monkeypatch.setattr("nanobot.migration_guard.require_runtime_ready", lambda: None)
+    monkeypatch.setattr("kohaku.migration_guard.require_runtime_ready", lambda: None)
     monkeypatch.setattr(openai_codex_provider, "_request_codex", codex_response)
     monkeypatch.setattr(xai_grok_provider, "_request_xai", xai_response)
     monkeypatch.setattr(OpenAICompatProvider, "chat", copilot_response)
@@ -348,7 +348,7 @@ async def test_sdk_keeps_the_configured_account_across_interleaved_bots(
         if provider == "copilot":
             driver.refresh(owner)
         sessions = SessionManager(workspace, sessions_root=owner.data_root / "sessions")
-        return Nanobot.from_config(path, session_authority=BorrowedSessionAuthority(sessions))
+        return Kohaku.from_config(path, session_authority=BorrowedSessionAuthority(sessions))
 
     async with make(roots[0], "A") as a:
         async with make(roots[1], "B") as b:
@@ -359,8 +359,8 @@ async def test_sdk_keeps_the_configured_account_across_interleaved_bots(
 
 
 @pytest.mark.parametrize("provider,env", [
-    ("codex", "NANOBOT_CODEX_AUTH_PATH"),
-    ("copilot", "NANOBOT_COPILOT_AUTH_PATH"),
+    ("codex", "KOHAKU_CODEX_AUTH_PATH"),
+    ("copilot", "KOHAKU_COPILOT_AUTH_PATH"),
 ])
 def test_explicit_instance_keeps_its_own_account_with_inherited_auth_path(
     provider, env, roots, tmp_path, monkeypatch,
@@ -382,9 +382,9 @@ def test_explicit_instance_keeps_its_own_account_with_inherited_auth_path(
 
 
 def test_settings_model_catalog_uses_the_selected_instance_account(roots, monkeypatch):
-    from nanobot.providers import openai_codex_provider
-    from nanobot.providers.registry import ProviderModelSpec
-    from nanobot.webui.settings_api import provider_models_payload
+    from kohaku.providers import openai_codex_provider
+    from kohaku.providers.registry import ProviderModelSpec
+    from kohaku.webui.settings_api import provider_models_payload
 
     driver = _DRIVERS["codex"]
     observed = []
@@ -625,8 +625,8 @@ def test_settings_oauth_status_and_logout_use_the_selected_instance(
     _isolated_home: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from nanobot.webui import settings_api
-    from nanobot.webui.settings_services import WebUIOAuthFlowRegistry
+    from kohaku.webui import settings_api
+    from kohaku.webui.settings_services import WebUIOAuthFlowRegistry
 
     root_a, root_b = roots
     # A gateway process started on instance A.
@@ -663,8 +663,8 @@ def test_settings_explicit_import_writes_only_the_selected_instance(
     _isolated_home: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from nanobot.webui import settings_api
-    from nanobot.webui.settings_services import WebUIOAuthFlowRegistry
+    from kohaku.webui import settings_api
+    from kohaku.webui.settings_services import WebUIOAuthFlowRegistry
 
     root_a, root_b = roots
     monkeypatch.setattr(loader, "_current_config_path", root_a.data_root / "config.json")

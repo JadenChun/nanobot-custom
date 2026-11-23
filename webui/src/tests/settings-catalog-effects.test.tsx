@@ -17,7 +17,7 @@ import type {
   McpPresetsPayload,
   SkillSummary,
 } from "@/lib/types";
-import type { NanobotClient } from "@/lib/nanobot-client";
+import type { KohakuClient } from "@/lib/kohaku-client";
 import { ClientProvider } from "@/providers/ClientProvider";
 
 const getToken = () => "test-token";
@@ -441,7 +441,7 @@ describe("Apps settings catalog loading", () => {
       { name: "bundled-skill", description: "Bundled description", source: "builtin", available: true },
       { name: "plugin-skill", description: "Plugin description", source: "plugin", available: true },
     ];
-    const client = {} as NanobotClient;
+    const client = {} as KohakuClient;
 
     render(
       <ClientProvider client={client} token="test-token">

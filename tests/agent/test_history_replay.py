@@ -7,12 +7,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from nanobot.agent.loop import AgentLoop, _TurnExecutionOptions
-from nanobot.agent.turn import DeliveryTarget, RunStatus, TurnRequest, TurnResult
-from nanobot.bus.events import InboundMessage
-from nanobot.providers.base import LLMResponse
-from nanobot.session.manager import Session
-from nanobot.session.summary import SUMMARY_CONTINUATION_TEXT, session_summary_from_metadata
+from kohaku.agent.loop import AgentLoop, _TurnExecutionOptions
+from kohaku.agent.turn import DeliveryTarget, RunStatus, TurnRequest, TurnResult
+from kohaku.bus.events import InboundMessage
+from kohaku.providers.base import LLMResponse
+from kohaku.session.manager import Session
+from kohaku.session.summary import SUMMARY_CONTINUATION_TEXT, session_summary_from_metadata
 from tests.agent.p6_admitted_fixtures import AgentInputs, AsyncAdmittedFactory
 from tests.agent.p6_admitted_fixtures import admitted_async as admitted_async
 

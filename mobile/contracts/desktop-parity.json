@@ -11,7 +11,7 @@
     "tree": "8113b258a5c783b6bfec2eac8707072d0182d891",
     "clean": true,
     "planning_review_head": "b05292b0769732ea99f72c0a74f13f222d98030f",
-    "desktop_surface": "webui (React 18 + Vite, served by nanobot gateway)",
+    "desktop_surface": "webui (React 18 + Vite, served by Kohaku gateway)",
     "mobile_surface": "Capacitor Android shell bundling the shared WebUI",
     "runtime_surface_capabilities": {
       "browser": {
@@ -31,7 +31,7 @@
       "tools.webui_allow_remote_package_install": {
         "default": false,
         "effect": "non-local WebUI clients cannot install package-backed apps/features/skills",
-        "source": "nanobot/config/schema.py:851"
+        "source": "kohaku/config/schema.py:851"
       }
     },
     "versions": {
@@ -40,7 +40,7 @@
       "mobile_package": "0.0.0",
       "mobile_protocol": 1,
       "bridge_version": 1,
-      "android_application": "ai.nanobot.mobile",
+      "android_application": "ai.kohaku.mobile",
       "capacitor": "8.6.0"
     },
     "current_mobile_scope": {
@@ -84,10 +84,10 @@
           "action": "List sessions",
           "desktop": {
             "source": [
-              "nanobot/webui/ws_http.py:_handle_sessions_list"
+              "kohaku/webui/ws_http.py:_handle_sessions_list"
             ],
             "tests": [
-              "nanobot/channels/websocket/tests/test_websocket_http_routes.py"
+              "kohaku/channels/websocket/tests/test_websocket_http_routes.py"
             ],
             "implementation": "present"
           },
@@ -132,7 +132,7 @@
             "desktop_implementation": "present",
             "mobile_implementation": "present",
             "evidence": [
-              "nanobot/webui/session_list_index.py",
+              "kohaku/webui/session_list_index.py",
               "mobile bridge read"
             ]
           },
@@ -146,11 +146,11 @@
           "action": "Read persisted thread",
           "desktop": {
             "source": [
-              "nanobot/webui/ws_http.py:_handle_webui_thread_get",
-              "nanobot/webui/transcript.py"
+              "kohaku/webui/ws_http.py:_handle_webui_thread_get",
+              "kohaku/webui/transcript.py"
             ],
             "tests": [
-              "nanobot/channels/websocket/tests/test_websocket_http_routes.py"
+              "kohaku/channels/websocket/tests/test_websocket_http_routes.py"
             ],
             "implementation": "present"
           },
@@ -215,8 +215,8 @@
           "action": "Read authorized delegated children",
           "desktop": {
             "source": [
-              "nanobot/webui/ws_http.py:_handle_delegated_children_get",
-              "nanobot/webui/ws_http.py:_load_child_ancestry"
+              "kohaku/webui/ws_http.py:_handle_delegated_children_get",
+              "kohaku/webui/ws_http.py:_load_child_ancestry"
             ],
             "tests": [
               "tests/webui/test_child_thread_route.py"
@@ -270,8 +270,8 @@
             "desktop_implementation": "present",
             "mobile_implementation": "present",
             "evidence": [
-              "nanobot/webui/ws_http.py:_handle_delegated_children_get",
-              "nanobot/remote/edge.py",
+              "kohaku/webui/ws_http.py:_handle_delegated_children_get",
+              "kohaku/remote/edge.py",
               "mobile/native-network/internal/broker/policy.go"
             ]
           },
@@ -285,8 +285,8 @@
           "action": "Read session context",
           "desktop": {
             "source": [
-              "nanobot/webui/ws_http.py:_handle_session_context_get",
-              "nanobot/webui/session_context.py"
+              "kohaku/webui/ws_http.py:_handle_session_context_get",
+              "kohaku/webui/session_context.py"
             ],
             "tests": [
               "tests/webui/test_session_context.py"
@@ -344,8 +344,8 @@
           "action": "Preview workspace file",
           "desktop": {
             "source": [
-              "nanobot/webui/ws_http.py:_handle_file_preview",
-              "nanobot/webui/file_preview.py"
+              "kohaku/webui/ws_http.py:_handle_file_preview",
+              "kohaku/webui/file_preview.py"
             ],
             "tests": [
               "tests/webui/test_file_preview.py"
@@ -410,8 +410,8 @@
           "action": "List generated session assets",
           "desktop": {
             "source": [
-              "nanobot/webui/ws_http.py:_handle_generated_assets",
-              "nanobot/webui/generated_assets.py"
+              "kohaku/webui/ws_http.py:_handle_generated_assets",
+              "kohaku/webui/generated_assets.py"
             ],
             "tests": [
               "tests/webui/test_generated_assets.py"
@@ -472,8 +472,8 @@
           "action": "List every turn in a session",
           "desktop": {
             "source": [
-              "nanobot/webui/transcript.py:session_turn_index",
-              "nanobot/webui/ws_http.py:_handle_session_turns_get"
+              "kohaku/webui/transcript.py:session_turn_index",
+              "kohaku/webui/ws_http.py:_handle_session_turns_get"
             ],
             "tests": [
               "tests/webui/test_session_turn_index.py"
@@ -534,8 +534,8 @@
           "action": "List generated assets across sessions",
           "desktop": {
             "source": [
-              "nanobot/webui/ws_http.py:_handle_all_generated_assets",
-              "nanobot/webui/generated_asset_index.py"
+              "kohaku/webui/ws_http.py:_handle_all_generated_assets",
+              "kohaku/webui/generated_asset_index.py"
             ],
             "tests": [
               "tests/webui/test_generated_assets.py"
@@ -595,7 +595,7 @@
           "action": "List slash commands",
           "desktop": {
             "source": [
-              "nanobot/webui/ws_http.py:_handle_commands"
+              "kohaku/webui/ws_http.py:_handle_commands"
             ],
             "tests": [
               "tests/webui/test_mobile_commands.py"
@@ -652,10 +652,10 @@
           "action": "Send message (text/media)",
           "desktop": {
             "source": [
-              "nanobot/webui/inbound_commands.py:_dispatch_message"
+              "kohaku/webui/inbound_commands.py:_dispatch_message"
             ],
             "tests": [
-              "nanobot/channels/websocket/tests/test_websocket_channel.py"
+              "kohaku/channels/websocket/tests/test_websocket_channel.py"
             ],
             "implementation": "present"
           },
@@ -712,10 +712,10 @@
           "action": "Create chat",
           "desktop": {
             "source": [
-              "nanobot/webui/inbound_commands.py:dispatch"
+              "kohaku/webui/inbound_commands.py:dispatch"
             ],
             "tests": [
-              "nanobot/channels/websocket/tests/test_websocket_channel.py"
+              "kohaku/channels/websocket/tests/test_websocket_channel.py"
             ],
             "implementation": "present"
           },
@@ -770,8 +770,8 @@
           "action": "Create temporary chat",
           "desktop": {
             "source": [
-              "nanobot/webui/inbound_commands.py:dispatch",
-              "nanobot/webui/temporary_chats.py"
+              "kohaku/webui/inbound_commands.py:dispatch",
+              "kohaku/webui/temporary_chats.py"
             ],
             "tests": [
               "tests/webui/test_websocket_channel.py"
@@ -830,7 +830,7 @@
           "action": "Discard temporary chat",
           "desktop": {
             "source": [
-              "nanobot/webui/inbound_commands.py:dispatch"
+              "kohaku/webui/inbound_commands.py:dispatch"
             ],
             "tests": [
               "tests/webui/test_temporary_chats.py"
@@ -888,7 +888,7 @@
           "action": "Fork chat",
           "desktop": {
             "source": [
-              "nanobot/webui/forking.py:handle_webui_fork_chat"
+              "kohaku/webui/forking.py:handle_webui_fork_chat"
             ],
             "tests": [
               "tests/webui/test_forking.py"
@@ -947,7 +947,7 @@
           "action": "Attach media/attachment",
           "desktop": {
             "source": [
-              "nanobot/webui/inbound_commands.py:dispatch"
+              "kohaku/webui/inbound_commands.py:dispatch"
             ],
             "tests": [
               "tests/webui/test_attachment_ingress.py"
@@ -1006,10 +1006,10 @@
           "action": "Delete session",
           "desktop": {
             "source": [
-              "nanobot/webui/ws_http.py:_handle_session_delete"
+              "kohaku/webui/ws_http.py:_handle_session_delete"
             ],
             "tests": [
-              "nanobot/channels/websocket/tests/test_websocket_http_routes.py"
+              "kohaku/channels/websocket/tests/test_websocket_http_routes.py"
             ],
             "implementation": "present"
           },
@@ -1067,7 +1067,7 @@
           "action": "Continue after recovery pause",
           "desktop": {
             "source": [
-              "nanobot/webui/ws_http.py:_dispatch_recovery_route"
+              "kohaku/webui/ws_http.py:_dispatch_recovery_route"
             ],
             "tests": [
               "tests/webui/test_folder_access_recovery_api.py"
@@ -1128,7 +1128,7 @@
           "action": "Dismiss recovery notice",
           "desktop": {
             "source": [
-              "nanobot/webui/ws_http.py:_dispatch_recovery_route"
+              "kohaku/webui/ws_http.py:_dispatch_recovery_route"
             ],
             "tests": [
               "tests/webui/test_folder_access_recovery_api.py"
@@ -1187,7 +1187,7 @@
           "action": "Read shared sidebar state",
           "desktop": {
             "source": [
-              "nanobot/webui/sidebar_state.py:read_webui_sidebar_state"
+              "kohaku/webui/sidebar_state.py:read_webui_sidebar_state"
             ],
             "tests": [
               "tests/webui/test_sidebar_state.py"
@@ -1245,7 +1245,7 @@
           "action": "Update sidebar state",
           "desktop": {
             "source": [
-              "nanobot/webui/ws_http.py:_handle_webui_sidebar_state_update"
+              "kohaku/webui/ws_http.py:_handle_webui_sidebar_state_update"
             ],
             "tests": [
               "tests/webui/test_sidebar_state.py"
@@ -1306,7 +1306,7 @@
           "action": "Set chat workspace/mode",
           "desktop": {
             "source": [
-              "nanobot/webui/inbound_commands.py:dispatch"
+              "kohaku/webui/inbound_commands.py:dispatch"
             ],
             "tests": [
               "tests/webui/test_permission_v2_api.py"
@@ -1366,8 +1366,8 @@
           "action": "Transcribe audio",
           "desktop": {
             "source": [
-              "nanobot/webui/inbound_commands.py:dispatch",
-              "nanobot/webui/transcription_ws.py"
+              "kohaku/webui/inbound_commands.py:dispatch",
+              "kohaku/webui/transcription_ws.py"
             ],
             "tests": [
               "tests/webui/test_transcription_ws.py"
@@ -1424,8 +1424,8 @@
           "action": "Fetch signed media",
           "desktop": {
             "source": [
-              "nanobot/webui/ws_http.py:_handle_media_fetch",
-              "nanobot/webui/media_gateway.py"
+              "kohaku/webui/ws_http.py:_handle_media_fetch",
+              "kohaku/webui/media_gateway.py"
             ],
             "tests": [
               "tests/webui/test_managed_media_access.py"
@@ -1486,7 +1486,7 @@
           "action": "Native attachment upload",
           "desktop": {
             "source": [
-              "nanobot/remote/data_server.py",
+              "kohaku/remote/data_server.py",
               "mobile/android/.../attachments/AttachmentPolicy.kt"
             ],
             "tests": [
@@ -1546,7 +1546,7 @@
           "action": "Dispose temporary chats on disconnect",
           "desktop": {
             "source": [
-              "nanobot/webui/temporary_chats.py"
+              "kohaku/webui/temporary_chats.py"
             ],
             "tests": [
               "tests/webui/test_temporary_chats.py"
@@ -1604,7 +1604,7 @@
           "action": "Read settings snapshot",
           "desktop": {
             "source": [
-              "nanobot/webui/settings_routes.py:_handle_settings"
+              "kohaku/webui/settings_routes.py:_handle_settings"
             ],
             "tests": [
               "tests/webui/test_settings_api.py"
@@ -1664,7 +1664,7 @@
           "action": "Read token usage",
           "desktop": {
             "source": [
-              "nanobot/webui/settings_routes.py:_handle_settings_usage"
+              "kohaku/webui/settings_routes.py:_handle_settings_usage"
             ],
             "tests": [
               "tests/webui/test_settings_api.py"
@@ -1722,7 +1722,7 @@
           "action": "Check version/update",
           "desktop": {
             "source": [
-              "nanobot/webui/version_check.py"
+              "kohaku/webui/version_check.py"
             ],
             "tests": [
               "tests/webui/test_version_check.py"
@@ -1779,7 +1779,7 @@
           "action": "Update agent defaults",
           "desktop": {
             "source": [
-              "nanobot/webui/settings_models.py"
+              "kohaku/webui/settings_models.py"
             ],
             "tests": [
               "tests/webui/test_settings_models.py"
@@ -1841,7 +1841,7 @@
           "action": "Create provider",
           "desktop": {
             "source": [
-              "nanobot/webui/settings_models.py"
+              "kohaku/webui/settings_models.py"
             ],
             "tests": [
               "tests/webui/test_settings_models.py"
@@ -1902,7 +1902,7 @@
           "action": "Update provider",
           "desktop": {
             "source": [
-              "nanobot/webui/settings_models.py"
+              "kohaku/webui/settings_models.py"
             ],
             "tests": [
               "tests/webui/test_settings_models.py"
@@ -1963,7 +1963,7 @@
           "action": "Start provider OAuth login",
           "desktop": {
             "source": [
-              "nanobot/webui/settings_models.py"
+              "kohaku/webui/settings_models.py"
             ],
             "tests": [
               "tests/webui/test_settings_models.py"
@@ -2024,7 +2024,7 @@
           "action": "Complete provider OAuth login",
           "desktop": {
             "source": [
-              "nanobot/webui/settings_models.py"
+              "kohaku/webui/settings_models.py"
             ],
             "tests": [
               "tests/webui/test_settings_models.py"
@@ -2085,7 +2085,7 @@
           "action": "Logout provider OAuth",
           "desktop": {
             "source": [
-              "nanobot/webui/settings_models.py"
+              "kohaku/webui/settings_models.py"
             ],
             "tests": [
               "tests/webui/test_settings_models.py"
@@ -2144,7 +2144,7 @@
           "action": "Read provider model catalog",
           "desktop": {
             "source": [
-              "nanobot/webui/settings_models.py"
+              "kohaku/webui/settings_models.py"
             ],
             "tests": [
               "tests/webui/test_settings_models.py"
@@ -2207,7 +2207,7 @@
           "action": "Create model configuration",
           "desktop": {
             "source": [
-              "nanobot/webui/settings_models.py"
+              "kohaku/webui/settings_models.py"
             ],
             "tests": [
               "tests/webui/test_settings_models.py"
@@ -2268,7 +2268,7 @@
           "action": "Update model configuration",
           "desktop": {
             "source": [
-              "nanobot/webui/settings_models.py"
+              "kohaku/webui/settings_models.py"
             ],
             "tests": [
               "tests/webui/test_settings_models.py"
@@ -2329,7 +2329,7 @@
           "action": "Delete model configuration",
           "desktop": {
             "source": [
-              "nanobot/webui/settings_models.py"
+              "kohaku/webui/settings_models.py"
             ],
             "tests": [
               "tests/webui/test_settings_models.py"
@@ -2389,7 +2389,7 @@
           "action": "Migrate model configurations",
           "desktop": {
             "source": [
-              "nanobot/webui/settings_models.py"
+              "kohaku/webui/settings_models.py"
             ],
             "tests": [
               "tests/webui/test_settings_models.py"
@@ -2449,7 +2449,7 @@
           "action": "Update model fallback order",
           "desktop": {
             "source": [
-              "nanobot/webui/settings_models.py"
+              "kohaku/webui/settings_models.py"
             ],
             "tests": [
               "tests/webui/test_settings_models.py"
@@ -2508,7 +2508,7 @@
           "action": "Update web search",
           "desktop": {
             "source": [
-              "nanobot/webui/settings_capabilities.py"
+              "kohaku/webui/settings_capabilities.py"
             ],
             "tests": [
               "tests/webui/test_settings_capabilities.py"
@@ -2568,7 +2568,7 @@
           "action": "Update image generation",
           "desktop": {
             "source": [
-              "nanobot/webui/settings_capabilities.py"
+              "kohaku/webui/settings_capabilities.py"
             ],
             "tests": [
               "tests/webui/test_settings_capabilities.py"
@@ -2628,7 +2628,7 @@
           "action": "Update transcription",
           "desktop": {
             "source": [
-              "nanobot/webui/settings_capabilities.py"
+              "kohaku/webui/settings_capabilities.py"
             ],
             "tests": [
               "tests/webui/test_settings_capabilities.py"
@@ -2688,7 +2688,7 @@
           "action": "Update network safety",
           "desktop": {
             "source": [
-              "nanobot/webui/settings_capabilities.py"
+              "kohaku/webui/settings_capabilities.py"
             ],
             "tests": [
               "tests/webui/test_settings_capabilities.py"
@@ -2748,7 +2748,7 @@
           "action": "Read managed API service status",
           "desktop": {
             "source": [
-              "nanobot/webui/settings_capabilities.py"
+              "kohaku/webui/settings_capabilities.py"
             ],
             "tests": [
               "tests/webui/test_settings_capabilities.py"
@@ -2806,7 +2806,7 @@
           "action": "Start managed API service",
           "desktop": {
             "source": [
-              "nanobot/webui/settings_capabilities.py"
+              "kohaku/webui/settings_capabilities.py"
             ],
             "tests": [
               "tests/webui/test_settings_capabilities.py"
@@ -2867,7 +2867,7 @@
           "action": "Stop managed API service",
           "desktop": {
             "source": [
-              "nanobot/webui/settings_capabilities.py"
+              "kohaku/webui/settings_capabilities.py"
             ],
             "tests": [
               "tests/webui/test_settings_capabilities.py"
@@ -2979,7 +2979,7 @@
           "action": "Validate channel config",
           "desktop": {
             "source": [
-              "nanobot/webui/settings_system.py"
+              "kohaku/webui/settings_system.py"
             ],
             "tests": [
               "tests/webui/test_settings_system.py"
@@ -3039,7 +3039,7 @@
           "action": "Configure/disable channel",
           "desktop": {
             "source": [
-              "nanobot/webui/settings_system.py"
+              "kohaku/webui/settings_system.py"
             ],
             "tests": [
               "tests/webui/test_settings_system.py"
@@ -3098,7 +3098,7 @@
           "action": "Start channel QR/link connect",
           "desktop": {
             "source": [
-              "nanobot/webui/settings_system.py"
+              "kohaku/webui/settings_system.py"
             ],
             "tests": [
               "tests/webui/test_settings_system.py"
@@ -3157,7 +3157,7 @@
           "action": "Poll channel connect",
           "desktop": {
             "source": [
-              "nanobot/webui/settings_system.py"
+              "kohaku/webui/settings_system.py"
             ],
             "tests": [
               "tests/webui/test_settings_system.py"
@@ -3215,7 +3215,7 @@
           "action": "Cancel channel connect",
           "desktop": {
             "source": [
-              "nanobot/webui/settings_system.py"
+              "kohaku/webui/settings_system.py"
             ],
             "tests": [
               "tests/webui/test_settings_system.py"
@@ -3272,7 +3272,7 @@
           "action": "List chat-user pairing requests",
           "desktop": {
             "source": [
-              "nanobot/webui/settings_system.py"
+              "kohaku/webui/settings_system.py"
             ],
             "tests": [
               "tests/webui/test_settings_system.py"
@@ -3330,7 +3330,7 @@
           "action": "Approve chat-user pairing",
           "desktop": {
             "source": [
-              "nanobot/webui/settings_system.py"
+              "kohaku/webui/settings_system.py"
             ],
             "tests": [
               "tests/webui/test_settings_system.py"
@@ -3390,7 +3390,7 @@
           "action": "Deny chat-user pairing",
           "desktop": {
             "source": [
-              "nanobot/webui/settings_system.py"
+              "kohaku/webui/settings_system.py"
             ],
             "tests": [
               "tests/webui/test_settings_system.py"
@@ -3457,7 +3457,7 @@
           "action": "List CLI apps",
           "desktop": {
             "source": [
-              "nanobot/webui/cli_apps_api.py"
+              "kohaku/webui/cli_apps_api.py"
             ],
             "tests": [
               "tests/webui/test_cli_apps_api.py"
@@ -3515,8 +3515,8 @@
           "action": "Install CLI app",
           "desktop": {
             "source": [
-              "nanobot/webui/settings_system.py",
-              "nanobot/webui/cli_apps_api.py"
+              "kohaku/webui/settings_system.py",
+              "kohaku/webui/cli_apps_api.py"
             ],
             "tests": [
               "tests/webui/test_cli_apps_api.py"
@@ -3578,7 +3578,7 @@
           "action": "Update CLI app",
           "desktop": {
             "source": [
-              "nanobot/webui/settings_system.py"
+              "kohaku/webui/settings_system.py"
             ],
             "tests": [
               "tests/webui/test_cli_apps_api.py"
@@ -3640,7 +3640,7 @@
           "action": "Uninstall CLI app",
           "desktop": {
             "source": [
-              "nanobot/webui/settings_system.py"
+              "kohaku/webui/settings_system.py"
             ],
             "tests": [
               "tests/webui/test_cli_apps_api.py"
@@ -3701,7 +3701,7 @@
           "action": "Test CLI app",
           "desktop": {
             "source": [
-              "nanobot/webui/settings_system.py"
+              "kohaku/webui/settings_system.py"
             ],
             "tests": [
               "tests/webui/test_cli_apps_api.py"
@@ -3761,7 +3761,7 @@
           "action": "List MCP presets",
           "desktop": {
             "source": [
-              "nanobot/webui/mcp_presets_api.py"
+              "kohaku/webui/mcp_presets_api.py"
             ],
             "tests": [
               "tests/webui/test_mcp_presets_api.py"
@@ -3819,8 +3819,8 @@
           "action": "Enable MCP preset",
           "desktop": {
             "source": [
-              "nanobot/webui/settings_routes.py",
-              "nanobot/webui/mcp_presets_api.py"
+              "kohaku/webui/settings_routes.py",
+              "kohaku/webui/mcp_presets_api.py"
             ],
             "tests": [
               "tests/webui/test_mcp_presets_api.py"
@@ -3880,7 +3880,7 @@
           "action": "Disable MCP preset",
           "desktop": {
             "source": [
-              "nanobot/webui/settings_routes.py"
+              "kohaku/webui/settings_routes.py"
             ],
             "tests": [
               "tests/webui/test_mcp_presets_api.py"
@@ -3939,7 +3939,7 @@
           "action": "Remove MCP preset",
           "desktop": {
             "source": [
-              "nanobot/webui/settings_routes.py"
+              "kohaku/webui/settings_routes.py"
             ],
             "tests": [
               "tests/webui/test_mcp_presets_api.py"
@@ -3999,7 +3999,7 @@
           "action": "Test MCP preset",
           "desktop": {
             "source": [
-              "nanobot/webui/settings_routes.py"
+              "kohaku/webui/settings_routes.py"
             ],
             "tests": [
               "tests/webui/test_mcp_presets_api.py"
@@ -4058,7 +4058,7 @@
           "action": "Reconnect MCP preset",
           "desktop": {
             "source": [
-              "nanobot/webui/settings_routes.py"
+              "kohaku/webui/settings_routes.py"
             ],
             "tests": [
               "tests/webui/test_mcp_presets_runtime.py"
@@ -4117,7 +4117,7 @@
           "action": "Save custom MCP server",
           "desktop": {
             "source": [
-              "nanobot/webui/settings_routes.py"
+              "kohaku/webui/settings_routes.py"
             ],
             "tests": [
               "tests/webui/test_mcp_presets_api.py"
@@ -4178,7 +4178,7 @@
           "action": "Import MCP config",
           "desktop": {
             "source": [
-              "nanobot/webui/settings_routes.py"
+              "kohaku/webui/settings_routes.py"
             ],
             "tests": [
               "tests/webui/test_mcp_presets_api.py"
@@ -4238,7 +4238,7 @@
           "action": "Import Cursor MCP config",
           "desktop": {
             "source": [
-              "nanobot/webui/settings_routes.py"
+              "kohaku/webui/settings_routes.py"
             ],
             "tests": [
               "tests/webui/test_mcp_presets_api.py"
@@ -4297,7 +4297,7 @@
           "action": "Select MCP tools",
           "desktop": {
             "source": [
-              "nanobot/webui/settings_routes.py"
+              "kohaku/webui/settings_routes.py"
             ],
             "tests": [
               "tests/webui/test_mcp_presets_api.py"
@@ -4356,7 +4356,7 @@
           "action": "Start MCP OAuth",
           "desktop": {
             "source": [
-              "nanobot/webui/settings_routes.py"
+              "kohaku/webui/settings_routes.py"
             ],
             "tests": [
               "tests/webui/test_mcp_oauth_api.py"
@@ -4415,7 +4415,7 @@
           "action": "Read MCP OAuth status",
           "desktop": {
             "source": [
-              "nanobot/webui/settings_routes.py"
+              "kohaku/webui/settings_routes.py"
             ],
             "tests": [
               "tests/webui/test_mcp_oauth_api.py"
@@ -4473,7 +4473,7 @@
           "action": "Complete MCP OAuth",
           "desktop": {
             "source": [
-              "nanobot/webui/settings_routes.py"
+              "kohaku/webui/settings_routes.py"
             ],
             "tests": [
               "tests/webui/test_mcp_oauth_api.py"
@@ -4532,7 +4532,7 @@
           "action": "Cancel MCP OAuth",
           "desktop": {
             "source": [
-              "nanobot/webui/settings_routes.py"
+              "kohaku/webui/settings_routes.py"
             ],
             "tests": [
               "tests/webui/test_mcp_oauth_api.py"
@@ -4591,7 +4591,7 @@
           "action": "List optional features",
           "desktop": {
             "source": [
-              "nanobot/webui/nanobot_features_api.py"
+              "kohaku/webui/nanobot_features_api.py"
             ],
             "tests": [
               "tests/webui/test_settings_system.py"
@@ -4649,8 +4649,8 @@
           "action": "Enable optional feature",
           "desktop": {
             "source": [
-              "nanobot/webui/settings_system.py",
-              "nanobot/optional_features.py"
+              "kohaku/webui/settings_system.py",
+              "kohaku/optional_features.py"
             ],
             "tests": [
               "tests/webui/test_settings_system.py"
@@ -4712,7 +4712,7 @@
           "action": "Disable optional feature",
           "desktop": {
             "source": [
-              "nanobot/webui/settings_system.py"
+              "kohaku/webui/settings_system.py"
             ],
             "tests": [
               "tests/webui/test_settings_system.py"
@@ -4779,7 +4779,7 @@
           "action": "List installed/local skills",
           "desktop": {
             "source": [
-              "nanobot/webui/skills_api.py"
+              "kohaku/webui/skills_api.py"
             ],
             "tests": [
               "tests/webui/test_skills_api.py"
@@ -4837,7 +4837,7 @@
           "action": "Read skill detail",
           "desktop": {
             "source": [
-              "nanobot/webui/skills_api.py"
+              "kohaku/webui/skills_api.py"
             ],
             "tests": [
               "tests/webui/test_skills_api.py"
@@ -4895,7 +4895,7 @@
           "action": "Enable/disable skill",
           "desktop": {
             "source": [
-              "nanobot/webui/skills_api.py"
+              "kohaku/webui/skills_api.py"
             ],
             "tests": [
               "tests/webui/test_skills_api.py"
@@ -4955,7 +4955,7 @@
           "action": "Delete skill",
           "desktop": {
             "source": [
-              "nanobot/webui/skills_api.py"
+              "kohaku/webui/skills_api.py"
             ],
             "tests": [
               "tests/webui/test_skills_api.py"
@@ -5016,7 +5016,7 @@
           "action": "Search marketplace",
           "desktop": {
             "source": [
-              "nanobot/webui/skills_marketplace.py"
+              "kohaku/webui/skills_marketplace.py"
             ],
             "tests": [
               "tests/webui/test_skills_marketplace.py"
@@ -5079,7 +5079,7 @@
           "action": "Trending marketplace skills",
           "desktop": {
             "source": [
-              "nanobot/webui/skills_marketplace.py"
+              "kohaku/webui/skills_marketplace.py"
             ],
             "tests": [
               "tests/webui/test_skills_marketplace.py"
@@ -5140,7 +5140,7 @@
           "action": "Skill trend detail",
           "desktop": {
             "source": [
-              "nanobot/webui/skills_marketplace.py"
+              "kohaku/webui/skills_marketplace.py"
             ],
             "tests": [
               "tests/webui/test_skills_marketplace.py"
@@ -5201,7 +5201,7 @@
           "action": "Install marketplace skill",
           "desktop": {
             "source": [
-              "nanobot/webui/skills_marketplace.py"
+              "kohaku/webui/skills_marketplace.py"
             ],
             "tests": [
               "tests/webui/test_skills_marketplace.py"
@@ -5271,7 +5271,7 @@
           "action": "List automations",
           "desktop": {
             "source": [
-              "nanobot/webui/ws_http.py:_handle_webui_automations"
+              "kohaku/webui/ws_http.py:_handle_webui_automations"
             ],
             "tests": [
               "tests/webui/test_session_automations.py"
@@ -5329,7 +5329,7 @@
           "action": "List session automations",
           "desktop": {
             "source": [
-              "nanobot/webui/ws_http.py:_handle_session_automations"
+              "kohaku/webui/ws_http.py:_handle_session_automations"
             ],
             "tests": [
               "tests/webui/test_session_automations.py"
@@ -5387,7 +5387,7 @@
           "action": "Enable automation",
           "desktop": {
             "source": [
-              "nanobot/webui/ws_http.py:_handle_webui_automation_action"
+              "kohaku/webui/ws_http.py:_handle_webui_automation_action"
             ],
             "tests": [
               "tests/webui/test_session_automations.py"
@@ -5447,7 +5447,7 @@
           "action": "Disable automation",
           "desktop": {
             "source": [
-              "nanobot/webui/ws_http.py:_handle_webui_automation_action"
+              "kohaku/webui/ws_http.py:_handle_webui_automation_action"
             ],
             "tests": [
               "tests/webui/test_session_automations.py"
@@ -5506,7 +5506,7 @@
           "action": "Delete automation",
           "desktop": {
             "source": [
-              "nanobot/webui/ws_http.py:_handle_webui_automation_action"
+              "kohaku/webui/ws_http.py:_handle_webui_automation_action"
             ],
             "tests": [
               "tests/webui/test_session_automations.py"
@@ -5567,7 +5567,7 @@
           "action": "Run automation now",
           "desktop": {
             "source": [
-              "nanobot/webui/ws_http.py:_handle_webui_automation_action"
+              "kohaku/webui/ws_http.py:_handle_webui_automation_action"
             ],
             "tests": [
               "tests/webui/test_session_automations.py"
@@ -5627,7 +5627,7 @@
           "action": "Edit automation definition",
           "desktop": {
             "source": [
-              "nanobot/webui/ws_http.py:_handle_webui_automation_action"
+              "kohaku/webui/ws_http.py:_handle_webui_automation_action"
             ],
             "tests": [
               "tests/webui/test_session_automations.py"
@@ -5695,7 +5695,7 @@
           "action": "Read workspaces/control state",
           "desktop": {
             "source": [
-              "nanobot/webui/ws_http.py:_handle_workspaces"
+              "kohaku/webui/ws_http.py:_handle_workspaces"
             ],
             "tests": [
               "tests/webui/test_workspace_management_errors.py"
@@ -5753,11 +5753,11 @@
           "action": "Pick server folder",
           "desktop": {
             "source": [
-              "nanobot/webui/ws_http.py:_handle_workspace_folder_picker",
-              "nanobot/webui/native_folder_picker.py"
+              "kohaku/webui/ws_http.py:_handle_workspace_folder_picker",
+              "kohaku/webui/native_folder_picker.py"
             ],
             "tests": [
-              "nanobot/channels/websocket/tests/test_websocket_http_routes.py"
+              "kohaku/channels/websocket/tests/test_websocket_http_routes.py"
             ],
             "implementation": "present"
           },
@@ -5805,7 +5805,7 @@
           "action": "Add/update folder grant",
           "desktop": {
             "source": [
-              "nanobot/webui/ws_http.py:_handle_workspace_management"
+              "kohaku/webui/ws_http.py:_handle_workspace_management"
             ],
             "tests": [
               "tests/webui/test_folder_grant_receipt.py"
@@ -5851,8 +5851,8 @@
             "desktop_implementation": "present",
             "mobile_implementation": "partial",
             "evidence": [
-              "nanobot/webui/workspace_directories.py",
-              "nanobot/webui/ws_http.py:_owner_grant_payload"
+              "kohaku/webui/workspace_directories.py",
+              "kohaku/webui/ws_http.py:_owner_grant_payload"
             ]
           },
           "exception": null,
@@ -5865,7 +5865,7 @@
           "action": "Revoke folder grant",
           "desktop": {
             "source": [
-              "nanobot/webui/ws_http.py:_handle_workspace_management"
+              "kohaku/webui/ws_http.py:_handle_workspace_management"
             ],
             "tests": [
               "tests/webui/test_folder_grant_receipt.py"
@@ -5923,7 +5923,7 @@
           "action": "Add folder from request",
           "desktop": {
             "source": [
-              "nanobot/webui/ws_http.py:_handle_workspace_access_action"
+              "kohaku/webui/ws_http.py:_handle_workspace_access_action"
             ],
             "tests": [
               "tests/webui/test_folder_access_recovery_api.py"
@@ -5981,7 +5981,7 @@
           "action": "Resolve access request",
           "desktop": {
             "source": [
-              "nanobot/webui/ws_http.py:_handle_workspace_access_action"
+              "kohaku/webui/ws_http.py:_handle_workspace_access_action"
             ],
             "tests": [
               "tests/webui/test_folder_access_recovery_api.py"
@@ -6039,7 +6039,7 @@
           "action": "Continue after approval",
           "desktop": {
             "source": [
-              "nanobot/webui/ws_http.py:_handle_workspace_access_action"
+              "kohaku/webui/ws_http.py:_handle_workspace_access_action"
             ],
             "tests": [
               "tests/webui/test_folder_access_recovery_api.py"
@@ -6097,7 +6097,7 @@
           "action": "Cancel access request",
           "desktop": {
             "source": [
-              "nanobot/webui/ws_http.py:_handle_workspace_access_action"
+              "kohaku/webui/ws_http.py:_handle_workspace_access_action"
             ],
             "tests": [
               "tests/webui/test_folder_access_recovery_api.py"
@@ -6155,7 +6155,7 @@
           "action": "Allow once",
           "desktop": {
             "source": [
-              "nanobot/webui/ws_http.py:_handle_workspace_access_action"
+              "kohaku/webui/ws_http.py:_handle_workspace_access_action"
             ],
             "tests": [
               "tests/webui/test_folder_access_recovery_api.py"
@@ -6213,7 +6213,7 @@
           "action": "Set access mode",
           "desktop": {
             "source": [
-              "nanobot/webui/ws_http.py:_handle_workspace_permission_action"
+              "kohaku/webui/ws_http.py:_handle_workspace_permission_action"
             ],
             "tests": [
               "tests/webui/test_permission_v2_api.py"
@@ -6271,7 +6271,7 @@
           "action": "Prepare Full access",
           "desktop": {
             "source": [
-              "nanobot/webui/ws_http.py:_handle_workspace_permission_action"
+              "kohaku/webui/ws_http.py:_handle_workspace_permission_action"
             ],
             "tests": [
               "tests/webui/test_permission_v2_api.py"
@@ -6331,7 +6331,7 @@
           "action": "Rename/edit folder grant",
           "desktop": {
             "source": [
-              "nanobot/webui/ws_http.py:_handle_workspace_management"
+              "kohaku/webui/ws_http.py:_handle_workspace_management"
             ],
             "tests": [
               "tests/webui/test_workspace_management_errors.py"
@@ -6389,7 +6389,7 @@
           "action": "Remember repository",
           "desktop": {
             "source": [
-              "nanobot/webui/ws_http.py:_handle_workspace_management"
+              "kohaku/webui/ws_http.py:_handle_workspace_management"
             ],
             "tests": [
               "tests/webui/test_workspace_management_errors.py"
@@ -6447,7 +6447,7 @@
           "action": "Forget repository",
           "desktop": {
             "source": [
-              "nanobot/webui/ws_http.py:_handle_workspace_management"
+              "kohaku/webui/ws_http.py:_handle_workspace_management"
             ],
             "tests": [
               "tests/webui/test_workspace_management_errors.py"
@@ -6505,7 +6505,7 @@
           "action": "Discover repositories",
           "desktop": {
             "source": [
-              "nanobot/webui/ws_http.py:_handle_workspace_management"
+              "kohaku/webui/ws_http.py:_handle_workspace_management"
             ],
             "tests": [
               "tests/webui/test_workspace_management_errors.py"
@@ -6563,7 +6563,7 @@
           "action": "Read folder-browser roots",
           "desktop": {
             "source": [
-              "nanobot/webui/workspace_directories.py (planned)"
+              "kohaku/webui/workspace_directories.py (planned)"
             ],
             "tests": [
               "tests/webui/test_workspace_directories.py (planned)"
@@ -6608,7 +6608,7 @@
             "desktop_implementation": "present",
             "mobile_implementation": "absent",
             "evidence": [
-              "nanobot/webui/workspace_directories.py",
+              "kohaku/webui/workspace_directories.py",
               "tests/webui/test_workspace_directories.py"
             ]
           },
@@ -6622,7 +6622,7 @@
           "action": "Browse server folders",
           "desktop": {
             "source": [
-              "nanobot/webui/workspace_directories.py (planned)"
+              "kohaku/webui/workspace_directories.py (planned)"
             ],
             "tests": [
               "tests/webui/test_workspace_directories.py (planned)"
@@ -6673,7 +6673,7 @@
             "desktop_implementation": "present",
             "mobile_implementation": "absent",
             "evidence": [
-              "nanobot/webui/workspace_directories.py",
+              "kohaku/webui/workspace_directories.py",
               "tests/webui/test_workspace_directories.py"
             ]
           },
@@ -6687,7 +6687,7 @@
           "action": "Resolve selected server folder",
           "desktop": {
             "source": [
-              "nanobot/webui/workspace_directories.py (planned)"
+              "kohaku/webui/workspace_directories.py (planned)"
             ],
             "tests": [
               "tests/webui/test_workspace_directories.py (planned)"
@@ -6732,7 +6732,7 @@
             "desktop_implementation": "present",
             "mobile_implementation": "absent",
             "evidence": [
-              "nanobot/webui/workspace_directories.py",
+              "kohaku/webui/workspace_directories.py",
               "tests/webui/test_workspace_directories.py"
             ]
           },
@@ -6754,7 +6754,7 @@
           "action": "Read remote access status/devices",
           "desktop": {
             "source": [
-              "nanobot/webui/settings_remote.py"
+              "kohaku/webui/settings_remote.py"
             ],
             "tests": [
               "tests/webui/test_remote_access_settings.py"
@@ -6813,7 +6813,7 @@
           "action": "Enable/re-enable remote access",
           "desktop": {
             "source": [
-              "nanobot/webui/settings_remote.py"
+              "kohaku/webui/settings_remote.py"
             ],
             "tests": [
               "tests/webui/test_remote_access_settings.py"
@@ -6866,8 +6866,8 @@
           "action": "Revoke a device",
           "desktop": {
             "source": [
-              "nanobot/webui/settings_remote.py",
-              "nanobot/remote/management.py"
+              "kohaku/webui/settings_remote.py",
+              "kohaku/remote/management.py"
             ],
             "tests": [
               "tests/webui/test_remote_access_settings.py"
@@ -6927,7 +6927,7 @@
           "action": "Start new-device pairing challenge",
           "desktop": {
             "source": [
-              "nanobot/webui/settings_remote.py"
+              "kohaku/webui/settings_remote.py"
             ],
             "tests": [
               "tests/webui/test_remote_access_settings.py"
@@ -6979,7 +6979,7 @@
           "action": "Approve new-device pairing",
           "desktop": {
             "source": [
-              "nanobot/webui/settings_remote.py"
+              "kohaku/webui/settings_remote.py"
             ],
             "tests": [
               "tests/webui/test_remote_access_settings.py"
@@ -7032,7 +7032,7 @@
           "action": "Upgrade device scope",
           "desktop": {
             "source": [
-              "nanobot/remote/store.py:update_scopes"
+              "kohaku/remote/store.py:update_scopes"
             ],
             "tests": [
               "tests/remote/test_remote_store.py"
@@ -7082,8 +7082,8 @@
           "action": "Owner-local device list",
           "desktop": {
             "source": [
-              "nanobot/remote/management.py",
-              "nanobot/remote/ipc.py"
+              "kohaku/remote/management.py",
+              "kohaku/remote/ipc.py"
             ],
             "tests": [
               "tests/remote/test_management.py"
@@ -7134,8 +7134,8 @@
           "action": "Owned Serve mapping/private entry",
           "desktop": {
             "source": [
-              "nanobot/remote/staging.py",
-              "nanobot/remote/supervision.py"
+              "kohaku/remote/staging.py",
+              "kohaku/remote/supervision.py"
             ],
             "tests": [
               "tests/remote/test_supervision.py"
@@ -7186,7 +7186,7 @@
           "action": "Deny new-device pairing",
           "desktop": {
             "source": [
-              "nanobot/webui/settings_remote.py"
+              "kohaku/webui/settings_remote.py"
             ],
             "tests": [
               "tests/webui/test_remote_access_settings.py"
@@ -7239,7 +7239,7 @@
           "action": "Cancel new-device pairing",
           "desktop": {
             "source": [
-              "nanobot/webui/settings_remote.py"
+              "kohaku/webui/settings_remote.py"
             ],
             "tests": [
               "tests/webui/test_remote_access_settings.py"
@@ -7291,7 +7291,7 @@
           "action": "Renew pending pairing setup",
           "desktop": {
             "source": [
-              "nanobot/webui/settings_remote.py"
+              "kohaku/webui/settings_remote.py"
             ],
             "tests": [
               "tests/webui/test_remote_access_settings.py"
@@ -7345,7 +7345,7 @@
           "action": "Read pending pairing setup",
           "desktop": {
             "source": [
-              "nanobot/webui/settings_remote.py"
+              "kohaku/webui/settings_remote.py"
             ],
             "tests": [
               "tests/webui/test_remote_access_settings.py"
@@ -7396,7 +7396,7 @@
           "action": "Read Tailscale readiness",
           "desktop": {
             "source": [
-              "nanobot/webui/settings_remote.py"
+              "kohaku/webui/settings_remote.py"
             ],
             "tests": [
               "tests/webui/test_remote_access_settings.py"
@@ -7456,7 +7456,7 @@
           "desktop": {
             "source": [
               "webui/src/App.tsx:restart handler",
-              "nanobot/command"
+              "kohaku/command"
             ],
             "tests": [
               "webui/src/tests/app.test.tsx"
@@ -7560,7 +7560,7 @@
           "action": "Install/update installed service",
           "desktop": {
             "source": [
-              "nanobot/remote/supervision.py"
+              "kohaku/remote/supervision.py"
             ],
             "tests": [
               "tests/remote/test_supervision.py"
@@ -7659,7 +7659,7 @@
           "action": "Send a local desktop notification",
           "desktop": {
             "source": [
-              "nanobot/webui/ws_http.py:_handle_desktop_notify"
+              "kohaku/webui/ws_http.py:_handle_desktop_notify"
             ],
             "tests": [
               "webui/src/tests/task-notifications.test.ts",
@@ -7723,8 +7723,8 @@
           "action": "Download attachment/media file",
           "desktop": {
             "source": [
-              "nanobot/webui/media_api.py",
-              "nanobot/webui/media_gateway.py"
+              "kohaku/webui/media_api.py",
+              "kohaku/webui/media_gateway.py"
             ],
             "tests": [
               "tests/webui/test_managed_media_access.py"
@@ -7782,7 +7782,7 @@
           "action": "Import file as attachment",
           "desktop": {
             "source": [
-              "nanobot/webui/attachment_ingress.py"
+              "kohaku/webui/attachment_ingress.py"
             ],
             "tests": [
               "tests/webui/test_attachment_ingress.py"
@@ -7831,7 +7831,7 @@
           "action": "Binary/PDF preview",
           "desktop": {
             "source": [
-              "nanobot/webui/file_preview.py"
+              "kohaku/webui/file_preview.py"
             ],
             "tests": [
               "tests/webui/test_file_preview.py"

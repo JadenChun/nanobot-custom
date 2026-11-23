@@ -1,5 +1,5 @@
-#ifndef NANOBOT_NETWORK_H
-#define NANOBOT_NETWORK_H
+#ifndef KOHAKU_NETWORK_H
+#define KOHAKU_NETWORK_H
 
 #include <stdint.h>
 
@@ -8,7 +8,7 @@ extern "C" {
 #endif
 
 /*
- * Nanobot mobile native transport ABI, version 1.
+ * Kohaku mobile native transport ABI, version 1.
  *
  * Inputs are NUL-terminated UTF-8 JSON except for WebSocket frame bytes.
  * The caller owns every input buffer. The library copies input data before
@@ -36,7 +36,7 @@ extern "C" {
  * confirmed origin and an allowlisted method/path table.
  */
 
-#define NANOBOT_NETWORK_ABI_VERSION 1
+#define KOHAKU_NETWORK_ABI_VERSION 1
 
 int32_t nanobot_network_abi_version(void);
 
@@ -122,4 +122,4 @@ int32_t nanobot_network_last_error_copy(char *out, int32_t capacity);
 }
 #endif
 
-#endif /* NANOBOT_NETWORK_H */
+#endif /* KOHAKU_NETWORK_H */

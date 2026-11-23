@@ -7,19 +7,19 @@ import httpx
 import pytest
 from openai import AsyncOpenAI
 
-from nanobot.agent.memory import Consolidator
-from nanobot.providers.base import (
+from kohaku.agent.memory import Consolidator
+from kohaku.providers.base import (
     GenerationSettings,
     LLMProvider,
     LLMResponse,
     LLMUsage,
     ToolCallRequest,
 )
-from nanobot.providers.openai_compat_provider import OpenAICompatProvider
-from nanobot.providers.pooled_provider import PooledProvider
-from nanobot.providers.registry import find_by_name
-from nanobot.providers.request_budget import FinalizedRequestBudgetExceeded
-from nanobot.utils.llm_runtime import LLMRuntime
+from kohaku.providers.openai_compat_provider import OpenAICompatProvider
+from kohaku.providers.pooled_provider import PooledProvider
+from kohaku.providers.registry import find_by_name
+from kohaku.providers.request_budget import FinalizedRequestBudgetExceeded
+from kohaku.utils.llm_runtime import LLMRuntime
 
 
 class SummaryProvider(LLMProvider):
@@ -235,8 +235,8 @@ async def test_runtime_system_messages_cannot_enter_summary_evidence():
 
 
 async def test_summary_does_not_fallback_or_rotate_credentials():
-    from nanobot.providers.fallback_provider import FallbackProvider
-    from nanobot.providers.pooled_provider import PooledProvider
+    from kohaku.providers.fallback_provider import FallbackProvider
+    from kohaku.providers.pooled_provider import PooledProvider
 
     primary = SummaryProvider(LLMResponse(content='rate limit', finish_reason='error', error_status_code=429))
     spare = SummaryProvider(LLMResponse(content='must not run'))
@@ -251,7 +251,7 @@ async def test_summary_does_not_fallback_or_rotate_credentials():
 
 
 async def test_auxiliary_disables_anthropic_output_budget_expansion():
-    from nanobot.providers.anthropic_provider import AnthropicProvider
+    from kohaku.providers.anthropic_provider import AnthropicProvider
 
     provider = SummaryProvider(LLMResponse(content='facts'))
     captured = LLMRuntime(provider, 'claude-sonnet-4-5',

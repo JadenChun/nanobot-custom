@@ -6,7 +6,7 @@ import json
 import time
 from pathlib import Path
 
-from nanobot.apps.cli.service import CliAppManager, CliAppsRuntimeConfig
+from kohaku.apps.cli.service import CliAppManager, CliAppsRuntimeConfig
 
 
 def _write_cache(path: Path, registry: dict) -> None:

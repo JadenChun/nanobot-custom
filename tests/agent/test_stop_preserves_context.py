@@ -11,10 +11,10 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from nanobot.agent.loop import AgentLoop
-from nanobot.bus.events import InboundMessage
-from nanobot.providers.base import GenerationSettings, LLMResponse, ToolCallRequest
-from nanobot.session.recovery import RUNTIME_CHECKPOINT_KEY, restore_runtime_checkpoint
+from kohaku.agent.loop import AgentLoop
+from kohaku.bus.events import InboundMessage
+from kohaku.providers.base import GenerationSettings, LLMResponse, ToolCallRequest
+from kohaku.session.recovery import RUNTIME_CHECKPOINT_KEY, restore_runtime_checkpoint
 from tests.agent import p6_admitted_fixtures
 
 admitted_async = p6_admitted_fixtures.admitted_async

@@ -2,14 +2,14 @@
 
 import pytest
 
-from nanobot.agent.tools.filesystem import (
+from kohaku.agent.tools.filesystem import (
     EditFileTool,
     ListDirTool,
     ReadFileTool,
     WriteFileTool,
     _find_matches,
 )
-from nanobot.agent.write_guard import FileLockRegistry, WriteScope
+from kohaku.agent.write_guard import FileLockRegistry, WriteScope
 
 # ---------------------------------------------------------------------------
 # ReadFileTool
@@ -296,7 +296,7 @@ class TestWorkspaceRestriction:
 
     @pytest.mark.asyncio
     async def test_extra_dirs_does_not_widen_write(self, tmp_path):
-        from nanobot.agent.tools.filesystem import WriteFileTool
+        from kohaku.agent.tools.filesystem import WriteFileTool
 
         workspace = tmp_path / "ws"
         workspace.mkdir()
@@ -415,7 +415,7 @@ class TestWorkspaceAlias:
     """Docker-style /workspace/... paths must be rewritten to the host workspace."""
 
     def test_rewrite_absolute_workspace_path(self, tmp_path):
-        from nanobot.agent.tools.filesystem import _resolve_path
+        from kohaku.agent.tools.filesystem import _resolve_path
 
         target = tmp_path / "previous_app.txt"
         target.write_text("GitHub Desktop")
@@ -424,7 +424,7 @@ class TestWorkspaceAlias:
         assert resolved == target.resolve()
 
     def test_rewrite_nested_path(self, tmp_path):
-        from nanobot.agent.tools.filesystem import _resolve_path
+        from kohaku.agent.tools.filesystem import _resolve_path
 
         sub = tmp_path / "sub"
         sub.mkdir()
@@ -435,7 +435,7 @@ class TestWorkspaceAlias:
         assert resolved == target.resolve()
 
     def test_exact_workspace_alias(self, tmp_path):
-        from nanobot.agent.tools.filesystem import _resolve_path
+        from kohaku.agent.tools.filesystem import _resolve_path
 
         resolved = _resolve_path("/workspace", workspace=tmp_path)
         assert resolved == tmp_path.resolve()
@@ -443,7 +443,7 @@ class TestWorkspaceAlias:
     def test_non_alias_absolute_path_unchanged(self, tmp_path):
         from pathlib import Path
 
-        from nanobot.agent.tools.filesystem import _resolve_path
+        from kohaku.agent.tools.filesystem import _resolve_path
 
         # A non-/workspace/ absolute path should NOT be rewritten.
         resolved = _resolve_path("/tmp/some_file.txt", workspace=tmp_path)
@@ -451,7 +451,7 @@ class TestWorkspaceAlias:
         assert resolved == Path("/tmp/some_file.txt").resolve()
 
     def test_relative_path_still_resolves_against_workspace(self, tmp_path):
-        from nanobot.agent.tools.filesystem import _resolve_path
+        from kohaku.agent.tools.filesystem import _resolve_path
 
         target = tmp_path / "relative.txt"
         target.write_text("data")
@@ -460,7 +460,7 @@ class TestWorkspaceAlias:
         assert resolved == target.resolve()
 
     def test_no_workspace_no_rewrite(self):
-        from nanobot.agent.tools.filesystem import _resolve_path
+        from kohaku.agent.tools.filesystem import _resolve_path
 
         # Without a workspace, /workspace/... stays as-is (no rewrite).
         resolved = _resolve_path("/workspace/foo.txt")

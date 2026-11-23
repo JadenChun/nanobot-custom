@@ -57,8 +57,8 @@ import {
 import { copyTextToClipboard } from "@/lib/clipboard";
 import type {
   ChannelValidationPayload,
-  NanobotFeatureInfo,
-  NanobotFeaturesPayload,
+  KohakuFeatureInfo,
+  KohakuFeaturesPayload,
 } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { useClient } from "@/providers/ClientProvider";
@@ -69,7 +69,7 @@ export function ChannelCatalogRow({
   showBrandLogos,
   onSelect,
 }: {
-  feature: NanobotFeatureInfo;
+  feature: KohakuFeatureInfo;
   selected: boolean;
   showBrandLogos: boolean;
   onSelect: () => void;
@@ -127,12 +127,12 @@ export function ChannelSetupPanel({
   onFeaturesUpdate,
 }: {
   token: string;
-  feature: NanobotFeatureInfo;
+  feature: KohakuFeatureInfo;
   actionKey: string | null;
   chatAppsDocsUrl?: string;
   showBrandLogos: boolean;
   onAction: (action: "enable" | "disable", name: string) => void;
-  onFeaturesUpdate: (payload: NanobotFeaturesPayload) => void;
+  onFeaturesUpdate: (payload: KohakuFeaturesPayload) => void;
 }) {
   const { t, i18n } = useTranslation();
   const tx = (key: string, fallback: string) => t(key, { defaultValue: fallback });
@@ -271,12 +271,12 @@ function ChannelSetupSurface({
   onFeaturesUpdate,
 }: {
   token: string;
-  feature: NanobotFeatureInfo;
+  feature: KohakuFeatureInfo;
   setup: ChannelSetupPresentation;
   chatAppsDocsUrl?: string;
   connectRequestId: number;
   ConnectFlow?: ComponentType<ChannelPluginConnectFlowProps>;
-  onFeaturesUpdate: (payload: NanobotFeaturesPayload) => void;
+  onFeaturesUpdate: (payload: KohakuFeaturesPayload) => void;
 }) {
   const { client } = useClient();
   const { t } = useTranslation();
@@ -304,7 +304,7 @@ function ChannelSetupSurface({
   const requirements = channelRequirements(feature, t);
   const summary = setup.summary ?? tx(
     "settings.channels.setupSummary",
-    "Enable only turns on nanobot support. Add the platform credentials, then restart nanobot.",
+    "Enable only turns on Kohaku support. Add the platform credentials, then restart Kohaku.",
   );
   const [fieldValues, setFieldValues] = useState<Record<string, string>>(() =>
     defaultChannelFieldValues(editableFields, feature.config_values),

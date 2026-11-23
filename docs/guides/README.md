@@ -1,4 +1,4 @@
-# nanobot Task Guides
+# Kohaku Task Guides
 
 Start with [Install and Quick Start](../quick-start.md) and get one reply before using a guide below. Each guide targets one outcome; linked reference pages hold the complete option tables and edge cases.
 
@@ -48,4 +48,4 @@ Use **Settings → Channels** in the WebUI for guided setup. These guides explai
 | Add Langfuse tracing | [Configure Langfuse observability](./configure-langfuse-observability.md) |
 | Understand folder access and workspaces | [Folder access and workspaces](./folder-access-and-workspaces.md) |
 | Secure local tools | [Secure a local AI agent](./secure-local-ai-agent.md) |
-| Deploy the gateway | [Deploy nanobot gateway](./deploy-nanobot-gateway.md) |
+| Deploy the gateway | [Deploy kohaku gateway](./deploy-kohaku-gateway.md) |

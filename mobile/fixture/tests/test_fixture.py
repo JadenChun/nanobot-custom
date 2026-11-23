@@ -1,4 +1,4 @@
-"""M02 fixture contract tests. These do not start or import a Nanobot agent."""
+"""M02 fixture contract tests. These do not start or import a Kohaku agent."""
 
 from __future__ import annotations
 
@@ -40,7 +40,7 @@ class FixtureProcess:
         if self.tls:
             import tempfile
 
-            directory = Path(tempfile.mkdtemp(prefix="nanobot-fixture-tls-"))
+            directory = Path(tempfile.mkdtemp(prefix="kohaku-fixture-tls-"))
             self.cert = directory / "cert.pem"
             self.key = directory / "key.pem"
             subprocess.run(
@@ -355,5 +355,5 @@ def test_tls_self_signed_is_rejected_by_default() -> None:
 
 def test_fixture_has_no_agent_imports() -> None:
     source = "\n".join(path.read_text(encoding="utf-8") for path in FIXTURE_DIR.glob("*.py"))
-    for forbidden in ("from nanobot", "import nanobot", "AgentLoop", "gateway_runtime"):
+    for forbidden in ("from kohaku", "import kohaku", "AgentLoop", "gateway_runtime"):
         assert forbidden not in source

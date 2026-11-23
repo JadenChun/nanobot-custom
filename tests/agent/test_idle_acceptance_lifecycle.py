@@ -7,13 +7,13 @@ import gc
 
 import pytest
 
-from nanobot.agent.idle_compaction import IdleCompactionPolicy
-from nanobot.agent.idle_lifecycle import IdleLifecycleIntegration
-from nanobot.agent.idle_runtime import IdleRuntimeBindingRegistry
-from nanobot.agent.idle_scanner import IdleCompactionScanner
-from nanobot.providers.base import GenerationSettings
-from nanobot.session.manager import JsonlSessionStore
-from nanobot.utils.llm_runtime import LLMRuntime
+from kohaku.agent.idle_compaction import IdleCompactionPolicy
+from kohaku.agent.idle_lifecycle import IdleLifecycleIntegration
+from kohaku.agent.idle_runtime import IdleRuntimeBindingRegistry
+from kohaku.agent.idle_scanner import IdleCompactionScanner
+from kohaku.providers.base import GenerationSettings
+from kohaku.session.manager import JsonlSessionStore
+from kohaku.utils.llm_runtime import LLMRuntime
 from tests.agent.idle_acceptance_support import NetworkDenial, make_harness
 
 

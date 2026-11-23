@@ -43,10 +43,10 @@ def _source_archive(root: Path) -> bytes:
             path = root / relative
             if not path.exists():
                 raise FileNotFoundError(path)
-            archive.add(path, arcname=Path("nanobot-tui-source/tui") / relative)
+            archive.add(path, arcname=Path("kohaku-tui-source/tui") / relative)
         archive.add(root.parent / "packages/client-events",
-                    arcname="nanobot-tui-source/packages/client-events")
-        archive.add(root.parent / "LICENSE", arcname="nanobot-tui-source/LICENSE")
+                    arcname="kohaku-tui-source/packages/client-events")
+        archive.add(root.parent / "LICENSE", arcname="kohaku-tui-source/LICENSE")
     return output.getvalue()
 
 
@@ -59,7 +59,7 @@ def main() -> None:
     root = Path(__file__).resolve().parent.parent
     project_root = root.parent
     extension = ".exe" if target.startswith("win32-") else ""
-    asset = f"nanobot-tui-{target}{extension}"
+    asset = f"kohaku-tui-{target}{extension}"
     dist = root / "dist"
 
     files = {
@@ -71,7 +71,7 @@ def main() -> None:
         "BUN-1.3.13-LICENSE.md": (root / "licenses" / "BUN-1.3.13-LICENSE.md").read_bytes(),
         "LGPL-2.0.txt": (root / "licenses" / "LGPL-2.0.txt").read_bytes(),
         "LGPL-2.1.txt": (root / "licenses" / "LGPL-2.1.txt").read_bytes(),
-        "nanobot-tui-source.tar.gz": _source_archive(root),
+        "kohaku-tui-source.tar.gz": _source_archive(root),
     }
     manifest = "".join(f"{_sha256(content)}  {name}\n" for name, content in files.items()).encode()
     files["MANIFEST.sha256"] = manifest

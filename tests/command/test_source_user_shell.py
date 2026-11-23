@@ -4,9 +4,9 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from nanobot.agent.tools.shell import ExecTool
-from nanobot.bus.events import INBOUND_META_USER_SHELL, InboundMessage
-from nanobot.command.builtin import USER_SHELL_COMMAND
+from kohaku.agent.tools.shell import ExecTool
+from kohaku.bus.events import INBOUND_META_USER_SHELL, InboundMessage
+from kohaku.command.builtin import USER_SHELL_COMMAND
 from tests.agent.p6_admitted_fixtures import AdmittedGraphs
 from tests.tools.p6_message_fixtures import execute_message, make_loop
 

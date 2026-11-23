@@ -6,7 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from nanobot.agent import idle_summary as idle
+from kohaku.agent import idle_summary as idle
 from tests.agent.test_idle_summary import _authority
 
 

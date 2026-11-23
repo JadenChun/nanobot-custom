@@ -10,18 +10,18 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from nanobot.agent import SubagentManager
-from nanobot.agent.hook import AgentHookContext
-from nanobot.agent.runner import AgentRunResult
-from nanobot.agent.subagent import (
+from kohaku.agent import SubagentManager
+from kohaku.agent.hook import AgentHookContext
+from kohaku.agent.runner import AgentRunResult
+from kohaku.agent.subagent import (
     SubagentStatus,
     _SubagentHook,
 )
-from nanobot.agent.tools.context import current_request_context
-from nanobot.agent.tools.registry import ToolRegistry
-from nanobot.bus.queue import MessageBus
-from nanobot.providers.base import GenerationSettings, LLMProvider, LLMUsage
-from nanobot.utils.llm_runtime import LLMRuntime
+from kohaku.agent.tools.context import current_request_context
+from kohaku.agent.tools.registry import ToolRegistry
+from kohaku.bus.queue import MessageBus
+from kohaku.providers.base import GenerationSettings, LLMProvider, LLMUsage
+from kohaku.utils.llm_runtime import LLMRuntime
 
 # ---------------------------------------------------------------------------
 # Helpers

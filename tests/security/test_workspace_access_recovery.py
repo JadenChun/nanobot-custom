@@ -8,11 +8,11 @@ from pathlib import Path
 
 import pytest
 
-from nanobot.context_repo import ContextRepoManager, ResourceAccessPolicy
-from nanobot.context_repo.policy import FolderAccessNeededError
-from nanobot.security.folder_grants import FolderGrantStore
-from nanobot.webui import workspaces as workspace_api
-from nanobot.workspace_access_recovery import (
+from kohaku.context_repo import ContextRepoManager, ResourceAccessPolicy
+from kohaku.context_repo.policy import FolderAccessNeededError
+from kohaku.security.folder_grants import FolderGrantStore
+from kohaku.webui import workspaces as workspace_api
+from kohaku.workspace_access_recovery import (
     parse_folder_access_need,
     parse_workspace_access_action_payload,
     parse_workspace_access_once_payload,
@@ -230,7 +230,7 @@ def test_legacy_private_runtime_path_stays_terminal_without_grant_store(
     credential.parent.mkdir(parents=True)
     credential.write_text("secret", encoding="utf-8")
     monkeypatch.setattr(
-        "nanobot.config.paths.get_config_path",
+        "kohaku.config.paths.get_config_path",
         lambda: instance / "config.json",
     )
     policy = ResourceAccessPolicy(
@@ -271,22 +271,22 @@ async def test_recovery_owner_reads_request_from_real_canonical_session(
     monkeypatch: pytest.MonkeyPatch,
     request: pytest.FixtureRequest,
 ) -> None:
-    from nanobot.bus.queue import MessageBus
-    from nanobot.security.folder_grants import FolderGrantStore
-    from nanobot.session.execution_owner import acquire_execution
-    from nanobot.session.manager import Session, SessionManager, SessionWriteConflict
-    from nanobot.session.turn_writer import SourceTurnWriter
-    from nanobot.session.workspace_access_continuation import (
+    from kohaku.bus.queue import MessageBus
+    from kohaku.security.folder_grants import FolderGrantStore
+    from kohaku.session.execution_owner import acquire_execution
+    from kohaku.session.manager import Session, SessionManager, SessionWriteConflict
+    from kohaku.session.turn_writer import SourceTurnWriter
+    from kohaku.session.workspace_access_continuation import (
         WorkspaceAccessContinuationReference,
         WorkspaceAccessContinuationRejectedError,
         workspace_access_continuation,
     )
-    from nanobot.session.workspace_access_recovery import (
+    from kohaku.session.workspace_access_recovery import (
         WorkspaceAccessActionError,
         WorkspaceAccessRecoveryOwner,
         admit_workspace_access_continuation,
     )
-    from nanobot.webui.workspaces import WebUIWorkspaceController
+    from kohaku.webui.workspaces import WebUIWorkspaceController
 
     home = tmp_path / "agent"
     instance = tmp_path / "instance"
@@ -381,7 +381,7 @@ async def test_recovery_owner_reads_request_from_real_canonical_session(
     )
     bus = MessageBus()
     owner = WorkspaceAccessRecoveryOwner(sessions, workspaces, bus)
-    from nanobot.session.webui_turns import websocket_turn_wall_started_at
+    from kohaku.session.webui_turns import websocket_turn_wall_started_at
 
     public_request = owner.get("chat-a")
 
@@ -466,11 +466,11 @@ async def test_recovery_owner_reads_request_from_real_canonical_session(
     assert inbound.session_key == session.key
     assert inbound.content == "Continue task"
     assert inbound.metadata["webui_turn_id"] == continued["continuation_turn_id"]
-    from nanobot.session.webui_turns import (
+    from kohaku.session.webui_turns import (
         clear_websocket_turn_if_current,
         websocket_turn_owner_is_registered,
     )
-    from nanobot.webui.metadata import WEBSOCKET_TURN_OWNER_METADATA_KEY
+    from kohaku.webui.metadata import WEBSOCKET_TURN_OWNER_METADATA_KEY
 
     lifecycle_owner = inbound.metadata.get(WEBSOCKET_TURN_OWNER_METADATA_KEY)
     assert isinstance(lifecycle_owner, str)
@@ -506,13 +506,13 @@ async def test_recovery_owner_reads_request_from_real_canonical_session(
         })
     assert replay.value.status == 409
 
-    from nanobot.agent.turn import (
+    from kohaku.agent.turn import (
         DeliveryTarget,
         HistoryMode,
         TurnRequest,
         TurnSource,
     )
-    from nanobot.agent.turn import TurnContext as RunTurnContext
+    from kohaku.agent.turn import TurnContext as RunTurnContext
 
     backend = sessions._jsonl_store
     async with acquire_execution(backend, session.key, run_id="9" * 32) as execution_owner:
@@ -551,7 +551,7 @@ async def test_recovery_owner_reads_request_from_real_canonical_session(
 def test_focus_cycle_and_new_input_permanently_invalidate_recovery_record(
     tmp_path: Path,
 ) -> None:
-    from nanobot.session.manager import Session, SessionManager
+    from kohaku.session.manager import Session, SessionManager
 
     home = tmp_path / "agent"
     alternate = tmp_path / "alternate"
@@ -632,7 +632,7 @@ def test_focus_cycle_and_new_input_permanently_invalidate_recovery_record(
         expected_latest_input_event_id=input_event_id,
     )
     latest = source.load_source_snapshot(key)
-    from nanobot.session.source import new_source_event
+    from kohaku.session.source import new_source_event
 
     accepted_input = new_source_event(
         {"role": "user", "content": "Now read the latest report"},
@@ -644,31 +644,31 @@ def test_focus_cycle_and_new_input_permanently_invalidate_recovery_record(
 
 @pytest.mark.asyncio
 async def test_request_persistence_commits_from_real_owned_gateway_turn(tmp_path: Path) -> None:
-    from nanobot.agent.loop import AgentRunResult, TurnKind
-    from nanobot.agent.loop import TurnContext as AgentTurnContext
-    from nanobot.agent.tools.context import RequestContext
-    from nanobot.agent.tools.workspace import FOLDER_ACCESS_SAFE_FINAL
-    from nanobot.agent.turn import (
+    from kohaku.agent.loop import AgentRunResult, TurnKind
+    from kohaku.agent.loop import TurnContext as AgentTurnContext
+    from kohaku.agent.tools.context import RequestContext
+    from kohaku.agent.tools.workspace import FOLDER_ACCESS_SAFE_FINAL
+    from kohaku.agent.turn import (
         HistoryMode,
         RunPolicyContext,
         TurnRequest,
         TurnSource,
     )
-    from nanobot.agent.turn import TurnContext as RunTurnContext
-    from nanobot.agent.turn_delivery import TurnDeliveryFactory
-    from nanobot.bus.events import InboundMessage
-    from nanobot.bus.queue import MessageBus
-    from nanobot.security.workspace_access import build_workspace_scope
-    from nanobot.session.execution_owner import acquire_execution
-    from nanobot.session.manager import Session, SessionManager
-    from nanobot.session.turn_writer import SourceTurnWriter
-    from nanobot.session.workspace_access_continuation import workspace_access_continuation
-    from nanobot.session.workspace_access_recovery import (
+    from kohaku.agent.turn import TurnContext as RunTurnContext
+    from kohaku.agent.turn_delivery import TurnDeliveryFactory
+    from kohaku.bus.events import InboundMessage
+    from kohaku.bus.queue import MessageBus
+    from kohaku.security.workspace_access import build_workspace_scope
+    from kohaku.session.execution_owner import acquire_execution
+    from kohaku.session.manager import Session, SessionManager
+    from kohaku.session.turn_writer import SourceTurnWriter
+    from kohaku.session.workspace_access_continuation import workspace_access_continuation
+    from kohaku.session.workspace_access_recovery import (
         WorkspaceAccessRecoveryOwner,
         admit_workspace_access_continuation,
         persist_folder_access_request,
     )
-    from nanobot.webui.metadata import WEBUI_TURN_METADATA_KEY
+    from kohaku.webui.metadata import WEBUI_TURN_METADATA_KEY
 
     home = tmp_path / "agent"
     home.mkdir()
@@ -809,7 +809,7 @@ async def test_request_persistence_commits_from_real_owned_gateway_turn(tmp_path
             continuation_owner,
             run_id=continuation_run_id,
         )
-        from nanobot.agent.turn import DeliveryTarget
+        from kohaku.agent.turn import DeliveryTarget
 
         continuation_context = RunTurnContext(
             request=TurnRequest(
@@ -883,8 +883,8 @@ async def test_request_persistence_commits_from_real_owned_gateway_turn(tmp_path
     assert repeated_request["task"] == public_request["task"]
     assert repeated_request["blocked_turn_id"] == continuation_turn_id
     assert repeated_request["access_request_id"] != public_request["access_request_id"]
-    from nanobot.session.webui_turns import clear_websocket_turn_if_current
-    from nanobot.webui.metadata import WEBSOCKET_TURN_OWNER_METADATA_KEY
+    from kohaku.session.webui_turns import clear_websocket_turn_if_current
+    from kohaku.webui.metadata import WEBSOCKET_TURN_OWNER_METADATA_KEY
 
     assert clear_websocket_turn_if_current(
         "chat-persist",

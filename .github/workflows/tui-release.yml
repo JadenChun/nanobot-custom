@@ -69,7 +69,7 @@ jobs:
         if: startsWith(matrix.target, 'darwin-')
         uses: indygreg/apple-code-sign-action@44d0985b7f4363198e80b6fea63ac3e9dd3e9957 # v1
         with:
-          input_path: tui/dist/nanobot-tui-${{ matrix.target }}
+          input_path: tui/dist/kohaku-tui-${{ matrix.target }}
           rcodesign_version: 0.29.0
 
       - name: Build notices and release archive
@@ -88,7 +88,7 @@ jobs:
         shell: bash
         run: |
           gh release view "$TAG" >/dev/null
-          asset="nanobot-tui-${TARGET}"
+          asset="kohaku-tui-${TARGET}"
           if [[ "$TARGET" == win32-* ]]; then asset="${asset}.exe"; fi
           gh release upload "$TAG" \
             "tui/dist/${asset}.zip" \

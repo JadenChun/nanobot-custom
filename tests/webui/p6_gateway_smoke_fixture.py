@@ -17,12 +17,12 @@ from stat import S_ISFIFO
 
 import pytest
 
-from nanobot.agent.tools.sandbox import managed_bwrap_available
-from nanobot.agent.tools.shell import ExecTool
-from nanobot.channels.websocket.runtime import WebSocketConfig
-from nanobot.cli.gateway_runtime import _run_gateway
-from nanobot.config.loader import load_config, set_config_path
-from nanobot.providers.unconfigured_provider import UnconfiguredProvider
+from kohaku.agent.tools.sandbox import managed_bwrap_available
+from kohaku.agent.tools.shell import ExecTool
+from kohaku.channels.websocket.runtime import WebSocketConfig
+from kohaku.cli.gateway_runtime import _run_gateway
+from kohaku.config.loader import load_config, set_config_path
+from kohaku.providers.unconfigured_provider import UnconfiguredProvider
 
 
 def main() -> None:
@@ -53,7 +53,7 @@ def main() -> None:
             sys.executable,
             "-I",
             "-m",
-            "nanobot.agent.tools.native_process_supervisor",
+            "kohaku.agent.tools.native_process_supervisor",
         ]:
             return False
         expected_flags = ["--gate-fd", "--status-fd", "--control-fd", "--config-fd"]
@@ -112,12 +112,12 @@ def main() -> None:
                 allowed_shell_commands.add(prepared.command)
             return await execute(self, *args, **kwargs)
 
-        patches.setattr("nanobot.migration_guard.require_runtime_ready", lambda: None)
+        patches.setattr("kohaku.migration_guard.require_runtime_ready", lambda: None)
         patches.setattr(UnconfiguredProvider, "chat", no_model_call)
         patches.setattr(ExecTool, "execute", execute_expected_smoke_command)
         # Memory Git history is independent of transport/recovery; do not run
         # its optional hook subprocesses in this exact-effect smoke fixture.
-        patches.setattr("nanobot.utils.gitstore.GitStore.init", lambda self: False)
+        patches.setattr("kohaku.utils.gitstore.GitStore.init", lambda self: False)
         _run_gateway(
             config,
             webui_static_dist=False,

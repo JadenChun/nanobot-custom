@@ -7,12 +7,12 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from nanobot.agent.runner import AgentRunner, AgentRunSpec
-from nanobot.agent.tools.base import Tool
-from nanobot.agent.tools.registry import ToolRegistry
-from nanobot.agent.turn import RunStatus
-from nanobot.providers.base import LLMProvider, LLMResponse, ToolCallRequest
-from nanobot.utils.llm_runtime import LLMRuntime
+from kohaku.agent.runner import AgentRunner, AgentRunSpec
+from kohaku.agent.tools.base import Tool
+from kohaku.agent.tools.registry import ToolRegistry
+from kohaku.agent.turn import RunStatus
+from kohaku.providers.base import LLMProvider, LLMResponse, ToolCallRequest
+from kohaku.utils.llm_runtime import LLMRuntime
 
 
 class _FixedTool(Tool):

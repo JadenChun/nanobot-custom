@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from nanobot.context_repo import ContextRepoManager, ResourceAccessPolicy
-from nanobot.security.folder_grants import FolderGrantStore
-from nanobot.webui.media_gateway import WebUIMediaGateway
+from kohaku.context_repo import ContextRepoManager, ResourceAccessPolicy
+from kohaku.security.folder_grants import FolderGrantStore
+from kohaku.webui.media_gateway import WebUIMediaGateway
 
 
 def _gateway(

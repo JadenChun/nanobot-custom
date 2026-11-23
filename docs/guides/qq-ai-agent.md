@@ -1,6 +1,6 @@
-# Build a QQ AI Agent with nanobot
+# Build a QQ AI Agent with Kohaku
 
-This guide connects nanobot to QQ through the official `qq` channel. The
+This guide connects Kohaku to QQ through the official `qq` channel. The
 official channel uses the botpy SDK and currently focuses on private messages.
 For QQ group chat and OneBot v11 workflows, use the Napcat section in the full
 chat-apps reference.
@@ -8,26 +8,27 @@ chat-apps reference.
 ## What this guide builds
 
 - a QQ bot application
-- the `qq` channel enabled in nanobot
+- the `qq` channel enabled in Kohaku
 - one pairing-approved QQ private sender
-- a running nanobot gateway
+- a running kohaku gateway
 
 ## Prerequisites
 
-- A working local nanobot reply:
+- A working local Kohaku reply:
 
 ```bash
-nanobot agent -m "Hello!"
+kohaku agent -m "Hello!"
 ```
 
 - Access to the QQ Open Platform.
 - A QQ account added to the bot sandbox for testing.
 
-## Install nanobot
+## Install Kohaku
 
 ```bash
-python -m pip install nanobot-ai
-nanobot onboard --wizard
+# Run from the root of a clone of this repository
+python -m pip install -e .
+kohaku onboard --wizard
 ```
 
 ## Enable the QQ channel
@@ -35,12 +36,12 @@ nanobot onboard --wizard
 Install the optional channel dependency:
 
 ```bash
-nanobot plugins enable qq
+kohaku plugins enable qq
 ```
 
 In the QQ Open Platform, create a bot application and copy the AppID and
 AppSecret. Add your QQ account to the sandbox test members, then merge this
-snippet into `~/.nanobot/config.json`:
+snippet into `~/.kohaku/config.json`:
 
 ```json
 {
@@ -58,11 +59,11 @@ snippet into `~/.nanobot/config.json`:
 Omitting `allowFrom` enables pairing-only mode. A new private sender should get
 a pairing code before normal agent access.
 
-## Run nanobot gateway
+## Run kohaku gateway
 
 ```bash
-nanobot channels status
-nanobot gateway
+kohaku channels status
+kohaku gateway
 ```
 
 ## Test a message
@@ -71,7 +72,7 @@ Send the QQ bot a private message from a sandbox account. It should return a
 pairing code. Approve it from a trusted local surface:
 
 ```bash
-nanobot agent -m "/pairing approve ABCD-EFGH"
+kohaku agent -m "/pairing approve ABCD-EFGH"
 ```
 
 Send the message again after approval.

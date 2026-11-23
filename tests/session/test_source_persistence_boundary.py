@@ -6,10 +6,10 @@ from pathlib import Path
 
 import pytest
 
-from nanobot.session import mode_storage, source_store
-from nanobot.session.manager import JsonlSessionStore
-from nanobot.session.source import SourceValidationError
-from nanobot.session.source_store import SourceSessionStore, SourceSnapshot, SourceState
+from kohaku.session import mode_storage, source_store
+from kohaku.session.manager import JsonlSessionStore
+from kohaku.session.source import SourceValidationError
+from kohaku.session.source_store import SourceSessionStore, SourceSnapshot, SourceState
 from tests.session.test_source_store import seed, upgrade
 
 KEY = "test:source-persistence"

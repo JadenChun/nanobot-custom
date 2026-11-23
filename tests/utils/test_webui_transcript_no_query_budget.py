@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from nanobot.webui.transcript import (
+from kohaku.webui.transcript import (
     append_transcript_object,
     build_webui_thread_response,
 )
@@ -25,8 +25,8 @@ def _contents(payload: dict) -> list[str]:
 
 
 def test_no_query_thread_response_uses_bounded_page(tmp_path, monkeypatch) -> None:
-    monkeypatch.setattr("nanobot.config.paths.get_data_dir", lambda: tmp_path)
-    monkeypatch.setattr("nanobot.webui.transcript._NO_QUERY_TRANSCRIPT_PAGE_LIMIT", 4)
+    monkeypatch.setattr("kohaku.config.paths.get_data_dir", lambda: tmp_path)
+    monkeypatch.setattr("kohaku.webui.transcript._NO_QUERY_TRANSCRIPT_PAGE_LIMIT", 4)
     key = "websocket:no-query-budget"
     chat_id = "no-query-budget"
     for idx in range(1, 7):

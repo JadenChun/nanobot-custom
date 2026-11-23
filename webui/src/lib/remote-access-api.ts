@@ -88,7 +88,7 @@ export function buildMobilePairingLink(
     origin: origin.trim().replace(/\/+$/, ""),
     challenge,
   });
-  return `nanobot://pair?${params.toString()}`;
+  return `kohaku://pair?${params.toString()}`;
 }
 
 async function request<T>(

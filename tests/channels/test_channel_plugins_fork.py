@@ -8,17 +8,17 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from nanobot.bus.events import OutboundMessage
-from nanobot.bus.outbound_events import (
+from kohaku.bus.events import OutboundMessage
+from kohaku.bus.outbound_events import (
     ProgressEvent,
     StreamDeltaEvent,
     StreamedResponseEvent,
     outbound_message_for_event,
 )
-from nanobot.bus.queue import MessageBus
-from nanobot.channels.base import BaseChannel
-from nanobot.channels.manager import ChannelManager
-from nanobot.config.schema import ChannelsConfig, Config
+from kohaku.bus.queue import MessageBus
+from kohaku.channels.base import BaseChannel
+from kohaku.channels.manager import ChannelManager
+from kohaku.config.schema import ChannelsConfig, Config
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -68,7 +68,7 @@ def _make_entry_point(name: str, cls: type):
 
 
 def _package_descriptor(channel_cls: type[BaseChannel]):
-    from nanobot.channels.plugin import ChannelPlugin
+    from kohaku.channels.plugin import ChannelPlugin
 
     return ChannelPlugin(
         name=channel_cls.name,
@@ -138,12 +138,12 @@ _EP_TARGET = "importlib.metadata.entry_points"
 
 
 def test_discover_plugins_loads_package_descriptors():
-    from nanobot.channels.registry import discover_plugins
+    from kohaku.channels.registry import discover_plugins
 
     plugin = _package_descriptor(_FakePlugin)
     with (
-        patch("nanobot.channels.registry._channel_package_names", return_value=["fakeplugin"]),
-        patch("nanobot.channels.registry.load_channel_package", return_value=plugin),
+        patch("kohaku.channels.registry._channel_package_names", return_value=["fakeplugin"]),
+        patch("kohaku.channels.registry.load_channel_package", return_value=plugin),
     ):
         result = discover_plugins()
 
@@ -151,11 +151,11 @@ def test_discover_plugins_loads_package_descriptors():
 
 
 def test_legacy_entry_points_are_not_auto_loaded():
-    from nanobot.channels.registry import discover_plugins
+    from kohaku.channels.registry import discover_plugins
 
     ep = _make_entry_point("line", _FakePlugin)
     with (
-        patch("nanobot.channels.registry._channel_package_names", return_value=[]),
+        patch("kohaku.channels.registry._channel_package_names", return_value=[]),
         patch(_EP_TARGET, return_value=[ep]) as entry_points,
     ):
         assert discover_plugins() == {}
@@ -163,14 +163,14 @@ def test_legacy_entry_points_are_not_auto_loaded():
 
 
 def test_discover_plugins_handles_load_error():
-    from nanobot.channels.registry import discover_plugins
+    from kohaku.channels.registry import discover_plugins
 
     def _boom(_name):
         raise RuntimeError("broken")
 
     with (
-        patch("nanobot.channels.registry._channel_package_names", return_value=["broken"]),
-        patch("nanobot.channels.registry.load_channel_package", side_effect=_boom),
+        patch("kohaku.channels.registry._channel_package_names", return_value=["broken"]),
+        patch("kohaku.channels.registry.load_channel_package", side_effect=_boom),
     ):
         result = discover_plugins()
 
@@ -182,7 +182,7 @@ def test_discover_plugins_handles_load_error():
 # ---------------------------------------------------------------------------
 
 def test_discover_all_includes_builtins():
-    from nanobot.channels.registry import discover_all, discover_plugins
+    from kohaku.channels.registry import discover_all, discover_plugins
 
     result = discover_all()
 
@@ -194,10 +194,10 @@ def test_discover_all_includes_builtins():
 
 
 def test_discover_all_loads_package_runtime():
-    from nanobot.channels.registry import discover_all
+    from kohaku.channels.registry import discover_all
 
     with patch(
-        "nanobot.channels.registry.discover_plugins",
+        "kohaku.channels.registry.discover_plugins",
         return_value={"fakeplugin": _package_descriptor(_FakePlugin)},
     ):
         result = discover_all()
@@ -206,8 +206,8 @@ def test_discover_all_loads_package_runtime():
 
 
 def test_discover_all_builtin_ignores_legacy_entry_point():
-    from nanobot.channels.registry import discover_all
-    from nanobot.channels.telegram.runtime import TelegramChannel
+    from kohaku.channels.registry import discover_all
+    from kohaku.channels.telegram.runtime import TelegramChannel
 
     ep = _make_entry_point("telegram", _FakeTelegram)
     with patch(_EP_TARGET, return_value=[ep]) as entry_points:
@@ -223,7 +223,7 @@ def test_discover_all_builtin_ignores_legacy_entry_point():
 
 async def test_manager_loads_plugin_from_dict_config(monkeypatch):
     """ChannelManager should instantiate a plugin channel from a raw dict config."""
-    from nanobot.channels.manager import ChannelManager
+    from kohaku.channels.manager import ChannelManager
 
     fake_config = Config.model_validate({
         "channels": {
@@ -232,7 +232,7 @@ async def test_manager_loads_plugin_from_dict_config(monkeypatch):
     })
 
     monkeypatch.setattr(
-        "nanobot.channels.registry.discover_plugins",
+        "kohaku.channels.registry.discover_plugins",
         lambda enabled_names=None: {"fakeplugin": _package_descriptor(_FakePlugin)},
     )
     mgr = await ChannelManager(fake_config, MessageBus()).acquire()
@@ -244,8 +244,8 @@ async def test_manager_loads_plugin_from_dict_config(monkeypatch):
 def test_channels_login_uses_discovered_plugin_class(monkeypatch):
     from typer.testing import CliRunner
 
-    from nanobot.cli.commands import app
-    from nanobot.config.schema import Config
+    from kohaku.cli.commands import app
+    from kohaku.config.schema import Config
 
     runner = CliRunner()
     seen: dict[str, object] = {}
@@ -258,9 +258,9 @@ def test_channels_login_uses_discovered_plugin_class(monkeypatch):
             seen["config"] = self.config
             return True
 
-    monkeypatch.setattr("nanobot.config.loader.load_config", lambda _path=None: Config())
+    monkeypatch.setattr("kohaku.config.loader.load_config", lambda _path=None: Config())
     monkeypatch.setattr(
-        "nanobot.channels.registry.discover_all",
+        "kohaku.channels.registry.discover_all",
         lambda: {"fakeplugin": _LoginPlugin},
     )
 
@@ -278,7 +278,7 @@ def test_manager_skips_disabled_plugin(monkeypatch):
     })
 
     monkeypatch.setattr(
-        "nanobot.channels.registry.discover_plugins",
+        "kohaku.channels.registry.discover_plugins",
         lambda enabled_names=None: {"fakeplugin": _package_descriptor(_FakePlugin)},
     )
     mgr = ChannelManager(fake_config, MessageBus())
@@ -292,7 +292,7 @@ def test_manager_skips_disabled_plugin(monkeypatch):
 
 def test_builtin_channel_default_config():
     """Built-in channels expose default_config() returning a dict with 'enabled': False."""
-    from nanobot.channels.telegram.runtime import TelegramChannel
+    from kohaku.channels.telegram.runtime import TelegramChannel
     cfg = TelegramChannel.default_config()
     assert isinstance(cfg, dict)
     assert cfg["enabled"] is False
@@ -301,7 +301,7 @@ def test_builtin_channel_default_config():
 
 def test_builtin_channel_init_from_dict():
     """Built-in channels accept a raw dict and convert to Pydantic internally."""
-    from nanobot.channels.telegram.runtime import TelegramChannel
+    from kohaku.channels.telegram.runtime import TelegramChannel
     bus = MessageBus()
     ch = TelegramChannel({"enabled": False, "token": "test-tok", "allowFrom": ["*"]}, bus)
     assert ch.config.token == "test-tok"
@@ -414,7 +414,7 @@ async def test_send_with_retry_retries_on_failure():
     msg = OutboundMessage(channel="failing", chat_id="123", content="test")
 
     # Patch asyncio.sleep to avoid actual delays
-    with patch("nanobot.channels.manager.asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
+    with patch("kohaku.channels.manager.asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
         await mgr._send_with_retry(mgr.channels["failing"], msg)
 
     assert call_count == 3  # 3 total attempts (initial + 2 retries)
@@ -454,7 +454,7 @@ async def test_send_with_retry_no_retry_when_max_is_zero():
 
     msg = OutboundMessage(channel="failing", chat_id="123", content="test")
 
-    with patch("nanobot.channels.manager.asyncio.sleep", new_callable=AsyncMock):
+    with patch("kohaku.channels.manager.asyncio.sleep", new_callable=AsyncMock):
         await mgr._send_with_retry(mgr.channels["failing"], msg)
 
     assert call_count == 1  # Called once but no retry (max(0, 1) = 1)
@@ -626,7 +626,7 @@ async def test_send_with_retry_propagates_cancelled_error_during_sleep():
     async def cancel_during_sleep(_):
         raise asyncio.CancelledError("cancelled during sleep")
 
-    with patch("nanobot.channels.manager.asyncio.sleep", side_effect=cancel_during_sleep):
+    with patch("kohaku.channels.manager.asyncio.sleep", side_effect=cancel_during_sleep):
         with pytest.raises(asyncio.CancelledError):
             await mgr._send_with_retry(mgr.channels["failing"], msg)
 

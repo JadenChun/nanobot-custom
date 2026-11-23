@@ -6,9 +6,9 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from nanobot.config.schema import Config, ProvidersConfig
-from nanobot.providers.openai_compat_provider import OpenAICompatProvider
-from nanobot.providers.registry import PROVIDERS, find_by_name
+from kohaku.config.schema import Config, ProvidersConfig
+from kohaku.providers.openai_compat_provider import OpenAICompatProvider
+from kohaku.providers.registry import PROVIDERS, find_by_name
 
 
 def test_opencode_config_fields_exist() -> None:
@@ -172,7 +172,7 @@ async def test_deepseek_history_reaches_transport_without_mutating_source(
     ]
     original = deepcopy(messages)
     create = AsyncMock(return_value=_chunks() if stream else _completion())
-    with patch("nanobot.providers.openai_compat_provider.AsyncOpenAI") as client:
+    with patch("kohaku.providers.openai_compat_provider.AsyncOpenAI") as client:
         client.return_value.chat.completions.create = create
         provider = OpenAICompatProvider(
             api_key="fixture", spec=find_by_name(provider_name), default_model=model,
@@ -205,7 +205,7 @@ async def test_opencode_minimax_rejected_before_transport(
     stream, provider_name, prefix, api_type,
 ) -> None:
     create = AsyncMock(return_value=_completion())
-    with patch("nanobot.providers.openai_compat_provider.AsyncOpenAI") as client:
+    with patch("kohaku.providers.openai_compat_provider.AsyncOpenAI") as client:
         client.return_value.chat.completions.create = create
         provider = OpenAICompatProvider(
             api_key="fixture", spec=find_by_name(provider_name),
@@ -230,7 +230,7 @@ async def test_opencode_minimax_rejected_before_transport(
 ])
 async def test_other_gateway_models_keep_existing_transport_contract(provider_name, model) -> None:
     create = AsyncMock(return_value=_completion())
-    with patch("nanobot.providers.openai_compat_provider.AsyncOpenAI") as client:
+    with patch("kohaku.providers.openai_compat_provider.AsyncOpenAI") as client:
         client.return_value.chat.completions.create = create
         provider = OpenAICompatProvider(
             api_key="fixture", spec=find_by_name(provider_name), default_model=model,

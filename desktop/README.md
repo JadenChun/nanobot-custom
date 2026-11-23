@@ -1,10 +1,10 @@
-# Kohaku desktop app
+# kohaku desktop app
 
 The native bundle contains the Tauri setup/status shell, its local UI, the application
 icon, license notices, and `backend-compat.json`. It does not install Python,
 the WebUI chat, pip packages, or a gateway service. The setup window selects a
 config and an installed interpreter; the shell uses that absolute interpreter
-to run `-I -m nanobot.desktop` over a private inherited NDJSON pipe.
+to run `-I -m kohaku.desktop` over a private inherited NDJSON pipe.
 
 ## macOS
 
@@ -19,7 +19,7 @@ cargo tauri build --bundles app -- --locked
 Install the resulting `Kohaku.app` into an Applications folder.
 The local build is ad hoc signed, not notarized. Select a matching Python
 environment: macOS additionally requires the `darwin-identity-stop-v1` backend
-capability, so an older Nanobot 0.3.0 wheel is not sufficient. The native window
+capability, so the legacy Nanobot 0.3.0 wheel is not sufficient. The native window
 uses WKWebView to render the shared chat UI; it is not a browser shortcut.
 
 See [macOS usage and validation](MACOS.md) for config requirements, behavior,

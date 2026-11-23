@@ -8,10 +8,10 @@ from pathlib import Path
 
 import pytest
 
-from nanobot.session.manager import Session, SessionManager, SessionStorageError
-from nanobot.session.runtime_authority import OfflineSessionOperator
-from nanobot.session.session_export import export_canonical_session
-from nanobot.session.session_mode import SessionExportTransaction, SessionModeError
+from kohaku.session.manager import Session, SessionManager, SessionStorageError
+from kohaku.session.runtime_authority import OfflineSessionOperator
+from kohaku.session.session_export import export_canonical_session
+from kohaku.session.session_mode import SessionExportTransaction, SessionModeError
 
 
 def _canonical_json(value: object) -> bytes:

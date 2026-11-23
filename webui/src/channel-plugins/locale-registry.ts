@@ -12,7 +12,7 @@ type ChannelMessagesModule = {
 type ChannelMessagesLoader = () => Promise<ChannelMessagesModule>;
 
 const modules = import.meta.glob<ChannelMessagesModule>(
-  "../../../nanobot/channels/*/webui/locales/*.json",
+  "../../../kohaku/channels/*/webui/locales/*.json",
 );
 
 const loadersByChannel = new Map<
@@ -23,7 +23,7 @@ const translationsByChannel = new Map<string, Map<SupportedLocale, ChannelMessag
 const supportedLocaleCodes = new Set<string>(supportedLocales.map(({ code }) => code));
 
 for (const [modulePath, loader] of Object.entries(modules)) {
-  const match = modulePath.match(/nanobot\/channels\/([^/]+)\/webui\/locales\/([^/]+)\.json$/);
+  const match = modulePath.match(/kohaku\/channels\/([^/]+)\/webui\/locales\/([^/]+)\.json$/);
   if (!match) {
     throw new Error(`Cannot derive channel locale identity from '${modulePath}'`);
   }

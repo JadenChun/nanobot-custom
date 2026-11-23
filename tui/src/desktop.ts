@@ -8,8 +8,8 @@ export interface DesktopConnectionSource {
 }
 
 export function desktopConnectionSource(environment: Environment = process.env): DesktopConnectionSource | undefined {
-  const rawCommand = environment.NANOBOT_TUI_DESKTOP_RESOLVER
-  const rawTarget = environment.NANOBOT_TUI_DESKTOP_TARGET
+  const rawCommand = environment.KOHAKU_TUI_DESKTOP_RESOLVER
+  const rawTarget = environment.KOHAKU_TUI_DESKTOP_TARGET
   if (!rawCommand && !rawTarget) return undefined
   try {
     const command: unknown = JSON.parse(rawCommand || "")

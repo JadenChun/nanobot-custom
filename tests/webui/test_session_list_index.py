@@ -13,17 +13,17 @@ import pytest
 from websockets.datastructures import Headers
 from websockets.http11 import Request
 
-import nanobot.webui.session_list_index as session_list_index
-from nanobot.cron.session_turns import CRON_HISTORY_META
-from nanobot.providers.base import ProviderConversationState
-from nanobot.security.workspace_access import WORKSPACE_SCOPE_METADATA_KEY
-from nanobot.session.automation_turns import AUTOMATION_HISTORY_META
-from nanobot.session.history_visibility import HIDDEN_HISTORY_META
-from nanobot.session.manager import SessionManager
-from nanobot.session.model_selection import SESSION_MODEL_PRESET_METADATA_KEY
-from nanobot.session.recovery import RECOVERY_METADATA_KEY
-from nanobot.session.runtime_authority import DurableSessionAuthority
-from nanobot.session.session_handles import SESSION_HANDLE_METADATA_KEY, session_handle_for_name
+import kohaku.webui.session_list_index as session_list_index
+from kohaku.cron.session_turns import CRON_HISTORY_META
+from kohaku.providers.base import ProviderConversationState
+from kohaku.security.workspace_access import WORKSPACE_SCOPE_METADATA_KEY
+from kohaku.session.automation_turns import AUTOMATION_HISTORY_META
+from kohaku.session.history_visibility import HIDDEN_HISTORY_META
+from kohaku.session.manager import SessionManager
+from kohaku.session.model_selection import SESSION_MODEL_PRESET_METADATA_KEY
+from kohaku.session.recovery import RECOVERY_METADATA_KEY
+from kohaku.session.runtime_authority import DurableSessionAuthority
+from kohaku.session.session_handles import SESSION_HANDLE_METADATA_KEY, session_handle_for_name
 from tests.webui.test_child_thread_route import _make_channel
 
 

@@ -8,16 +8,16 @@ from pathlib import Path
 
 import pytest
 
-from nanobot.agent.skills import BUILTIN_SKILLS_DIR, SkillsLoader
-from nanobot.agent.tools.filesystem import ReadFileTool, WriteFileTool
-from nanobot.agent.tools.repositories import SaveKnowledgeTool
-from nanobot.context_repo.catalog import RepositoryCatalog, RepositoryEntry
-from nanobot.security.workspace_access import (
+from kohaku.agent.skills import BUILTIN_SKILLS_DIR, SkillsLoader
+from kohaku.agent.tools.filesystem import ReadFileTool, WriteFileTool
+from kohaku.agent.tools.repositories import SaveKnowledgeTool
+from kohaku.context_repo.catalog import RepositoryCatalog, RepositoryEntry
+from kohaku.security.workspace_access import (
     bind_workspace_scope,
     build_workspace_scope,
     reset_workspace_scope,
 )
-from nanobot.utils.workspace_prompts import load_workspace_prompt_override
+from kohaku.utils.workspace_prompts import load_workspace_prompt_override
 
 
 def _skill_entry(entries, name: str):
@@ -37,7 +37,7 @@ def _entry_field(entry, field: str):
 def _load_video_script():
     script = (
         Path(__file__).resolve().parents[2]
-        / "nanobot"
+        / "kohaku"
         / "skills"
         / "video-understanding"
         / "scripts"

@@ -9,9 +9,9 @@ from pathlib import Path
 
 import pytest
 
-from nanobot.runtime_context import public_history_message
-from nanobot.session.execution_owner import ExecutionBusyError, acquire_execution
-from nanobot.session.input_attempt import (
+from kohaku.runtime_context import public_history_message
+from kohaku.session.execution_owner import ExecutionBusyError, acquire_execution
+from kohaku.session.input_attempt import (
     InputAttempt,
     InputAttemptConflictError,
     InputAttemptSource,
@@ -19,9 +19,9 @@ from nanobot.session.input_attempt import (
     fingerprint,
     principal_tag,
 )
-from nanobot.session.manager import JsonlSessionStore, Session
-from nanobot.session.source import new_source_event
-from nanobot.session.turn_writer import SourceTurnWriter
+from kohaku.session.manager import JsonlSessionStore, Session
+from kohaku.session.source import new_source_event
+from kohaku.session.turn_writer import SourceTurnWriter
 from tests.session.test_source_store import candidate
 
 

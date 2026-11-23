@@ -1,0 +1,1331 @@
+"""Configuration schema using Pydantic."""
+from __future__ import annotations
+
+import math
+import os
+from collections.abc import Iterable, Mapping
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, cast
+
+from pydantic import (
+    AliasChoices,
+    ConfigDict,
+    Field,
+    PrivateAttr,
+    StrictBool,
+    StrictFloat,
+    StrictInt,
+    field_validator,
+    model_validator,
+)
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from kohaku.config.legacy_h1 import consume_retired_telegram_busy
+from kohaku.config.timezone import detect_system_timezone
+from kohaku.config_base import Base
+from kohaku.cron.types import CronSchedule
+
+if TYPE_CHECKING:
+    from kohaku.agent.tools.cli_apps import CliAppsToolConfig
+    from kohaku.agent.tools.filesystem import FileToolsConfig
+    from kohaku.agent.tools.image_generation import ImageGenerationToolConfig
+    from kohaku.agent.tools.self import MyToolConfig
+    from kohaku.agent.tools.shell import ExecToolConfig
+    from kohaku.agent.tools.web import WebToolsConfig
+
+
+class MaxTokensConfig(Base):
+    """Token limits configuration."""
+
+    input: int = 120000
+    output: int = 4096
+
+
+class FallbackEntry(Base):
+    """One entry in the provider fallback chain."""
+
+    provider: str  # Provider name, e.g. "gemini"
+    model: str
+
+class ContextRepoConfig(Base):
+    """Optional advanced overrides for an attached context repository."""
+
+    path: str
+    read_only: bool = False
+    allow_exec: StrictBool = Field(
+        default=True,
+        validation_alias=AliasChoices("allowExec", "allow_exec"),
+        serialization_alias="allowExec",
+    )
+    auto_sync: bool = True
+    credential_profile: str | None = None
+    manifest: str = "nanobot.context.json"
+    target_repo_paths: dict[str, str] = Field(default_factory=dict)
+
+class CrawlerAgentConfig(Base):
+    """Dedicated low-cost model used by the foreground crawler role."""
+
+    enabled: bool = False
+    provider: str | None = None
+    model: str | None = None
+    max_tokens: MaxTokensConfig = Field(
+        default_factory=lambda: MaxTokensConfig(input=20000, output=2000)
+    )
+    max_tool_iterations: int = Field(default=20, ge=1, le=100)
+    reasoning_effort: str | None = "low"
+
+class AgentBrowserConfig(Base):
+    """Agent Browser tool configuration."""
+
+    enabled: bool = True
+    package: str = "agent-browser"
+    timeout: int = 180
+    max_output_chars: int = 12000
+    # Shared browser session. When ``cdp_url`` is reachable the tool attaches to
+    # that Chromium instead of launching an isolated profile, so the agent uses
+    # the same cookies and sign-ins as the user.
+    cdp_url: str = ""
+    pin_tab: bool = True
+    session: str = "default"
+    # Launch command used to start the shared browser when the CDP endpoint is
+    # not yet listening (for example the ``chrome-agent`` wrapper).
+    launch_command: str = ""
+    launch_wait_seconds: int = 20
+    executable_path: str = ""
+
+class AgentDeviceConfig(Base):
+    """Agent Device tool configuration."""
+
+    enabled: bool = True
+    package: str = "agent-device"
+    timeout: int = 180
+    max_output_chars: int = 12000
+
+class DesktopUseConfig(Base):
+    """Desktop-use tool configuration (pure-Python, stateless).
+
+    Stateless desktop driver: no daemon, no AX tree. Each call is a
+    one-shot OS-level event (CGEvent on macOS). The model works from
+    screenshots + pixel coordinates, like Anthropic's ``computer-use-demo``
+    and OpenAI's Operator agent.
+
+    Disabled by default. macOS requires the PyObjC frameworks
+    (``pip install 'kohaku[desktop]'``) plus Accessibility and Screen
+    Recording permissions in System Settings > Privacy & Security.
+    Windows / Linux backends are not yet implemented.
+    """
+
+    enabled: bool = False
+    screenshot_delay: float = 0.5  # seconds to wait before capturing (let UI settle)
+    typing_delay_ms: int = 12  # per-character delay during `type`
+    scaling_enabled: bool = True  # downscale coords to XGA/WXGA/FWXGA
+    max_output_chars: int = 12000
+    humanize_typing: bool = True
+
+class ImageConfig(Base):
+    """Image generation configuration."""
+    provider: str = "codex_cli"
+    model: str = "bytedance-seed/seedream-4.5"
+    api_key: str = ""
+    api_base: str = "https://openrouter.ai/api/v1"
+    codex_command: str = "codex"
+    codex_model: str = "gpt-5.4-mini"
+    codex_timeout: int = 300
+    codex_home: str = ""
+
+class ChannelsConfig(Base):
+    """Configuration for chat channels.
+
+    Built-in and plugin channel configs are stored as extra fields (dicts).
+    Each channel parses its own config in __init__.
+    Per-channel "streaming": true enables streaming output (requires send_delta impl).
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    @model_validator(mode="before")
+    @classmethod
+    def preserve_fork_activation_defaults(cls, value: Any) -> Any:
+        if not isinstance(value, dict):
+            return value
+        data = dict(cast(dict[object, object], value))
+        websocket = data.get("websocket")
+        if websocket is None:
+            data["websocket"] = {"enabled": False}
+        elif isinstance(websocket, dict):
+            data["websocket"] = {"enabled": False, **cast(dict[object, object], websocket)}
+        if "taskUpdateMode" not in data and "task_update_mode" not in data and "sendProgress" in data:
+            data["taskUpdateMode"] = "verbose" if data["sendProgress"] else "result"
+        return data
+
+    websocket: dict[str, Any] = Field(default_factory=lambda: {"enabled": False})
+    task_update_mode: Literal["result", "verbose"] = "verbose"
+
+    send_progress: bool = True  # stream agent's text progress to the channel
+    send_tool_hints: bool = False  # stream tool-call hints (e.g. read_file("…"))
+    show_reasoning: bool = True  # surface model reasoning when channel implements it
+    extract_document_text: bool = True  # Deprecated and ignored; documents are read on demand
+    send_max_retries: int = Field(default=3, ge=0, le=10)  # Max delivery attempts (initial send included)
+    transcription_provider: str = "groq"  # Deprecated: use top-level transcription.provider
+    transcription_language: str | None = Field(default=None, pattern=r"^[a-z]{2,3}$")  # Deprecated: use top-level transcription.language
+
+
+class TranscriptionConfig(Base):
+    """Cross-channel audio transcription configuration."""
+
+    enabled: bool = True
+    provider: str | None = None  # Validated by kohaku.audio.transcription_registry.
+    model: str | None = None
+    language: str | None = Field(default=None, pattern=r"^[a-z]{2,3}$")
+    max_duration_sec: int = Field(default=120, ge=1, le=600)
+    max_upload_mb: int = Field(default=25, ge=1, le=100)
+
+
+class DreamConfig(Base):
+    """Dream memory consolidation configuration."""
+
+    _HOUR_MS = 3_600_000
+
+    enabled: bool = False  # Compatibility intent; periodic Dream is not installed by the gateway
+    interval_h: int = Field(default=2, ge=1)  # Every 2 hours by default
+    cron: str | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+    )  # Legacy cron expression override
+    model_override: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("modelOverride", "model", "model_override"),
+    )  # Model preset name for Dream sessions
+
+    def build_schedule(self, timezone: str) -> CronSchedule:
+        """Build the runtime schedule, preferring the legacy cron override if present."""
+        if self.cron:
+            return CronSchedule(kind="cron", expr=self.cron, tz=timezone)
+        return CronSchedule(kind="every", every_ms=self.interval_h * self._HOUR_MS)
+
+    def describe_schedule(self) -> str:
+        """Return a human-readable summary for logs and startup output."""
+        if self.cron:
+            return f"cron {self.cron} (legacy)"
+        hours = self.interval_h
+        return f"every {hours}h"
+
+
+class InlineFallbackConfig(Base):
+    """One inline fallback model configuration."""
+
+    model: str
+    provider: str
+    max_tokens: int | None = None
+    context_window_tokens: int | None = None
+    temperature: float | None = None
+    reasoning_effort: str | None = None
+
+
+FallbackCandidate = str | InlineFallbackConfig
+
+
+class ModelPresetConfig(Base):
+    """A named set of model + generation parameters for quick switching."""
+
+    model: str
+    provider: str = "auto"
+    max_tokens: int = 8192
+    context_window_tokens: int = 200_000
+    temperature: float = 0.1
+    reasoning_effort: str | None = None
+
+    def to_generation_settings(self) -> Any:
+        from kohaku.providers.base import GenerationSettings
+        return GenerationSettings(
+            temperature=self.temperature,
+            max_tokens=self.max_tokens,
+            reasoning_effort=self.reasoning_effort,
+        )
+
+
+class IdleCompactionConfig(Base):
+    """Dormant configuration contract for future idle compaction activation.
+
+    This model only validates and preserves configuration. It does not build a
+    coordinator, enumerate sessions, resolve a provider, or create tasks.
+    Runtime activation remains owned by a later integration package.
+    """
+
+    _ALIASES: ClassVar[tuple[tuple[str, str], ...]] = (
+        ("idle_ttl_seconds", "idleTtlSeconds"),
+        ("scan_interval_seconds", "scanIntervalSeconds"),
+        ("queue_capacity", "queueCapacity"),
+        ("max_concurrent_jobs", "maxConcurrentJobs"),
+        ("max_auxiliary_calls", "maxAuxiliaryCalls"),
+        ("max_auxiliary_tokens", "maxAuxiliaryTokens"),
+        ("max_input_tokens", "maxInputTokens"),
+        ("max_output_tokens", "maxOutputTokens"),
+        ("max_chunks", "maxChunks"),
+        ("max_auxiliary_wall_seconds", "maxAuxiliaryWallSeconds"),
+        ("initial_backoff_seconds", "initialBackoffSeconds"),
+        ("max_backoff_seconds", "maxBackoffSeconds"),
+        ("summary_model_preset", "summaryModelPreset"),
+    )
+
+    enabled: StrictBool = False
+    idle_ttl_seconds: StrictFloat = 0.0
+    scan_interval_seconds: StrictFloat | None = None
+    queue_capacity: StrictInt | None = Field(default=None, gt=0)
+    max_concurrent_jobs: StrictInt | None = Field(default=None, gt=0)
+    max_auxiliary_calls: StrictInt | None = Field(default=None, gt=0)
+    max_auxiliary_tokens: StrictInt | None = Field(default=None, gt=0)
+    max_input_tokens: StrictInt | None = Field(default=None, gt=0)
+    max_output_tokens: StrictInt | None = Field(default=None, gt=0)
+    max_chunks: StrictInt | None = Field(default=None, gt=0)
+    max_auxiliary_wall_seconds: StrictFloat | None = None
+    initial_backoff_seconds: StrictFloat | None = None
+    max_backoff_seconds: StrictFloat | None = None
+    summary_model_preset: str | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def reject_alias_duplicates(cls, value: Any) -> Any:
+        """Reject ambiguous input when both generated aliases are supplied."""
+        if not isinstance(value, Mapping):
+            return value
+        data = dict(cast(Mapping[object, object], value))
+        for snake_name, camel_name in cls._ALIASES:
+            if snake_name in data and camel_name in data:
+                raise ValueError(
+                    f"Specify only one of {camel_name!r} or {snake_name!r}"
+                )
+        return data
+
+    @field_validator("idle_ttl_seconds")
+    @classmethod
+    def validate_idle_ttl_seconds(cls, value: float) -> float:
+        if not math.isfinite(value) or value < 0:
+            raise ValueError("idle_ttl_seconds must be a finite non-negative number")
+        return value
+
+    @field_validator(
+        "scan_interval_seconds",
+        "max_auxiliary_wall_seconds",
+        "initial_backoff_seconds",
+        "max_backoff_seconds",
+    )
+    @classmethod
+    def validate_positive_seconds(cls, value: float | None) -> float | None:
+        if value is not None and (not math.isfinite(value) or value <= 0):
+            raise ValueError("idle compaction duration values must be finite and positive")
+        return value
+
+    @field_validator("summary_model_preset")
+    @classmethod
+    def validate_summary_model_preset(cls, value: str | None) -> str | None:
+        if value is not None and not value.strip():
+            raise ValueError("summary_model_preset must be a non-empty preset name")
+        return value
+
+    @model_validator(mode="after")
+    def validate_enabled_contract(self) -> "IdleCompactionConfig":
+        if (
+            self.initial_backoff_seconds is not None
+            and self.max_backoff_seconds is not None
+            and self.initial_backoff_seconds > self.max_backoff_seconds
+        ):
+            raise ValueError("initial_backoff_seconds cannot exceed max_backoff_seconds")
+        if not self.enabled:
+            return self
+
+        missing = [
+            name
+            for name in (
+                "scan_interval_seconds",
+                "queue_capacity",
+                "max_concurrent_jobs",
+                "max_auxiliary_calls",
+                "max_auxiliary_tokens",
+                "max_input_tokens",
+                "max_output_tokens",
+                "max_chunks",
+                "max_auxiliary_wall_seconds",
+                "initial_backoff_seconds",
+                "max_backoff_seconds",
+                "summary_model_preset",
+            )
+            if getattr(self, name) is None
+        ]
+        if self.idle_ttl_seconds <= 0:
+            missing.append("idle_ttl_seconds > 0")
+        if missing:
+            raise ValueError(
+                "enabled idle compaction requires every operational field; "
+                f"missing or invalid: {', '.join(missing)}"
+            )
+        return self
+
+
+class SourceCompactionConfig(Base):
+    """Foreground source-summary stream and whole-operation time limits."""
+
+    _ALIASES: ClassVar[tuple[tuple[str, str], ...]] = (
+        ("idle_timeout_seconds", "idleTimeoutSeconds"),
+        ("overall_timeout_seconds", "overallTimeoutSeconds"),
+        ("pressure_trigger_ratio", "pressureTriggerRatio"),
+        ("target_ratio", "targetRatio"),
+        ("summary_generation_tokens", "summaryGenerationTokens"),
+    )
+
+    idle_timeout_seconds: float = Field(default=300.0, gt=0, allow_inf_nan=False)
+    overall_timeout_seconds: float = Field(default=900.0, gt=0, allow_inf_nan=False)
+    pressure_trigger_ratio: float = Field(default=0.9, gt=0, le=1, allow_inf_nan=False)
+    target_ratio: float = Field(default=0.6, gt=0, le=1, allow_inf_nan=False)
+    summary_generation_tokens: int | None = Field(default=None, gt=0)
+
+    @model_validator(mode="before")
+    @classmethod
+    def reject_alias_duplicates(cls, value: Any) -> Any:
+        if not isinstance(value, Mapping):
+            return value
+        data = dict(cast(Mapping[object, object], value))
+        for snake_name, camel_name in cls._ALIASES:
+            if snake_name in data and camel_name in data:
+                raise ValueError(f"Specify only one of {camel_name!r} or {snake_name!r}")
+        for name in (
+            "idleTimeoutSeconds", "idle_timeout_seconds",
+            "overallTimeoutSeconds", "overall_timeout_seconds",
+        ):
+            if name not in data:
+                continue
+            raw = data[name]
+            if isinstance(raw, bool) or not isinstance(raw, (int, float)):
+                raise ValueError(f"{name} must be a finite positive number")
+            if not math.isfinite(raw) or raw <= 0:
+                raise ValueError(f"{name} must be a finite positive number")
+        return data
+
+    @model_validator(mode="after")
+    def validate_ratios(self) -> "SourceCompactionConfig":
+        if self.target_ratio >= self.pressure_trigger_ratio:
+            raise ValueError("target_ratio must be below pressure_trigger_ratio")
+        return self
+
+
+class DelegationTreeConfig(Base):
+    """Finite delegated-child limits for one gateway runtime."""
+
+    max_depth: StrictInt = Field(default=2, ge=1, le=2)
+    max_live_children_per_parent: StrictInt = Field(default=2, ge=1, le=2)
+    max_live_descendants: StrictInt = Field(default=4, ge=2, le=4)
+    max_live_children_per_gateway: StrictInt = Field(default=4, ge=1, le=4)
+
+    @model_validator(mode="after")
+    def validate_child_limits(self) -> "DelegationTreeConfig":
+        if self.max_live_descendants < self.max_live_children_per_parent:
+            raise ValueError("root descendant limit must hold one parent's children")
+        return self
+
+
+class AgentDefaults(Base):
+    """Default agent configuration."""
+
+    fallback: list[FallbackEntry] = Field(default_factory=list)
+    context_paths: list[str] = Field(default_factory=list)
+    context_repos: list[str | ContextRepoConfig] = Field(default_factory=list)
+    tool_result_clearing_keep: int = 3
+    consolidation_trigger_ratio: float = 0.5
+    consolidation_target_ratio: float = 0.3
+
+    @model_validator(mode="before")
+    @classmethod
+    def reject_idle_compaction_alias_duplicates(cls, value: Any) -> Any:
+        if isinstance(value, Mapping):
+            data = dict(cast(Mapping[object, object], value))
+            if "idleCompaction" in data and "idle_compaction" in data:
+                raise ValueError(
+                    "Specify only one of 'idleCompaction' or 'idle_compaction'"
+                )
+            if "sourceCompaction" in data and "source_compaction" in data:
+                raise ValueError(
+                    "Specify only one of 'sourceCompaction' or 'source_compaction'"
+                )
+            if "idleCompactAfterMinutes" in data and "sessionTtlMinutes" in data:
+                raise ValueError(
+                    "Specify only one of 'idleCompactAfterMinutes' or "
+                    "'sessionTtlMinutes'"
+                )
+            if (
+                "idleCompactCheckIntervalSeconds" in data
+                and "idle_compact_check_interval_seconds" in data
+            ):
+                raise ValueError(
+                    "Specify only one of 'idleCompactCheckIntervalSeconds' or "
+                    "'idle_compact_check_interval_seconds'"
+                )
+        return cast(object, value)
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_fork_tokens(cls, value: Any) -> Any:
+        if not isinstance(value, dict):
+            return value
+        # The before-validator receives untrusted Python/JSON input. Keep its
+        # values opaque until Pydantic validates the normalized fields.
+        data = dict(cast(dict[object, object], value))
+        raw = data.get("maxTokens", data.get("max_tokens"))
+        legacy_input = data.pop("maxInputTokens", None)
+        if isinstance(raw, dict):
+            token_fields = cast(dict[object, object], raw)
+            explicit = data.get("contextWindowTokens", data.get("context_window_tokens"))
+            fallback = legacy_input if legacy_input is not None else explicit
+            total = token_fields.get("input", fallback if fallback is not None else 120000)
+            data.pop("maxTokens", None)
+            data.pop("max_tokens", None)
+            data["max_tokens"] = token_fields.get("output", 4096)
+            data["context_window_tokens"] = total
+            data.pop("contextWindowTokens", None)
+        elif legacy_input is not None:
+            # Staging gave maxInputTokens precedence over contextWindowTokens.
+            # Remove the camel-case alias before supplying the canonical field,
+            # otherwise Pydantic would prefer the stale alias over this value.
+            data.pop("contextWindowTokens", None)
+            data["context_window_tokens"] = legacy_input
+        if "context_path" in data or "contextPath" in data:
+            path = data.pop("context_path", data.pop("contextPath", None))
+            if path:
+                existing_paths = data.get("context_paths", data.get("contextPaths", ()))
+                if not isinstance(existing_paths, Iterable):
+                    raise ValueError("context_paths must be iterable")
+                paths = list(cast(Iterable[object], existing_paths))
+                paths.append(path)
+                data.pop("contextPaths", None)
+                data["context_paths"] = paths
+        return data
+
+    workspace: str = "~/.kohaku/workspace"
+    model_preset: str | None = None  # Active preset name — takes precedence over fields below
+    model: str = "anthropic/claude-opus-4-5"
+    provider: str = (
+        "auto"  # Provider name (e.g. "anthropic", "openrouter") or "auto" for auto-detection
+    )
+    max_tokens: int = 4096
+    context_window_tokens: int = 120_000
+    temperature: float = 0.1
+    fallback_models: list[FallbackCandidate] = Field(default_factory=list)
+    max_tool_iterations: int = 200
+    max_concurrent_subagents: int = Field(default=4, ge=1)
+    delegation_tree: DelegationTreeConfig = Field(default_factory=DelegationTreeConfig)
+    max_tool_result_chars: int = 16_000
+    provider_retry_mode: Literal["standard", "persistent"] = "standard"
+    tool_hint_max_length: int = Field(
+        default=40,
+        ge=20,
+        le=500,
+        validation_alias=AliasChoices("toolHintMaxLength"),
+        serialization_alias="toolHintMaxLength",
+    )  # Max characters for tool hint display (e.g. "$ cd …/project && npm test")
+    reasoning_effort: str | None = None  # low / medium / high / xhigh / max / adaptive / none — LLM thinking effort; None preserves the provider default
+    timezone: str = "UTC"  # Effective IANA timezone, e.g. "Asia/Shanghai"
+    timezone_mode: Literal["auto", "manual"] = "manual"
+    bot_name: str = "Kohaku"  # Display name shown in CLI prompts (e.g. "{name} is thinking...")
+    bot_icon: str = "🐈"  # Short icon (emoji or text) shown next to the bot name in CLI; "" to omit
+    unified_session: bool = False  # Share one session across all channels (single-user multi-device)
+    disabled_skills: list[str] = Field(default_factory=list)  # Skill names to exclude from loading (e.g. ["summarize", "skill-creator"])
+    session_ttl_minutes: int = Field(
+        default=0,
+        ge=0,
+        validation_alias=AliasChoices("idleCompactAfterMinutes", "sessionTtlMinutes"),
+        serialization_alias="idleCompactAfterMinutes",
+    )  # Auto-compact idle threshold in minutes (0 = disabled)
+    idle_compact_check_interval_seconds: int = Field(
+        default=60,
+        ge=0,
+    )  # Minimum interval in seconds between scans for idle sessions
+    idle_compaction: IdleCompactionConfig = Field(default_factory=IdleCompactionConfig)
+    source_compaction: SourceCompactionConfig = Field(default_factory=SourceCompactionConfig)
+    dream: DreamConfig = Field(default_factory=DreamConfig)
+
+    @model_validator(mode="before")
+    @classmethod
+    def resolve_timezone(cls, value: object) -> object:
+        """Detect new defaults server-side while preserving configured timezones."""
+        if not isinstance(value, dict):
+            return value
+
+        data = dict(cast(dict[str, object], value))
+        timezone_mode = data.get("timezoneMode", data.get("timezone_mode"))
+        if timezone_mode is None:
+            timezone_mode = "manual"
+            data["timezoneMode"] = timezone_mode
+        if timezone_mode == "auto":
+            data["timezone"] = detect_system_timezone()
+        return data
+
+    @field_validator("timezone")
+    @classmethod
+    def validate_timezone(cls, value: str) -> str:
+        from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+        try:
+            ZoneInfo(value)
+        except ZoneInfoNotFoundError:
+            raise ValueError(f"unknown timezone {value!r}") from None
+        return value
+
+
+class AgentsConfig(Base):
+    """Agent configuration."""
+
+    defaults: AgentDefaults = Field(default_factory=AgentDefaults)
+    crawler: CrawlerAgentConfig = Field(default_factory=CrawlerAgentConfig)
+
+
+class ProviderConfig(Base):
+    """LLM provider configuration."""
+
+    # User-facing label; the configured provider key remains its identity.
+    display_name: str | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+    )
+    api_keys: list[str] = Field(default_factory=list, repr=False)
+    rate_limit: int = 0
+    timeout: float = 60.0
+
+    @property
+    def effective_keys(self) -> list[str]:
+        if self.api_keys:
+            return [key for key in self.api_keys if key]
+        return [self.api_key] if self.api_key else []
+
+    api_key: str | None = Field(default=None, repr=False)
+    api_base: str | None = None
+    api_type: Literal["auto", "chat_completions", "responses"] = "auto"  # Request API surface
+    extra_headers: dict[str, str] | None = None  # Custom headers (e.g. APP-Code for AiHubMix)
+    extra_body: dict[str, Any] | None = None  # Extra provider request fields; shape depends on provider/API surface
+    extra_query: dict[str, str] | None = None  # Extra query params (e.g. api-version for Azure-style gateways)
+    proxy: str | None = None  # Explicit HTTP proxy; image downloads trust its DNS and egress
+    thinking_style: str | None = None  # Thinking/reasoning style for custom providers
+
+    # Provider runtime policy overrides for generic accounting. Most providers
+    # leave these unset and inherit their registry policy (strict by default).
+    request_accounting: Literal["strict", "estimated_compat"] | None = None
+    max_request_bytes: int | None = Field(default=None, ge=1)
+
+    # Valid values mirror the keys of _THINKING_STYLE_MAP in
+    # kohaku/providers/openai_compat_provider.py. Kept duplicated here to
+    # avoid an import cycle (schema.py must not import from providers/).
+    _VALID_THINKING_STYLES: ClassVar[tuple[str, ...]] = (
+        "thinking_type",
+        "enable_thinking",
+        "reasoning_split",
+    )
+
+    @field_validator("thinking_style")
+    @classmethod
+    def _validate_thinking_style(cls, v: str | None) -> str | None:
+        if not v:  # None or "" -> no injection, valid (backwards compatible)
+            return v
+        if v not in cls._VALID_THINKING_STYLES:
+            raise ValueError(
+                f"Invalid thinking_style {v!r}. "
+                f"Must be one of: {', '.join(repr(s) for s in cls._VALID_THINKING_STYLES)} "
+                f"(or empty/omitted)."
+            )
+        return v
+
+
+class BedrockProviderConfig(ProviderConfig):
+    """AWS Bedrock Runtime provider configuration."""
+
+    region: str | None = None  # AWS region, falls back to AWS_REGION/AWS_DEFAULT_REGION/profile
+    profile: str | None = None  # Optional AWS shared config profile
+    # The installed SDK supports a configured bearer token only as process
+    # identity. The operator must opt in explicitly; Kohaku never swaps a live
+    # process credential for another instance's key.
+    allow_process_bearer: bool = False
+
+
+class ProvidersConfig(Base):
+    """Configuration for LLM providers.
+
+    Supports custom providers via extra fields — any additional field
+    becomes an OpenAI-compatible custom provider.
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    custom: ProviderConfig = Field(default_factory=ProviderConfig)  # Any OpenAI-compatible endpoint
+    azure_openai: ProviderConfig = Field(default_factory=ProviderConfig)  # Azure OpenAI (model = deployment name)
+    bedrock: BedrockProviderConfig = Field(default_factory=BedrockProviderConfig)  # AWS Bedrock Converse
+    anthropic: ProviderConfig = Field(default_factory=ProviderConfig)
+    openai: ProviderConfig = Field(default_factory=ProviderConfig)
+    openrouter: ProviderConfig = Field(default_factory=ProviderConfig)
+    orcarouter: ProviderConfig = Field(default_factory=ProviderConfig)  # OrcaRouter API gateway
+    assemblyai: ProviderConfig = Field(default_factory=ProviderConfig)  # AssemblyAI voice transcription
+    huggingface: ProviderConfig = Field(default_factory=ProviderConfig)
+    skywork: ProviderConfig = Field(default_factory=ProviderConfig)  # Skywork / APIFree API gateway
+    deepseek: ProviderConfig = Field(default_factory=ProviderConfig)
+    groq: ProviderConfig = Field(default_factory=ProviderConfig)
+    zhipu: ProviderConfig = Field(default_factory=ProviderConfig)
+    dashscope: ProviderConfig = Field(default_factory=ProviderConfig)
+    modelscope: ProviderConfig = Field(default_factory=ProviderConfig)
+    vllm: ProviderConfig = Field(default_factory=ProviderConfig)
+    ollama: ProviderConfig = Field(default_factory=ProviderConfig)  # Ollama local models
+    lm_studio: ProviderConfig = Field(default_factory=ProviderConfig)  # LM Studio local models
+    atomic_chat: ProviderConfig = Field(default_factory=ProviderConfig)  # Atomic Chat local models
+    ovms: ProviderConfig = Field(default_factory=ProviderConfig)  # OpenVINO Model Server (OVMS)
+    gemini: ProviderConfig = Field(default_factory=ProviderConfig)
+    moonshot: ProviderConfig = Field(default_factory=ProviderConfig)
+    kimi_coding: ProviderConfig = Field(default_factory=ProviderConfig)  # Kimi Coding Plan (Anthropic Messages API)
+    minimax: ProviderConfig = Field(default_factory=ProviderConfig)
+    minimax_anthropic: ProviderConfig = Field(default_factory=ProviderConfig)  # MiniMax Anthropic endpoint (thinking)
+    mistral: ProviderConfig = Field(default_factory=ProviderConfig)
+    stepfun: ProviderConfig = Field(default_factory=ProviderConfig)  # Step Fun (阶跃星辰) — LLM + ASR (set apiBase to Plan URL for ASR)
+    xiaomi_mimo: ProviderConfig = Field(default_factory=ProviderConfig)  # Xiaomi MIMO (小米)
+    longcat: ProviderConfig = Field(default_factory=ProviderConfig)  # LongCat
+    ant_ling: ProviderConfig = Field(default_factory=ProviderConfig)  # Ant Ling
+    local_manager: ProviderConfig = Field(default_factory=ProviderConfig)  # Local Inference Manager gateway
+    aihubmix: ProviderConfig = Field(default_factory=ProviderConfig)  # AiHubMix API gateway
+    siliconflow: ProviderConfig = Field(default_factory=ProviderConfig)  # SiliconFlow (硅基流动)
+    edenai: ProviderConfig = Field(default_factory=ProviderConfig)  # Eden AI API gateway
+    novita: ProviderConfig = Field(default_factory=ProviderConfig)  # Novita AI
+    volcengine: ProviderConfig = Field(default_factory=ProviderConfig)  # VolcEngine (火山引擎)
+    volcengine_coding_plan: ProviderConfig = Field(default_factory=ProviderConfig)  # VolcEngine Coding Plan
+    byteplus: ProviderConfig = Field(default_factory=ProviderConfig)  # BytePlus (VolcEngine international)
+    byteplus_coding_plan: ProviderConfig = Field(default_factory=ProviderConfig)  # BytePlus Coding Plan
+    openai_codex: ProviderConfig = Field(default_factory=ProviderConfig, exclude=True)  # OpenAI Codex (OAuth)
+    xai_grok: ProviderConfig = Field(default_factory=ProviderConfig, exclude=True)  # xAI Grok (OAuth)
+    github_copilot: ProviderConfig = Field(default_factory=ProviderConfig, exclude=True)  # Github Copilot (OAuth)
+    qianfan: ProviderConfig = Field(default_factory=ProviderConfig)  # Qianfan (百度千帆)
+    nvidia: ProviderConfig = Field(default_factory=ProviderConfig)  # NVIDIA NIM (nvapi- keys)
+    opencode: ProviderConfig = Field(default_factory=ProviderConfig)  # OpenCode Zen (canonical provider id)
+    opencode_zen: ProviderConfig = Field(default_factory=ProviderConfig)  # OpenCode Zen (curated coding models)
+    opencode_go: ProviderConfig = Field(default_factory=ProviderConfig)  # OpenCode Go (low-cost coding models)
+
+    @model_validator(mode="after")
+    def convert_extra_providers(self):
+        """Convert extra fields (custom providers) to ProviderConfig objects."""
+        if self.model_extra:
+            from kohaku.providers.registry import find_by_name
+
+            for key, value in self.model_extra.items():
+                if spec := find_by_name(key):
+                    raise ValueError(
+                        f"providers.{key} conflicts with built-in provider {spec.name!r}; "
+                        "use the built-in provider key or choose a different custom provider name"
+                    )
+                if isinstance(value, dict):
+                    self.model_extra[key] = ProviderConfig.model_validate(value)
+        return self
+
+    @model_validator(mode="after")
+    def _validate_api_type_scope(self) -> "ProvidersConfig":
+        for name in self.__class__.model_fields:
+            if name == "openai":
+                continue
+            provider = getattr(self, name, None)
+            if isinstance(provider, ProviderConfig) and provider.api_type != "auto":
+                raise ValueError("providers.<name>.api_type is only supported for providers.openai")
+        for provider in (self.model_extra or {}).values():
+            if isinstance(provider, ProviderConfig) and provider.api_type != "auto":
+                raise ValueError("providers.<name>.api_type is only supported for providers.openai")
+        return self
+
+
+class HeartbeatConfig(Base):
+    keep_recent_messages: int = 8
+    """Retained Heartbeat configuration; periodic execution is unavailable."""
+
+    # P5 D7: installation alone must never opt a process into provider-backed
+    # background work.  Explicit ``enabled: true`` remains representable for
+    # compatibility, but Stage 1 does not construct a scheduler for it.
+    enabled: bool = False
+    interval_s: int = 30 * 60  # 30 minutes
+
+
+class ApiConfig(Base):
+    """OpenAI-compatible API server configuration."""
+
+    host: str = "127.0.0.1"  # Safer default: local-only bind.
+    port: int = 8900
+    timeout: float = 120.0  # Per-request timeout in seconds.
+    api_key: str = Field(default="", repr=False)
+
+    @model_validator(mode="after")
+    def wildcard_host_requires_auth(self) -> "ApiConfig":
+        if self.host not in ("0.0.0.0", "::"):
+            return self
+        if self.api_key.strip():
+            return self
+        raise ValueError(
+            "host is 0.0.0.0 (all interfaces) but api_key is not set "
+            "- set api.api_key to prevent unauthenticated access"
+        )
+
+
+class GatewayCronConfig(Base):
+    """Explicit gateway-only timer admission; SDK/API construction stays inert."""
+
+    enabled: StrictBool = False
+    poll_interval_s: float = Field(default=1.0, ge=0.05, le=60, allow_inf_nan=False)
+    readiness_timeout_s: float = Field(default=60.0, gt=0, le=600, allow_inf_nan=False)
+    drain_timeout_s: float = Field(default=5.0, gt=0, le=300, allow_inf_nan=False)
+    adapter_cwd: str | None = None
+    codex_quota_retry: StrictBool = True
+
+
+class GatewayConfig(Base):
+    """Gateway/server configuration."""
+
+    host: str = "127.0.0.1"  # Safer default: local-only bind.
+    port: int = 18790
+    restart_mode: Literal["auto", "exec", "spawn", "exit"] = "auto"
+    heartbeat: HeartbeatConfig = Field(default_factory=HeartbeatConfig)
+    process_continuations: bool = False
+    local_triggers: StrictBool = False
+    cron: GatewayCronConfig = Field(default_factory=GatewayCronConfig)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _retire_telegram_busy(cls, value: object) -> object:
+        return consume_retired_telegram_busy(value)
+
+
+class DirectoryBrowserRootConfig(Base):
+    """One explicitly configured label for the remote folder browser."""
+
+    id: str = Field(min_length=1, max_length=64)
+    label: str = Field(min_length=1, max_length=64)
+    path: str = Field(min_length=1, max_length=4096)
+
+    @field_validator("id")
+    @classmethod
+    def _id(cls, value: str) -> str:
+        import re
+
+        if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}", value) is None:
+            raise ValueError("directory root id is invalid")
+        return value
+
+    @field_validator("path")
+    @classmethod
+    def _path(cls, value: str) -> str:
+        if "\x00" in value or not value.strip():
+            raise ValueError("directory root path is invalid")
+        if not Path(value).expanduser().is_absolute():
+            raise ValueError("directory root path must be absolute")
+        return value
+
+
+class DirectoryBrowserConfig(Base):
+    """Bounded folder-browser roots; empty means explicit setup is required."""
+
+    roots: list[DirectoryBrowserRootConfig] = Field(default_factory=list)
+
+    @field_validator("roots")
+    @classmethod
+    def _roots(cls, value: list[DirectoryBrowserRootConfig]) -> list[DirectoryBrowserRootConfig]:
+        if len(value) > 32:
+            raise ValueError("at most 32 directory roots are allowed")
+        ids = [root.id for root in value]
+        if len(set(ids)) != len(ids):
+            raise ValueError("directory root ids must be unique")
+        return value
+
+
+class RemoteAccessConfig(Base):
+    """Independent mobile device authority; defaults off and owns no gateway state."""
+
+    enabled: StrictBool = False
+    state_dir: str | None = None
+    socket_path: str | None = None
+    listener_port: int | None = Field(default=None, ge=1024, le=65535)
+    owner_timeout_seconds: float = Field(default=2.0, gt=0, le=10.0, allow_inf_nan=False)
+    directory_browser: DirectoryBrowserConfig = Field(default_factory=DirectoryBrowserConfig)
+
+
+
+class MCPServerConfig(Base):
+    """MCP server connection configuration (stdio or HTTP)."""
+
+    type: Literal["stdio", "sse", "streamableHttp"] | None = None  # auto-detected if omitted
+    auth: Literal["oauth"] | None = None  # Remote MCP OAuth; tokens are stored outside config
+    command: str = ""  # Stdio: command to run (e.g. "npx")
+    args: list[str] = Field(default_factory=list)  # Stdio: command arguments
+    env: dict[str, str] = Field(default_factory=dict)  # Stdio: extra env vars
+    cwd: str = ""  # Stdio: working directory for MCP server runtime artifacts
+    url: str = ""  # HTTP/SSE: endpoint URL
+    headers: dict[str, str] = Field(default_factory=dict)  # HTTP/SSE: custom headers
+    tool_timeout: int = 30  # seconds before a tool call is cancelled
+    enabled_tools: list[str] = Field(default_factory=lambda: ["*"])  # Only register these tools; accepts raw MCP names or wrapped mcp_<server>_<tool> names; ["*"] = all capabilities (tools, resources, prompts); any restriction = only listed tools, no resources/prompts
+
+
+def _lazy_default(module_path: str, class_name: str) -> Any:
+    """Deferred import helper for ToolsConfig default factories."""
+    import importlib
+    module = importlib.import_module(module_path)
+    return getattr(module, class_name)()
+
+
+PermissionAction = Literal["allow", "ask", "deny"]
+PermissionProfile = Literal["autonomous", "balanced", "strict"]
+
+
+class ToolPermissionsConfig(Base):
+    """Declarative tool action permissions (Codex/OpenCode-inspired).
+
+    - ``autonomous`` (default): All local workspace edits and shell commands run
+      autonomously inside the active Sandbox / workspace boundary without
+      interactive approval prompts. Hard invariants (sandbox/path containment,
+      SSRF, read-only subagents, unconfined nested ``--yolo`` refusal, and
+      explicit ``deny`` rules) remain enforced silently.
+    - ``balanced``: Local workspace edits and local shell commands run
+      autonomously; external or OS-level mutations (``desktop_use``,
+      ``agent_device``, ``agent_browser`` mutations, external ``git push`` /
+      ``publish`` / ``kubectl`` / DB drops, and confined reduced-protection
+      nested launches) ask for approval.
+    - ``strict``: Legacy behavior — asks on large file overwrites/edits,
+      ``replace_all``, destructive local/external shell commands, ``cron``,
+      and external mutations.
+
+    ``rules`` supports per-tool or pattern-scoped overrides
+    (``"allow"`` | ``"ask"`` | ``"deny"``), evaluated last-match-wins.
+    """
+
+    profile: PermissionProfile = "autonomous"
+    rules: dict[str, PermissionAction | dict[str, PermissionAction]] = Field(default_factory=dict)
+
+
+class ToolsConfig(Base):
+    """Tools configuration.
+
+    Field types for tool-specific sub-configs are resolved via model_rebuild()
+    at the bottom of this file so tool config classes can stay next to their
+    tool implementations.
+    """
+
+    @classmethod
+    def model_rebuild(cls, *, force: bool = False, raise_errors: bool = True,
+                      _parent_namespace_depth: int = 2,
+                      _types_namespace: Mapping[str, Any] | None = None) -> bool | None:
+        namespace = dict(_types_namespace or {})
+        namespace.update(_tool_config_types())
+        return super().model_rebuild(force=force, raise_errors=raise_errors,
+            _parent_namespace_depth=_parent_namespace_depth, _types_namespace=namespace)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _select_image_configuration(cls, data: Any) -> Any:
+        if isinstance(data, dict) and "image_generation" not in data and "imageGeneration" not in data:
+            data = dict(cast(dict[object, object], data))
+            data["image_generation"] = {"configuration_source": "legacy"}
+        return cast(object, data)
+
+    agent_browser: AgentBrowserConfig = Field(default_factory=AgentBrowserConfig)
+    agent_device: AgentDeviceConfig = Field(default_factory=AgentDeviceConfig)
+    desktop_use: DesktopUseConfig = Field(default_factory=DesktopUseConfig)
+    image: ImageConfig = Field(default_factory=ImageConfig)
+
+    web: WebToolsConfig = Field(default_factory=lambda: _lazy_default("kohaku.agent.tools.web", "WebToolsConfig"))
+    exec: ExecToolConfig = Field(default_factory=lambda: _lazy_default("kohaku.agent.tools.shell", "ExecToolConfig"))
+    file: FileToolsConfig = Field(default_factory=lambda: _lazy_default("kohaku.agent.tools.filesystem", "FileToolsConfig"))
+    cli_apps: CliAppsToolConfig = Field(default_factory=lambda: _lazy_default("kohaku.agent.tools.cli_apps", "CliAppsToolConfig"))
+    my: MyToolConfig = Field(default_factory=lambda: _lazy_default("kohaku.agent.tools.self", "MyToolConfig"))
+    image_generation: ImageGenerationToolConfig = Field(
+        default_factory=lambda: _lazy_default("kohaku.agent.tools.image_generation", "ImageGenerationToolConfig"),
+    )
+    max_session_messages_per_minute: int = Field(default=6, ge=1)
+    # Explicit roots from which trusted MCP media tools may stage video/file
+    # outputs into the managed media library. Empty means no file capture.
+    media_output_roots: list[str] = Field(default_factory=list)
+    # 0 = keep generated media forever; otherwise remove assets older than the
+    # configured age. Orphan cleanup only targets unreferenced assets.
+    generated_media_retention_days: int = Field(default=0, ge=0)
+    generated_media_orphan_grace_days: int = Field(default=7, ge=1)
+    # 0 = no quota. Quota cleanup never deletes referenced assets.
+    generated_media_max_bytes: int = Field(default=0, ge=0)
+    restrict_to_workspace: bool = False  # policy intent: keep tool access inside workspace when possible
+    permissions: ToolPermissionsConfig = Field(default_factory=ToolPermissionsConfig)
+    webui_allow_local_service_access: bool = Field(
+        default=True,
+        validation_alias=AliasChoices(
+            "webuiAllowLocalServiceAccess",
+            "webui_allow_local_service_access",
+            "allowLocalPreviewAccess",
+            "allow_local_preview_access",
+        ),
+    )  # allow channel setup validation to reach localhost services; legacy allowLocalPreviewAccess still reads
+    webui_allow_remote_package_install: bool = Field(
+        default=False,
+        validation_alias=AliasChoices(
+            "webuiAllowRemotePackageInstall",
+            "webui_allow_remote_package_install",
+        ),
+    )  # allow non-local WebUI clients to install optional packages and agent skills
+    mcp_servers: dict[str, MCPServerConfig] = Field(default_factory=dict)
+    ssrf_whitelist: list[str] = Field(default_factory=list)  # CIDR ranges to exempt from SSRF blocking (e.g. ["100.64.0.0/10"] for Tailscale)
+
+    @field_validator("media_output_roots")
+    @classmethod
+    def _validate_media_output_roots(cls, values: list[str]) -> list[str]:
+        roots: list[str] = []
+        for value in values:
+            if not value.strip():
+                raise ValueError("tools.mediaOutputRoots entries must be non-empty paths")
+            path = Path(value).expanduser()
+            if not path.is_absolute() or path == Path(path.anchor):
+                raise ValueError("tools.mediaOutputRoots entries must be absolute non-root paths")
+            roots.append(os.path.abspath(os.fspath(path)))
+        return roots
+
+
+class ArtifactsConfig(Base):
+    """Opt-in private storage for source-bound context artifacts."""
+
+    enabled: StrictBool = False
+    root: str | None = None
+    max_blob_bytes: StrictInt = Field(default=64 * 1024 * 1024, gt=0)
+    max_namespace_bytes: StrictInt = Field(default=1024 * 1024 * 1024, gt=0)
+
+    @field_validator("root")
+    @classmethod
+    def _validate_root(cls, value: object) -> str | None:
+        if value is None:
+            return None
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError("artifacts.root must be an absolute path")
+        path = Path(value).expanduser()
+        if not path.is_absolute() or path == Path(path.anchor):
+            raise ValueError("artifacts.root must be an absolute non-root path")
+        # Normalize lexical components without resolving symlinks.  The
+        # factory rejects symlinked roots/components before it opens or creates
+        # private state, so resolving here would hide an unsafe configuration.
+        return os.path.abspath(os.fspath(path))
+
+    @model_validator(mode="after")
+    def _validate_limits(self) -> "ArtifactsConfig":
+        if self.max_namespace_bytes < self.max_blob_bytes:
+            raise ValueError("artifacts.maxNamespaceBytes must be at least artifacts.maxBlobBytes")
+        return self
+
+
+class Config(BaseSettings):
+    """Root configuration for Kohaku."""
+
+    _source_path: Path | None = PrivateAttr(default=None)
+
+    agents: AgentsConfig = Field(default_factory=AgentsConfig)
+    channels: ChannelsConfig = Field(default_factory=ChannelsConfig)
+    transcription: TranscriptionConfig = Field(default_factory=TranscriptionConfig)
+    providers: ProvidersConfig = Field(default_factory=ProvidersConfig)
+    api: ApiConfig = Field(default_factory=ApiConfig)
+    gateway: GatewayConfig = Field(default_factory=GatewayConfig)
+    remote_access: RemoteAccessConfig = Field(
+        default_factory=RemoteAccessConfig,
+        validation_alias=AliasChoices("remoteAccess", "remote_access"),
+        serialization_alias="remoteAccess",
+    )
+    tools: ToolsConfig = Field(default_factory=ToolsConfig)
+    artifacts: ArtifactsConfig = Field(default_factory=ArtifactsConfig)
+    model_presets: dict[str, ModelPresetConfig] = Field(
+        default_factory=dict,
+        validation_alias=AliasChoices("modelPresets", "model_presets"),
+        serialization_alias="modelPresets",
+    )
+
+    @classmethod
+    def model_rebuild(cls, *, force: bool = False, raise_errors: bool = True,
+                      _parent_namespace_depth: int = 2,
+                      _types_namespace: Mapping[str, Any] | None = None) -> bool | None:
+        namespace = dict(_types_namespace or {})
+        namespace.update(_tool_config_types())
+        return super().model_rebuild(force=force, raise_errors=raise_errors,
+            _parent_namespace_depth=_parent_namespace_depth, _types_namespace=namespace)
+
+    def __init__(self, **values: Any) -> None:
+        if not type(self).__pydantic_complete__:
+            _resolve_tool_config_refs()
+        super().__init__(**values)
+
+    def bind_source_path(self, path: Path) -> None:
+        """Record the config file that owns instance-level runtime data."""
+        self._source_path = path.expanduser().resolve(strict=False)
+
+    @property
+    def runtime_data_dir(self) -> Path | None:
+        """Return the active instance data directory when loaded from a config path."""
+        return self._source_path.parent if self._source_path is not None else None
+
+    @model_validator(mode="after")
+    def _validate_model_preset(self) -> "Config":
+        # Keep persisted names accepted by previous releases loadable. New
+        # names are normalized and checked case-insensitively at mutation
+        # boundaries, where conflicts can be reported without breaking startup.
+        if "default" in self.model_presets:
+            raise ValueError("model_preset name 'default' is reserved for agents.defaults")
+        name = self.agents.defaults.model_preset
+        if name and name != "default" and name not in self.model_presets:
+            raise ValueError(f"model_preset {name!r} not found in model_presets")
+        dream_name = self.agents.defaults.dream.model_override
+        if dream_name and dream_name != "default" and dream_name not in self.model_presets:
+            raise ValueError(f"Dream model preset {dream_name!r} not found in model_presets")
+        idle = self.agents.defaults.idle_compaction
+        if idle.enabled and idle.summary_model_preset not in self.model_presets:
+            raise ValueError(
+                "Idle compaction summary model preset "
+                f"{idle.summary_model_preset!r} not found in model_presets"
+            )
+        if self.agents.defaults.fallback and self.agents.defaults.fallback_models:
+            raise ValueError("Configure either legacy fallback or fallback_models, not both")
+        for fallback in self.agents.defaults.fallback_models:
+            if isinstance(fallback, str) and fallback not in self.model_presets:
+                raise ValueError(f"fallback_models entry {fallback!r} not found in model_presets")
+        return self
+
+    def resolve_default_preset(self) -> ModelPresetConfig:
+        """Return the implicit `default` preset from agents.defaults fields."""
+        d = self.agents.defaults
+        return ModelPresetConfig(
+            model=d.model, provider=d.provider, max_tokens=d.max_tokens,
+            context_window_tokens=d.context_window_tokens,
+            temperature=d.temperature, reasoning_effort=d.reasoning_effort,
+        )
+
+    def resolve_preset(self, name: str | None = None) -> ModelPresetConfig:
+        """Return effective model params from a named preset or the implicit default."""
+        name = self.agents.defaults.model_preset if name is None else name
+        if not name or name == "default":
+            return self.resolve_default_preset()
+        if name not in self.model_presets:
+            raise KeyError(f"model_preset {name!r} not found in model_presets")
+        return self.model_presets[name]
+
+    @property
+    def workspace_path(self) -> Path:
+        """Get expanded workspace path."""
+        return Path(self.agents.defaults.workspace).expanduser()
+
+    def _match_provider(
+        self, model: str | None = None,
+        *,
+        preset: ModelPresetConfig | None = None,
+    ) -> tuple["ProviderConfig | None", str | None]:
+        """Match provider config and its registry name. Returns (config, spec_name)."""
+        from kohaku.providers.registry import (
+            PROVIDERS,
+            find_by_name,
+        )
+
+        resolved = preset or self.resolve_preset()
+        forced = resolved.provider
+
+        def _custom_provider_by_name(name: str) -> tuple[ProviderConfig, str] | None:
+            normalized = name.replace("-", "_").lower()
+            for attr_name, provider in (self.providers.model_extra or {}).items():
+                if not isinstance(provider, ProviderConfig):
+                    continue
+                if attr_name.replace("-", "_").lower() == normalized:
+                    return provider, attr_name
+            return None
+
+        if forced != "auto":
+            spec = find_by_name(forced)
+            if spec:
+                p = getattr(self.providers, spec.name, None)
+                return (p, spec.name) if p else (None, None)
+            custom = _custom_provider_by_name(forced)
+            if custom is not None:
+                return custom
+            return None, None
+
+        model_lower = (model or resolved.model).lower()
+        model_normalized = model_lower.replace("-", "_")
+        model_prefix = model_lower.split("/", 1)[0] if "/" in model_lower else ""
+        normalized_prefix = model_prefix.replace("-", "_")
+        prefixed_provider = find_by_name(model_prefix) if model_prefix else None
+
+        def _kw_matches(kw: str) -> bool:
+            kw = kw.lower()
+            return kw in model_lower or kw.replace("-", "_") in model_normalized
+
+        # Explicit provider prefix wins — prevents `github-copilot/...codex` matching openai_codex.
+        for spec in PROVIDERS:
+            if spec.is_transcription_only:
+                continue
+            p = getattr(self.providers, spec.name, None)
+            if p and model_prefix and normalized_prefix == spec.name:
+                if spec.is_oauth or spec.is_local or spec.is_direct or p.effective_keys:
+                    return p, spec.name
+
+        # Check for custom provider by prefix (e.g., "companyProxy/gpt-4").
+        # Return the matching provider even when apiBase is missing, so a
+        # malformed explicit prefix fails instead of falling through to a
+        # different custom provider.
+        if model_prefix:
+            custom = _custom_provider_by_name(normalized_prefix)
+            if custom is not None:
+                return custom
+
+        # Match by keyword (order follows PROVIDERS registry)
+        for spec in PROVIDERS:
+            if spec.is_transcription_only:
+                continue
+            p = getattr(self.providers, spec.name, None)
+            if p and any(_kw_matches(kw) for kw in spec.keywords):
+                # Local providers (Ollama, vLLM, …) keep model-family keywords
+                # like "nemotron" or "llama" to enable bare-model auto-routing,
+                # but those keywords collide with cloud-hosted variants of the
+                # same family (e.g. `nvidia/nemotron-...` via OpenRouter). Only
+                # honor a local keyword match when the user has actually
+                # configured that local endpoint via `api_base` — mirrors the
+                # gate already used by the local-fallback loop below.
+                if spec.is_local:
+                    # A qualified model belongs to its explicit provider or a
+                    # gateway fallback, never to a different local provider
+                    # whose model-family keyword happens to match.
+                    foreign_prefix = bool(
+                        prefixed_provider is not None and prefixed_provider.name != spec.name
+                    )
+                    if not p.api_base or foreign_prefix:
+                        continue
+                if spec.is_oauth or spec.is_local or spec.is_direct or p.effective_keys:
+                    return p, spec.name
+
+        # Fallback: configured local providers can route models without
+        # provider-specific keywords (for example plain "llama3.2" on Ollama).
+        # Prefer providers whose detect_by_base_keyword matches the configured api_base
+        # (e.g. Ollama's "11434" in "http://localhost:11434") over plain registry order.
+        local_fallback: tuple[ProviderConfig, str] | None = None
+        if prefixed_provider is None:
+            for spec in PROVIDERS:
+                if not spec.is_local:
+                    continue
+                p = getattr(self.providers, spec.name, None)
+                if not (p and p.api_base):
+                    continue
+                if spec.detect_by_base_keyword and spec.detect_by_base_keyword in p.api_base:
+                    return p, spec.name
+                if local_fallback is None:
+                    local_fallback = (p, spec.name)
+        if local_fallback:
+            return local_fallback
+
+        # Fallback: gateways first, then others (follows registry order)
+        # OAuth providers are NOT valid fallbacks — they require explicit model selection
+        for spec in PROVIDERS:
+            if spec.is_oauth or spec.is_transcription_only:
+                continue
+            p = getattr(self.providers, spec.name, None)
+            if p and p.effective_keys:
+                return p, spec.name
+
+        # Final fallback: check for any configured custom provider
+        for attr_name, p in (self.providers.model_extra or {}).items():
+            if isinstance(p, ProviderConfig) and p.api_base:
+                return p, attr_name
+
+        return None, None
+
+    def get_provider(
+        self,
+        model: str | None = None,
+        *,
+        preset: ModelPresetConfig | None = None,
+    ) -> ProviderConfig | None:
+        """Get matched provider config (api_key, api_base, extra_headers). Falls back to first available."""
+        p, _ = self._match_provider(model, preset=preset)
+        return p
+
+    def get_provider_name(
+        self,
+        model: str | None = None,
+        *,
+        preset: ModelPresetConfig | None = None,
+    ) -> str | None:
+        """Get the registry name of the matched provider (e.g. "deepseek", "openrouter")."""
+        _, name = self._match_provider(model, preset=preset)
+        return name
+
+    def get_api_key(
+        self,
+        model: str | None = None,
+        *,
+        preset: ModelPresetConfig | None = None,
+    ) -> str | None:
+        """Get API key for the given model. Falls back to first available key."""
+        p = self.get_provider(model, preset=preset)
+        return p.effective_keys[0] if p and p.effective_keys else None
+
+    def get_api_base(
+        self,
+        model: str | None = None,
+        *,
+        preset: ModelPresetConfig | None = None,
+    ) -> str | None:
+        """Get API base URL for the given model, falling back to the provider default when present."""
+        from kohaku.providers.registry import find_by_name
+
+        p, name = self._match_provider(model, preset=preset)
+        if p and p.api_base:
+            return p.api_base
+        if name:
+            spec = find_by_name(name)
+            if spec and spec.default_api_base:
+                return spec.default_api_base
+        return None
+
+    model_config = SettingsConfigDict(
+        env_prefix="KOHAKU_",
+        env_nested_delimiter="__",
+    )
+
+
+_TOOL_CONFIG_MODULES = {
+    "CliAppsToolConfig": "kohaku.agent.tools.cli_apps",
+    "FileToolsConfig": "kohaku.agent.tools.filesystem",
+    "ImageGenerationToolConfig": "kohaku.agent.tools.image_generation",
+    "MyToolConfig": "kohaku.agent.tools.self",
+    "ExecToolConfig": "kohaku.agent.tools.shell",
+    "WebFetchConfig": "kohaku.agent.tools.web",
+    "WebSearchConfig": "kohaku.agent.tools.web",
+    "WebToolsConfig": "kohaku.agent.tools.web",
+}
+
+
+def __getattr__(name: str) -> Any:
+    """Resolve historical aliases after a tool-first import cycle has unwound."""
+    from importlib import import_module
+
+    module_name = _TOOL_CONFIG_MODULES.get(name)
+    if module_name is None:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    value = getattr(import_module(module_name), name)
+    globals()[name] = value
+    return value
+
+
+def _tool_config_types() -> dict[str, Any]:
+    """Collect canonical types without recursively rebuilding Pydantic models."""
+    namespace: dict[str, Any] = {}
+    for name in _TOOL_CONFIG_MODULES:
+        try:
+            namespace[name] = globals().get(name) or __getattr__(name)
+        except AttributeError as exc:
+            # A tool may currently be importing this schema before defining its
+            # config class. Defer the eager attempt; first-use rebuild retries.
+            raise ImportError(f'Tool configuration {name} is not yet available') from exc
+    return namespace
+
+
+def _resolve_tool_config_refs() -> None:
+    """Resolve both public schemas once canonical tool classes are importable."""
+    namespace = _tool_config_types()
+    ToolsConfig.model_rebuild(_types_namespace=namespace)
+    Config.model_rebuild(_types_namespace=namespace)
+
+
+# Eagerly resolve when the import chain allows it (no circular deps at this
+# point).  If it fails (first import triggers a cycle), the rebuild will
+# happen lazily when Config/ToolsConfig is first used at runtime.
+try:
+    _resolve_tool_config_refs()
+except ImportError:
+    pass

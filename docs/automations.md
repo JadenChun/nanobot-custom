@@ -3,7 +3,7 @@
 <!-- Meta description: Create, run, and manage supported scheduled automations and local triggers, and inspect inactive periodic features. -->
 
 Automations are agent turns that run later. Use them
-when nanobot should do work without someone actively typing: reminders,
+when Kohaku should do work without someone actively typing: reminders,
 recurring checks, nightly summaries, CI follow-ups, local script reports, or
 webhook-driven events.
 
@@ -18,8 +18,8 @@ installed by the normal gateway.
 
 | Type | Starts from | Best for | Created with |
 |---|---|---|---|
-| Scheduled automation | Time, interval, or cron expression | Recurring reminders, scheduled summaries, one-time future tasks | Ask nanobot in the target topic to schedule it with the `cron` tool |
-| Local trigger | A local `nanobot trigger ...` command | CI jobs, webhooks, shell scripts, generated reports | `/trigger <name>` in the target topic |
+| Scheduled automation | Time, interval, or cron expression | Recurring reminders, scheduled summaries, one-time future tasks | Ask Kohaku in the target topic to schedule it with the `cron` tool |
+| Local trigger | A local `kohaku trigger ...` command | CI jobs, webhooks, shell scripts, generated reports | `/trigger <name>` in the target topic |
 | Heartbeat | Unavailable in the normal gateway | Retained configuration and workspace task file | Periodic execution is inactive |
 
 The two user-created automation types are scheduled automations and local
@@ -28,7 +28,7 @@ edits; their presence does not mean a background worker is installed.
 
 ## Before You Create One
 
-Enable the execution path you need, then keep `nanobot gateway` running:
+Enable the execution path you need, then keep `kohaku gateway` running:
 
 ```json
 {
@@ -44,8 +44,8 @@ contract. Unsupported enabled definitions stop activation with an explicit
 error. Enabling cron does not activate Heartbeat or Dream.
 
 Use the same workspace and config for the gateway and any process that sends
-local trigger messages. If you run multiple nanobot instances, pass the matching
-`--config` or `--workspace` option to `nanobot trigger`.
+local trigger messages. If you run multiple Kohaku instances, pass the matching
+`--config` or `--workspace` option to `kohaku trigger`.
 
 Create a local trigger from the target chat or WebUI topic. For scheduled
 execution, use a supported Telegram chat. Other scheduled origins can retain
@@ -55,7 +55,7 @@ origin cannot be enabled or run from the WebUI.
 ## Scheduled Automations
 
 Scheduled automations are created by the agent's `cron` tool. For the installed
-scheduler, ask nanobot from the target Telegram chat:
+scheduler, ask Kohaku from the target Telegram chat:
 
 ```text
 Every weekday at 9am, check open pull requests and summarize blockers here.
@@ -69,7 +69,7 @@ Tomorrow at 4pm, remind me to send the release notes.
 
 The cron tool supports interval schedules, cron expressions, and one-time
 scheduled tasks. Cron expressions can include an IANA timezone such as
-`America/Vancouver`; otherwise nanobot uses the runtime default timezone.
+`America/Vancouver`; otherwise Kohaku uses the runtime default timezone.
 
 The installed scheduler executes each run with fresh context and a dedicated
 `cron:<job-id>` session. Supported Telegram destinations receive a durable
@@ -80,7 +80,7 @@ Other delivery transports are unsupported by this scheduler.
 ## Local Triggers
 
 Local triggers let a local script or external service send a message into a
-specific nanobot session later.
+specific Kohaku session later.
 
 Set `gateway.localTriggers` to `true` and restart the gateway to activate
 delivery. Creation and CLI enqueue remain available while delivery is inactive;
@@ -93,13 +93,13 @@ arrive:
 /trigger PR review
 ```
 
-nanobot replies with a trigger ID and a command shaped like:
+Kohaku replies with a trigger ID and a command shaped like:
 
 ```bash
-nanobot trigger trg_8K4P2Q9X "Review PR #4502"
+kohaku trigger trg_8K4P2Q9X "Review PR #4502"
 ```
 
-Replace the quoted text with the message nanobot should receive. For generated
+Replace the quoted text with the message Kohaku should receive. For generated
 or longer content, pipe stdin:
 
 ```bash
@@ -110,13 +110,13 @@ For multiple instances, use the same config or workspace selector as the
 gateway:
 
 ```bash
-nanobot trigger --config ./bot-a/config.json trg_8K4P2Q9X "Nightly report"
-nanobot trigger --workspace ./bot-a/workspace trg_8K4P2Q9X "Nightly report"
+kohaku trigger --config ./bot-a/config.json trg_8K4P2Q9X "Nightly report"
+kohaku trigger --workspace ./bot-a/workspace trg_8K4P2Q9X "Nightly report"
 ```
 
-nanobot does not provide a built-in public webhook receiver for local triggers.
-If GitHub, CI, or another external system should wake nanobot, run your own
-small webhook service and have it call `nanobot trigger` after it builds the
+Kohaku does not provide a built-in public webhook receiver for local triggers.
+If GitHub, CI, or another external system should wake Kohaku, run your own
+small webhook service and have it call `kohaku trigger` after it builds the
 final message.
 
 ## Heartbeat
@@ -141,7 +141,7 @@ Use the WebUI Automations view to:
 - inspect protected system automations without changing them.
 
 Local triggers do not have a WebUI "Run now" action because each run needs a
-message. Copy the `nanobot trigger ...` command from the WebUI and replace
+message. Copy the `kohaku trigger ...` command from the WebUI and replace
 `"message"` with the content that should be delivered.
 
 Unsupported or inactive execution paths display a reason. The UI reads
@@ -185,7 +185,7 @@ For a CI follow-up, create a trigger once:
 Then have your CI or webhook adapter call:
 
 ```bash
-nanobot trigger <trigger-id> "Build failed on main. Inspect the logs and suggest the next fix."
+kohaku trigger <trigger-id> "Build failed on main. Inspect the logs and suggest the next fix."
 ```
 
 For a local report script:
@@ -213,6 +213,6 @@ the WebUI Automations view.
 
 - [`webui.md#automations`](./webui.md#automations) for the browser management view
 - [`chat-commands.md#local-triggers`](./chat-commands.md#local-triggers) for `/trigger`
-- [`cli-reference.md#local-triggers`](./cli-reference.md#local-triggers) for `nanobot trigger`
+- [`cli-reference.md#local-triggers`](./cli-reference.md#local-triggers) for `kohaku trigger`
 - [`configuration.md#gateway-heartbeat`](./configuration.md#gateway-heartbeat) for heartbeat settings
 - [`guides/long-running-ai-agent.md`](./guides/long-running-ai-agent.md) for long-running agent work

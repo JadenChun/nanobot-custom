@@ -23,20 +23,20 @@ from scripts.p6_release_rehearsal import (
 )
 
 _PACKAGE_MEMBERS = (
-    "nanobot/__init__.py",
-    "nanobot/templates/IDENTITY.md",
-    "nanobot/templates/TOOLS.md",
-    "nanobot/skills/README.md",
-    "nanobot/skills/desktop-use/SKILL.md",
-    "nanobot/skills/mobile-app-testing/SKILL.md",
-    "nanobot/skills/mobile-dogfood/SKILL.md",
-    "nanobot/skills/webapp-testing/SKILL.md",
-    "nanobot/skills/video-understanding/SKILL.md",
-    "nanobot/skills/video-understanding/scripts/extract_keyframes.py",
-    "nanobot/crawler/worker.py",
-    "nanobot/channels/telegram/webui/index.ts",
-    "nanobot/channels/websocket/webui/index.ts",
-    "nanobot/web/dist/index.html",
+    "kohaku/__init__.py",
+    "kohaku/templates/IDENTITY.md",
+    "kohaku/templates/TOOLS.md",
+    "kohaku/skills/README.md",
+    "kohaku/skills/desktop-use/SKILL.md",
+    "kohaku/skills/mobile-app-testing/SKILL.md",
+    "kohaku/skills/mobile-dogfood/SKILL.md",
+    "kohaku/skills/webapp-testing/SKILL.md",
+    "kohaku/skills/video-understanding/SKILL.md",
+    "kohaku/skills/video-understanding/scripts/extract_keyframes.py",
+    "kohaku/crawler/worker.py",
+    "kohaku/channels/telegram/webui/index.ts",
+    "kohaku/channels/websocket/webui/index.ts",
+    "kohaku/web/dist/index.html",
 )
 
 
@@ -53,7 +53,7 @@ def test_candidate_ci_runs_linux_python_314_and_preserves_strict_policy() -> Non
     python_jobs = [
         job for job in jobs.values()
         if any(
-            "python -m pytest" in step.get("run", "") and "--cov=nanobot" in step["run"]
+            "python -m pytest" in step.get("run", "") and "--cov=kohaku" in step["run"]
             for step in job["steps"]
         )
     ]
@@ -83,23 +83,23 @@ def _write_zip(
     path: Path,
     members: tuple[str, ...],
     *,
-    metadata_root: str = "nanobot_ai-0.3.0.dist-info",
+    metadata_root: str = "kohaku-0.3.0.dist-info",
 ) -> None:
     with zipfile.ZipFile(path, "w") as archive:
         for member in members:
             archive.writestr(member, member)
-        archive.writestr(f"{metadata_root}/METADATA", "Name: nanobot-ai\n")
+        archive.writestr(f"{metadata_root}/METADATA", "Name: kohaku\n")
         archive.writestr(f"{metadata_root}/RECORD", "")
 
 
 def _write_sdist(path: Path, members: tuple[str, ...]) -> None:
     with tarfile.open(path, "w:gz") as archive:
         for member in members + (
-            "nanobot-ai-0.3.0/README.md",
-            "nanobot-ai-0.3.0/LICENSE",
-            "nanobot-ai-0.3.0/THIRD_PARTY_NOTICES.md",
-            "nanobot-ai-0.3.0/pyproject.toml",
-            "nanobot-ai-0.3.0/hatch_build.py",
+            "kohaku-0.3.0/README.md",
+            "kohaku-0.3.0/LICENSE",
+            "kohaku-0.3.0/THIRD_PARTY_NOTICES.md",
+            "kohaku-0.3.0/pyproject.toml",
+            "kohaku-0.3.0/hatch_build.py",
         ):
             data = member.encode()
             info = tarfile.TarInfo(member)
@@ -112,8 +112,8 @@ def test_sdist_include_entries_are_exact_project_roots() -> None:
     pyproject = tomllib.loads((project_root / "pyproject.toml").read_text(encoding="utf-8"))
 
     assert pyproject["tool"]["hatch"]["build"]["targets"]["sdist"]["include"] == [
-        "/nanobot/",
-        "/nanobot/web/dist/",
+        "/kohaku/",
+        "/kohaku/web/dist/",
         "/hatch_build.py",
         "/README.md",
         "/LICENSE",
@@ -123,10 +123,10 @@ def test_sdist_include_entries_are_exact_project_roots() -> None:
 
 
 def test_archive_inventory_covers_wheel_and_sdist_assets(tmp_path: Path) -> None:
-    wheel = tmp_path / "nanobot_ai-0.3.0-py3-none-any.whl"
-    sdist = tmp_path / "nanobot-ai-0.3.0.tar.gz"
+    wheel = tmp_path / "kohaku-0.3.0-py3-none-any.whl"
+    sdist = tmp_path / "kohaku-0.3.0.tar.gz"
     wheel_members = _PACKAGE_MEMBERS
-    sdist_members = tuple(f"nanobot-ai-0.3.0/{member}" for member in _PACKAGE_MEMBERS)
+    sdist_members = tuple(f"kohaku-0.3.0/{member}" for member in _PACKAGE_MEMBERS)
     _write_zip(wheel, wheel_members)
     _write_sdist(sdist, sdist_members)
 
@@ -150,17 +150,17 @@ def test_source_manifest_retains_required_release_assets() -> None:
     include = pyproject["tool"]["hatch"]["build"]["include"]
 
     for pattern in (
-        "nanobot/**/*.py",
-        "nanobot/templates/**/*.md",
-        "nanobot/skills/**/*.md",
-        "nanobot/skills/**/*.sh",
-        "nanobot/skills/**/*.py",
-        "nanobot/channels/*/webui/**/*",
-        "nanobot/web/dist/**/*",
+        "kohaku/**/*.py",
+        "kohaku/templates/**/*.md",
+        "kohaku/skills/**/*.md",
+        "kohaku/skills/**/*.sh",
+        "kohaku/skills/**/*.py",
+        "kohaku/channels/*/webui/**/*",
+        "kohaku/web/dist/**/*",
     ):
         assert pattern in include
     for relative in _PACKAGE_MEMBERS:
-        if relative == "nanobot/web/dist/index.html":
+        if relative == "kohaku/web/dist/index.html":
             # The generated bundle is intentionally absent in this offline
             # checkout; the Hatch include/artifact rules are the gate here.
             continue
@@ -168,11 +168,11 @@ def test_source_manifest_retains_required_release_assets() -> None:
 
 
 def test_archive_inventory_rejects_local_state_and_traversal(tmp_path: Path) -> None:
-    wheel = tmp_path / "nanobot_ai-0.3.0-py3-none-any.whl"
+    wheel = tmp_path / "kohaku-0.3.0-py3-none-any.whl"
     _write_zip(
         wheel,
-        tuple(f"nanobot_ai-0.3.0/{member}" for member in _PACKAGE_MEMBERS)
-        + ("nanobot_ai-0.3.0/.env", "../secrets.txt"),
+        tuple(f"kohaku-0.3.0/{member}" for member in _PACKAGE_MEMBERS)
+        + ("kohaku-0.3.0/.env", "../secrets.txt"),
     )
 
     with pytest.raises(ReleaseArtifactError, match="forbidden|unsafe"):
@@ -180,29 +180,29 @@ def test_archive_inventory_rejects_local_state_and_traversal(tmp_path: Path) -> 
 
 
 def test_wheel_inventory_requires_canonical_package_paths(tmp_path: Path) -> None:
-    wheel = tmp_path / "nanobot_ai-0.3.0-py3-none-any.whl"
-    _write_zip(wheel, tuple(f"nanobot_ai-0.3.0/{member}" for member in _PACKAGE_MEMBERS))
+    wheel = tmp_path / "kohaku-0.3.0-py3-none-any.whl"
+    _write_zip(wheel, tuple(f"kohaku-0.3.0/{member}" for member in _PACKAGE_MEMBERS))
 
     report = inspect_archive(wheel)
 
-    assert "nanobot/__init__.py" in report.missing
-    assert "nanobot_ai-0.3.0.dist-info/METADATA" not in report.missing
+    assert "kohaku/__init__.py" in report.missing
+    assert "kohaku-0.3.0.dist-info/METADATA" not in report.missing
 
 
 def test_wheel_inventory_requires_filename_derived_metadata_root(tmp_path: Path) -> None:
-    wheel = tmp_path / "nanobot_ai-0.3.0-py3-none-any.whl"
+    wheel = tmp_path / "kohaku-0.3.0-py3-none-any.whl"
     _write_zip(wheel, _PACKAGE_MEMBERS, metadata_root="other-0.3.0.dist-info")
 
     report = inspect_archive(wheel)
 
     assert report.missing == (
-        "nanobot_ai-0.3.0.dist-info/METADATA",
-        "nanobot_ai-0.3.0.dist-info/RECORD",
+        "kohaku-0.3.0.dist-info/METADATA",
+        "kohaku-0.3.0.dist-info/RECORD",
     )
 
 
 def test_sdist_inventory_requires_one_filename_derived_root(tmp_path: Path) -> None:
-    sdist = tmp_path / "nanobot-ai-0.3.0.tar.gz"
+    sdist = tmp_path / "kohaku-0.3.0.tar.gz"
     _write_sdist(sdist, tuple(f"other-root/{member}" for member in _PACKAGE_MEMBERS))
 
     with pytest.raises(ReleaseArtifactError, match="outside distribution root"):
@@ -210,29 +210,29 @@ def test_sdist_inventory_requires_one_filename_derived_root(tmp_path: Path) -> N
 
 
 def test_archive_inventory_rejects_zip_symlinks_and_required_directories(tmp_path: Path) -> None:
-    symlink = tmp_path / "nanobot_ai-0.3.0-py3-none-any.whl"
+    symlink = tmp_path / "kohaku-0.3.0-py3-none-any.whl"
     with zipfile.ZipFile(symlink, "w") as archive:
-        info = zipfile.ZipInfo("nanobot/__init__.py")
+        info = zipfile.ZipInfo("kohaku/__init__.py")
         info.create_system = 3
         info.external_attr = (stat.S_IFLNK | 0o777) << 16
         archive.writestr(info, "elsewhere")
     with pytest.raises(ReleaseArtifactError, match="symlink"):
         inspect_archive(symlink)
 
-    directory = tmp_path / "nanobot_ai-0.3.0-py3-none-any.whl"
-    _write_zip(directory, tuple(member for member in _PACKAGE_MEMBERS if member != "nanobot/web/dist/index.html"))
+    directory = tmp_path / "kohaku-0.3.0-py3-none-any.whl"
+    _write_zip(directory, tuple(member for member in _PACKAGE_MEMBERS if member != "kohaku/web/dist/index.html"))
     with zipfile.ZipFile(directory, "a") as archive:
-        archive.writestr("nanobot/web/dist/index.html", "")
-        info = archive.getinfo("nanobot/web/dist/index.html")
+        archive.writestr("kohaku/web/dist/index.html", "")
+        info = archive.getinfo("kohaku/web/dist/index.html")
         info.external_attr = (stat.S_IFDIR | 0o755) << 16
     report = inspect_archive(directory)
-    assert report.missing == ("nanobot/web/dist/index.html",)
+    assert report.missing == ("kohaku/web/dist/index.html",)
 
 
 def test_archive_inventory_rejects_concurrent_path_replacement(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    wheel = tmp_path / "nanobot_ai-0.3.0-py3-none-any.whl"
+    wheel = tmp_path / "kohaku-0.3.0-py3-none-any.whl"
     _write_zip(wheel, _PACKAGE_MEMBERS)
     replacement = tmp_path / "replacement.whl"
     replacement.write_bytes(b"replacement")
@@ -270,7 +270,7 @@ def test_archive_inventory_rejects_concurrent_path_replacement(
 def test_dependency_inventory_records_unlocked_release_inputs() -> None:
     report = inspect_dependency_inputs(Path(__file__).resolve().parents[2])
 
-    assert report.project == "nanobot-ai"
+    assert report.project == "kohaku"
     assert report.dependencies
     assert "crawler-worker" in report.optional_dependencies
     assert report.lockfile_present == (Path(__file__).resolve().parents[2] / "uv.lock").is_file()
@@ -280,7 +280,7 @@ def test_dependency_inventory_records_unlocked_release_inputs() -> None:
 
 def test_service_inventory_requires_foreground_gateway_and_file_logging() -> None:
     root = Path(__file__).resolve().parents[2]
-    report = inspect_service_unit(root / "deploy/systemd/nanobot-gateway.service")
+    report = inspect_service_unit(root / "deploy/systemd/kohaku-gateway.service")
 
     assert report.valid is True
     assert report.missing == ()
@@ -292,14 +292,14 @@ def test_service_inventory_ignores_comments_and_directives_outside_service(tmp_p
     unit.write_text(
         """
 [Unit]
-ExecStart=/opt/nanobot gateway --config /ignored --log-file /ignored
-# ExecStart=/opt/nanobot gateway --config /comment --log-file /comment
+ExecStart=/opt/kohaku gateway --config /ignored --log-file /ignored
+# ExecStart=/opt/kohaku gateway --config /comment --log-file /comment
 
 [Service]
 # EnvironmentFile=/comment
 WorkingDirectory=
-ExecStart=/opt/nanobot gateway --config /etc/nanobot.json
-EnvironmentFile=/etc/nanobot.env
+ExecStart=/opt/kohaku gateway --config /etc/kohaku.json
+EnvironmentFile=/etc/kohaku.env
 """,
         encoding="utf-8",
     )
@@ -315,11 +315,11 @@ def test_service_inventory_honors_execstart_reset_and_rejects_duplicates(tmp_pat
     reset.write_text(
         """
 [Service]
-ExecStart=/opt/old/nanobot gateway --config /old --log-file /old
+ExecStart=/opt/old/kohaku gateway --config /old --log-file /old
 ExecStart=
-ExecStart=/opt/nanobot gateway --config /etc/nanobot.json --log-file /var/log/nanobot.log
-EnvironmentFile=/etc/nanobot.env
-WorkingDirectory=/opt/nanobot
+ExecStart=/opt/kohaku gateway --config /etc/kohaku.json --log-file /var/log/kohaku.log
+EnvironmentFile=/etc/kohaku.env
+WorkingDirectory=/opt/kohaku
 """,
         encoding="utf-8",
     )
@@ -327,10 +327,10 @@ WorkingDirectory=/opt/nanobot
     duplicate.write_text(
         """
 [Service]
-ExecStart=/opt/one/nanobot gateway --config /one --log-file /one
-ExecStart=/opt/two/nanobot gateway --config /two --log-file /two
-EnvironmentFile=/etc/nanobot.env
-WorkingDirectory=/opt/nanobot
+ExecStart=/opt/one/kohaku gateway --config /one --log-file /one
+ExecStart=/opt/two/kohaku gateway --config /two --log-file /two
+EnvironmentFile=/etc/kohaku.env
+WorkingDirectory=/opt/kohaku
 """,
         encoding="utf-8",
     )
@@ -346,9 +346,9 @@ def test_service_inventory_rejects_wrapper_with_nanobot_arguments(tmp_path: Path
     unit.write_text(
         """
 [Service]
-ExecStart=/bin/echo nanobot gateway --config /etc/nanobot.json --log-file /var/log/nanobot.log
-EnvironmentFile=/etc/nanobot.env
-WorkingDirectory=/opt/nanobot
+ExecStart=/bin/echo kohaku gateway --config /etc/kohaku.json --log-file /var/log/kohaku.log
+EnvironmentFile=/etc/kohaku.env
+WorkingDirectory=/opt/kohaku
 """,
         encoding="utf-8",
     )
@@ -356,7 +356,7 @@ WorkingDirectory=/opt/nanobot
     report = inspect_service_unit(unit)
 
     assert report.valid is False
-    assert "nanobot gateway" in report.missing
+    assert "kohaku gateway" in report.missing
 
 
 def test_service_inventory_applies_environment_file_reset(tmp_path: Path) -> None:
@@ -364,10 +364,10 @@ def test_service_inventory_applies_environment_file_reset(tmp_path: Path) -> Non
     unit.write_text(
         """
 [Service]
-ExecStart=/opt/nanobot/bin/nanobot gateway --config /etc/nanobot.json --log-file /var/log/nanobot.log
-EnvironmentFile=/etc/nanobot.env
+ExecStart=/opt/kohaku/bin/kohaku gateway --config /etc/kohaku.json --log-file /var/log/kohaku.log
+EnvironmentFile=/etc/kohaku.env
 EnvironmentFile=
-WorkingDirectory=/opt/nanobot
+WorkingDirectory=/opt/kohaku
 """,
         encoding="utf-8",
     )

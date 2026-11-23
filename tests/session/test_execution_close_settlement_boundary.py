@@ -8,14 +8,14 @@ from dataclasses import replace
 
 import pytest
 
-from nanobot.session import execution_owner as owner_module
-from nanobot.session.execution_owner import (
+from kohaku.session import execution_owner as owner_module
+from kohaku.session.execution_owner import (
     ExecutionOwner,
     ExecutionOwnershipError,
     acquire_execution,
 )
-from nanobot.session.manager import JsonlSessionStore
-from nanobot.session.source_store import SourceSessionStore, SourceSnapshot
+from kohaku.session.manager import JsonlSessionStore
+from kohaku.session.source_store import SourceSessionStore, SourceSnapshot
 from tests.session.test_execution_owner import seed
 
 

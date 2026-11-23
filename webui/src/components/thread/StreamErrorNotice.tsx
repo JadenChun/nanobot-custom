@@ -5,7 +5,7 @@ import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import { resolveModelRequestFailureCopy } from "@/lib/model-request-failure";
 import { cn } from "@/lib/utils";
-import { messageDeliveryErrorKind, type StreamError } from "@/lib/nanobot-client";
+import { messageDeliveryErrorKind, type StreamError } from "@/lib/kohaku-client";
 
 interface StreamErrorNoticeProps {
   error: StreamError;

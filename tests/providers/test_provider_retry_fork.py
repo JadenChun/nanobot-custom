@@ -4,8 +4,8 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from nanobot.providers.base import GenerationSettings, LLMProvider, LLMResponse
-from nanobot.providers.pooled_provider import PooledProvider
+from kohaku.providers.base import GenerationSettings, LLMProvider, LLMResponse
+from kohaku.providers.pooled_provider import PooledProvider
 
 
 class ScriptedProvider(LLMProvider):
@@ -38,7 +38,7 @@ async def test_chat_with_retry_retries_transient_error_then_succeeds(monkeypatch
     async def _fake_sleep(delay: int) -> None:
         delays.append(delay)
 
-    monkeypatch.setattr("nanobot.providers.base.asyncio.sleep", _fake_sleep)
+    monkeypatch.setattr("kohaku.providers.base.asyncio.sleep", _fake_sleep)
 
     response = await provider.chat_with_retry(messages=[{"role": "user", "content": "hello"}])
 
@@ -58,7 +58,7 @@ async def test_chat_with_retry_does_not_retry_non_transient_error(monkeypatch) -
     async def _fake_sleep(delay: int) -> None:
         delays.append(delay)
 
-    monkeypatch.setattr("nanobot.providers.base.asyncio.sleep", _fake_sleep)
+    monkeypatch.setattr("kohaku.providers.base.asyncio.sleep", _fake_sleep)
 
     response = await provider.chat_with_retry(messages=[{"role": "user", "content": "hello"}])
 
@@ -80,7 +80,7 @@ async def test_chat_with_retry_returns_final_error_after_retries(monkeypatch) ->
     async def _fake_sleep(delay: int) -> None:
         delays.append(delay)
 
-    monkeypatch.setattr("nanobot.providers.base.asyncio.sleep", _fake_sleep)
+    monkeypatch.setattr("kohaku.providers.base.asyncio.sleep", _fake_sleep)
 
     response = await provider.chat_with_retry(messages=[{"role": "user", "content": "hello"}])
 
@@ -103,7 +103,7 @@ async def test_chat_with_retry_does_not_restart_after_key_pool_exhausted(monkeyp
     async def _fake_sleep(delay: int) -> None:
         delays.append(delay)
 
-    monkeypatch.setattr("nanobot.providers.base.asyncio.sleep", _fake_sleep)
+    monkeypatch.setattr("kohaku.providers.base.asyncio.sleep", _fake_sleep)
 
     response = await provider.chat_with_retry(messages=[{"role": "user", "content": "hello"}],
         on_retry_exhausted=exhausted, on_retry_status=status,
@@ -134,7 +134,7 @@ async def test_chat_stream_with_retry_does_not_restart_after_key_pool_exhausted(
     async def _fake_sleep(delay: int) -> None:
         delays.append(delay)
 
-    monkeypatch.setattr("nanobot.providers.base.asyncio.sleep", _fake_sleep)
+    monkeypatch.setattr("kohaku.providers.base.asyncio.sleep", _fake_sleep)
 
     response = await provider.chat_stream_with_retry(messages=[{"role": "user", "content": "hello"}],
         on_retry_exhausted=exhausted, on_retry_status=status,

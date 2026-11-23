@@ -4,10 +4,10 @@ from datetime import datetime, timezone
 
 import pytest
 
-from nanobot.agent.tools.context import RequestContext, request_context
-from nanobot.agent.tools.cron import CronTool
-from nanobot.cron.service import CronService
-from nanobot.cron.types import CronDestination, CronJobState, CronSchedule
+from kohaku.agent.tools.context import RequestContext, request_context
+from kohaku.agent.tools.cron import CronTool
+from kohaku.cron.service import CronService
+from kohaku.cron.types import CronDestination, CronJobState, CronSchedule
 from tests.cron import p6_compat_fixtures as cases
 from tests.cron.stage3_fixtures import offline_denial  # noqa: F401
 

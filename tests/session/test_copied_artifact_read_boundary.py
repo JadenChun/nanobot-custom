@@ -6,10 +6,10 @@ from pathlib import Path
 
 import pytest
 
-from nanobot.session.artifact_operator import ArtifactOperatorError
-from nanobot.session.manager import SessionManager
-from nanobot.session.runtime_authority import OfflineSessionOperator
-from nanobot.session.session_mode import SessionModeError, SessionModeResolver
+from kohaku.session.artifact_operator import ArtifactOperatorError
+from kohaku.session.manager import SessionManager
+from kohaku.session.runtime_authority import OfflineSessionOperator
+from kohaku.session.session_mode import SessionModeError, SessionModeResolver
 from tests.session.test_artifact_operator import copied_artifact_fixture
 from tests.session.test_session_composition_export_boundary import manager_writer
 

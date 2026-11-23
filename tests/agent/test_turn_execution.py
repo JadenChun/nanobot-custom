@@ -7,13 +7,13 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from nanobot.agent.foreground import build_foreground_dependencies
-from nanobot.agent.policy import RiskyActionPolicy
-from nanobot.agent.tools.base import Tool
-from nanobot.agent.tools.cron import CronTool
-from nanobot.agent.tools.filesystem import EditFileTool
-from nanobot.agent.tools.message import MessageTool
-from nanobot.agent.turn import (
+from kohaku.agent.foreground import build_foreground_dependencies
+from kohaku.agent.policy import RiskyActionPolicy
+from kohaku.agent.tools.base import Tool
+from kohaku.agent.tools.cron import CronTool
+from kohaku.agent.tools.filesystem import EditFileTool
+from kohaku.agent.tools.message import MessageTool
+from kohaku.agent.turn import (
     DelegationBudget,
     DeliveryTarget,
     RunStatus,
@@ -23,17 +23,17 @@ from nanobot.agent.turn import (
     TurnRequest,
     TurnSource,
 )
-from nanobot.agent.write_guard import FileLockRegistry
-from nanobot.bus.queue import MessageBus
-from nanobot.config.schema import ToolsConfig
-from nanobot.providers.base import GenerationSettings, LLMResponse, ToolCallRequest
-from nanobot.utils.llm_runtime import LLMRuntime
+from kohaku.agent.write_guard import FileLockRegistry
+from kohaku.bus.queue import MessageBus
+from kohaku.config.schema import ToolsConfig
+from kohaku.providers.base import GenerationSettings, LLMResponse, ToolCallRequest
+from kohaku.utils.llm_runtime import LLMRuntime
 
 
 @pytest.fixture(autouse=True)
 def _allow_guarded_constructor_for_this_suite(monkeypatch):
     """Open only this suite's constructor seam; restore the guard per test."""
-    monkeypatch.setattr("nanobot.migration_guard.require_runtime_ready", lambda: None)
+    monkeypatch.setattr("kohaku.migration_guard.require_runtime_ready", lambda: None)
 
 
 class _StoppingTool(Tool):
@@ -75,7 +75,7 @@ class _ToolErrorTool(_StoppingTool):
 
 @pytest.mark.asyncio
 async def test_execute_turn_preserves_system_compat_route_and_source(tmp_path) -> None:
-    from nanobot.agent.loop import AgentLoop
+    from kohaku.agent.loop import AgentLoop
 
     provider = MagicMock()
     provider.get_default_model.return_value = "test-model"
@@ -100,7 +100,7 @@ async def test_execute_turn_preserves_system_compat_route_and_source(tmp_path) -
 
 @pytest.mark.asyncio
 async def test_contextual_tool_stop_does_not_make_an_extra_model_call(tmp_path) -> None:
-    from nanobot.agent.loop import AgentLoop
+    from kohaku.agent.loop import AgentLoop
 
     provider = MagicMock()
     provider.get_default_model.return_value = "test-model"
@@ -130,7 +130,7 @@ async def test_contextual_tool_stop_does_not_make_an_extra_model_call(tmp_path) 
 
 @pytest.mark.asyncio
 async def test_contextual_tool_error_is_terminal_without_an_extra_model_call(tmp_path) -> None:
-    from nanobot.agent.loop import AgentLoop
+    from kohaku.agent.loop import AgentLoop
 
     provider = MagicMock()
     provider.get_default_model.return_value = "test-model"
@@ -156,7 +156,7 @@ async def test_contextual_tool_error_is_terminal_without_an_extra_model_call(tmp
 
 @pytest.mark.asyncio
 async def test_execute_turn_finalizes_unexpected_error_and_notifies_callback(tmp_path) -> None:
-    from nanobot.agent.loop import AgentLoop
+    from kohaku.agent.loop import AgentLoop
 
     provider = MagicMock()
     provider.get_default_model.return_value = "test-model"
@@ -337,7 +337,7 @@ def test_foreground_worker_capability_and_context_budget_use_shared_dependencies
 
 @pytest.mark.asyncio
 async def test_browser_policy_allows_navigation_and_requires_approval_for_mutation(tmp_path) -> None:
-    from nanobot.providers.base import ToolCallRequest
+    from kohaku.providers.base import ToolCallRequest
 
     policy = RiskyActionPolicy(workspace=tmp_path)
     read = await policy.evaluate(

@@ -241,8 +241,8 @@ vi.mock("@/lib/bootstrap", () => ({
   clearSavedSecret: vi.fn(),
 }));
 
-vi.mock("@/lib/nanobot-client", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib/nanobot-client")>();
+vi.mock("@/lib/kohaku-client", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/kohaku-client")>();
   class MockClient {
     status = "idle" as const;
     defaultChatId: string | null = null;
@@ -292,7 +292,7 @@ vi.mock("@/lib/nanobot-client", async (importOriginal) => {
     updateMaxFrameBytes = vi.fn();
   }
 
-  return { ...actual, NanobotClient: MockClient };
+  return { ...actual, KohakuClient: MockClient };
 });
 
 import {
@@ -2612,7 +2612,7 @@ describe("App layout", () => {
             port: 8900,
             timeout: 120,
             endpoint: "http://127.0.0.1:8900/v1",
-            command: "nanobot serve",
+            command: "kohaku serve",
           });
         }
         if (href === "/api/settings/provider-models?provider=openai") {
@@ -2851,7 +2851,7 @@ describe("App layout", () => {
     expect(screen.getByTestId("overview-logo-openai")).toBeInTheDocument();
     expect(screen.getByTestId("overview-logo-brave")).toBeInTheDocument();
     expect(screen.getByTestId("overview-logo-openrouter")).toBeInTheDocument();
-    expect(screen.queryByTestId("overview-logo-nanobot-gateway")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("overview-logo-kohaku-gateway")).not.toBeInTheDocument();
     expect(screen.queryByTestId("overview-logo-nanobot-workspace")).not.toBeInTheDocument();
     expect(screen.queryByRole("navigation", { name: "Sidebar navigation" })).not.toBeInTheDocument();
     const settingsNav = screen.getByRole("navigation", { name: "Settings sections" });
@@ -2918,7 +2918,7 @@ describe("App layout", () => {
     expect(screen.queryByText("Ant Ling")).not.toBeInTheDocument();
     expect(
       screen.queryByText(
-        "Bring your own provider keys. Nanobot reads these values from the current config and only configured providers can be used in model presets.",
+        "Bring your own provider keys. Kohaku reads these values from the current config and only configured providers can be used in model presets.",
       ),
     ).not.toBeInTheDocument();
     expect(screen.queryByText("azure_openai")).not.toBeInTheDocument();

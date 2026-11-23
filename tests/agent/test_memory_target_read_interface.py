@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from nanobot.agent import memory_recovery_storage as storage
+from kohaku.agent import memory_recovery_storage as storage
 
 _INFO = object()
 _FORWARDING = (

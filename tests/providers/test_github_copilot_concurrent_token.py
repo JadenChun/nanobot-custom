@@ -9,12 +9,12 @@ from pathlib import Path
 import httpx
 import pytest
 
-from nanobot.providers import copilot_auth
-from nanobot.providers import github_copilot_provider as gc
+from kohaku.providers import copilot_auth
+from kohaku.providers import github_copilot_provider as gc
 
 
 def _install_identity(monkeypatch, tmp_path: Path) -> None:
-    monkeypatch.setenv("NANOBOT_COPILOT_AUTH_PATH", str(tmp_path / "copilot.json"))
+    monkeypatch.setenv("KOHAKU_COPILOT_AUTH_PATH", str(tmp_path / "copilot.json"))
     authority = copilot_auth.get_copilot_authority()
     generation = authority.begin_login()
     authority.commit_login("github-token", generation)

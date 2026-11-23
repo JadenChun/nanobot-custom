@@ -4,7 +4,7 @@ import gzip
 from pathlib import Path
 from unittest.mock import MagicMock
 
-from nanobot.webui.ws_http import GatewayHTTPHandler
+from kohaku.webui.ws_http import GatewayHTTPHandler
 
 
 def _handler(static_dist_path: Path) -> GatewayHTTPHandler:

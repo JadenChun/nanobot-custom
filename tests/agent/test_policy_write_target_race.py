@@ -4,13 +4,13 @@ from pathlib import Path
 
 import pytest
 
-from nanobot.agent.hook import AgentHook, AgentHookContext
-from nanobot.agent.policy import RiskyActionPolicy
-from nanobot.agent.tools.execution import execute_tool_calls
-from nanobot.agent.tools.filesystem import WriteFileTool
-from nanobot.agent.tools.registry import ToolRegistry
-from nanobot.providers.base import ToolCallRequest
-from nanobot.security.workspace_access import (
+from kohaku.agent.hook import AgentHook, AgentHookContext
+from kohaku.agent.policy import RiskyActionPolicy
+from kohaku.agent.tools.execution import execute_tool_calls
+from kohaku.agent.tools.filesystem import WriteFileTool
+from kohaku.agent.tools.registry import ToolRegistry
+from kohaku.providers.base import ToolCallRequest
+from kohaku.security.workspace_access import (
     bind_workspace_scope,
     reset_workspace_scope,
     validate_workspace_scope_payload,

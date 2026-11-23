@@ -8,8 +8,8 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from nanobot.config.loader import load_config, save_config
-from nanobot.config.schema import Config
+from kohaku.config.loader import load_config, save_config
+from kohaku.config.schema import Config
 
 
 def test_artifacts_default_to_disabled_with_documented_caps() -> None:

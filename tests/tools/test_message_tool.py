@@ -3,13 +3,13 @@ from pathlib import Path
 
 import pytest
 
-from nanobot.agent.tools.context import RequestContext, request_context
-from nanobot.agent.tools.message import MessageTool
-from nanobot.bus.events import OutboundMessage
-from nanobot.config.paths import get_workspace_path
-from nanobot.context_repo.policy import ResourceAccessPolicy
-from nanobot.security.folder_grants import FolderGrantStore
-from nanobot.security.workspace_access import (
+from kohaku.agent.tools.context import RequestContext, request_context
+from kohaku.agent.tools.message import MessageTool
+from kohaku.bus.events import OutboundMessage
+from kohaku.config.paths import get_workspace_path
+from kohaku.context_repo.policy import ResourceAccessPolicy
+from kohaku.security.folder_grants import FolderGrantStore
+from kohaku.security.workspace_access import (
     bind_workspace_scope,
     build_workspace_scope,
     reset_workspace_scope,
@@ -481,8 +481,8 @@ async def test_message_tool_attaches_webui_display_source_for_same_websocket_ses
     tmp_path: Path,
 ) -> None:
     """Managed WebUI turns must carry source authority so media messages persist to transcript."""
-    from nanobot.session.source_store import SourceState
-    from nanobot.webui.metadata import WEBUI_DISPLAY_SOURCE_KEY
+    from kohaku.session.source_store import SourceState
+    from kohaku.webui.metadata import WEBUI_DISPLAY_SOURCE_KEY
 
     sent: list[OutboundMessage] = []
 
@@ -556,18 +556,18 @@ async def test_message_tool_media_persists_in_managed_webui_transcript(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Outbound media sent via MessageTool in a managed session survives transcript replay."""
-    from nanobot.session.execution_owner import acquire_execution
-    from nanobot.session.runtime_authority import DurableSessionAuthority
-    from nanobot.session.turn_writer import SourceTurnWriter
-    from nanobot.webui.metadata import WEBUI_TURN_METADATA_KEY
-    from nanobot.webui.transcript import (
+    from kohaku.session.execution_owner import acquire_execution
+    from kohaku.session.runtime_authority import DurableSessionAuthority
+    from kohaku.session.turn_writer import SourceTurnWriter
+    from kohaku.webui.metadata import WEBUI_TURN_METADATA_KEY
+    from kohaku.webui.transcript import (
         WebUITranscriptRecorder,
         build_webui_thread_response,
     )
 
     webui_dir = tmp_path / "webui"
     webui_dir.mkdir()
-    monkeypatch.setattr("nanobot.webui.transcript.get_webui_dir", lambda: webui_dir)
+    monkeypatch.setattr("kohaku.webui.transcript.get_webui_dir", lambda: webui_dir)
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     lease = await DurableSessionAuthority(
@@ -610,7 +610,7 @@ async def test_message_tool_media_persists_in_managed_webui_transcript(
         assert len(sent) == 1
         from loguru import logger as test_logger
 
-        from nanobot.webui.media_gateway import WebUIMediaGateway
+        from kohaku.webui.media_gateway import WebUIMediaGateway
 
         media_gateway = WebUIMediaGateway(
             secret=b"test-secret",

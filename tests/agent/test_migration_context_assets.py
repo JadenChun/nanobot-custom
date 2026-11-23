@@ -1,6 +1,6 @@
 """Preserved context assets must reach the upstream prompt loader."""
-from nanobot.agent.context import ContextBuilder
-from nanobot.agent.skills import SkillsLoader
+from kohaku.agent.context import ContextBuilder
+from kohaku.agent.skills import SkillsLoader
 
 
 def test_custom_profile_files_are_loaded_from_agent_workspace(tmp_path):
@@ -37,7 +37,7 @@ def test_ordered_external_skills_preserve_workspace_and_disabled_precedence(tmp_
 
 
 def test_managed_repository_context_and_memory_reach_prompt(tmp_path):
-    from nanobot.context_repo import ContextRepoManager
+    from kohaku.context_repo import ContextRepoManager
 
     workspace, repo = tmp_path / 'agent', tmp_path / 'context'
     workspace.mkdir()

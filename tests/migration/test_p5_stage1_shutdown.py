@@ -5,9 +5,9 @@ from types import SimpleNamespace
 
 import pytest
 
-from nanobot.bus.queue import MessageBus
-from nanobot.channels.manager import ChannelManager
-from nanobot.config.schema import Config
+from kohaku.bus.queue import MessageBus
+from kohaku.channels.manager import ChannelManager
+from kohaku.config.schema import Config
 
 
 def _leaf_exceptions(exc: BaseException) -> list[BaseException]:
@@ -380,20 +380,20 @@ async def test_acquisition_rollback_is_reverse_owned_and_preserves_all_errors(
         SimpleNamespace(instance_id="first", config={}),
         SimpleNamespace(instance_id="second", config={}),
     ]
-    monkeypatch.setattr("nanobot.channels.registry.discover_plugins", lambda: {"probe": plugin})
-    monkeypatch.setattr("nanobot.channels.registry.packaged_channel_names", lambda: set())
+    monkeypatch.setattr("kohaku.channels.registry.discover_plugins", lambda: {"probe": plugin})
+    monkeypatch.setattr("kohaku.channels.registry.packaged_channel_names", lambda: set())
     monkeypatch.setattr(
-        "nanobot.channels.registry.discover_legacy_plugins",
+        "kohaku.channels.registry.discover_legacy_plugins",
         lambda *_args, **_kwargs: {},
     )
     monkeypatch.setattr(
-        "nanobot.optional_features.check_enabled_channel_dependencies",
+        "kohaku.optional_features.check_enabled_channel_dependencies",
         lambda *_args, **_kwargs: {},
     )
-    monkeypatch.setattr("nanobot.channels.manager.channel_setup_spec", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr("nanobot.channels.manager.channel_instance_specs", lambda *_args: specs)
+    monkeypatch.setattr("kohaku.channels.manager.channel_setup_spec", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr("kohaku.channels.manager.channel_instance_specs", lambda *_args: specs)
     monkeypatch.setattr(
-        "nanobot.channels.manager.channel_runtime_name",
+        "kohaku.channels.manager.channel_runtime_name",
         lambda _plugin, instance_id: f"probe.{instance_id}",
     )
     monkeypatch.setattr(plugin, "load_channel_class", lambda: object, raising=False)

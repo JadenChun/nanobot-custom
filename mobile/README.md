@@ -1,6 +1,6 @@
-# Nanobot mobile client
+# Kohaku mobile client
 
-Android-first mobile client for a Nanobot server. The selected server owns the Python agent,
+Android-first mobile client for Kohaku. The selected server owns the Python agent,
 sessions, memory, tools, files and provider credentials; the phone is a scoped client.
 
 Current status (2026-11-01 owner tranche): owner-scoped full-control pairing consent, typed
@@ -29,27 +29,27 @@ persistence boots the packaged shared UI through the native transport, and the s
 production-composed gateway. The real-gateway run passed handshake/read 200, WebSocket ready/attach,
 media full/range/oversize/hostile cases, and live revocation denial. Signed media resolves through
 native handles in shared attachments/lightbox. Product pairing now works end to end: Remote
-Access settings creates the exact `nanobot://pair` challenge and renders it as a QR/link, the
+Access settings creates the exact `kohaku://pair` challenge and renders it as a QR/link, the
 phone scans the QR or opens the link, the native bridge collects the owner challenge, displays the
 comparison code, then polls approval and stores the issued tokens in Keystore custody. The device
 remains linked until it is revoked in Remote Access settings; revoke denies new admissions. The
 full flow passed on the A142 phone against
 the real gateway, including handshake/read/WebSocket after pairing. A later run against a full
-`nanobot gateway` with the local `Qwen3.8-27B-UD-Q6_K_XL` provider completed the same phone pairing
+`kohaku gateway` with the local `Qwen3.8-27B-UD-Q6_K_XL` provider completed the same phone pairing
 and produced real model replies in both the host mobile-edge check (`GATEWAY_MODEL_OK`, 11.7 s) and
 the phone chat (`PHONE_OK`, 0.9 s); evidence is in
 `evidence/20261031-full-gateway/`. The phone's embedded Tailscale node needs a one-time interactive
 login when its prior node state was removed. Normal in-place app updates preserve both
-the encrypted Nanobot custody and the embedded Tailscale state; uninstall/clear-data
+the encrypted custody data and the embedded Tailscale state; uninstall/clear-data
 requires a fresh pairing. If tsnet asks for a new login while custody is intact, the
 app offers a re-auth panel instead of erasing the pairing. Use
 `mobile/scripts/install-release-update.sh` (or a Play Store update) for in-place
 updates; do not uninstall unless a fresh pairing is intended. The mobile bridge now also carries the
 model-preset, workspace-control and persisted-thread reads, so the composer model
 picker and the Sandbox mode menu work on the phone. The 2026-11-01 owner-client revision changes the phone from a
-restricted chat viewer to the same full Nanobot client as the desktop WebUI, with no
+restricted chat viewer to the same full Kohaku client as the desktop WebUI, with no
 separate admin pairing. Implementation is tracked in M30–M34; the current signed
-artifact is still the chat-scoped build until those tasks land. The signed artifact was rebuilt with that bridge and the Nanobot launcher
+artifact is still the chat-scoped build until those tasks land. The signed artifact was rebuilt with that bridge and the Kohaku launcher
 icon/splash (`936803375e50f9b54ca243eb2ea1609b4b1aa706bc5bd7182ce83e7ff4e3edd7`). M20 final matrix is green: WebUI
 1,364 passed; Python 17,111 passed, 22 skipped; phone 31 tests (8 live skipped, 23 passed). The five baseline
 failures and the order-dependent flake were repaired. M22 signed release is built and verified with
@@ -99,7 +99,7 @@ use push delivery.
 ## Owner pairing (2026-11-03)
 
 New pairing is owner-only. The desktop shows a 300-second QR challenge plus an
-8-digit fallback code; the phone can scan the QR, paste the `nanobot://pair`
+8-digit fallback code; the phone can scan the QR, paste the `kohaku://pair`
 link, or open **Use an 8-digit code instead** and enter the full HTTPS origin and
 code. Both paths require a desktop approval. The phone no longer displays or asks
 for a comparison code.
@@ -113,19 +113,19 @@ v1 transport; there is no relay or biometric gate.
 ## Release signing
 
 Release signing is configured from the environment, never from tracked files. The default
-keystore path is `~/.config/nanobot-mobile/release.keystore` and must be mode `600`.
+keystore path is `~/.config/kohaku-mobile/release.keystore` and must be mode `600`.
 
-Create a private `~/.config/nanobot-mobile/release.env` (mode `600`) with:
+Create a private `~/.config/kohaku-mobile/release.env` (mode `600`) with:
 
 ```bash
-NANOBOT_MOBILE_KEYSTORE=$HOME/.config/nanobot-mobile/release.keystore
-NANOBOT_MOBILE_KEY_ALIAS=<key-alias>
-NANOBOT_MOBILE_KEYSTORE_PASSWORD=<store-password>
-NANOBOT_MOBILE_KEY_PASSWORD=<key-password>
+KOHAKU_MOBILE_KEYSTORE=$HOME/.config/kohaku-mobile/release.keystore
+KOHAKU_MOBILE_KEY_ALIAS=<key-alias>
+KOHAKU_MOBILE_KEYSTORE_PASSWORD=<store-password>
+KOHAKU_MOBILE_KEY_PASSWORD=<key-password>
 ```
 
-`NANOBOT_MOBILE_KEYSTORE_PASSWORD_FILE` can point at a single-line password file instead of
-`NANOBOT_MOBILE_KEYSTORE_PASSWORD`. The key password defaults to the store password.
+`KOHAKU_MOBILE_KEYSTORE_PASSWORD_FILE` can point at a single-line password file instead of
+`KOHAKU_MOBILE_KEYSTORE_PASSWORD`. The key password defaults to the store password.
 
 Build and verify the signed release:
 
@@ -145,8 +145,11 @@ release app:
 
 | Build | Application ID | Label | Signing |
 |---|---|---|---|
-| Release | `ai.nanobot.mobile` | Kohaku | release keystore |
-| Debug | `ai.nanobot.mobile.debug` | Kohaku Dev | debug keystore |
+| Release | `ai.kohaku.mobile` | Kohaku | release keystore |
+| Debug | `ai.kohaku.mobile.debug` | Kohaku Dev | debug keystore |
+
+The new package ID gives Kohaku a fresh app identity. Install it as a separate app and complete
+pairing again. Android does not move Nanobot app data or pairing state to this package.
 
 The debug app has its own app data, custody, pairing and embedded Tailscale state, so development
 does not overwrite the release app or require re-pairing it.
@@ -158,14 +161,14 @@ mobile/scripts/build-debug.sh
 adb install -r mobile/android/app/build/outputs/apk/debug/app-debug.apk
 ```
 
-`build-debug.sh` packages `mobile/www-shared`. The `nanobot://pair` scheme is shared by both
+`build-debug.sh` packages `mobile/www-shared`. The `kohaku://pair` scheme is shared by both
 apps, so Android may show an app chooser. Choose **Kohaku Dev** when you test the debug build.
 
 Release builds and in-place release updates keep their existing flow:
 
 ```bash
 mobile/scripts/build-release.sh
-mobile/scripts/install-release-update.sh <serial> mobile/evidence/<date>-m22-release/nanobot-mobile-release.apk
+mobile/scripts/install-release-update.sh <serial> mobile/evidence/<date>-m22-release/kohaku-mobile-release.apk
 ```
 
 ## Isolated toolchain
@@ -192,7 +195,7 @@ cd android && ./gradlew :app:assembleDebug
 
 `M01` also ships a fixture-only JNI/CMake probe (`android/app/src/main/cpp/probe.c`) that reports
 the executing ABI and page size. It grants no network, file or credential authority. The fixture
-debug build installs as `ai.nanobot.mobile.debug`, so it can coexist with the release app.
+debug build installs as `ai.kohaku.mobile.debug`, so it can coexist with the release app.
 
 ## Emulator qualification
 
@@ -202,7 +205,7 @@ mobile/scripts/qualify-emulator.sh --evidence-dir <private-run-directory> --nati
 ```
 
 The runner builds, creates/reuses an x86_64 API 36 AVD, installs the fixture debug APK
-(`ai.nanobot.mobile.debug`), waits for the native probe marker, captures a screenshot and cleans
+(`ai.kohaku.mobile.debug`), waits for the native probe marker, captures a screenshot and cleans
 up the emulator unless `--keep-emulator` is passed. Evidence stays under the gitignored
 `mobile/evidence/`.
 
@@ -223,5 +226,5 @@ Emulator `37.2.13` segfaults during display setup on this Fedora 44 host in ever
 hardware/software mode except ANGLE indirect (`-gpu auto`, `host`, `swiftshader`,
 `swiftshader_indirect`, `off` and `guest` all crashed). The runner therefore defaults to
 `-gpu angle_indirect`, which booted the API 36 image in about 19 seconds on the same kernel.
-Override with `NANOBOT_MOBILE_EMULATOR_GPU` or `--gpu` when a host has a different known-good
+Override with `KOHAKU_MOBILE_EMULATOR_GPU` or `--gpu` when a host has a different known-good
 mode, and record the result with the evidence.

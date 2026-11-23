@@ -16,8 +16,8 @@ from unittest.mock import patch
 
 import pytest
 
-import nanobot.cron.occurrence_store as occurrence_store
-from nanobot.cron.occurrence_store import (
+import kohaku.cron.occurrence_store as occurrence_store
+from kohaku.cron.occurrence_store import (
     CronOccurrenceStore,
     OccurrenceAlreadyCompletedError,
     OccurrenceConflictError,
@@ -354,14 +354,14 @@ async def test_completed_retry_reverifies_durability_after_replace_directory_fsy
     # The record may be visible, yet the caller receives no delivery authority.
     with store.acquire_execution_fence(claim) as fence:
         store.begin_execution(claim, fence)
-        with patch("nanobot.cron.occurrence_store.os.fsync", side_effect=[None, OSError("directory")]):
+        with patch("kohaku.cron.occurrence_store.os.fsync", side_effect=[None, OSError("directory")]):
             with pytest.raises(OccurrencePersistenceError):
                 store.complete(claim, completion, fence)
         assert store.get(claim.occurrence_id).state == "completed"
 
         # An identical retry must fsync and verify the existing completed record;
         # merely returning the visible JSON would incorrectly authorize delivery.
-        with patch("nanobot.cron.occurrence_store.os.fsync", side_effect=OSError("still not durable")):
+        with patch("kohaku.cron.occurrence_store.os.fsync", side_effect=OSError("still not durable")):
             with pytest.raises(OccurrencePersistenceError):
                 store.complete(claim, completion, fence)
 
@@ -373,12 +373,12 @@ async def test_completed_retry_reverifies_durability_after_replace_directory_fsy
 def test_encoded_record_limit_applies_before_claim_completion_and_reclaim_writes(tmp_path: Path) -> None:
     exact_store = _store(tmp_path / "exact")
     claimed_wire = _wire_for_claim(exact_store)
-    with patch("nanobot.cron.occurrence_store._MAX_RECORD_BYTES", len(claimed_wire)):
+    with patch("kohaku.cron.occurrence_store._MAX_RECORD_BYTES", len(claimed_wire)):
         claim = _claim(exact_store)
     assert claim.occurrence_id
 
     claim_store = _store(tmp_path / "claim-oversize")
-    with patch("nanobot.cron.occurrence_store._MAX_RECORD_BYTES", len(claimed_wire) - 1):
+    with patch("kohaku.cron.occurrence_store._MAX_RECORD_BYTES", len(claimed_wire) - 1):
         with pytest.raises(OccurrenceConflictError, match="encoded record"):
             _claim(claim_store)
     assert not list(claim_store.root.glob("*.json"))
@@ -387,7 +387,7 @@ def test_encoded_record_limit_applies_before_claim_completion_and_reclaim_writes
     completion_claim = _claim(completion_store)
     completion = {"status": "ok", "result": "computed"}
     completed_wire = _wire_for_claim(completion_store, completion=completion)
-    with patch("nanobot.cron.occurrence_store._MAX_RECORD_BYTES", len(completed_wire) - 1):
+    with patch("kohaku.cron.occurrence_store._MAX_RECORD_BYTES", len(completed_wire) - 1):
         with pytest.raises(OccurrenceConflictError, match="encoded record"):
             _complete(completion_store, completion_claim, completion)
     assert completion_store.get(completion_claim.occurrence_id).state == "claimed"
@@ -401,7 +401,7 @@ def test_encoded_record_limit_applies_before_claim_completion_and_reclaim_writes
             "replaced_generation": 1,
         },
     )
-    with patch("nanobot.cron.occurrence_store._MAX_RECORD_BYTES", len(reclaimed_wire) - 1):
+    with patch("kohaku.cron.occurrence_store._MAX_RECORD_BYTES", len(reclaimed_wire) - 1):
         with pytest.raises(OccurrenceConflictError, match="encoded record"):
             completion_store.reclaim_after_reconciliation(
                 completion_claim.occurrence_id,
@@ -456,7 +456,7 @@ async def test_write_and_replace_failures_do_not_return_execution_or_delivery_au
     tmp_path: Path,
 ) -> None:
     store = _store(tmp_path)
-    with patch("nanobot.cron.occurrence_store.os.fsync", side_effect=OSError("fsync failed")):
+    with patch("kohaku.cron.occurrence_store.os.fsync", side_effect=OSError("fsync failed")):
         with pytest.raises(OccurrencePersistenceError):
             _claim(store)
 
@@ -464,12 +464,12 @@ async def test_write_and_replace_failures_do_not_return_execution_or_delivery_au
     claim = _claim(durable_store)
     with durable_store.acquire_execution_fence(claim) as fence:
         durable_store.begin_execution(claim, fence)
-        with patch("nanobot.cron.occurrence_store.os.fsync", side_effect=OSError("fsync failed")):
+        with patch("kohaku.cron.occurrence_store.os.fsync", side_effect=OSError("fsync failed")):
             with pytest.raises(OccurrencePersistenceError):
                 durable_store.complete(claim, {"status": "ok"}, fence)
         assert durable_store.get(claim.occurrence_id).state == "claimed"
 
-        with patch("nanobot.cron.occurrence_store.os.rename", side_effect=OSError("replace failed")):
+        with patch("kohaku.cron.occurrence_store.os.rename", side_effect=OSError("replace failed")):
             with pytest.raises(OccurrencePersistenceError):
                 durable_store.complete(claim, {"status": "ok"}, fence)
     assert durable_store.get(claim.occurrence_id).state == "claimed"
@@ -487,7 +487,7 @@ def test_records_and_lock_are_private(tmp_path: Path) -> None:
 
 def test_root_creation_requires_parent_fsync_before_any_claim(tmp_path: Path) -> None:
     root = tmp_path / "new-private-occurrences"
-    with patch("nanobot.cron.occurrence_store.os.fsync", side_effect=OSError("parent fsync failed")):
+    with patch("kohaku.cron.occurrence_store.os.fsync", side_effect=OSError("parent fsync failed")):
         with pytest.raises(OccurrencePersistenceError):
             CronOccurrenceStore(root, namespace=NAMESPACE)
     assert not list(root.glob("*.json")) if root.exists() else True
@@ -498,7 +498,7 @@ def test_persistent_final_parent_fsync_failure_cannot_be_bypassed_by_reopen(
 ) -> None:
     root = tmp_path / "persistent-parent-fsync"
     with patch(
-        "nanobot.cron.occurrence_store.os.fsync",
+        "kohaku.cron.occurrence_store.os.fsync",
         side_effect=_persistent_final_parent_fsync_failure(root),
     ):
         for _ in range(2):
@@ -522,7 +522,7 @@ def test_concurrent_initializers_cannot_bypass_persistent_parent_fsync_failure(
             failures.append(type(exc))
 
     with patch(
-        "nanobot.cron.occurrence_store.os.fsync",
+        "kohaku.cron.occurrence_store.os.fsync",
         side_effect=_persistent_final_parent_fsync_failure(root),
     ):
         workers = [threading.Thread(target=initialize) for _ in range(2)]
@@ -546,7 +546,7 @@ def test_new_root_child_fd_closes_when_initialization_boundary_fails(
             captured["child"] = fd
             raise OSError("fchmod failed")
 
-        patcher = patch("nanobot.cron.occurrence_store.os.fchmod", side_effect=fail_fchmod)
+        patcher = patch("kohaku.cron.occurrence_store.os.fchmod", side_effect=fail_fchmod)
     elif boundary == "child_fsync":
         original_fsync = os.fsync
 
@@ -556,7 +556,7 @@ def test_new_root_child_fd_closes_when_initialization_boundary_fails(
                 raise OSError("child fsync failed")
             original_fsync(fd)
 
-        patcher = patch("nanobot.cron.occurrence_store.os.fsync", side_effect=fail_child_fsync)
+        patcher = patch("kohaku.cron.occurrence_store.os.fsync", side_effect=fail_child_fsync)
     else:
         original_fsync = os.fsync
         local = threading.local()
@@ -571,7 +571,7 @@ def test_new_root_child_fd_closes_when_initialization_boundary_fails(
                 raise OSError("parent fsync failed")
             original_fsync(fd)
 
-        patcher = patch("nanobot.cron.occurrence_store.os.fsync", side_effect=fail_parent_fsync)
+        patcher = patch("kohaku.cron.occurrence_store.os.fsync", side_effect=fail_parent_fsync)
 
     with patcher:
         with pytest.raises(OccurrencePersistenceError):
@@ -729,7 +729,7 @@ async def test_execution_lock_fsync_failure_and_existing_residue_retry_grant_no_
             raise OSError(f"{boundary} fsync failed")
         original_fsync(fd)
 
-    with patch("nanobot.cron.occurrence_store.os.fsync", side_effect=fail_boundary):
+    with patch("kohaku.cron.occurrence_store.os.fsync", side_effect=fail_boundary):
         for _ in range(2):
             with pytest.raises(OccurrencePersistenceError, match="execution lock"):
                 store.acquire_execution_fence(claim)

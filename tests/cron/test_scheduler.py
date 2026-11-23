@@ -1,8 +1,8 @@
 import pytest
 
-from nanobot.cron.occurrence_store import OccurrenceCorruptError
-from nanobot.cron.runtime_inspection import inspect_scheduler
-from nanobot.cron.scheduler_store import SchedulerConflictError
+from kohaku.cron.occurrence_store import OccurrenceCorruptError
+from kohaku.cron.runtime_inspection import inspect_scheduler
+from kohaku.cron.scheduler_store import SchedulerConflictError
 from tests.cron.stage3_fixtures import offline_denial, runtime  # noqa: F401
 
 
@@ -25,7 +25,7 @@ async def prebegin_crash(tmp_path, monkeypatch):
 
 
 def reconcile(graph, record, *, successor="operator-successor", **changes):
-    from nanobot.cron.runtime_inspection import reconcile_occurrence
+    from kohaku.cron.runtime_inspection import reconcile_occurrence
 
     return reconcile_occurrence(graph.service.occurrence_store.root, namespace="stage3",
         occurrence_id=record.occurrence_id, expected_owner=record.owner,
@@ -36,8 +36,8 @@ def reconcile(graph, record, *, successor="operator-successor", **changes):
 
 @pytest.mark.parametrize("fresh", [False, True])
 async def test_prebegin_reconciliation_resumes_future_without_old_compute(tmp_path, monkeypatch, fresh):
-    from nanobot.cron.scheduler import Scheduler
-    from nanobot.cron.scheduler_store import SchedulerStore
+    from kohaku.cron.scheduler import Scheduler
+    from kohaku.cron.scheduler_store import SchedulerStore
 
     graph, item, clock, calls, channels = await prebegin_crash(tmp_path, monkeypatch)
     original = graph.service.occurrence_store.inspect_records()[0]
@@ -70,7 +70,7 @@ async def test_repeated_reconciliation_retains_every_edge_and_original_observati
     second = graph.service.occurrence_store.inspect_records()[0]
     reconcile(graph, second, successor="third")
     # Inspection does not refresh the dormant owner's pinned state or publish.
-    from nanobot.cron.runtime_inspection import inspect_scheduler
+    from kohaku.cron.runtime_inspection import inspect_scheduler
 
     inspected = inspect_scheduler(graph.store.root, namespace="stage3", runtime_identity="copied-root")
     assert inspected["classifications"] == before["classifications"]
@@ -88,8 +88,8 @@ async def test_repeated_reconciliation_retains_every_edge_and_original_observati
 async def test_bridge_capacity_rolls_epoch_and_resumes_timers(tmp_path, monkeypatch):
     from copy import deepcopy
 
-    import nanobot.cron.scheduler_store as scheduler_store
-    from nanobot.cron.scheduler_store import SchedulerStore
+    import kohaku.cron.scheduler_store as scheduler_store
+    from kohaku.cron.scheduler_store import SchedulerStore
 
     graph, item, clock, calls, channels = await prebegin_crash(tmp_path, monkeypatch)
     original = graph.service.occurrence_store.inspect_records()[0]
@@ -138,7 +138,7 @@ async def test_bridge_capacity_rolls_epoch_and_resumes_timers(tmp_path, monkeypa
 
 
 async def test_recurring_job_keeps_its_receipts_across_scheduler_capacity(tmp_path, monkeypatch):
-    from nanobot.cron import scheduler_store
+    from kohaku.cron import scheduler_store
 
     monkeypatch.setattr(scheduler_store, "MAX_CLASSIFICATIONS", 3)
     graph, _item, clock, calls, channels = runtime(tmp_path)
@@ -172,13 +172,13 @@ async def test_recurring_job_keeps_its_receipts_across_scheduler_capacity(tmp_pa
 
 
 async def test_epoch_archive_tamper_fails_closed(tmp_path, monkeypatch):
-    from nanobot.cron.occurrence_store import OccurrenceCorruptError
-    from nanobot.cron.scheduler_store import SchedulerStore
+    from kohaku.cron.occurrence_store import OccurrenceCorruptError
+    from kohaku.cron.scheduler_store import SchedulerStore
 
     graph, item, clock, calls, channels = await prebegin_crash(tmp_path, monkeypatch)
     original = graph.service.occurrence_store.inspect_records()[0]
     reconcile(graph, original, successor="second")
-    import nanobot.cron.scheduler_store as scheduler_store
+    import kohaku.cron.scheduler_store as scheduler_store
 
     monkeypatch.setattr(scheduler_store, "MAX_BRIDGES", 1)
     current = graph.service.occurrence_store.inspect_records()[0]
@@ -197,7 +197,7 @@ async def test_epoch_archive_tamper_fails_closed(tmp_path, monkeypatch):
 async def test_epoch_rollover_survives_crash_before_state_publication(
     tmp_path, monkeypatch
 ):
-    from nanobot.cron.scheduler_store import SchedulerStore
+    from kohaku.cron.scheduler_store import SchedulerStore
 
     graph, item, clock, calls, channels = await prebegin_crash(tmp_path, monkeypatch)
     original = graph.service.occurrence_store.inspect_records()[0]
@@ -233,9 +233,9 @@ async def test_epoch_rollover_survives_crash_before_state_publication(
 
 
 async def test_epoch_missing_archive_fails_closed(tmp_path, monkeypatch):
-    import nanobot.cron.scheduler_store as scheduler_store
-    from nanobot.cron.occurrence_store import OccurrenceCorruptError
-    from nanobot.cron.scheduler_store import SchedulerStore
+    import kohaku.cron.scheduler_store as scheduler_store
+    from kohaku.cron.occurrence_store import OccurrenceCorruptError
+    from kohaku.cron.scheduler_store import SchedulerStore
 
     graph, item, clock, calls, channels = await prebegin_crash(tmp_path, monkeypatch)
     original = graph.service.occurrence_store.inspect_records()[0]
@@ -257,9 +257,9 @@ async def test_epoch_skipped_predecessor_fails_closed(tmp_path, monkeypatch):
     import hashlib
     import json
 
-    import nanobot.cron.scheduler_store as scheduler_store
-    from nanobot.cron.occurrence_store import OccurrenceCorruptError
-    from nanobot.cron.scheduler_store import SchedulerStore
+    import kohaku.cron.scheduler_store as scheduler_store
+    from kohaku.cron.occurrence_store import OccurrenceCorruptError
+    from kohaku.cron.scheduler_store import SchedulerStore
 
     graph, item, clock, calls, channels = await prebegin_crash(tmp_path, monkeypatch)
     original = graph.service.occurrence_store.inspect_records()[0]
@@ -295,9 +295,9 @@ async def test_epoch_skipped_predecessor_fails_closed(tmp_path, monkeypatch):
 async def test_reconciliation_chain_attacks_fail_closed(tmp_path, monkeypatch, attack):
     from copy import deepcopy
 
-    from nanobot.cron.occurrence_store import OccurrenceCorruptError
-    from nanobot.cron.scheduler import Scheduler
-    from nanobot.cron.scheduler_store import SchedulerStore
+    from kohaku.cron.occurrence_store import OccurrenceCorruptError
+    from kohaku.cron.scheduler import Scheduler
+    from kohaku.cron.scheduler_store import SchedulerStore
 
     graph, item, clock, calls, channels = await prebegin_crash(tmp_path, monkeypatch)
     for owner in ("second", "third", "fourth"):
@@ -337,8 +337,8 @@ async def test_acquisition_refresh_rejects_unproved_state_change(tmp_path, monke
     import json
     import os
 
-    from nanobot.cron.occurrence_store import OccurrenceCorruptError
-    from nanobot.cron.scheduler_store import SchedulerStore
+    from kohaku.cron.occurrence_store import OccurrenceCorruptError
+    from kohaku.cron.scheduler_store import SchedulerStore
 
     graph, item, clock, calls, channels = await prebegin_crash(tmp_path, monkeypatch)
     original = graph.service.occurrence_store.inspect_records()[0]
@@ -385,8 +385,8 @@ async def test_authoritative_occurrence_binding_and_completed_observation_are_st
     from copy import deepcopy
     from dataclasses import replace
 
-    from nanobot.cron.scheduler import Scheduler
-    from nanobot.cron.scheduler_store import SchedulerStore
+    from kohaku.cron.scheduler import Scheduler
+    from kohaku.cron.scheduler_store import SchedulerStore
 
     graph, item, clock, calls, channels = await prebegin_crash(tmp_path, monkeypatch)
     original = graph.service.occurrence_store.inspect_records()[0]
@@ -499,7 +499,7 @@ async def test_cursor_publication_inplace_attack_grants_no_dispatch(tmp_path, mo
     import os
     import stat
 
-    from nanobot.cron.occurrence_store import OccurrenceCorruptError
+    from kohaku.cron.occurrence_store import OccurrenceCorruptError
 
     graph, item, clock, calls, channels = runtime(tmp_path)
     clock.now = 1100

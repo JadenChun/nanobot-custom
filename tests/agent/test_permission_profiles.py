@@ -6,13 +6,13 @@ from pathlib import Path
 
 import pytest
 
-from nanobot.agent.policy import RiskyActionPolicy
-from nanobot.agent.tools.filesystem import EditFileTool, WriteFileTool
-from nanobot.agent.tools.registry import ToolRegistry
-from nanobot.agent.turn import ApprovalDecision, TurnContext
-from nanobot.agent.turn_admission import APPROVAL_TTL_SECONDS, ApprovalAdmission
-from nanobot.config.schema import Config, ToolPermissionsConfig
-from nanobot.providers.base import ToolCallRequest
+from kohaku.agent.policy import RiskyActionPolicy
+from kohaku.agent.tools.filesystem import EditFileTool, WriteFileTool
+from kohaku.agent.tools.registry import ToolRegistry
+from kohaku.agent.turn import ApprovalDecision, TurnContext
+from kohaku.agent.turn_admission import APPROVAL_TTL_SECONDS, ApprovalAdmission
+from kohaku.config.schema import Config, ToolPermissionsConfig
+from kohaku.providers.base import ToolCallRequest
 
 
 def test_default_config_uses_autonomous_permission_profile() -> None:
@@ -183,7 +183,7 @@ async def test_pending_approval_does_not_expire_by_default(monkeypatch: pytest.M
 
     # Simulate the user returning 24 hours later.
     later = pending.created_at + 24 * 3600
-    monkeypatch.setattr("nanobot.agent.turn_admission.time.time", lambda: later)
+    monkeypatch.setattr("kohaku.agent.turn_admission.time.time", lambda: later)
 
     decision = ApprovalDecision(approval_id=pending.approval_id, decision="approve")
     snapshot = await admission.snapshot_decision("websocket:chat-1", decision)

@@ -7,46 +7,46 @@ from pathlib import Path
 import httpx
 import pytest
 
-from nanobot.providers import copilot_auth
-from nanobot.providers import github_copilot_provider as gc
+from kohaku.providers import copilot_auth
+from kohaku.providers import github_copilot_provider as gc
 
 
 def test_resolve_falls_back_to_default_without_env(monkeypatch):
-    monkeypatch.delenv("NANOBOT_COPILOT_BASE_URL", raising=False)
-    assert gc._resolve("NANOBOT_COPILOT_BASE_URL", gc.DEFAULT_COPILOT_BASE_URL) == (
+    monkeypatch.delenv("KOHAKU_COPILOT_BASE_URL", raising=False)
+    assert gc._resolve("KOHAKU_COPILOT_BASE_URL", gc.DEFAULT_COPILOT_BASE_URL) == (
         gc.DEFAULT_COPILOT_BASE_URL
     )
 
 
 def test_resolve_uses_env_override_and_strips(monkeypatch):
-    monkeypatch.setenv("NANOBOT_COPILOT_TOKEN_URL", "  https://api.acme.ghe.com/copilot_internal/v2/token  ")
-    assert gc._resolve("NANOBOT_COPILOT_TOKEN_URL", gc.DEFAULT_COPILOT_TOKEN_URL) == (
+    monkeypatch.setenv("KOHAKU_COPILOT_TOKEN_URL", "  https://api.acme.ghe.com/copilot_internal/v2/token  ")
+    assert gc._resolve("KOHAKU_COPILOT_TOKEN_URL", gc.DEFAULT_COPILOT_TOKEN_URL) == (
         "https://api.acme.ghe.com/copilot_internal/v2/token"
     )
 
 
 def test_blank_env_override_falls_back_to_default(monkeypatch):
-    monkeypatch.setenv("NANOBOT_COPILOT_BASE_URL", "   ")
-    assert gc._resolve("NANOBOT_COPILOT_BASE_URL", gc.DEFAULT_COPILOT_BASE_URL) == (
+    monkeypatch.setenv("KOHAKU_COPILOT_BASE_URL", "   ")
+    assert gc._resolve("KOHAKU_COPILOT_BASE_URL", gc.DEFAULT_COPILOT_BASE_URL) == (
         gc.DEFAULT_COPILOT_BASE_URL
     )
 
 
 def test_provider_api_base_honors_env_override(monkeypatch):
-    monkeypatch.setenv("NANOBOT_COPILOT_BASE_URL", "https://copilot-api.acme.ghe.com")
+    monkeypatch.setenv("KOHAKU_COPILOT_BASE_URL", "https://copilot-api.acme.ghe.com")
     provider = gc.GitHubCopilotProvider()
     assert provider.api_base == "https://copilot-api.acme.ghe.com"
 
 
 def test_login_uses_enterprise_endpoint_overrides(monkeypatch, tmp_path: Path):
-    monkeypatch.setenv("NANOBOT_COPILOT_AUTH_PATH", str(tmp_path / "copilot.json"))
-    monkeypatch.setenv("NANOBOT_GITHUB_COPILOT_CLIENT_ID", "enterprise-client-id")
-    monkeypatch.setenv("NANOBOT_GITHUB_DEVICE_CODE_URL", "https://ghe.example/login/device/code")
+    monkeypatch.setenv("KOHAKU_COPILOT_AUTH_PATH", str(tmp_path / "copilot.json"))
+    monkeypatch.setenv("KOHAKU_GITHUB_COPILOT_CLIENT_ID", "enterprise-client-id")
+    monkeypatch.setenv("KOHAKU_GITHUB_DEVICE_CODE_URL", "https://ghe.example/login/device/code")
     monkeypatch.setenv(
-        "NANOBOT_GITHUB_ACCESS_TOKEN_URL",
+        "KOHAKU_GITHUB_ACCESS_TOKEN_URL",
         "https://ghe.example/login/oauth/access_token",
     )
-    monkeypatch.setenv("NANOBOT_GITHUB_USER_URL", "https://api.ghe.example/user")
+    monkeypatch.setenv("KOHAKU_GITHUB_USER_URL", "https://api.ghe.example/user")
     monkeypatch.setattr(gc.webbrowser, "open", lambda _url: None)
 
     calls = []
@@ -108,9 +108,9 @@ def test_login_uses_enterprise_endpoint_overrides(monkeypatch, tmp_path: Path):
 async def test_copilot_token_exchange_uses_enterprise_endpoint_override(
     monkeypatch, tmp_path: Path
 ):
-    monkeypatch.setenv("NANOBOT_COPILOT_AUTH_PATH", str(tmp_path / "copilot.json"))
+    monkeypatch.setenv("KOHAKU_COPILOT_AUTH_PATH", str(tmp_path / "copilot.json"))
     monkeypatch.setenv(
-        "NANOBOT_COPILOT_TOKEN_URL",
+        "KOHAKU_COPILOT_TOKEN_URL",
         "https://api.ghe.example/copilot_internal/v2/token",
     )
     authority = copilot_auth.get_copilot_authority()

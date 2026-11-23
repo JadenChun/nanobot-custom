@@ -8,12 +8,12 @@ from pathlib import Path
 
 import pytest
 
-from nanobot.session.artifact_factory import ConfiguredArtifactReaderFactory
-from nanobot.session.artifact_operator import (
+from kohaku.session.artifact_factory import ConfiguredArtifactReaderFactory
+from kohaku.session.artifact_operator import (
     ArtifactOperatorError,
     CopiedArtifactOperator,
 )
-from nanobot.session.runtime_authority import OfflineSessionOperator
+from kohaku.session.runtime_authority import OfflineSessionOperator
 from tests.session.test_artifact_reader import setup_read
 
 
@@ -93,7 +93,7 @@ async def test_disabled_inspection_creates_no_storage(tmp_path: Path) -> None:
     artifacts = tmp_path / "copy-artifacts"
     read_workspace = tmp_path / "authorized-workspace"
     read_workspace.mkdir()
-    from nanobot.agent.tools.filesystem import ReadFileTool
+    from kohaku.agent.tools.filesystem import ReadFileTool
 
     operator = CopiedArtifactOperator(
         workspace,
@@ -218,7 +218,7 @@ async def test_rematerializer_receives_exact_already_held_store_transaction(
     async with copied_artifact_fixture(tmp_path) as fixture:
         blob = next(fixture["artifact_root"].rglob("*.blob"))
         blob.unlink()
-        from nanobot.session.artifact_rematerialization import ArtifactRematerializer
+        from kohaku.session.artifact_rematerialization import ArtifactRematerializer
 
         original = ArtifactRematerializer.rematerialize
         observed = False

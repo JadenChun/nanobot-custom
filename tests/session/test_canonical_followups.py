@@ -4,21 +4,21 @@ from dataclasses import replace
 
 import pytest
 
-from nanobot.bus.events import InboundMessage
-from nanobot.bus.queue import MessageBus
-from nanobot.session.execution_owner import acquire_execution
-from nanobot.session.manager import SessionManager
-from nanobot.session.pending_followups import (
+from kohaku.bus.events import InboundMessage
+from kohaku.bus.queue import MessageBus
+from kohaku.session.execution_owner import acquire_execution
+from kohaku.session.manager import SessionManager
+from kohaku.session.pending_followups import (
     copy_pending_followup_proof,
     mint_pending_followup_id,
     parse_pending_followup_records,
     pending_followup_id,
     record_pending_followup,
 )
-from nanobot.session.persistence_metadata import SOURCE_PENDING_FOLLOWUPS_METADATA_KEY as JOURNAL
-from nanobot.session.recovery import RecoveryCoordinator
-from nanobot.session.source import SourceValidationError
-from nanobot.session.turn_writer import SourceTurnWriter
+from kohaku.session.persistence_metadata import SOURCE_PENDING_FOLLOWUPS_METADATA_KEY as JOURNAL
+from kohaku.session.recovery import RecoveryCoordinator
+from kohaku.session.source import SourceValidationError
+from kohaku.session.turn_writer import SourceTurnWriter
 
 KEY = "websocket:followups"
 

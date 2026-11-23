@@ -6,12 +6,12 @@ from pathlib import Path
 
 import pytest
 
-from nanobot.agent.context import ContextBuilder
-from nanobot.agent.tools.filesystem import ReadFileTool, WriteFileTool
-from nanobot.agent.tools.repositories import RepositoryCatalogTool, SaveKnowledgeTool
-from nanobot.context_repo import ContextRepoManager, ResourceAccessPolicy
-from nanobot.context_repo.catalog import RepositoryCatalog, RepositoryEntry
-from nanobot.security.workspace_access import (
+from kohaku.agent.context import ContextBuilder
+from kohaku.agent.tools.filesystem import ReadFileTool, WriteFileTool
+from kohaku.agent.tools.repositories import RepositoryCatalogTool, SaveKnowledgeTool
+from kohaku.context_repo import ContextRepoManager, ResourceAccessPolicy
+from kohaku.context_repo.catalog import RepositoryCatalog, RepositoryEntry
+from kohaku.security.workspace_access import (
     bind_workspace_scope,
     build_workspace_scope,
     reset_workspace_scope,

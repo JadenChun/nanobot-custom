@@ -6,15 +6,15 @@ from typing import Any
 
 import pytest
 
-from nanobot.agent.hook import AgentHook, AgentHookContext
-from nanobot.agent.progress_hook import AgentProgressHook
-from nanobot.agent.tools.base import Tool
-from nanobot.agent.tools.execution import execute_tool_calls
-from nanobot.agent.tools.progress import current_tool_progress_sink
-from nanobot.agent.tools.registry import ToolRegistry
-from nanobot.bus.outbound_events import ProgressEvent
-from nanobot.events import EventSink
-from nanobot.providers.base import ToolCallRequest
+from kohaku.agent.hook import AgentHook, AgentHookContext
+from kohaku.agent.progress_hook import AgentProgressHook
+from kohaku.agent.tools.base import Tool
+from kohaku.agent.tools.execution import execute_tool_calls
+from kohaku.agent.tools.progress import current_tool_progress_sink
+from kohaku.agent.tools.registry import ToolRegistry
+from kohaku.bus.outbound_events import ProgressEvent
+from kohaku.events import EventSink
+from kohaku.providers.base import ToolCallRequest
 
 
 class _ProgressReportingTool(Tool):

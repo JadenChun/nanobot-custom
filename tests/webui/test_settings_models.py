@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from nanobot.config.schema import Config
-from nanobot.webui.settings_models import (
+from kohaku.config.schema import Config
+from kohaku.webui.settings_models import (
     model_settings_payload,
     update_agent_model_settings,
     update_provider_settings,

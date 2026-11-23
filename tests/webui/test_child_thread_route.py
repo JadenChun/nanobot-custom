@@ -12,19 +12,19 @@ from urllib.parse import quote, urlencode
 
 import pytest
 
-from nanobot.agent.tools.execution import KnownToolResult
-from nanobot.bus.queue import MessageBus
-from nanobot.channels.websocket.runtime import WebSocketConfig
-from nanobot.channels.websocket.tests.ws_test_client import (
+from kohaku.agent.tools.execution import KnownToolResult
+from kohaku.bus.queue import MessageBus
+from kohaku.channels.websocket.runtime import WebSocketConfig
+from kohaku.channels.websocket.tests.ws_test_client import (
     InProcessHttpChannel,
     http_get,
 )
-from nanobot.session.execution_owner import acquire_execution
-from nanobot.session.manager import Session, SessionManager
-from nanobot.session.runtime_authority import RuntimeSessionMetadata
-from nanobot.session.turn_writer import SourceTurnWriter
-from nanobot.webui.gateway_services import build_gateway_services
-from nanobot.webui.ws_http import _decode_child_cursor
+from kohaku.session.execution_owner import acquire_execution
+from kohaku.session.manager import Session, SessionManager
+from kohaku.session.runtime_authority import RuntimeSessionMetadata
+from kohaku.session.turn_writer import SourceTurnWriter
+from kohaku.webui.gateway_services import build_gateway_services
+from kohaku.webui.ws_http import _decode_child_cursor
 
 _PARENT_KEY = "websocket:chat-a"
 _CHILD_KEY = "delegated:a3-5-child"
@@ -37,7 +37,7 @@ _IN_PROCESS_PORTS = itertools.count(41_100)
 
 @pytest.fixture(autouse=True)
 def _isolate_runtime_data(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("nanobot.config.paths.get_data_dir", lambda: tmp_path)
+    monkeypatch.setattr("kohaku.config.paths.get_data_dir", lambda: tmp_path)
 
 
 def _next_port() -> int:

@@ -9,8 +9,8 @@ from pathlib import Path
 
 import pytest
 
-from nanobot.agent.context import ContextBuilder, TranscriptInput
-from nanobot.runtime_context import (
+from kohaku.agent.context import ContextBuilder, TranscriptInput
+from kohaku.runtime_context import (
     RUNTIME_CONTEXT_END,
     RUNTIME_CONTEXT_HISTORY_META,
     RUNTIME_CONTEXT_MESSAGE_META,
@@ -18,9 +18,9 @@ from nanobot.runtime_context import (
     RuntimeContextBlock,
     public_history_message,
 )
-from nanobot.session.source_projection import SourceNode
-from nanobot.session.source_request import SourceTranscript
-from nanobot.utils import helpers
+from kohaku.session.source_projection import SourceNode
+from kohaku.session.source_request import SourceTranscript
+from kohaku.utils import helpers
 
 
 class FrozenDatetime(datetime):

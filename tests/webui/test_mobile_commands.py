@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from nanobot.webui.ws_http import _filter_mobile_commands
+from kohaku.webui.ws_http import _filter_mobile_commands
 
 
 def test_mobile_command_filter_keeps_chat_commands_only() -> None:
@@ -25,7 +25,7 @@ def test_mobile_command_filter_keeps_chat_commands_only() -> None:
 
 
 def test_request_settings_requires_negotiated_v1_fields() -> None:
-    from nanobot.webui.inbound_commands import request_settings_error
+    from kohaku.webui.inbound_commands import request_settings_error
 
     base = {
         "request_settings_version": 1,
@@ -47,7 +47,7 @@ def test_request_settings_requires_negotiated_v1_fields() -> None:
 
 
 def test_request_settings_rejects_message_level_control_fields() -> None:
-    from nanobot.webui.inbound_commands import request_settings_error
+    from kohaku.webui.inbound_commands import request_settings_error
 
     base = {
         "request_settings_version": 1,
@@ -81,7 +81,7 @@ def test_request_settings_rejects_message_level_control_fields() -> None:
 
 
 def test_request_intent_target_validation() -> None:
-    from nanobot.webui.inbound_commands import request_settings_error
+    from kohaku.webui.inbound_commands import request_settings_error
 
     def check(
         extra: dict[str, object],

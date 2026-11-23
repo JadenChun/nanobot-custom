@@ -1,5 +1,5 @@
 {
-  "name": "@nanobot/tui",
+  "name": "@kohaku/tui",
   "private": true,
   "version": "0.1.0",
   "type": "module",

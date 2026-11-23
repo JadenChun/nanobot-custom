@@ -8,16 +8,16 @@ from types import SimpleNamespace
 import httpx
 import pytest
 
-from nanobot.config.loader import load_config, save_config
-from nanobot.config.schema import Config, InlineFallbackConfig, ModelPresetConfig
-from nanobot.llm_usage import get_llm_usage_store
-from nanobot.llm_usage.models import LLMCallRecord
-from nanobot.providers.base import LLMUsage
-from nanobot.providers.oauth_model_catalog import OAuthModelCatalogSnapshot
-from nanobot.providers.registry import ProviderModelSpec, find_by_name
-from nanobot.session.manager import SessionManager
-from nanobot.session.model_selection import SESSION_MODEL_PRESET_METADATA_KEY
-from nanobot.webui.settings_api import (
+from kohaku.config.loader import load_config, save_config
+from kohaku.config.schema import Config, InlineFallbackConfig, ModelPresetConfig
+from kohaku.llm_usage import get_llm_usage_store
+from kohaku.llm_usage.models import LLMCallRecord
+from kohaku.providers.base import LLMUsage
+from kohaku.providers.oauth_model_catalog import OAuthModelCatalogSnapshot
+from kohaku.providers.registry import ProviderModelSpec, find_by_name
+from kohaku.session.manager import SessionManager
+from kohaku.session.model_selection import SESSION_MODEL_PRESET_METADATA_KEY
+from kohaku.webui.settings_api import (
     WebUISettingsError,
     _docs_version,
     _model_catalog_kind,
@@ -42,7 +42,7 @@ from nanobot.webui.settings_api import (
     update_transcription_settings,
     update_web_search_settings,
 )
-from nanobot.webui.settings_services import WebUIOAuthFlowRegistry
+from kohaku.webui.settings_services import WebUIOAuthFlowRegistry
 
 DYNAMIC_PROVIDER_NAME = "my-company-api"
 DYNAMIC_PROVIDER_API_BASE = "https://example.test/v1"
@@ -57,7 +57,7 @@ def test_settings_payload_propagates_preset_resolution_failure(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     config = Config()
-    monkeypatch.setattr("nanobot.webui.settings_api.load_config", lambda: config)
+    monkeypatch.setattr("kohaku.webui.settings_api.load_config", lambda: config)
     monkeypatch.setattr(
         Config,
         "resolve_preset",
@@ -85,16 +85,16 @@ def test_settings_payload_includes_versioned_docs(
 ) -> None:
     config_path = tmp_path / "config.json"
     save_config(Config(), config_path)
-    monkeypatch.setattr("nanobot.config.loader._current_config_path", config_path)
-    monkeypatch.setattr("nanobot.webui.settings_api.__version__", "0.2.3")
+    monkeypatch.setattr("kohaku.config.loader._current_config_path", config_path)
+    monkeypatch.setattr("kohaku.webui.settings_api.__version__", "0.2.3")
 
     payload = settings_payload()
 
     assert payload["docs"] == {
         "version": "0.2.3",
-        "base_url": "https://nanobot.wiki/docs/0.2.3",
-        "chat_apps_url": "https://nanobot.wiki/docs/0.2.3/getting-started/chat-apps",
-        "latest_url": "https://nanobot.wiki/docs/latest",
+        "base_url": "https://github.com/JadenChun/nanobot-custom/blob/staging/docs",
+        "chat_apps_url": "https://github.com/JadenChun/nanobot-custom/blob/staging/docs/chat-apps.md",
+        "latest_url": "https://github.com/JadenChun/nanobot-custom/blob/staging/docs",
     }
 
 
@@ -106,7 +106,7 @@ def test_settings_payload_exposes_edenai_provider(
     config = Config()
     config.providers.edenai.api_key = "eden-test-key"
     save_config(config, config_path)
-    monkeypatch.setattr("nanobot.config.loader._current_config_path", config_path)
+    monkeypatch.setattr("kohaku.config.loader._current_config_path", config_path)
 
     payload = settings_payload()
     edenai = next(row for row in payload["providers"] if row["name"] == "edenai")
@@ -126,7 +126,7 @@ def test_settings_payload_exposes_orcarouter_provider(
     config = Config()
     config.providers.orcarouter.api_key = "sk-orca-test"
     save_config(config, config_path)
-    monkeypatch.setattr("nanobot.config.loader._current_config_path", config_path)
+    monkeypatch.setattr("kohaku.config.loader._current_config_path", config_path)
 
     payload = settings_payload()
     orcarouter = next(row for row in payload["providers"] if row["name"] == "orcarouter")
@@ -146,7 +146,7 @@ def test_settings_payload_includes_relocated_capabilities(
     config = Config()
     config.api.port = 9910
     save_config(config, config_path)
-    monkeypatch.setattr("nanobot.config.loader._current_config_path", config_path)
+    monkeypatch.setattr("kohaku.config.loader._current_config_path", config_path)
     monkeypatch.setenv("LANGFUSE_SECRET_KEY", "secret")
     monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", "public")
 
@@ -164,7 +164,7 @@ def test_settings_payload_exposes_modelscope_image_model(
 ) -> None:
     config_path = tmp_path / "config.json"
     save_config(Config(), config_path)
-    monkeypatch.setattr("nanobot.config.loader._current_config_path", config_path)
+    monkeypatch.setattr("kohaku.config.loader._current_config_path", config_path)
 
     payload = settings_payload()
     providers = {row["name"]: row for row in payload["image_generation"]["providers"]}
@@ -179,7 +179,7 @@ def test_update_api_settings_requires_key_for_network_access(
 ) -> None:
     config_path = tmp_path / "config.json"
     save_config(Config(), config_path)
-    monkeypatch.setattr("nanobot.config.loader._current_config_path", config_path)
+    monkeypatch.setattr("kohaku.config.loader._current_config_path", config_path)
 
     with pytest.raises(WebUISettingsError, match="API key"):
         update_api_settings({"host": ["0.0.0.0"], "port": ["8900"]})
@@ -204,7 +204,7 @@ def test_update_api_settings_requires_key_for_specific_network_interface(
 ) -> None:
     config_path = tmp_path / "config.json"
     save_config(Config(), config_path)
-    monkeypatch.setattr("nanobot.config.loader._current_config_path", config_path)
+    monkeypatch.setattr("kohaku.config.loader._current_config_path", config_path)
 
     with pytest.raises(WebUISettingsError, match="API key"):
         update_api_settings({"host": ["192.168.1.10"], "port": ["8900"]})
@@ -216,7 +216,7 @@ def test_update_api_settings_allows_alternate_loopback_without_key(
 ) -> None:
     config_path = tmp_path / "config.json"
     save_config(Config(), config_path)
-    monkeypatch.setattr("nanobot.config.loader._current_config_path", config_path)
+    monkeypatch.setattr("kohaku.config.loader._current_config_path", config_path)
 
     update_api_settings({"host": ["127.0.0.2"], "port": ["8900"]})
 
@@ -255,7 +255,7 @@ def test_create_model_configuration_accepts_legacy_label_without_changing_call_o
     config.agents.defaults.provider = "openai"
     config.providers.openai.api_key = "sk-test"
     save_config(config, config_path)
-    monkeypatch.setattr("nanobot.config.loader._current_config_path", config_path)
+    monkeypatch.setattr("kohaku.config.loader._current_config_path", config_path)
 
     payload = create_model_configuration(
         {
@@ -295,7 +295,7 @@ def test_first_model_configuration_replaces_unused_schema_default(
     config = Config()
     config.providers.openai.api_key = "sk-test"
     save_config(config, config_path)
-    monkeypatch.setattr("nanobot.config.loader._current_config_path", config_path)
+    monkeypatch.setattr("kohaku.config.loader._current_config_path", config_path)
 
     payload = create_model_configuration(
         {
@@ -322,7 +322,7 @@ def test_create_model_configuration_preserves_canonical_name(
     config = Config()
     config.providers.openai.api_key = "sk-test"
     save_config(config, config_path)
-    monkeypatch.setattr("nanobot.config.loader._current_config_path", config_path)
+    monkeypatch.setattr("kohaku.config.loader._current_config_path", config_path)
 
     payload = create_model_configuration(
         {
@@ -354,7 +354,7 @@ def test_create_model_configuration_accepts_dynamic_custom_provider(
 ) -> None:
     config_path = tmp_path / "config.json"
     save_config(_dynamic_provider_config(), config_path)
-    monkeypatch.setattr("nanobot.config.loader._current_config_path", config_path)
+    monkeypatch.setattr("kohaku.config.loader._current_config_path", config_path)
 
     payload = create_model_configuration(
         {
@@ -386,7 +386,7 @@ def test_create_model_configuration_rejects_dynamic_custom_provider_without_api_
         }
     )
     save_config(config, config_path)
-    monkeypatch.setattr("nanobot.config.loader._current_config_path", config_path)
+    monkeypatch.setattr("kohaku.config.loader._current_config_path", config_path)
 
     with pytest.raises(WebUISettingsError, match="provider is not configured"):
         create_model_configuration(
@@ -404,7 +404,7 @@ def test_create_model_configuration_rejects_unconfigured_provider(
 ) -> None:
     config_path = tmp_path / "config.json"
     save_config(Config(), config_path)
-    monkeypatch.setattr("nanobot.config.loader._current_config_path", config_path)
+    monkeypatch.setattr("kohaku.config.loader._current_config_path", config_path)
 
     with pytest.raises(WebUISettingsError, match="provider is not configured"):
         create_model_configuration(
@@ -428,9 +428,9 @@ def test_update_model_configuration_edits_named_preset_without_selecting(
         model="openai/gpt-4.1",
     )
     save_config(config, config_path)
-    monkeypatch.setattr("nanobot.config.loader._current_config_path", config_path)
+    monkeypatch.setattr("kohaku.config.loader._current_config_path", config_path)
     monkeypatch.setattr(
-        "nanobot.webui.settings_api._oauth_provider_status",
+        "kohaku.webui.settings_api._oauth_provider_status",
         lambda spec: {
             "configured": spec.name == "openai_codex",
             "account": "acct-test",
@@ -471,7 +471,7 @@ def test_update_model_configuration_renames_preset_and_config_references(
     defaults.fallback_models = ["backup", "openai"]
     defaults.dream.model_override = "openai"
     save_config(config, config_path)
-    monkeypatch.setattr("nanobot.config.loader._current_config_path", config_path)
+    monkeypatch.setattr("kohaku.config.loader._current_config_path", config_path)
     session_manager = SessionManager(
         tmp_path / "workspace",
         sessions_root=tmp_path / "sessions",
@@ -515,7 +515,7 @@ def test_update_model_configuration_rejects_duplicate_rename(
         "Codex": ModelPresetConfig(model="openai/gpt-5.5"),
     }
     save_config(config, config_path)
-    monkeypatch.setattr("nanobot.config.loader._current_config_path", config_path)
+    monkeypatch.setattr("kohaku.config.loader._current_config_path", config_path)
 
     with pytest.raises(WebUISettingsError) as duplicate:
         update_model_configuration({"name": ["openai"], "new_name": ["codex"]})
@@ -536,7 +536,7 @@ def test_update_model_configuration_rolls_back_sessions_when_config_save_fails(
     def fail_save(_config: Config, _path) -> None:
         raise OSError("disk full")
 
-    monkeypatch.setattr("nanobot.webui.settings_api._save_settings_config", fail_save)
+    monkeypatch.setattr("kohaku.webui.settings_api._save_settings_config", fail_save)
 
     with pytest.raises(OSError, match="disk full"):
         update_model_configuration(
@@ -562,7 +562,7 @@ def test_settings_payload_exposes_named_model_call_order(
     config.agents.defaults.model_preset = "primary"
     config.agents.defaults.fallback_models = ["backup", "backup"]
     save_config(config, config_path)
-    monkeypatch.setattr("nanobot.config.loader._current_config_path", config_path)
+    monkeypatch.setattr("kohaku.config.loader._current_config_path", config_path)
 
     payload = settings_payload()
 
@@ -582,7 +582,7 @@ def test_update_model_call_order_sets_primary_and_fallbacks(
     }
     config.agents.defaults.model_preset = "primary"
     save_config(config, config_path)
-    monkeypatch.setattr("nanobot.config.loader._current_config_path", config_path)
+    monkeypatch.setattr("kohaku.config.loader._current_config_path", config_path)
 
     payload = update_model_call_order({"order": [json.dumps(["backup", "primary"])]})
 
@@ -600,7 +600,7 @@ def test_update_model_call_order_activates_existing_named_preset(
     config = Config()
     config.model_presets["backup"] = ModelPresetConfig(model="openai/gpt-4.1-mini")
     save_config(config, config_path)
-    monkeypatch.setattr("nanobot.config.loader._current_config_path", config_path)
+    monkeypatch.setattr("kohaku.config.loader._current_config_path", config_path)
 
     payload = update_model_call_order({"order": [json.dumps(["backup"])]})
 
@@ -623,7 +623,7 @@ def test_update_model_call_order_preserves_real_legacy_configuration(
         provider="openai",
     )
     save_config(config, config_path)
-    monkeypatch.setattr("nanobot.config.loader._current_config_path", config_path)
+    monkeypatch.setattr("kohaku.config.loader._current_config_path", config_path)
 
     with pytest.raises(WebUISettingsError) as error:
         update_model_call_order({"order": [json.dumps(["backup"])]})
@@ -651,7 +651,7 @@ def test_migrate_model_configurations_preserves_legacy_chain(
         )
     ]
     save_config(config, config_path)
-    monkeypatch.setattr("nanobot.config.loader._current_config_path", config_path)
+    monkeypatch.setattr("kohaku.config.loader._current_config_path", config_path)
 
     legacy_payload = settings_payload()
     assert legacy_payload["model_call_order"] == []
@@ -680,7 +680,7 @@ def test_schema_default_is_not_exposed_or_materialized_as_legacy_configuration(
 ) -> None:
     config_path = tmp_path / "config.json"
     save_config(Config(), config_path)
-    monkeypatch.setattr("nanobot.config.loader._current_config_path", config_path)
+    monkeypatch.setattr("kohaku.config.loader._current_config_path", config_path)
 
     payload = settings_payload()
 
@@ -703,7 +703,7 @@ def test_model_configuration_advanced_options_round_trip(
     config = Config()
     config.providers.openai.api_key = "sk-test"
     save_config(config, config_path)
-    monkeypatch.setattr("nanobot.config.loader._current_config_path", config_path)
+    monkeypatch.setattr("kohaku.config.loader._current_config_path", config_path)
 
     created = create_model_configuration(
         {
@@ -748,7 +748,7 @@ def test_delete_model_configuration_requires_removing_it_from_call_order(
     }
     config.agents.defaults.model_preset = "primary"
     save_config(config, config_path)
-    monkeypatch.setattr("nanobot.config.loader._current_config_path", config_path)
+    monkeypatch.setattr("kohaku.config.loader._current_config_path", config_path)
 
     with pytest.raises(WebUISettingsError) as referenced:
         delete_model_configuration({"name": ["primary"]})
@@ -765,7 +765,7 @@ def test_update_provider_settings_updates_dynamic_custom_provider(
 ) -> None:
     config_path = tmp_path / "config.json"
     save_config(_dynamic_provider_config(api_base="https://old.example/v1"), config_path)
-    monkeypatch.setattr("nanobot.config.loader._current_config_path", config_path)
+    monkeypatch.setattr("kohaku.config.loader._current_config_path", config_path)
 
     payload = update_provider_settings(
         {
@@ -790,7 +790,7 @@ def test_create_provider_settings_persists_custom_advanced_options(
 ) -> None:
     config_path = tmp_path / "config.json"
     save_config(Config(), config_path)
-    monkeypatch.setattr("nanobot.config.loader._current_config_path", config_path)
+    monkeypatch.setattr("kohaku.config.loader._current_config_path", config_path)
 
     payload = create_provider_settings(
         {
@@ -854,7 +854,7 @@ def test_provider_settings_redacts_and_preserves_structured_secrets(
         "api-version": "2026-01-01",
     }
     save_config(config, config_path)
-    monkeypatch.setattr("nanobot.config.loader._current_config_path", config_path)
+    monkeypatch.setattr("kohaku.config.loader._current_config_path", config_path)
 
     payload = settings_payload()
     row = next(provider for provider in payload["providers"] if provider["name"] == "openai")
@@ -907,7 +907,7 @@ def test_update_provider_settings_persists_provider_specific_advanced_options(
     config = Config()
     config.providers.openai.api_key = "sk-openai"
     save_config(config, config_path)
-    monkeypatch.setattr("nanobot.config.loader._current_config_path", config_path)
+    monkeypatch.setattr("kohaku.config.loader._current_config_path", config_path)
 
     update_provider_settings(
         {
@@ -956,9 +956,9 @@ def test_update_provider_settings_updates_and_clears_oauth_proxy(
     config = Config()
     getattr(config.providers, config_attr).proxy = "http://127.0.0.1:7000"
     save_config(config, config_path)
-    monkeypatch.setattr("nanobot.config.loader._current_config_path", config_path)
+    monkeypatch.setattr("kohaku.config.loader._current_config_path", config_path)
     monkeypatch.setattr(
-        "nanobot.webui.settings_api._oauth_provider_status",
+        "kohaku.webui.settings_api._oauth_provider_status",
         lambda _spec: {
             "configured": False,
             "account": None,
@@ -996,7 +996,7 @@ def test_update_provider_settings_keeps_oauth_credentials_read_only(
 ) -> None:
     config_path = tmp_path / "config.json"
     save_config(Config(), config_path)
-    monkeypatch.setattr("nanobot.config.loader._current_config_path", config_path)
+    monkeypatch.setattr("kohaku.config.loader._current_config_path", config_path)
 
     with pytest.raises(WebUISettingsError, match="only supports proxy and extra_body settings"):
         update_provider_settings({"provider": ["openai_codex"], "apiKey": ["not-allowed"]})
@@ -1009,7 +1009,7 @@ def test_update_agent_settings_accepts_context_window_options(
     config_path = tmp_path / "config.json"
     config = Config()
     save_config(config, config_path)
-    monkeypatch.setattr("nanobot.config.loader._current_config_path", config_path)
+    monkeypatch.setattr("kohaku.config.loader._current_config_path", config_path)
 
     payload = update_agent_settings({"context_window_tokens": ["200000"]})
 
@@ -1023,7 +1023,7 @@ def test_update_agent_settings_marks_timezone_as_manual(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
-        "nanobot.config.timezone.get_localzone_name",
+        "kohaku.config.timezone.get_localzone_name",
         lambda: "Asia/Shanghai",
     )
     config_path = tmp_path / "config.json"
@@ -1031,7 +1031,7 @@ def test_update_agent_settings_marks_timezone_as_manual(
         "agents": {"defaults": {"timezone": "UTC", "timezoneMode": "auto"}},
     })
     save_config(config, config_path)
-    monkeypatch.setattr("nanobot.config.loader._current_config_path", config_path)
+    monkeypatch.setattr("kohaku.config.loader._current_config_path", config_path)
     initial = load_config(config_path)
     assert initial.agents.defaults.timezone == "Asia/Shanghai"
     assert initial.agents.defaults.timezone_mode == "auto"
@@ -1048,10 +1048,10 @@ def test_update_agent_settings_changed_timezone_requires_restart(
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr("nanobot.config.timezone.get_localzone_name", lambda: "Asia/Shanghai")
+    monkeypatch.setattr("kohaku.config.timezone.get_localzone_name", lambda: "Asia/Shanghai")
     config_path = tmp_path / "config.json"
     save_config(Config(), config_path)
-    monkeypatch.setattr("nanobot.config.loader._current_config_path", config_path)
+    monkeypatch.setattr("kohaku.config.loader._current_config_path", config_path)
     initial = load_config(config_path)
     assert initial.agents.defaults.timezone == "UTC"
     assert initial.agents.defaults.timezone_mode == "manual"
@@ -1075,7 +1075,7 @@ def test_update_model_configuration_preserves_custom_context_windows(
         model="openai/gpt-4.1",
     )
     save_config(config, config_path)
-    monkeypatch.setattr("nanobot.config.loader._current_config_path", config_path)
+    monkeypatch.setattr("kohaku.config.loader._current_config_path", config_path)
 
     payload = update_model_configuration(
         {
@@ -1096,7 +1096,7 @@ def test_update_context_window_rejects_unknown_values(
 ) -> None:
     config_path = tmp_path / "config.json"
     save_config(Config(), config_path)
-    monkeypatch.setattr("nanobot.config.loader._current_config_path", config_path)
+    monkeypatch.setattr("kohaku.config.loader._current_config_path", config_path)
 
     with pytest.raises(
         WebUISettingsError,
@@ -1111,7 +1111,7 @@ def test_update_model_configuration_rejects_default_preset(
 ) -> None:
     config_path = tmp_path / "config.json"
     save_config(Config(), config_path)
-    monkeypatch.setattr("nanobot.config.loader._current_config_path", config_path)
+    monkeypatch.setattr("kohaku.config.loader._current_config_path", config_path)
 
     with pytest.raises(WebUISettingsError, match="model configuration is required"):
         update_model_configuration({"name": ["default"], "model": ["openai/gpt-4.1"]})
@@ -1123,7 +1123,7 @@ def test_settings_payload_includes_oauth_provider_status(
 ) -> None:
     config_path = tmp_path / "config.json"
     save_config(Config(), config_path)
-    monkeypatch.setattr("nanobot.config.loader._current_config_path", config_path)
+    monkeypatch.setattr("kohaku.config.loader._current_config_path", config_path)
 
     def fake_oauth_status(spec):
         if spec.name == "openai_codex":
@@ -1140,7 +1140,7 @@ def test_settings_payload_includes_oauth_provider_status(
             "login_supported": True,
         }
 
-    monkeypatch.setattr("nanobot.webui.settings_api._oauth_provider_status", fake_oauth_status)
+    monkeypatch.setattr("kohaku.webui.settings_api._oauth_provider_status", fake_oauth_status)
 
     payload = settings_payload()
     providers = {row["name"]: row for row in payload["providers"]}
@@ -1156,7 +1156,7 @@ def test_settings_payload_includes_dynamic_custom_provider(
 ) -> None:
     config_path = tmp_path / "config.json"
     save_config(_dynamic_provider_config(defaults=True), config_path)
-    monkeypatch.setattr("nanobot.config.loader._current_config_path", config_path)
+    monkeypatch.setattr("kohaku.config.loader._current_config_path", config_path)
 
     payload = settings_payload()
     providers = {row["name"]: row for row in payload["providers"]}
@@ -1179,7 +1179,7 @@ def test_settings_payload_resolves_provider_for_each_auto_preset(
         model=f"{DYNAMIC_PROVIDER_NAME}/gpt-4",
     )
     save_config(config, config_path)
-    monkeypatch.setattr("nanobot.config.loader._current_config_path", config_path)
+    monkeypatch.setattr("kohaku.config.loader._current_config_path", config_path)
 
     payload = settings_payload()
     presets = {row["name"]: row for row in payload["model_presets"]}
@@ -1191,7 +1191,7 @@ def test_settings_payload_resolves_provider_for_each_auto_preset(
 def test_settings_payload_groups_opencode_compatibility_alias(tmp_path, monkeypatch) -> None:
     config_path = tmp_path / "config.json"
     save_config(Config(), config_path)
-    monkeypatch.setattr("nanobot.config.loader._current_config_path", config_path)
+    monkeypatch.setattr("kohaku.config.loader._current_config_path", config_path)
 
     payload = settings_payload()
     opencode_rows = [row for row in payload["providers"] if row["label"].startswith("OpenCode")]
@@ -1216,7 +1216,7 @@ def test_settings_payload_keeps_configured_opencode_legacy_alias(tmp_path, monke
         }
     )
     save_config(config, config_path)
-    monkeypatch.setattr("nanobot.config.loader._current_config_path", config_path)
+    monkeypatch.setattr("kohaku.config.loader._current_config_path", config_path)
 
     payload = settings_payload()
     zen_rows = [row for row in payload["providers"] if row["label"] == "OpenCode Zen"]
@@ -1241,7 +1241,7 @@ def test_settings_payload_marks_dynamic_custom_provider_without_api_base_unconfi
         }
     )
     save_config(config, config_path)
-    monkeypatch.setattr("nanobot.config.loader._current_config_path", config_path)
+    monkeypatch.setattr("kohaku.config.loader._current_config_path", config_path)
 
     payload = settings_payload()
     providers = {row["name"]: row for row in payload["providers"]}
@@ -1260,8 +1260,8 @@ def test_settings_payload_includes_network_safety_fields(
     config.tools.webui_allow_local_service_access = False
     config.tools.ssrf_whitelist = ["100.64.0.0/10"]
     save_config(config, config_path)
-    monkeypatch.setattr("nanobot.config.loader._current_config_path", config_path)
-    monkeypatch.setattr("nanobot.webui.workspaces.get_webui_dir", lambda: tmp_path / "webui")
+    monkeypatch.setattr("kohaku.config.loader._current_config_path", config_path)
+    monkeypatch.setattr("kohaku.webui.workspaces.get_webui_dir", lambda: tmp_path / "webui")
 
     payload = settings_payload()
 
@@ -1281,8 +1281,8 @@ def test_settings_payload_includes_exec_path_flags(
     config.tools.exec.path_prepend = "/venv/bin"
     config.tools.exec.path_append = "/usr/sbin"
     save_config(config, config_path)
-    monkeypatch.setattr("nanobot.config.loader._current_config_path", config_path)
-    monkeypatch.setattr("nanobot.webui.workspaces.get_webui_dir", lambda: tmp_path / "webui")
+    monkeypatch.setattr("kohaku.config.loader._current_config_path", config_path)
+    monkeypatch.setattr("kohaku.webui.workspaces.get_webui_dir", lambda: tmp_path / "webui")
 
     payload = settings_payload()
 
@@ -1299,7 +1299,7 @@ def test_update_web_search_settings_accepts_keenable_without_api_key(
     config.tools.web.search.provider = "brave"
     config.tools.web.search.api_key = "brave-key"
     save_config(config, config_path)
-    monkeypatch.setattr("nanobot.config.loader._current_config_path", config_path)
+    monkeypatch.setattr("kohaku.config.loader._current_config_path", config_path)
 
     payload = update_web_search_settings({"provider": ["keenable"]})
 
@@ -1319,7 +1319,7 @@ def test_update_web_search_settings_can_clear_optional_api_key(
     config.tools.web.search.provider = "keenable"
     config.tools.web.search.api_key = "keen-key"
     save_config(config, config_path)
-    monkeypatch.setattr("nanobot.config.loader._current_config_path", config_path)
+    monkeypatch.setattr("kohaku.config.loader._current_config_path", config_path)
 
     update_web_search_settings({"provider": ["keenable"], "api_key": [""]})
 
@@ -1338,7 +1338,7 @@ def test_settings_payload_includes_effective_transcription_config(
     config.channels.transcription_language = "en"
     config.providers.openai.api_key = "sk-test"
     save_config(config, config_path)
-    monkeypatch.setattr("nanobot.config.loader._current_config_path", config_path)
+    monkeypatch.setattr("kohaku.config.loader._current_config_path", config_path)
 
     payload = settings_payload()
 
@@ -1357,7 +1357,7 @@ def test_settings_payload_exposes_openrouter_transcription_provider(
     config = Config()
     config.providers.openrouter.api_key = "sk-or-test"
     save_config(config, config_path)
-    monkeypatch.setattr("nanobot.config.loader._current_config_path", config_path)
+    monkeypatch.setattr("kohaku.config.loader._current_config_path", config_path)
 
     payload = settings_payload()
 
@@ -1374,7 +1374,7 @@ def test_settings_payload_exposes_siliconflow_transcription_provider(
     config = Config()
     config.providers.siliconflow.api_key = "sf-test"
     save_config(config, config_path)
-    monkeypatch.setattr("nanobot.config.loader._current_config_path", config_path)
+    monkeypatch.setattr("kohaku.config.loader._current_config_path", config_path)
 
     payload = settings_payload()
 
@@ -1392,7 +1392,7 @@ def test_settings_payload_exposes_xiaomi_mimo_transcription_provider(
     config = Config()
     config.providers.xiaomi_mimo.api_key = "mimo-test"
     save_config(config, config_path)
-    monkeypatch.setattr("nanobot.config.loader._current_config_path", config_path)
+    monkeypatch.setattr("kohaku.config.loader._current_config_path", config_path)
 
     payload = settings_payload()
 
@@ -1410,7 +1410,7 @@ def test_settings_payload_exposes_assemblyai_transcription_provider(
     config.transcription.provider = "assemblyai"
     config.providers.assemblyai.api_key = "aai-test"
     save_config(config, config_path)
-    monkeypatch.setattr("nanobot.config.loader._current_config_path", config_path)
+    monkeypatch.setattr("kohaku.config.loader._current_config_path", config_path)
 
     payload = settings_payload()
 
@@ -1433,7 +1433,7 @@ def test_model_configuration_rejects_transcription_only_provider(
     config = Config()
     config.providers.assemblyai.api_key = "aai-test"
     save_config(config, config_path)
-    monkeypatch.setattr("nanobot.config.loader._current_config_path", config_path)
+    monkeypatch.setattr("kohaku.config.loader._current_config_path", config_path)
 
     with pytest.raises(WebUISettingsError, match="does not support chat models"):
         create_model_configuration(
@@ -1455,7 +1455,7 @@ def test_update_transcription_settings_writes_top_level_only(
     config.channels.transcription_language = "en"
     config.providers.groq.api_key = "gsk-test"
     save_config(config, config_path)
-    monkeypatch.setattr("nanobot.config.loader._current_config_path", config_path)
+    monkeypatch.setattr("kohaku.config.loader._current_config_path", config_path)
 
     payload = update_transcription_settings(
         {
@@ -1489,7 +1489,7 @@ def test_update_transcription_settings_accepts_openrouter(
     config = Config()
     config.providers.openrouter.api_key = "sk-or-test"
     save_config(config, config_path)
-    monkeypatch.setattr("nanobot.config.loader._current_config_path", config_path)
+    monkeypatch.setattr("kohaku.config.loader._current_config_path", config_path)
 
     payload = update_transcription_settings(
         {
@@ -1513,7 +1513,7 @@ def test_update_transcription_settings_accepts_xiaomi_mimo(
     config = Config()
     config.providers.xiaomi_mimo.api_key = "mimo-test"
     save_config(config, config_path)
-    monkeypatch.setattr("nanobot.config.loader._current_config_path", config_path)
+    monkeypatch.setattr("kohaku.config.loader._current_config_path", config_path)
 
     payload = update_transcription_settings(
         {
@@ -1539,7 +1539,7 @@ def test_update_transcription_settings_accepts_assemblyai(
     config = Config()
     config.providers.assemblyai.api_key = "aai-test"
     save_config(config, config_path)
-    monkeypatch.setattr("nanobot.config.loader._current_config_path", config_path)
+    monkeypatch.setattr("kohaku.config.loader._current_config_path", config_path)
 
     payload = update_transcription_settings(
         {
@@ -1561,7 +1561,7 @@ def test_update_transcription_settings_validates_language(
 ) -> None:
     config_path = tmp_path / "config.json"
     save_config(Config(), config_path)
-    monkeypatch.setattr("nanobot.config.loader._current_config_path", config_path)
+    monkeypatch.setattr("kohaku.config.loader._current_config_path", config_path)
 
     with pytest.raises(WebUISettingsError, match="transcription language"):
         update_transcription_settings({"language": ["en-US"]})
@@ -1574,7 +1574,7 @@ def test_settings_payload_includes_token_usage_summary(
     config_path = tmp_path / "config.json"
     config = Config()
     save_config(config, config_path)
-    monkeypatch.setattr("nanobot.config.loader._current_config_path", config_path)
+    monkeypatch.setattr("kohaku.config.loader._current_config_path", config_path)
     get_llm_usage_store().record(
         LLMCallRecord(
             started_at_ms=int(time.time() * 1000),
@@ -1606,7 +1606,7 @@ def test_settings_usage_payload_returns_lightweight_token_usage(
     config_path = tmp_path / "config.json"
     config = Config()
     save_config(config, config_path)
-    monkeypatch.setattr("nanobot.config.loader._current_config_path", config_path)
+    monkeypatch.setattr("kohaku.config.loader._current_config_path", config_path)
     get_llm_usage_store().record(
         LLMCallRecord(
             started_at_ms=int(time.time() * 1000),
@@ -1633,8 +1633,8 @@ def test_update_network_safety_settings_writes_local_service_flag(
 ) -> None:
     config_path = tmp_path / "config.json"
     save_config(Config(), config_path)
-    monkeypatch.setattr("nanobot.config.loader._current_config_path", config_path)
-    monkeypatch.setattr("nanobot.webui.workspaces.get_webui_dir", lambda: tmp_path / "webui")
+    monkeypatch.setattr("kohaku.config.loader._current_config_path", config_path)
+    monkeypatch.setattr("kohaku.webui.workspaces.get_webui_dir", lambda: tmp_path / "webui")
 
     payload = update_network_safety_settings(
         {
@@ -1659,8 +1659,8 @@ def test_update_network_safety_settings_accepts_legacy_restricted_default_access
 ) -> None:
     config_path = tmp_path / "config.json"
     save_config(Config(), config_path)
-    monkeypatch.setattr("nanobot.config.loader._current_config_path", config_path)
-    monkeypatch.setattr("nanobot.webui.workspaces.get_webui_dir", lambda: tmp_path / "webui")
+    monkeypatch.setattr("kohaku.config.loader._current_config_path", config_path)
+    monkeypatch.setattr("kohaku.webui.workspaces.get_webui_dir", lambda: tmp_path / "webui")
 
     payload = update_network_safety_settings({"webui_default_access_mode": ["restricted"]})
 
@@ -1674,8 +1674,8 @@ def test_update_network_safety_settings_default_access_is_webui_only(
     config_path = tmp_path / "config.json"
     save_config(Config(), config_path)
     before = config_path.read_text(encoding="utf-8")
-    monkeypatch.setattr("nanobot.config.loader._current_config_path", config_path)
-    monkeypatch.setattr("nanobot.webui.workspaces.get_webui_dir", lambda: tmp_path / "webui")
+    monkeypatch.setattr("kohaku.config.loader._current_config_path", config_path)
+    monkeypatch.setattr("kohaku.webui.workspaces.get_webui_dir", lambda: tmp_path / "webui")
 
     payload = update_network_safety_settings({"webui_default_access_mode": ["full"]})
 
@@ -1700,7 +1700,7 @@ def test_openai_codex_oauth_status_uses_available_token(
         },
     )()
     monkeypatch.setattr(
-        "nanobot.providers.codex_auth.get_codex_authority",
+        "kohaku.providers.codex_auth.get_codex_authority",
         lambda: SimpleNamespace(get_view_or_import=lambda: SimpleNamespace(token=token)),
     )
 
@@ -1724,7 +1724,7 @@ def test_openai_codex_oauth_status_uses_refreshable_expired_token(
         },
     )()
     monkeypatch.setattr(
-        "nanobot.providers.codex_auth.get_codex_authority",
+        "kohaku.providers.codex_auth.get_codex_authority",
         lambda: SimpleNamespace(get_view_or_import=lambda: SimpleNamespace(token=token)),
     )
 
@@ -1741,7 +1741,7 @@ def test_openai_codex_oauth_status_rejects_unavailable_token(
         raise RuntimeError("refresh failed")
 
     monkeypatch.setattr(
-        "nanobot.providers.codex_auth.get_codex_authority",
+        "kohaku.providers.codex_auth.get_codex_authority",
         lambda: SimpleNamespace(get_view_or_import=lambda: fake_load(None)),
     )
 
@@ -1761,7 +1761,7 @@ def test_xai_grok_status_accepts_refreshable_login(
         account_id="user@example.com",
     )
     monkeypatch.setattr(
-        "nanobot.providers.xai_oauth.get_xai_oauth_login_status",
+        "kohaku.providers.xai_oauth.get_xai_oauth_login_status",
         lambda: token,
     )
 
@@ -1787,7 +1787,7 @@ def test_openai_codex_oauth_login_passes_configured_proxy(
         config_path,
     )
     monkeypatch.setenv("CODEX_PROXY_TEST", proxy)
-    monkeypatch.setattr("nanobot.config.loader._current_config_path", config_path)
+    monkeypatch.setattr("kohaku.config.loader._current_config_path", config_path)
     captured: dict[str, object] = {}
 
     class FakeFlow:
@@ -1808,7 +1808,7 @@ def test_openai_codex_oauth_login_passes_configured_proxy(
         return FakeFlow()
 
     monkeypatch.setattr(
-        "nanobot.providers.openai_codex_oauth.start_openai_codex_oauth_login",
+        "kohaku.providers.openai_codex_oauth.start_openai_codex_oauth_login",
         fake_start,
     )
 
@@ -1818,7 +1818,7 @@ def test_openai_codex_oauth_login_passes_configured_proxy(
         config_path=config_path,
     )
 
-    from nanobot.providers.oauth_credentials import CredentialOwner
+    from kohaku.providers.oauth_credentials import CredentialOwner
 
     assert captured == {
         "proxy": proxy,
@@ -1840,11 +1840,11 @@ def test_openai_codex_oauth_login_passes_configured_proxy(
         return SimpleNamespace(access="access-token")
 
     monkeypatch.setattr(
-        "nanobot.providers.openai_codex_oauth.complete_openai_codex_oauth_login",
+        "kohaku.providers.openai_codex_oauth.complete_openai_codex_oauth_login",
         fake_complete,
     )
     monkeypatch.setattr(
-        "nanobot.webui.settings_api.settings_payload",
+        "kohaku.webui.settings_api.settings_payload",
         lambda **_kwargs: {"settings": "ready"},
     )
 
@@ -1879,7 +1879,7 @@ def test_openai_codex_remote_login_uses_headless_dependency_mode(
 ) -> None:
     config_path = tmp_path / "config.json"
     save_config(Config(), config_path)
-    monkeypatch.setattr("nanobot.config.loader._current_config_path", config_path)
+    monkeypatch.setattr("kohaku.config.loader._current_config_path", config_path)
     captured: dict[str, object] = {}
 
     class FakeFlow:
@@ -1895,7 +1895,7 @@ def test_openai_codex_remote_login_uses_headless_dependency_mode(
         return FakeFlow()
 
     monkeypatch.setattr(
-        "nanobot.providers.openai_codex_oauth.start_openai_codex_oauth_login",
+        "kohaku.providers.openai_codex_oauth.start_openai_codex_oauth_login",
         fake_start,
     )
 
@@ -1919,7 +1919,7 @@ def test_openai_codex_oauth_login_reports_missing_oauth_cli_kit(
     real_import = builtins.__import__
 
     def fake_import(name, *args, **kwargs):
-        if name == "nanobot.providers.openai_codex_oauth":
+        if name == "kohaku.providers.openai_codex_oauth":
             raise ImportError("missing")
         return real_import(name, *args, **kwargs)
 
@@ -1932,8 +1932,8 @@ def test_openai_codex_oauth_login_reports_missing_oauth_cli_kit(
         )
 
     assert str(exc.value) == (
-        "This nanobot installation is missing the required oauth-cli-kit package. "
-        "Reinstall or upgrade nanobot-ai using the same installation method."
+        "This Kohaku installation is missing the required oauth-cli-kit package. "
+        "Reinstall or upgrade Kohaku using the same installation method."
     )
 
 
@@ -1944,7 +1944,7 @@ def test_github_copilot_oauth_login_reports_missing_oauth_cli_kit(
     real_import = builtins.__import__
 
     def fake_import(name, *args, **kwargs):
-        if name == "nanobot.providers.github_copilot_provider":
+        if name == "kohaku.providers.github_copilot_provider":
             raise ImportError("missing")
         return real_import(name, *args, **kwargs)
 
@@ -1957,8 +1957,8 @@ def test_github_copilot_oauth_login_reports_missing_oauth_cli_kit(
         )
 
     assert str(exc.value) == (
-        "This nanobot installation is missing the required oauth-cli-kit package. "
-        "Reinstall or upgrade nanobot-ai using the same installation method."
+        "This Kohaku installation is missing the required oauth-cli-kit package. "
+        "Reinstall or upgrade Kohaku using the same installation method."
     )
 
 
@@ -1970,7 +1970,7 @@ def test_xai_grok_login_starts_fresh_browser_flow_with_proxy(
     proxy = "http://127.0.0.1:23458"
     config_path = tmp_path / "config.json"
     save_config(Config.model_validate({"providers": {"xaiGrok": {"proxy": proxy}}}), config_path)
-    monkeypatch.setattr("nanobot.config.loader._current_config_path", config_path)
+    monkeypatch.setattr("kohaku.config.loader._current_config_path", config_path)
     captured: dict[str, object] = {}
 
     class FakeFlow:
@@ -1985,7 +1985,7 @@ def test_xai_grok_login_starts_fresh_browser_flow_with_proxy(
         captured.update(proxy=proxy, timeout_s=timeout_s, owner=owner)
         return FakeFlow()
 
-    monkeypatch.setattr("nanobot.providers.xai_oauth.start_xai_oauth_login", fake_start)
+    monkeypatch.setattr("kohaku.providers.xai_oauth.start_xai_oauth_login", fake_start)
 
     payload = login_oauth_provider(
         {"provider": ["xai-grok"]},
@@ -2009,11 +2009,11 @@ def test_xai_grok_login_starts_fresh_browser_flow_with_proxy(
         return SimpleNamespace(access="access-token")
 
     monkeypatch.setattr(
-        "nanobot.providers.xai_oauth.complete_xai_oauth_login",
+        "kohaku.providers.xai_oauth.complete_xai_oauth_login",
         fake_complete,
     )
     monkeypatch.setattr(
-        "nanobot.webui.settings_api.settings_payload",
+        "kohaku.webui.settings_api.settings_payload",
         lambda **_kwargs: {"settings": "ready"},
     )
 
@@ -2043,13 +2043,13 @@ def test_xai_grok_login_reports_upstream_failure_as_bad_gateway(
 ) -> None:
     config_path = tmp_path / "config.json"
     save_config(Config(), config_path)
-    monkeypatch.setattr("nanobot.config.loader._current_config_path", config_path)
+    monkeypatch.setattr("kohaku.config.loader._current_config_path", config_path)
     failure = RuntimeError("Could not reach xAI sign-in: ConnectError.")
 
     def fake_start(**_kwargs):
         raise failure
 
-    monkeypatch.setattr("nanobot.providers.xai_oauth.start_xai_oauth_login", fake_start)
+    monkeypatch.setattr("kohaku.providers.xai_oauth.start_xai_oauth_login", fake_start)
 
     with pytest.raises(WebUISettingsError) as exc:
         login_oauth_provider(
@@ -2069,13 +2069,13 @@ def test_xai_grok_logout_removes_token_through_shared_lock(
 ) -> None:
     config_path = tmp_path / "config.json"
     save_config(Config(), config_path)
-    monkeypatch.setattr("nanobot.config.loader._current_config_path", config_path)
+    monkeypatch.setattr("kohaku.config.loader._current_config_path", config_path)
     token_path = tmp_path / "auth" / "xai.json"
     token_path.parent.mkdir(parents=True)
     token_path.write_text("{}", encoding="utf-8")
     token_path.with_suffix(".lock").write_text("", encoding="utf-8")
     monkeypatch.setattr(
-        "nanobot.providers.xai_oauth.get_xai_oauth_storage_path",
+        "kohaku.providers.xai_oauth.get_xai_oauth_storage_path",
         lambda *_args, **_kwargs: token_path,
     )
 
@@ -2095,7 +2095,7 @@ def test_provider_models_payload_fetches_openai_compatible_models(
     config = Config()
     config.providers.deepseek.api_key = "sk-test"
     save_config(config, config_path)
-    monkeypatch.setattr("nanobot.config.loader._current_config_path", config_path)
+    monkeypatch.setattr("kohaku.config.loader._current_config_path", config_path)
 
     def fake_get(url: str, **kwargs):
         assert url == "https://api.deepseek.com/models"
@@ -2111,7 +2111,7 @@ def test_provider_models_payload_fetches_openai_compatible_models(
             request=httpx.Request("GET", url),
         )
 
-    monkeypatch.setattr("nanobot.webui.settings_api.httpx.get", fake_get)
+    monkeypatch.setattr("kohaku.webui.settings_api.httpx.get", fake_get)
 
     payload = provider_models_payload({"provider": ["deepseek"]})
 
@@ -2156,7 +2156,7 @@ def test_provider_catalog_uses_configured_proxy_headers(
             request=httpx.Request("GET", url),
         )
 
-    monkeypatch.setattr("nanobot.webui.settings_api.httpx.get", fake_get)
+    monkeypatch.setattr("kohaku.webui.settings_api.httpx.get", fake_get)
     payload = provider_models_payload({"provider": ["openai"]}, config_path=config_path)
     assert payload["label"] == "Team Model Proxy"
     assert payload["provider"] == "openai"
@@ -2190,7 +2190,7 @@ def test_provider_catalog_does_not_fall_back_from_unresolved_proxy_base(
     def fake_get(_url: str, **_kwargs):
         pytest.fail("An unresolved configured endpoint must not send credentials to a fallback")
 
-    monkeypatch.setattr("nanobot.webui.settings_api.httpx.get", fake_get)
+    monkeypatch.setattr("kohaku.webui.settings_api.httpx.get", fake_get)
     payload = provider_models_payload({"provider": ["openai"]}, config_path=config_path)
     assert payload["status"] == "missing_api_base"
 
@@ -2207,7 +2207,7 @@ def test_provider_catalog_does_not_return_sensitive_transport_errors(
     def fake_get(_url: str, **_kwargs):
         raise httpx.LocalProtocolError("Illegal header value: secret-token")
 
-    monkeypatch.setattr("nanobot.webui.settings_api.httpx.get", fake_get)
+    monkeypatch.setattr("kohaku.webui.settings_api.httpx.get", fake_get)
     payload = provider_models_payload({"provider": ["openai"]}, config_path=config_path)
     assert payload["status"] == "error"
     assert "secret-token" not in json.dumps(payload)
@@ -2232,7 +2232,7 @@ def test_settings_payload_lists_local_manager_and_commandcode_separately(
         ),
     )
     save_config(config, config_path)
-    monkeypatch.setattr("nanobot.config.loader._current_config_path", config_path)
+    monkeypatch.setattr("kohaku.config.loader._current_config_path", config_path)
 
     payload = settings_payload()
     providers = {row["name"]: row for row in payload["providers"]}
@@ -2255,7 +2255,7 @@ def test_settings_payload_exposes_effective_provider_policy(
     config.providers.vllm.request_accounting = "estimated_compat"
     config.providers.vllm.max_request_bytes = 1_048_576
     save_config(config, config_path)
-    monkeypatch.setattr("nanobot.config.loader._current_config_path", config_path)
+    monkeypatch.setattr("kohaku.config.loader._current_config_path", config_path)
 
     payload = settings_payload()
     providers = {row["name"]: row for row in payload["providers"]}
@@ -2292,7 +2292,7 @@ def test_local_manager_provider_uses_live_gateway_catalog(
     config = Config()
     config.providers.local_manager.api_base = "http://127.0.0.1:8082/v1"
     save_config(config, config_path)
-    monkeypatch.setattr("nanobot.config.loader._current_config_path", config_path)
+    monkeypatch.setattr("kohaku.config.loader._current_config_path", config_path)
 
     def fake_get(url: str, **kwargs):
         assert url == "http://127.0.0.1:8082/v1/models"
@@ -2319,7 +2319,7 @@ def test_local_manager_provider_uses_live_gateway_catalog(
             request=httpx.Request("GET", url),
         )
 
-    monkeypatch.setattr("nanobot.webui.settings_api.httpx.get", fake_get)
+    monkeypatch.setattr("kohaku.webui.settings_api.httpx.get", fake_get)
 
     payload = provider_models_payload({"provider": ["local_manager"]})
 
@@ -2349,7 +2349,7 @@ def test_provider_models_payload_returns_online_openai_codex_models(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
-        "nanobot.webui.settings_models.get_oauth_model_catalog",
+        "kohaku.webui.settings_models.get_oauth_model_catalog",
         lambda *_args, **_kwargs: OAuthModelCatalogSnapshot(
             models=(
                 ProviderModelSpec(
@@ -2387,7 +2387,7 @@ def test_provider_models_payload_returns_online_github_copilot_models(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
-        "nanobot.webui.settings_models.get_oauth_model_catalog",
+        "kohaku.webui.settings_models.get_oauth_model_catalog",
         lambda *_args, **_kwargs: OAuthModelCatalogSnapshot(
             models=(
                 ProviderModelSpec(
@@ -2414,7 +2414,7 @@ def test_provider_models_payload_returns_online_xai_grok_models(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
-        "nanobot.webui.settings_models.get_oauth_model_catalog",
+        "kohaku.webui.settings_models.get_oauth_model_catalog",
         lambda *_args, **_kwargs: OAuthModelCatalogSnapshot(
             models=(
                 ProviderModelSpec(
@@ -2474,7 +2474,7 @@ def test_provider_models_payload_fetches_dynamic_custom_provider_models(
 ) -> None:
     config_path = tmp_path / "config.json"
     save_config(_dynamic_provider_config(), config_path)
-    monkeypatch.setattr("nanobot.config.loader._current_config_path", config_path)
+    monkeypatch.setattr("kohaku.config.loader._current_config_path", config_path)
 
     def fake_get(url: str, **kwargs):
         assert url == f"{DYNAMIC_PROVIDER_API_BASE}/models"
@@ -2485,7 +2485,7 @@ def test_provider_models_payload_fetches_dynamic_custom_provider_models(
             request=httpx.Request("GET", url),
         )
 
-    monkeypatch.setattr("nanobot.webui.settings_api.httpx.get", fake_get)
+    monkeypatch.setattr("kohaku.webui.settings_api.httpx.get", fake_get)
 
     payload = provider_models_payload({"provider": [DYNAMIC_PROVIDER_NAME]})
 
@@ -2513,7 +2513,7 @@ def test_provider_models_payload_fetches_minimax_anthropic_models(
     config.providers.minimax_anthropic.api_key = "sk-test"
     config.providers.minimax_anthropic.api_base = api_base
     save_config(config, config_path)
-    monkeypatch.setattr("nanobot.config.loader._current_config_path", config_path)
+    monkeypatch.setattr("kohaku.config.loader._current_config_path", config_path)
 
     def fake_get(url: str, **kwargs):
         assert url == expected_url
@@ -2525,7 +2525,7 @@ def test_provider_models_payload_fetches_minimax_anthropic_models(
             request=httpx.Request("GET", url),
         )
 
-    monkeypatch.setattr("nanobot.webui.settings_api.httpx.get", fake_get)
+    monkeypatch.setattr("kohaku.webui.settings_api.httpx.get", fake_get)
 
     payload = provider_models_payload({"provider": ["minimax_anthropic"]})
 
@@ -2547,7 +2547,7 @@ def test_provider_models_payload_requires_gateway_key(
 ) -> None:
     config_path = tmp_path / "config.json"
     save_config(Config(), config_path)
-    monkeypatch.setattr("nanobot.config.loader._current_config_path", config_path)
+    monkeypatch.setattr("kohaku.config.loader._current_config_path", config_path)
 
     payload = provider_models_payload({"provider": ["openrouter"]})
 
@@ -2564,7 +2564,7 @@ def test_provider_models_payload_fetches_orcarouter_catalog(
     config = Config()
     config.providers.orcarouter.api_key = "sk-orca-test"
     save_config(config, config_path)
-    monkeypatch.setattr("nanobot.config.loader._current_config_path", config_path)
+    monkeypatch.setattr("kohaku.config.loader._current_config_path", config_path)
 
     def fake_get(url: str, **kwargs):
         assert url == "https://api.orcarouter.ai/v1/models"
@@ -2580,7 +2580,7 @@ def test_provider_models_payload_fetches_orcarouter_catalog(
             request=httpx.Request("GET", url),
         )
 
-    monkeypatch.setattr("nanobot.webui.settings_api.httpx.get", fake_get)
+    monkeypatch.setattr("kohaku.webui.settings_api.httpx.get", fake_get)
 
     payload = provider_models_payload({"provider": ["orcarouter"]})
 
@@ -2608,9 +2608,9 @@ def test_create_model_configuration_accepts_configured_oauth_provider(
 ) -> None:
     config_path = tmp_path / "config.json"
     save_config(Config(), config_path)
-    monkeypatch.setattr("nanobot.config.loader._current_config_path", config_path)
+    monkeypatch.setattr("kohaku.config.loader._current_config_path", config_path)
     monkeypatch.setattr(
-        "nanobot.webui.settings_api._oauth_provider_status",
+        "kohaku.webui.settings_api._oauth_provider_status",
         lambda spec: {
             "configured": spec.name == "openai_codex",
             "account": "acct-test",
@@ -2648,7 +2648,7 @@ def test_settings_payload_azure_openai_with_api_key_is_configured(
     config.providers.azure_openai.api_key = "k"
     config.providers.azure_openai.api_base = "https://r.openai.azure.com"
     save_config(config, config_path)
-    monkeypatch.setattr("nanobot.config.loader._current_config_path", config_path)
+    monkeypatch.setattr("kohaku.config.loader._current_config_path", config_path)
 
     payload = settings_payload()
     azure = next(row for row in payload["providers"] if row["name"] == "azure_openai")
@@ -2668,7 +2668,7 @@ def test_settings_payload_azure_openai_aad_mode_is_configured(
     config = Config()
     config.providers.azure_openai.api_base = "https://r.openai.azure.com"
     save_config(config, config_path)
-    monkeypatch.setattr("nanobot.config.loader._current_config_path", config_path)
+    monkeypatch.setattr("kohaku.config.loader._current_config_path", config_path)
 
     payload = settings_payload()
     azure = next(row for row in payload["providers"] if row["name"] == "azure_openai")
@@ -2688,7 +2688,7 @@ def test_settings_payload_azure_openai_missing_base_not_configured(
     config = Config()
     config.providers.azure_openai.api_key = "k"
     save_config(config, config_path)
-    monkeypatch.setattr("nanobot.config.loader._current_config_path", config_path)
+    monkeypatch.setattr("kohaku.config.loader._current_config_path", config_path)
 
     payload = settings_payload()
     azure = next(row for row in payload["providers"] if row["name"] == "azure_openai")
@@ -2705,7 +2705,7 @@ def test_create_model_configuration_accepts_azure_openai_aad_mode(
     config = Config()
     config.providers.azure_openai.api_base = "https://r.openai.azure.com"
     save_config(config, config_path)
-    monkeypatch.setattr("nanobot.config.loader._current_config_path", config_path)
+    monkeypatch.setattr("kohaku.config.loader._current_config_path", config_path)
 
     payload = create_model_configuration(
         {
@@ -2729,7 +2729,7 @@ def test_create_model_configuration_rejects_azure_openai_without_base(
     """azure_openai without api_base must still be rejected as not configured."""
     config_path = tmp_path / "config.json"
     save_config(Config(), config_path)
-    monkeypatch.setattr("nanobot.config.loader._current_config_path", config_path)
+    monkeypatch.setattr("kohaku.config.loader._current_config_path", config_path)
 
     with pytest.raises(WebUISettingsError, match="provider is not configured"):
         create_model_configuration(
@@ -2743,7 +2743,7 @@ def test_create_model_configuration_rejects_azure_openai_without_base(
 
 def test_azure_openai_spec_no_longer_requires_api_key() -> None:
     """Contract guard: api_key is optional for azure_openai (AAD fallback)."""
-    from nanobot.webui.settings_api import _provider_requires_api_key
+    from kohaku.webui.settings_api import _provider_requires_api_key
 
     spec = find_by_name("azure_openai")
     assert spec is not None

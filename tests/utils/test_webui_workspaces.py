@@ -2,14 +2,14 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from nanobot.security.folder_grants import FolderGrantStore
-from nanobot.security.workspace_access import (
+from kohaku.security.folder_grants import FolderGrantStore
+from kohaku.security.workspace_access import (
     WORKSPACE_SCOPE_METADATA_KEY,
     WorkspaceScopeError,
     default_workspace_scope,
 )
-from nanobot.session.manager import SessionManager, SessionStore
-from nanobot.webui.workspaces import (
+from kohaku.session.manager import SessionManager, SessionStore
+from kohaku.webui.workspaces import (
     WebUIWorkspaceController,
     read_webui_default_access_mode,
     read_webui_workspace_state,
@@ -20,7 +20,7 @@ from nanobot.webui.workspaces import (
 
 
 def test_workspace_state_defaults_when_file_missing(tmp_path, monkeypatch) -> None:
-    monkeypatch.setattr("nanobot.webui.workspaces.get_webui_dir", lambda: tmp_path / "webui")
+    monkeypatch.setattr("kohaku.webui.workspaces.get_webui_dir", lambda: tmp_path / "webui")
 
     state = read_webui_workspace_state()
 
@@ -29,7 +29,7 @@ def test_workspace_state_defaults_when_file_missing(tmp_path, monkeypatch) -> No
 
 
 def test_workspace_payload_is_config_data_dir_scoped(tmp_path, monkeypatch) -> None:
-    monkeypatch.setattr("nanobot.webui.workspaces.get_webui_dir", lambda: tmp_path / "webui")
+    monkeypatch.setattr("kohaku.webui.workspaces.get_webui_dir", lambda: tmp_path / "webui")
     default = tmp_path / "default"
     default.mkdir()
 
@@ -51,7 +51,7 @@ def test_workspace_payload_hides_mutable_state_when_controls_unavailable(
     tmp_path,
     monkeypatch,
 ) -> None:
-    monkeypatch.setattr("nanobot.webui.workspaces.get_webui_dir", lambda: tmp_path / "webui")
+    monkeypatch.setattr("kohaku.webui.workspaces.get_webui_dir", lambda: tmp_path / "webui")
     default = tmp_path / "default"
     default.mkdir()
 
@@ -68,7 +68,7 @@ def test_workspace_payload_hides_mutable_state_when_controls_unavailable(
 
 
 def test_workspace_payload_advertises_native_folder_picker(tmp_path, monkeypatch) -> None:
-    monkeypatch.setattr("nanobot.webui.workspaces.get_webui_dir", lambda: tmp_path / "webui")
+    monkeypatch.setattr("kohaku.webui.workspaces.get_webui_dir", lambda: tmp_path / "webui")
     default = tmp_path / "default"
     default.mkdir()
 
@@ -83,7 +83,7 @@ def test_workspace_payload_advertises_native_folder_picker(tmp_path, monkeypatch
 
 
 def test_workspace_payload_uses_webui_default_access_mode(tmp_path, monkeypatch) -> None:
-    monkeypatch.setattr("nanobot.webui.workspaces.get_webui_dir", lambda: tmp_path / "webui")
+    monkeypatch.setattr("kohaku.webui.workspaces.get_webui_dir", lambda: tmp_path / "webui")
     default = tmp_path / "default"
     default.mkdir()
 
@@ -112,7 +112,7 @@ def test_workspace_payload_uses_webui_default_access_mode(tmp_path, monkeypatch)
 
 
 def test_legacy_restricted_webui_default_access_mode_maps_to_default(tmp_path, monkeypatch) -> None:
-    monkeypatch.setattr("nanobot.webui.workspaces.get_webui_dir", lambda: tmp_path / "webui")
+    monkeypatch.setattr("kohaku.webui.workspaces.get_webui_dir", lambda: tmp_path / "webui")
 
     assert write_webui_default_access_mode("restricted") is False
     assert read_webui_default_access_mode() == "default"
@@ -128,7 +128,7 @@ def test_webui_default_access_applies_to_unscoped_old_sessions(
     restrict_to_workspace: bool,
     expected_mode: str,
 ) -> None:
-    monkeypatch.setattr("nanobot.webui.workspaces.get_webui_dir", lambda: tmp_path / "webui")
+    monkeypatch.setattr("kohaku.webui.workspaces.get_webui_dir", lambda: tmp_path / "webui")
     default = tmp_path / "default"
     default.mkdir()
     sessions = SessionManager(tmp_path / "sessions")
@@ -157,7 +157,7 @@ def test_webui_default_access_applies_to_unscoped_old_sessions(
 
 
 def test_indexed_scope_preserves_missing_and_explicit_null_semantics(tmp_path, monkeypatch) -> None:
-    monkeypatch.setattr("nanobot.webui.workspaces.get_webui_dir", lambda: tmp_path / "webui")
+    monkeypatch.setattr("kohaku.webui.workspaces.get_webui_dir", lambda: tmp_path / "webui")
     default = tmp_path / "default"
     default.mkdir()
     write_webui_default_access_mode("full")
@@ -188,7 +188,7 @@ def test_indexed_scope_preserves_missing_and_explicit_null_semantics(tmp_path, m
 
 
 def test_webui_default_access_does_not_override_explicit_session_scope(tmp_path, monkeypatch) -> None:
-    monkeypatch.setattr("nanobot.webui.workspaces.get_webui_dir", lambda: tmp_path / "webui")
+    monkeypatch.setattr("kohaku.webui.workspaces.get_webui_dir", lambda: tmp_path / "webui")
     default = tmp_path / "default"
     project = tmp_path / "project"
     default.mkdir()
@@ -226,7 +226,7 @@ def test_scope_for_session_key_reads_metadata_without_full_history(
     tmp_path,
     monkeypatch,
 ) -> None:
-    monkeypatch.setattr("nanobot.webui.workspaces.get_webui_dir", lambda: tmp_path / "webui")
+    monkeypatch.setattr("kohaku.webui.workspaces.get_webui_dir", lambda: tmp_path / "webui")
     default = tmp_path / "default"
     project = tmp_path / "project"
     default.mkdir()
@@ -264,7 +264,7 @@ def test_managed_session_keeps_removed_project_focus_with_unavailable_access(
     tmp_path,
     monkeypatch,
 ) -> None:
-    monkeypatch.setattr("nanobot.webui.workspaces.get_webui_dir", lambda: tmp_path / "webui")
+    monkeypatch.setattr("kohaku.webui.workspaces.get_webui_dir", lambda: tmp_path / "webui")
     default = tmp_path / "default"
     acknowledged = tmp_path / "approved"
     removed = tmp_path / "removed-project"
@@ -306,7 +306,7 @@ def test_managed_session_keeps_replaced_project_focus_unavailable(
     tmp_path,
     monkeypatch,
 ) -> None:
-    monkeypatch.setattr("nanobot.webui.workspaces.get_webui_dir", lambda: tmp_path / "webui")
+    monkeypatch.setattr("kohaku.webui.workspaces.get_webui_dir", lambda: tmp_path / "webui")
     default = tmp_path / "default"
     project = tmp_path / "project"
     default.mkdir()
@@ -345,7 +345,7 @@ def test_managed_session_keeps_replaced_project_focus_unavailable(
 
 
 def test_new_chat_scope_is_persisted_only_after_first_message(tmp_path, monkeypatch) -> None:
-    monkeypatch.setattr("nanobot.webui.workspaces.get_webui_dir", lambda: tmp_path / "webui")
+    monkeypatch.setattr("kohaku.webui.workspaces.get_webui_dir", lambda: tmp_path / "webui")
     default = tmp_path / "default"
     project = tmp_path / "project"
     default.mkdir()
@@ -369,7 +369,7 @@ def test_new_chat_scope_is_persisted_only_after_first_message(tmp_path, monkeypa
 
 
 def test_scope_for_session_key_always_reads_the_active_store(tmp_path, monkeypatch) -> None:
-    monkeypatch.setattr("nanobot.webui.workspaces.get_webui_dir", lambda: tmp_path / "webui")
+    monkeypatch.setattr("kohaku.webui.workspaces.get_webui_dir", lambda: tmp_path / "webui")
     default = tmp_path / "default"
     project = tmp_path / "project"
     default.mkdir()
@@ -431,7 +431,7 @@ def test_scope_for_session_key_always_reads_the_active_store(tmp_path, monkeypat
 
 
 def test_remote_existing_chat_can_reduce_its_workspace_access(tmp_path, monkeypatch) -> None:
-    monkeypatch.setattr("nanobot.webui.workspaces.get_webui_dir", lambda: tmp_path / "webui")
+    monkeypatch.setattr("kohaku.webui.workspaces.get_webui_dir", lambda: tmp_path / "webui")
     default = tmp_path / "default"
     project = tmp_path / "project"
     default.mkdir()
@@ -479,7 +479,7 @@ def test_remote_new_chat_only_allows_non_escalating_scope_change(
     access_mode: str,
     allowed: bool,
 ) -> None:
-    monkeypatch.setattr("nanobot.webui.workspaces.get_webui_dir", lambda: tmp_path / "webui")
+    monkeypatch.setattr("kohaku.webui.workspaces.get_webui_dir", lambda: tmp_path / "webui")
     default = tmp_path / "default"
     other = tmp_path / "other"
     default.mkdir()
@@ -519,7 +519,7 @@ def test_remote_new_chat_only_allows_non_escalating_scope_change(
 
 
 def test_explicit_restricted_request_is_not_promoted_by_a_full_chat(tmp_path, monkeypatch) -> None:
-    from nanobot.security.workspace_access import build_workspace_scope
+    from kohaku.security.workspace_access import build_workspace_scope
 
     default = tmp_path / "default"
     project = tmp_path / "project"

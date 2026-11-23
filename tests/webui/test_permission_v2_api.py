@@ -13,29 +13,29 @@ import pytest
 from websockets.datastructures import Headers
 from websockets.http11 import Request
 
-from nanobot.agent.tools import native_process
-from nanobot.security import native_admission
-from nanobot.security.desktop_permissions import WorkspacePermissionConflictError
-from nanobot.security.folder_grants import FolderGrantStore
-from nanobot.security.workspace_access import default_workspace_scope
-from nanobot.session.execution_owner import acquire_execution
-from nanobot.session.manager import Session, SessionManager, SessionWriteConflict
-from nanobot.session.pending_followups import PendingFollowupRecord
-from nanobot.session.runtime_authority import DurableSessionAuthority
-from nanobot.session.source_store import SourceSessionStore
-from nanobot.session.webui_turns import (
+from kohaku.agent.tools import native_process
+from kohaku.security import native_admission
+from kohaku.security.desktop_permissions import WorkspacePermissionConflictError
+from kohaku.security.folder_grants import FolderGrantStore
+from kohaku.security.workspace_access import default_workspace_scope
+from kohaku.session.execution_owner import acquire_execution
+from kohaku.session.manager import Session, SessionManager, SessionWriteConflict
+from kohaku.session.pending_followups import PendingFollowupRecord
+from kohaku.session.runtime_authority import DurableSessionAuthority
+from kohaku.session.source_store import SourceSessionStore
+from kohaku.session.webui_turns import (
     clear_websocket_turn_if_current,
     register_queued_websocket_turn_if_idle,
 )
-from nanobot.session.workspace_access_recovery import (
+from kohaku.session.workspace_access_recovery import (
     WorkspaceAccessActionError,
     WorkspaceAccessRecoveryOwner,
 )
-from nanobot.webui import ws_http
-from nanobot.webui.inbound_commands import WebUICommandRouter
-from nanobot.webui.transcript import write_session_messages_as_transcript
-from nanobot.webui.workspaces import WebUIWorkspaceController, WorkspacePermissionActionError
-from nanobot.webui.ws_http import WEBSOCKET_MUTATION_ROUTES, GatewayHTTPHandler
+from kohaku.webui import ws_http
+from kohaku.webui.inbound_commands import WebUICommandRouter
+from kohaku.webui.transcript import write_session_messages_as_transcript
+from kohaku.webui.workspaces import WebUIWorkspaceController, WorkspacePermissionActionError
+from kohaku.webui.ws_http import WEBSOCKET_MUTATION_ROUTES, GatewayHTTPHandler
 from tests.webui.test_child_thread_route import _make_channel
 
 
@@ -1606,7 +1606,7 @@ def test_full_mode_action_projects_the_live_full_reference(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    from nanobot.agent.tools import native_process
+    from kohaku.agent.tools import native_process
 
     home = tmp_path / "agent"
     project = tmp_path / "project"
@@ -1853,7 +1853,7 @@ def test_remote_full_reference_is_bound_to_the_confirming_installation(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    from nanobot.agent.tools import native_process
+    from kohaku.agent.tools import native_process
 
     home = tmp_path / "agent"
     project = tmp_path / "project"

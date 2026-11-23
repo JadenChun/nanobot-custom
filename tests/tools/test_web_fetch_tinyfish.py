@@ -7,10 +7,10 @@ import json
 import httpx
 import pytest
 
-from nanobot.agent.tools import web as web_module
-from nanobot.agent.tools.context import ToolContext
-from nanobot.agent.tools.web import WebFetchConfig, WebFetchTool
-from nanobot.config.schema import Config, ToolsConfig
+from kohaku.agent.tools import web as web_module
+from kohaku.agent.tools.context import ToolContext
+from kohaku.agent.tools.web import WebFetchConfig, WebFetchTool
+from kohaku.config.schema import Config, ToolsConfig
 
 
 class _Stream:
@@ -232,8 +232,8 @@ def test_live_loader_clears_shared_key_when_search_provider_changes(monkeypatch)
     active.tools.web.search.provider = "tinyfish"
     active.tools.web.search.api_key = "shared-tinyfish-key"
     active.tools.web.fetch.provider = "tinyfish"
-    monkeypatch.setattr("nanobot.config.loader.load_config", lambda: active)
-    monkeypatch.setattr("nanobot.config.loader.resolve_config_env_vars", lambda config: config)
+    monkeypatch.setattr("kohaku.config.loader.load_config", lambda: active)
+    monkeypatch.setattr("kohaku.config.loader.resolve_config_env_vars", lambda config: config)
     tools = ToolsConfig()
     tools.web.search.provider = "tinyfish"
     tools.web.search.api_key = "shared-tinyfish-key"

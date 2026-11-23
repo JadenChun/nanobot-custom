@@ -27,9 +27,9 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
 DEFAULT_INVENTORY = REPO / "mobile/contracts/desktop-parity.json"
-WS_HTTP = REPO / "nanobot/webui/ws_http.py"
-SETTINGS_ROUTES = REPO / "nanobot/webui/settings_routes.py"
-INBOUND = REPO / "nanobot/webui/inbound_commands.py"
+WS_HTTP = REPO / "kohaku/webui/ws_http.py"
+SETTINGS_ROUTES = REPO / "kohaku/webui/settings_routes.py"
+INBOUND = REPO / "kohaku/webui/inbound_commands.py"
 
 REQUIRED_CATEGORIES = {
     "chat",

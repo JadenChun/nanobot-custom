@@ -12,7 +12,7 @@ cd "${repo_root}/webui"
 bun install --frozen-lockfile
 bun run build
 rm -rf "${output}"
-cp -a "${repo_root}/nanobot/web/dist" "${output}"
+cp -a "${repo_root}/kohaku/web/dist" "${output}"
 rm -f "${output}/sw.js" "${output}/sw.js.map"
 find "${output}" -name "*.gz" -delete
 cp "${mobile_root}/mobile-bootstrap.js" "${output}/mobile-bootstrap.js"

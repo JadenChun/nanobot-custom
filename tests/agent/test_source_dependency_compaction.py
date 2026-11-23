@@ -4,29 +4,29 @@ from datetime import datetime, timezone
 
 import pytest
 
-from nanobot.agent.context_governance import (
+from kohaku.agent.context_governance import (
     ContextGovernanceConfig,
     ContextGovernor,
     ContextWindowExceededError,
     ModelRequestState,
     SourceCompactionState,
 )
-from nanobot.agent.runner import AgentRunner, AgentRunSpec
-from nanobot.agent.tools.artifact import ReadArtifactTool
-from nanobot.agent.tools.execution import KnownToolResult
-from nanobot.agent.tools.registry import ToolRegistry
-from nanobot.agent.turn import TurnContext
-from nanobot.providers.base import LLMResponse, LLMUsage
-from nanobot.providers.conversation_state import ProviderConversationStateController
-from nanobot.session.artifact import ArtifactValidationError
-from nanobot.session.artifact_projection import ArtifactProjector
-from nanobot.session.artifact_reader import ArtifactReader
-from nanobot.session.artifact_store import PrivateArtifactStore
-from nanobot.session.checkpoint_admission import CheckpointAdmission
-from nanobot.session.source import SourceValidationError, prefix_digest
-from nanobot.session.source_projection import CheckpointNode, RuntimeNode, source_nodes
-from nanobot.session.source_request import SourceRequestLedger, SourceTranscript
-from nanobot.session.turn_writer import SourceTurnWriter
+from kohaku.agent.runner import AgentRunner, AgentRunSpec
+from kohaku.agent.tools.artifact import ReadArtifactTool
+from kohaku.agent.tools.execution import KnownToolResult
+from kohaku.agent.tools.registry import ToolRegistry
+from kohaku.agent.turn import TurnContext
+from kohaku.providers.base import LLMResponse, LLMUsage
+from kohaku.providers.conversation_state import ProviderConversationStateController
+from kohaku.session.artifact import ArtifactValidationError
+from kohaku.session.artifact_projection import ArtifactProjector
+from kohaku.session.artifact_reader import ArtifactReader
+from kohaku.session.artifact_store import PrivateArtifactStore
+from kohaku.session.checkpoint_admission import CheckpointAdmission
+from kohaku.session.source import SourceValidationError, prefix_digest
+from kohaku.session.source_projection import CheckpointNode, RuntimeNode, source_nodes
+from kohaku.session.source_request import SourceRequestLedger, SourceTranscript
+from kohaku.session.turn_writer import SourceTurnWriter
 from tests.agent.test_source_summary import SummaryProvider, runtime
 from tests.session.test_artifact_reader import setup_read
 
@@ -248,7 +248,7 @@ async def test_projected_dependency_loss_restores_inline_without_auxiliary_compa
 async def test_projected_source_summary_publishes_v2_without_artifact_publication(tmp_path, monkeypatch):
     from unittest.mock import Mock
 
-    from nanobot.session.source_store import SourceSessionStore
+    from kohaku.session.source_store import SourceSessionStore
 
     async with setup_read(tmp_path, 'projected evidence ' * 2000) as (writer, tool, store, descriptor, _):
         reader = ArtifactReader(writer, 'root_history', store, tool)
@@ -303,7 +303,7 @@ async def test_proofless_publication_cannot_downgrade_projected_evidence_to_sche
 
 
 async def test_projected_dependency_cas_change_after_summary_never_publishes_projection(tmp_path):
-    from nanobot.session.manager import SessionWriteConflict
+    from kohaku.session.manager import SessionWriteConflict
 
     async with setup_read(tmp_path, 'projected evidence ' * 2000) as (writer, tool, store, _, _):
         reader = ArtifactReader(writer, 'root_history', store, tool)
@@ -382,7 +382,7 @@ async def test_proofless_publication_cannot_downgrade_retrieval_evidence_to_sche
 async def test_dependent_validation_enters_source_transaction_only_under_blob_lock(tmp_path, monkeypatch):
     from contextlib import contextmanager
 
-    import nanobot.session.execution_owner as ownership
+    import kohaku.session.execution_owner as ownership
 
     async with setup_read(tmp_path) as (writer, tool, store, descriptor, _):
         reader = ArtifactReader(writer, 'root_history', store, tool)
@@ -420,7 +420,7 @@ async def test_dependent_validation_enters_source_transaction_only_under_blob_lo
 
 
 async def test_root_dependency_cas_change_after_summary_never_publishes_projection(tmp_path):
-    from nanobot.session.manager import SessionWriteConflict
+    from kohaku.session.manager import SessionWriteConflict
 
     async with setup_read(tmp_path) as (writer, tool, store, descriptor, _):
         reader = ArtifactReader(writer, 'root_history', store, tool)

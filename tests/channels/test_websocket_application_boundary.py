@@ -5,22 +5,22 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-from nanobot.channels.websocket import runtime
+from kohaku.channels.websocket import runtime
 
 _REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
-_RUNTIME_PATH = _REPOSITORY_ROOT / "nanobot" / "channels" / "websocket" / "runtime.py"
-_SESSION_IDENTITY_PATH = _REPOSITORY_ROOT / "nanobot" / "webui" / "session_identity.py"
+_RUNTIME_PATH = _REPOSITORY_ROOT / "kohaku" / "channels" / "websocket" / "runtime.py"
+_SESSION_IDENTITY_PATH = _REPOSITORY_ROOT / "kohaku" / "webui" / "session_identity.py"
 _FORBIDDEN_RUNTIME_IMPORTS = (
-    "nanobot.bus.outbound_events",
-    "nanobot.command",
-    "nanobot.runtime_context",
-    "nanobot.security.workspace_access",
-    "nanobot.session.goal_state",
-    "nanobot.webui.cli_apps_api",
-    "nanobot.webui.forking",
-    "nanobot.webui.mcp_presets_api",
-    "nanobot.webui.sidebar_state",
-    "nanobot.webui.transcription_ws",
+    "kohaku.bus.outbound_events",
+    "kohaku.command",
+    "kohaku.runtime_context",
+    "kohaku.security.workspace_access",
+    "kohaku.session.goal_state",
+    "kohaku.webui.cli_apps_api",
+    "kohaku.webui.forking",
+    "kohaku.webui.mcp_presets_api",
+    "kohaku.webui.sidebar_state",
+    "kohaku.webui.transcription_ws",
 )
 
 
@@ -90,7 +90,7 @@ def test_business_entrypoints_are_thin_transport_delegations() -> None:
 
 def test_persisted_webui_session_prefix_has_one_production_owner() -> None:
     owners = []
-    for path in (_REPOSITORY_ROOT / "nanobot").rglob("*.py"):
+    for path in (_REPOSITORY_ROOT / "kohaku").rglob("*.py"):
         if "tests" in path.parts or path == _SESSION_IDENTITY_PATH:
             continue
         if _contains_persisted_prefix_literal(path.read_text(encoding="utf-8")):

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from nanobot.security.network import (
+from kohaku.security.network import (
     NetworkPolicy,
     bind_network_policy_for_cidrs,
     configure_ssrf_whitelist,

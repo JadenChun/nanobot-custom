@@ -17,13 +17,13 @@ import {
   updateTranscriptionSettings,
   updateWebSearchSettings,
 } from "@/lib/api";
-import type { NanobotClient } from "@/lib/nanobot-client";
+import type { KohakuClient } from "@/lib/kohaku-client";
 import type { SettingsPayload, WebSearchSettingsUpdate } from "@/lib/types";
 
 interface CapabilitySettingsActionsOptions {
   state: CapabilitySettingsState;
   settings: SettingsPayload | null;
-  client: NanobotClient;
+  client: KohakuClient;
   t: TFunction;
   applyPayload: ApplySettingsPayload;
   maybeRestartHostEngine: MaybeRestartHostEngine;

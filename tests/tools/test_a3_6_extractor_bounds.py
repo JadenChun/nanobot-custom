@@ -1,8 +1,8 @@
 """Regression tests for A3-6 AC6.4: extractor download bounds before buffering."""
 
-from nanobot.agent.tools import web as web_module
-from nanobot.agent.tools.web import WebFetchTool, WebSearchTool
-from nanobot.config.schema import WebSearchConfig
+from kohaku.agent.tools import web as web_module
+from kohaku.agent.tools.web import WebFetchTool, WebSearchTool
+from kohaku.config.schema import WebSearchConfig
 
 
 class OversizeStreamResponse:

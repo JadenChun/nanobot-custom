@@ -6,11 +6,11 @@ from types import SimpleNamespace
 
 import pytest
 
-from nanobot.agent.tools.registry import ToolRegistry
-from nanobot.agent.tools.search import GrepTool
-from nanobot.agent.turn import ToolOutcome
-from nanobot.context_repo.manager import ContextRepoManager, ManagedContextRepo
-from nanobot.context_repo.policy import ResourceAccessPolicy
+from kohaku.agent.tools.registry import ToolRegistry
+from kohaku.agent.tools.search import GrepTool
+from kohaku.agent.turn import ToolOutcome
+from kohaku.context_repo.manager import ContextRepoManager, ManagedContextRepo
+from kohaku.context_repo.policy import ResourceAccessPolicy
 
 
 async def _attested_grep(tool: GrepTool, **params: object) -> ToolOutcome:

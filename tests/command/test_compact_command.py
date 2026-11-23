@@ -6,17 +6,17 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from nanobot.agent.loop import AgentLoop, _TurnExecutionOptions
-from nanobot.agent.turn import DeliveryTarget, TurnRequest, TurnSource
-from nanobot.bus.events import InboundMessage, OutboundMessage
-from nanobot.bus.outbound_events import ContextCompactionEvent, StopTargetEvent
-from nanobot.bus.runtime_events import TurnCompleted
-from nanobot.command.builtin import cmd_stop
-from nanobot.command.router import CommandContext
-from nanobot.providers.base import GenerationSettings, LLMResponse, ProviderConversationState
-from nanobot.session.history_visibility import is_hidden_history_message
-from nanobot.session.summary import SUMMARY_CONTINUATION_TEXT
-from nanobot.utils.llm_runtime import LLMRuntime
+from kohaku.agent.loop import AgentLoop, _TurnExecutionOptions
+from kohaku.agent.turn import DeliveryTarget, TurnRequest, TurnSource
+from kohaku.bus.events import InboundMessage, OutboundMessage
+from kohaku.bus.outbound_events import ContextCompactionEvent, StopTargetEvent
+from kohaku.bus.runtime_events import TurnCompleted
+from kohaku.command.builtin import cmd_stop
+from kohaku.command.router import CommandContext
+from kohaku.providers.base import GenerationSettings, LLMResponse, ProviderConversationState
+from kohaku.session.history_visibility import is_hidden_history_message
+from kohaku.session.summary import SUMMARY_CONTINUATION_TEXT
+from kohaku.utils.llm_runtime import LLMRuntime
 from tests.agent.p6_admitted_fixtures import AgentInputs
 from tests.agent.p6_admitted_fixtures import admitted_async as admitted_async
 

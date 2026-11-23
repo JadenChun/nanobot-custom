@@ -4,12 +4,12 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from nanobot.agent.policy import DelegatedReadOnlyPolicy
-from nanobot.agent.runner import AgentRunner
-from nanobot.agent.tools.base import Tool, ToolResult
-from nanobot.agent.tools.registry import ToolRegistry
-from nanobot.agent.turn import ToolOutcome, TurnContext
-from nanobot.providers.base import LLMResponse, ToolCallRequest
+from kohaku.agent.policy import DelegatedReadOnlyPolicy
+from kohaku.agent.runner import AgentRunner
+from kohaku.agent.tools.base import Tool, ToolResult
+from kohaku.agent.tools.registry import ToolRegistry
+from kohaku.agent.turn import ToolOutcome, TurnContext
+from kohaku.providers.base import LLMResponse, ToolCallRequest
 from tests.agent.runner_helpers import make_run_spec
 
 pytest_plugins = ("tests.agent.test_migration_source_engine",)
@@ -88,11 +88,11 @@ async def test_tool_errors_preserve_fail_fast_semantics(outcome):
 
 
 async def test_delegation_captures_crawler_capacity_without_mutating_provider(engine_config, monkeypatch):
-    from nanobot.agent.loop import AgentLoop
-    from nanobot.agent.tools.social_crawl import SocialCrawlTool
-    from nanobot.agent.turn import TurnRequest
-    from nanobot.providers.base import GenerationSettings
-    from nanobot.providers.factory import ProviderSnapshot
+    from kohaku.agent.loop import AgentLoop
+    from kohaku.agent.tools.social_crawl import SocialCrawlTool
+    from kohaku.agent.turn import TurnRequest
+    from kohaku.providers.base import GenerationSettings
+    from kohaku.providers.factory import ProviderSnapshot
     from tests.agent.test_migration_engine import ScriptedProvider
     from tests.agent.test_migration_source_engine import upgrade
 
@@ -113,7 +113,7 @@ async def test_delegation_captures_crawler_capacity_without_mutating_provider(en
     ])
     main_provider.generation = GenerationSettings(max_tokens=4000, temperature=0.7)
 
-    import nanobot.extensions.crawler as crawler_module
+    import kohaku.extensions.crawler as crawler_module
 
     def snapshot(config, *, preset):
         return ProviderSnapshot(

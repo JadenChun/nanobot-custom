@@ -41,7 +41,7 @@ export function ApprovalRequestCard({
   const approvalDescription = description ?? (approvalId
     ? t("approval.description", {
         defaultValue:
-          "Nanobot paused before a risky action. Review the planned action before continuing.",
+          "Kohaku paused before a risky action. Review the planned action before continuing.",
       })
     : t("approval.updateRequired", {
         defaultValue:

@@ -9,11 +9,11 @@ const bootstrapSource = readFileSync(
 );
 const androidRoot = resolve(process.cwd(), "../mobile/android/app/src/main");
 const notificationSmallDensities = [
-  ["res/drawable-mdpi/ic_stat_nanobot.png", 24],
-  ["res/drawable-hdpi/ic_stat_nanobot.png", 36],
-  ["res/drawable-xhdpi/ic_stat_nanobot.png", 48],
-  ["res/drawable-xxhdpi/ic_stat_nanobot.png", 72],
-  ["res/drawable-xxxhdpi/ic_stat_nanobot.png", 96],
+  ["res/drawable-mdpi/ic_stat_kohaku.png", 24],
+  ["res/drawable-hdpi/ic_stat_kohaku.png", 36],
+  ["res/drawable-xhdpi/ic_stat_kohaku.png", 48],
+  ["res/drawable-xxhdpi/ic_stat_kohaku.png", 72],
+  ["res/drawable-xxxhdpi/ic_stat_kohaku.png", 96],
 ] as const;
 const canonicalBadgePath = resolve(
   process.cwd(),
@@ -21,16 +21,16 @@ const canonicalBadgePath = resolve(
 );
 const notificationBitmapPath = resolve(
   androidRoot,
-  "res/drawable-nodpi/ic_nanobot_notification.png",
+  "res/drawable-nodpi/ic_kohaku_notification.png",
 );
 const canonicalBitmapPath = resolve(
   process.cwd(),
-  "public/brand/nanobot_icon_192.png",
+  "public/brand/kohaku_icon_192.png",
 );
 const keepAliveSource = readFileSync(
   resolve(
     androidRoot,
-    "java/ai/nanobot/mobile/RunKeepAliveService.kt",
+    "java/ai/kohaku/mobile/RunKeepAliveService.kt",
   ),
   "utf8",
 );
@@ -123,8 +123,8 @@ describe("mobile task notification bridge", () => {
       title: "Task finished",
       body: "Your task is complete.",
       isExactNotification: false,
-      smallIcon: "ic_stat_nanobot",
-      largeIcon: "ic_nanobot_notification",
+      smallIcon: "ic_stat_kohaku",
+      largeIcon: "ic_kohaku_notification",
     });
     expect(notification).not.toHaveProperty("schedule");
     expect(requestPermissions).toHaveBeenCalledTimes(1);
@@ -179,7 +179,7 @@ describe("mobile task notification bridge", () => {
   it("contains valid icon resources and points keepalive at the same small drawable", () => {
     const hasBitmap = existsSync(notificationBitmapPath);
     expect(hasBitmap).toBe(true);
-    expect(keepAliveSource).toContain("R.drawable.ic_stat_nanobot");
+    expect(keepAliveSource).toContain("R.drawable.ic_stat_kohaku");
     expect(keepAliveSource).not.toContain("android.R.drawable.stat_notify_sync");
 
     const pngHeader = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
@@ -192,7 +192,7 @@ describe("mobile task notification bridge", () => {
       expect(bytes.readUInt32BE(20)).toBe(expectedSize);
     }
     expect(
-      readFileSync(resolve(androidRoot, "res/drawable-xxxhdpi/ic_stat_nanobot.png")),
+      readFileSync(resolve(androidRoot, "res/drawable-xxxhdpi/ic_stat_kohaku.png")),
     ).toEqual(readFileSync(canonicalBadgePath));
 
     if (!hasBitmap) return;

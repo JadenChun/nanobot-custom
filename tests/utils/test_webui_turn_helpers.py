@@ -4,10 +4,10 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from nanobot.agent.tools.context import RequestContext, request_context
-from nanobot.agent.turn_delivery import TurnDeliveryFactory
-from nanobot.bus.events import InboundMessage
-from nanobot.bus.outbound_events import (
+from kohaku.agent.tools.context import RequestContext, request_context
+from kohaku.agent.turn_delivery import TurnDeliveryFactory
+from kohaku.bus.events import InboundMessage
+from kohaku.bus.outbound_events import (
     GoalStatusEvent,
     MessageAdmittedEvent,
     RetryStatusEvent,
@@ -15,8 +15,8 @@ from nanobot.bus.outbound_events import (
     TurnModelUpdatedEvent,
     UserInputEvent,
 )
-from nanobot.bus.queue import MessageBus
-from nanobot.bus.runtime_events import (
+from kohaku.bus.queue import MessageBus
+from kohaku.bus.runtime_events import (
     InjectionCommitted,
     RuntimeEventContext,
     SessionTurnStarted,
@@ -24,14 +24,14 @@ from nanobot.bus.runtime_events import (
     UserInputAccepted,
     UserInputCommitted,
 )
-from nanobot.providers.base import GenerationSettings
-from nanobot.session import webui_turns as wth
-from nanobot.session.manager import SessionManager
-from nanobot.session.session_handles import session_handle_for_name
-from nanobot.session.session_messages import SESSION_MESSAGE_METADATA_KEY
-from nanobot.utils.llm_runtime import LLMRuntime
-from nanobot.webui.metadata import WEBSOCKET_TURN_OWNER_METADATA_KEY
-from nanobot.webui.session_projection import WebUISessionProjection
+from kohaku.providers.base import GenerationSettings
+from kohaku.session import webui_turns as wth
+from kohaku.session.manager import SessionManager
+from kohaku.session.session_handles import session_handle_for_name
+from kohaku.session.session_messages import SESSION_MESSAGE_METADATA_KEY
+from kohaku.utils.llm_runtime import LLMRuntime
+from kohaku.webui.metadata import WEBSOCKET_TURN_OWNER_METADATA_KEY
+from kohaku.webui.session_projection import WebUISessionProjection
 
 
 @pytest.fixture(autouse=True)
@@ -195,7 +195,7 @@ async def test_fallback_model_is_scoped_to_its_websocket_chat() -> None:
 
 @pytest.mark.asyncio
 async def test_coordinator_connections_end_on_scope_exit_and_can_reconnect(tmp_path):
-    from nanobot.bus.runtime_events import RuntimeModelChanged
+    from kohaku.bus.runtime_events import RuntimeModelChanged
 
     bus = MessageBus()
     bus.publish_outbound = AsyncMock()

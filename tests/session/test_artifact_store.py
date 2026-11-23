@@ -8,8 +8,8 @@ from pathlib import Path
 
 import pytest
 
-from nanobot.session.artifact import ArtifactValidationError, parse_artifact_descriptor
-from nanobot.session.artifact_store import (
+from kohaku.session.artifact import ArtifactValidationError, parse_artifact_descriptor
+from kohaku.session.artifact_store import (
     ArtifactInstallCorruptionError,
     ArtifactInstallIOError,
     ArtifactInstallUncertainError,

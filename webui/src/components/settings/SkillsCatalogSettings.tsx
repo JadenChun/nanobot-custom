@@ -167,7 +167,7 @@ export function SkillsCatalogSettings({
               "settings.skills.sourceAndStatusHelp",
               {
                 defaultValue:
-                  "Built-in skills ship with nanobot. Shared custom skills come from configured libraries. Workspace shows a storage location; download origin may be unknown. Enabled allows instructions to load; Needs setup means a declared dependency is missing. Neither status tests the workflow.",
+                  "Built-in skills ship with Kohaku. Shared custom skills come from configured libraries. Workspace shows a storage location; download origin may be unknown. Enabled allows instructions to load; Needs setup means a declared dependency is missing. Neither status tests the workflow.",
               },
             )}
           </p>
@@ -768,7 +768,7 @@ function RequirementsSection({
           <p className="mt-1 text-[12px] leading-5 text-muted-foreground">
             {t("settings.skills.setupDescription", {
               defaultValue:
-                "Install the missing dependency on the machine running nanobot, then check again.",
+                "Install the missing dependency on the machine running Kohaku, then check again.",
             })}
           </p>
         </div>

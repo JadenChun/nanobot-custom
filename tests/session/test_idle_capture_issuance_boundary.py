@@ -6,10 +6,10 @@ from dataclasses import replace
 
 import pytest
 
-from nanobot.session import idle_checkpoint as idle
-from nanobot.session.idle_compaction import IdleCaptureToken
-from nanobot.session.manager import JsonlSessionStore
-from nanobot.session.source_store import SourceSessionStore
+from kohaku.session import idle_checkpoint as idle
+from kohaku.session.idle_compaction import IdleCaptureToken
+from kohaku.session.manager import JsonlSessionStore
+from kohaku.session.source_store import SourceSessionStore
 from tests.session.test_idle_attestation_ownership import issued
 from tests.session.test_idle_checkpoint import _admit, _artifact_policy, _seed
 

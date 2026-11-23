@@ -13,28 +13,28 @@ from uuid import UUID
 
 import pytest
 
-from nanobot.agent.stop_target import parse_stop_expectation
-from nanobot.agent.tools.base import Tool
-from nanobot.agent.tools.mcp import MCPToolWrapper
-from nanobot.agent.turn import TurnRequest
-from nanobot.bus.events import (
+from kohaku.agent.stop_target import parse_stop_expectation
+from kohaku.agent.tools.base import Tool
+from kohaku.agent.tools.mcp import MCPToolWrapper
+from kohaku.agent.turn import TurnRequest
+from kohaku.bus.events import (
     INBOUND_META_STOP_CLIENT,
     INBOUND_META_STOP_EXPECTATION,
     InboundMessage,
 )
-from nanobot.bus.outbound_events import StopTargetEvent, WebUIAdmissionRejectedEvent
-from nanobot.bus.runtime_events import TurnRunStatusChanged
-from nanobot.command.builtin import cmd_stop
-from nanobot.command.router import CommandContext
-from nanobot.providers.base import LLMResponse, ToolCallRequest
-from nanobot.session.execution_owner import acquire_execution
-from nanobot.session.pending_followups import (
+from kohaku.bus.outbound_events import StopTargetEvent, WebUIAdmissionRejectedEvent
+from kohaku.bus.runtime_events import TurnRunStatusChanged
+from kohaku.command.builtin import cmd_stop
+from kohaku.command.router import CommandContext
+from kohaku.providers.base import LLMResponse, ToolCallRequest
+from kohaku.session.execution_owner import acquire_execution
+from kohaku.session.pending_followups import (
     PendingChildFollowup,
     mint_pending_followup_id,
     record_pending_followup,
 )
-from nanobot.session.persistence_metadata import SOURCE_PENDING_FOLLOWUPS_METADATA_KEY
-from nanobot.session.source_store import SourceSessionStore
+from kohaku.session.persistence_metadata import SOURCE_PENDING_FOLLOWUPS_METADATA_KEY
+from kohaku.session.source_store import SourceSessionStore
 from tests.migration.test_local_runtime_activation import (
     _config,
     _running_composition,
@@ -44,7 +44,7 @@ from tests.migration.test_local_runtime_activation import (
 
 @pytest.fixture(autouse=True)
 def isolate_exact_stop_projection():
-    from nanobot.session.webui_turns import clear_websocket_turns
+    from kohaku.session.webui_turns import clear_websocket_turns
 
     clear_websocket_turns("exact-stop")
     yield
@@ -91,8 +91,8 @@ async def rejection_from_bus(handle):
 
 @pytest.mark.parametrize("change", ["held-child", "root-pending", "live-queue", "idle-child-pending", "nested-pending", "malformed", "orphan", "child-budget", "source-mismatch"])
 async def test_legacy_stop_proves_root_only_before_any_mutation(monkeypatch, tmp_path, change):
-    import nanobot.agent.loop as loop_module
-    from nanobot.session.webui_turns import (
+    import kohaku.agent.loop as loop_module
+    from kohaku.session.webui_turns import (
         activate_queued_websocket_turn,
         register_queued_websocket_turn_if_idle,
         websocket_turn_id,
@@ -193,7 +193,7 @@ async def test_legacy_stop_proves_root_only_before_any_mutation(monkeypatch, tmp
 
 
 async def test_legacy_stop_accepts_real_root_only(monkeypatch, tmp_path):
-    from nanobot.session.webui_turns import (
+    from kohaku.session.webui_turns import (
         activate_queued_websocket_turn,
         register_queued_websocket_turn_if_idle,
     )
@@ -219,7 +219,7 @@ async def test_legacy_stop_accepts_real_root_only(monkeypatch, tmp_path):
 async def test_real_children_get_derives_live_stop_target_without_event(monkeypatch, tmp_path, state):
     from urllib.parse import quote
 
-    from nanobot.channels.websocket.tests.ws_test_client import http_get
+    from kohaku.channels.websocket.tests.ws_test_client import http_get
     from tests.webui.test_child_thread_route import _auth_headers, _make_channel
 
     provider = _ScriptedProvider([LLMResponse(content="parent answered")], block_first=state == "root-only")
@@ -257,7 +257,7 @@ async def test_real_children_get_derives_live_stop_target_without_event(monkeypa
 async def test_thread_get_reuses_one_root_snapshot_for_history_permissions_and_stop(monkeypatch, tmp_path):
     from urllib.parse import quote
 
-    from nanobot.channels.websocket.tests.ws_test_client import http_get
+    from kohaku.channels.websocket.tests.ws_test_client import http_get
     from tests.webui.test_child_thread_route import _auth_headers, _make_channel
 
     provider = _ScriptedProvider([LLMResponse(content="parent answered")])
@@ -670,7 +670,7 @@ async def test_reused_canonical_run_id_executes_but_old_target_never_retargets(
 async def test_generated_run_requires_positive_pre_save_absence_and_no_attribution(
     monkeypatch, tmp_path, existing,
 ):
-    import nanobot.agent.loop as loop_module
+    import kohaku.agent.loop as loop_module
 
     provider = _ScriptedProvider([LLMResponse(content="first"), LLMResponse(content="second")], block_first=True)
     async with _running_composition(_config(tmp_path), provider, monkeypatch) as (handle, _run):
@@ -881,7 +881,7 @@ async def test_canonical_pre_admission_compact_receipt_has_no_typed_target(monke
             assert refused.event.reason == "stale_stop_target"
             assert agent._compact_dispatches.get(queued) is state
             if entry == "legacy":
-                from nanobot.session.webui_turns import (
+                from kohaku.session.webui_turns import (
                     activate_queued_websocket_turn,
                     register_queued_websocket_turn_if_idle,
                 )
@@ -903,7 +903,7 @@ async def test_canonical_pre_admission_compact_receipt_has_no_typed_target(monke
 
 @pytest.mark.parametrize("fault", ["malformed", "pending-budget", "source-budget", "child-budget", "child-source", "orphan"])
 async def test_incomplete_or_exhausted_inventory_has_no_partial_target_or_control(monkeypatch, tmp_path, fault):
-    import nanobot.agent.loop as loop_module
+    import kohaku.agent.loop as loop_module
 
     provider = _ScriptedProvider([LLMResponse(content="parent answered")])
     async with _running_composition(_config(tmp_path), provider, monkeypatch) as (handle, _run):
@@ -953,7 +953,7 @@ async def test_incomplete_or_exhausted_inventory_has_no_partial_target_or_contro
 
 
 async def test_sdk_closing_owner_cannot_appear_as_children_only_work(monkeypatch, tmp_path):
-    from nanobot.agent.loop import _SourceActivityAdmission
+    from kohaku.agent.loop import _SourceActivityAdmission
 
     provider = _ScriptedProvider([LLMResponse(content="answered")], block_first=True)
     async with _running_composition(_config(tmp_path), provider, monkeypatch) as (handle, _run):

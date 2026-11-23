@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from nanobot.cron.callback_store import (
+from kohaku.cron.callback_store import (
     CronCallbackConflictError,
     CronCallbackObservation,
     CronCallbackReconciliationRequiredError,
@@ -13,7 +13,7 @@ from nanobot.cron.callback_store import (
 
 
 def test_unlock_failure_still_closes_callback_lock(tmp_path: Path, monkeypatch) -> None:
-    import nanobot.cron.callback_store as module
+    import kohaku.cron.callback_store as module
 
     store = CronCallbackStore(tmp_path / "callbacks", lambda value: None)
     real_flock = module.fcntl.flock

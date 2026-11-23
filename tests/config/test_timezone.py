@@ -2,14 +2,14 @@ from __future__ import annotations
 
 import json
 
-from nanobot.config.loader import load_config, save_config
-from nanobot.config.schema import Config
-from nanobot.config.timezone import detect_system_timezone
+from kohaku.config.loader import load_config, save_config
+from kohaku.config.schema import Config
+from kohaku.config.timezone import detect_system_timezone
 
 
 def test_new_config_preserves_staging_utc_default(monkeypatch) -> None:
     monkeypatch.setattr(
-        "nanobot.config.timezone.get_localzone_name",
+        "kohaku.config.timezone.get_localzone_name",
         lambda: "Asia/Shanghai",
     )
 
@@ -21,7 +21,7 @@ def test_new_config_preserves_staging_utc_default(monkeypatch) -> None:
 
 def test_legacy_config_preserves_explicit_timezone(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(
-        "nanobot.config.timezone.get_localzone_name",
+        "kohaku.config.timezone.get_localzone_name",
         lambda: "Asia/Shanghai",
     )
     config_path = tmp_path / "config.json"
@@ -38,7 +38,7 @@ def test_legacy_config_preserves_explicit_timezone(tmp_path, monkeypatch) -> Non
 
 def test_auto_timezone_is_detected_by_backend_on_load(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(
-        "nanobot.config.timezone.get_localzone_name",
+        "kohaku.config.timezone.get_localzone_name",
         lambda: "Asia/Shanghai",
     )
     config_path = tmp_path / "config.json"
@@ -77,19 +77,19 @@ def test_manual_timezone_serializes_explicit_provenance(tmp_path) -> None:
 
 def test_onboard_refresh_materializes_manual_timezone_mode(tmp_path, monkeypatch) -> None:
     # Temporary-config integration only; production activation stays guarded.
-    monkeypatch.setattr("nanobot.migration_guard.require_runtime_ready", lambda: None)
+    monkeypatch.setattr("kohaku.migration_guard.require_runtime_ready", lambda: None)
     config_path = tmp_path / "config.json"
     workspace = tmp_path / "workspace"
     config_path.write_text(
         json.dumps({"agents": {"defaults": {"timezone": "America/New_York"}}}),
         encoding="utf-8",
     )
-    monkeypatch.setattr("nanobot.config.loader.get_config_path", lambda: config_path)
-    monkeypatch.setattr("nanobot.cli.commands._onboard_plugins", lambda _path: None)
+    monkeypatch.setattr("kohaku.config.loader.get_config_path", lambda: config_path)
+    monkeypatch.setattr("kohaku.cli.commands._onboard_plugins", lambda _path: None)
 
     from typer.testing import CliRunner
 
-    from nanobot.cli.commands import app
+    from kohaku.cli.commands import app
 
     result = CliRunner().invoke(app, ["onboard", "--refresh", "--workspace", str(workspace)])
 
@@ -106,7 +106,7 @@ def test_backend_timezone_detection_falls_back_to_utc(monkeypatch) -> None:
         raise OSError("timezone unavailable")
 
     monkeypatch.setattr(
-        "nanobot.config.timezone.get_localzone_name",
+        "kohaku.config.timezone.get_localzone_name",
         unavailable_timezone,
     )
 
@@ -115,7 +115,7 @@ def test_backend_timezone_detection_falls_back_to_utc(monkeypatch) -> None:
 
 def test_backend_timezone_detection_normalizes_utc_aliases(monkeypatch) -> None:
     monkeypatch.setattr(
-        "nanobot.config.timezone.get_localzone_name",
+        "kohaku.config.timezone.get_localzone_name",
         lambda: "Etc/UTC",
     )
 

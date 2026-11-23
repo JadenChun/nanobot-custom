@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from nanobot.config.paths import (
+from kohaku.config.paths import (
     get_bridge_install_dir,
     get_browser_test_artifacts_dir,
     get_cli_history_path,
@@ -18,7 +18,7 @@ from tests.config.path_test_fixtures import isolate_path_home
 
 def test_runtime_dirs_follow_config_path(monkeypatch, tmp_path: Path) -> None:
     config_file = tmp_path / "instance-a" / "config.json"
-    monkeypatch.setattr("nanobot.config.paths.get_config_path", lambda: config_file)
+    monkeypatch.setattr("kohaku.config.paths.get_config_path", lambda: config_file)
 
     assert get_data_dir() == config_file.parent
     assert get_runtime_subdir("cron") == config_file.parent / "cron"
@@ -28,31 +28,31 @@ def test_runtime_dirs_follow_config_path(monkeypatch, tmp_path: Path) -> None:
 
 def test_media_dir_supports_channel_namespace(monkeypatch, tmp_path: Path) -> None:
     config_file = tmp_path / "instance-b" / "config.json"
-    monkeypatch.setattr("nanobot.config.paths.get_config_path", lambda: config_file)
+    monkeypatch.setattr("kohaku.config.paths.get_config_path", lambda: config_file)
 
     assert get_media_dir() == config_file.parent / "media"
     assert get_media_dir("telegram") == config_file.parent / "media" / "telegram"
 
 
 def test_shared_and_legacy_paths_remain_global() -> None:
-    assert get_cli_history_path() == Path.home() / ".nanobot" / "history" / "cli_history"
-    assert get_bridge_install_dir() == Path.home() / ".nanobot" / "bridge"
-    assert get_legacy_sessions_dir() == Path.home() / ".nanobot" / "sessions"
+    assert get_cli_history_path() == Path.home() / ".kohaku" / "history" / "cli_history"
+    assert get_bridge_install_dir() == Path.home() / ".kohaku" / "bridge"
+    assert get_legacy_sessions_dir() == Path.home() / ".kohaku" / "sessions"
 
 
 def test_workspace_path_is_explicitly_resolved(tmp_path: Path, monkeypatch) -> None:
     isolate_path_home(tmp_path, monkeypatch)
-    assert get_workspace_path() == Path.home() / ".nanobot" / "workspace"
+    assert get_workspace_path() == Path.home() / ".kohaku" / "workspace"
     assert get_workspace_path("~/custom-workspace") == Path.home() / "custom-workspace"
 
 
 def test_browser_test_artifacts_dir_is_workspace_scoped(tmp_path: Path, monkeypatch) -> None:
     isolate_path_home(tmp_path, monkeypatch)
-    assert get_browser_test_artifacts_dir() == Path.home() / ".nanobot" / "workspace" / "artifacts" / "browser-tests"
+    assert get_browser_test_artifacts_dir() == Path.home() / ".kohaku" / "workspace" / "artifacts" / "browser-tests"
     assert get_browser_test_artifacts_dir("~/custom-workspace") == Path.home() / "custom-workspace" / "artifacts" / "browser-tests"
 
 
 def test_is_default_workspace_distinguishes_default_and_custom_paths() -> None:
     assert is_default_workspace(None) is True
-    assert is_default_workspace(Path.home() / ".nanobot" / "workspace") is True
+    assert is_default_workspace(Path.home() / ".kohaku" / "workspace") is True
     assert is_default_workspace("~/custom-workspace") is False

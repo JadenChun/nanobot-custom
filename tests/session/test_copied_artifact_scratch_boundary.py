@@ -4,8 +4,8 @@ from pathlib import Path
 
 import pytest
 
-from nanobot.session import artifact_operator
-from nanobot.session.manager import JsonlSessionStore
+from kohaku.session import artifact_operator
+from kohaku.session.manager import JsonlSessionStore
 
 KEY = "cli:copied-scratch"
 WORKSPACE_ID = "a" * 32

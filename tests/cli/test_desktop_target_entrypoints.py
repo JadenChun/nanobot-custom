@@ -3,7 +3,7 @@
 import pytest
 from typer.testing import CliRunner
 
-from nanobot.cli import commands, desktop_target, entry
+from kohaku.cli import commands, desktop_target, entry
 
 
 @pytest.fixture
@@ -22,7 +22,7 @@ def no_desktop_discovery(monkeypatch):
 @pytest.mark.parametrize("args", [[], ["--help"], ["--version"], ["agent", "--help"],
                                   ["webui", "--help"], ["gateway", "--help"]])
 def test_help_and_metadata_never_start_runtime(monkeypatch, args, launcher):
-    monkeypatch.setattr("nanobot.migration_guard.require_runtime_ready",
+    monkeypatch.setattr("kohaku.migration_guard.require_runtime_ready",
                         lambda: pytest.fail("help must not request runtime admission"))
     if launcher == "retained":
         result = CliRunner().invoke(commands.app, args)

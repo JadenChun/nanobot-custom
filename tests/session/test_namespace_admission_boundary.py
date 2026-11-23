@@ -5,9 +5,9 @@ from pathlib import Path
 
 import pytest
 
-from nanobot.session import mode_storage
-from nanobot.session.manager import JsonlSessionStore, Session
-from nanobot.session.mode_storage import LifetimeWriterLease, SessionModeError
+from kohaku.session import mode_storage
+from kohaku.session.manager import JsonlSessionStore, Session
+from kohaku.session.mode_storage import LifetimeWriterLease, SessionModeError
 
 
 def file_bytes(root: Path) -> dict[Path, bytes]:

@@ -16,17 +16,17 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from nanobot.audio.transcription import (
+from kohaku.audio.transcription import (
     EffectiveTranscriptionConfig,
     TranscriptionIngressError,
     transcribe_audio_file,
 )
-from nanobot.session.manager import SessionManager
-from nanobot.utils.document import (
+from kohaku.session.manager import SessionManager
+from kohaku.utils.document import (
     PdfSafetyError,
     _check_pdf_stream_bound,
 )
-from nanobot.webui import generated_asset_index, transcript
+from kohaku.webui import generated_asset_index, transcript
 
 
 def test_distinct_chat_ids_never_share_a_transcript(tmp_path: Path) -> None:
@@ -117,7 +117,7 @@ def test_pdf_bounds_decoded_stream_before_materialization(
 
     raw = zlib.compress(b"x" * 10_000)
     monkeypatch.setattr(
-        "nanobot.utils.document._MAX_PDF_CONTENT_STREAM_SIZE", 64
+        "kohaku.utils.document._MAX_PDF_CONTENT_STREAM_SIZE", 64
     )
 
     contents = FakeContents(raw)
@@ -143,7 +143,7 @@ def test_unmeasurable_audio_is_refused_before_provider_dispatch(
     )
 
     monkeypatch.setattr(
-        "nanobot.audio.transcription.measure_audio_duration",
+        "kohaku.audio.transcription.measure_audio_duration",
         AsyncMock(return_value=None),
     )
 
@@ -151,7 +151,7 @@ def test_unmeasurable_audio_is_refused_before_provider_dispatch(
         raise AssertionError("provider must not load")
 
     monkeypatch.setattr(
-        "nanobot.audio.transcription.get_transcription_provider",
+        "kohaku.audio.transcription.get_transcription_provider",
         fail_provider,
     )
 

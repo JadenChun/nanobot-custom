@@ -7,15 +7,15 @@ from pathlib import Path
 import pytest
 from loguru import logger
 
-from nanobot.session.execution_owner import acquire_execution
-from nanobot.session.manager import (
+from kohaku.session.execution_owner import acquire_execution
+from kohaku.session.manager import (
     SESSION_MODEL_PRESET_METADATA_KEY,
     Session,
     SessionManager,
 )
-from nanobot.session.runtime_authority import DurableSessionAuthority, OfflineSessionOperator
-from nanobot.session.session_mode import SessionModeError
-from nanobot.session.source import new_source_event
+from kohaku.session.runtime_authority import DurableSessionAuthority, OfflineSessionOperator
+from kohaku.session.session_mode import SessionModeError
+from kohaku.session.source import new_source_event
 
 
 def test_manager_clear_absent_deleted_and_active_canonical(tmp_path: Path) -> None:
@@ -150,7 +150,7 @@ def test_keyword_lifecycle_calls_and_guard_thread_isolation(tmp_path: Path) -> N
             tx = resolver.begin_export(key="cli:source", destination=tmp_path / "out", files={"manifest.json": b"{}\n"})
             tx.abort()
             def different_thread() -> None:
-                from nanobot.session.execution_owner import ExecutionBusyError
+                from kohaku.session.execution_owner import ExecutionBusyError
 
                 with pytest.raises(ExecutionBusyError):
                     with resolver.locked_snapshot("cli:source"):
@@ -195,7 +195,7 @@ def test_recovery_hint_is_revalidated_before_mutation(tmp_path: Path, monkeypatc
 
 
 def test_snapshot_foreign_task_exit_rejects_before_postcondition_reads(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    from nanobot.session.execution_owner import execution_lock_guard
+    from kohaku.session.execution_owner import execution_lock_guard
 
     workspace = tmp_path / "workspace"
     workspace.mkdir()
@@ -254,7 +254,7 @@ def test_snapshot_closed_lifecycle_rejects_reuse_and_exit_before_reads(tmp_path:
 
 
 def test_partial_multikey_guard_failure_releases_acquired_prefix(tmp_path: Path) -> None:
-    from nanobot.session.execution_owner import ExecutionBusyError, execution_lock_guard
+    from kohaku.session.execution_owner import ExecutionBusyError, execution_lock_guard
 
     workspace = tmp_path / "workspace"
     workspace.mkdir()
@@ -283,7 +283,7 @@ def test_copied_context_after_snapshot_exit_acquires_fresh_os_guard(tmp_path: Pa
     from contextlib import contextmanager
     from contextvars import copy_context
 
-    import nanobot.session.execution_owner as execution_module
+    import kohaku.session.execution_owner as execution_module
 
     workspace = tmp_path / "workspace"
     workspace.mkdir()
@@ -329,7 +329,7 @@ def test_copied_context_after_snapshot_exit_acquires_fresh_os_guard(tmp_path: Pa
 def test_reciprocal_forks_take_one_sorted_guard_set(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from contextlib import contextmanager
 
-    import nanobot.session.execution_owner as execution_module
+    import kohaku.session.execution_owner as execution_module
 
     workspace = tmp_path / "workspace"
     workspace.mkdir()
@@ -363,7 +363,7 @@ def test_reciprocal_forks_take_one_sorted_guard_set(tmp_path: Path, monkeypatch:
 def test_ownerless_canonical_mutations_reject_execution_evidence(tmp_path: Path, operation: str, evidence: str) -> None:
     import json
 
-    from nanobot.session.execution_owner import ExecutionOwnershipError
+    from kohaku.session.execution_owner import ExecutionOwnershipError
 
     workspace = tmp_path / "workspace"
     workspace.mkdir()
@@ -428,7 +428,7 @@ def test_manager_metadata_upsert_validates_removals_and_creation(tmp_path: Path)
 
 @pytest.mark.parametrize("operation", ["reset", "delete", "fork", "direct_reset", "direct_delete", "direct_fork"])
 def test_real_owner_contention_preserves_bytes_and_cache(tmp_path: Path, operation: str) -> None:
-    from nanobot.session.execution_owner import ExecutionBusyError
+    from kohaku.session.execution_owner import ExecutionBusyError
 
     workspace = tmp_path / "workspace"
     workspace.mkdir()
@@ -608,7 +608,7 @@ def test_legacy_provider_state_survives_manager_read_while_canonical_has_none(
     root = tmp_path / "sessions"
     unmanaged = SessionManager(workspace, sessions_root=root)
     legacy = Session("cli:legacy", messages=[{"role": "user", "content": "one"}])
-    from nanobot.providers.base import ProviderConversationState
+    from kohaku.providers.base import ProviderConversationState
 
     legacy.provider_state = ProviderConversationState(
         kind="fixture",

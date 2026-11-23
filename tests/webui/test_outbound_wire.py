@@ -5,18 +5,18 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from nanobot.bus.events import OutboundMessage
-from nanobot.bus.outbound_events import (
+from kohaku.bus.events import OutboundMessage
+from kohaku.bus.outbound_events import (
     ContextCompactionEvent,
     DelegatedChildEvent,
     RecoveryStateEvent,
     RetryStatusEvent,
     TurnEndEvent,
 )
-from nanobot.providers.base import LLMUsage
-from nanobot.webui.metadata import WEBUI_TURN_METADATA_KEY
-from nanobot.webui.outbound_projection import WebUIOutboundProjector
-from nanobot.webui.outbound_wire import (
+from kohaku.providers.base import LLMUsage
+from kohaku.webui.metadata import WEBUI_TURN_METADATA_KEY
+from kohaku.webui.outbound_projection import WebUIOutboundProjector
+from kohaku.webui.outbound_wire import (
     encode_context_compaction,
     encode_recovery_state,
     encode_retry_status,
@@ -87,7 +87,7 @@ def test_encode_recovery_state_preserves_false_can_continue() -> None:
 def test_encode_retry_status_projects_relative_wait_and_turn_id(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr("nanobot.webui.outbound_wire.time.time", lambda: 120.0)
+    monkeypatch.setattr("kohaku.webui.outbound_wire.time.time", lambda: 120.0)
 
     payload = encode_retry_status(
         "chat-1",

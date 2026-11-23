@@ -11,16 +11,16 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from nanobot.agent.child_sessions import ChildAdmission
-from nanobot.agent.loop import AgentLoop
-from nanobot.agent.runner import AgentRunner, AgentRunSpec
-from nanobot.agent.tools.artifact import ReadArtifactTool
-from nanobot.agent.tools.artifact_handoff import ArtifactHandoffTool
-from nanobot.agent.tools.delegation import DelegateTaskTool
-from nanobot.agent.tools.execution import KnownToolResult
-from nanobot.agent.tools.filesystem import ReadFileTool
-from nanobot.agent.tools.registry import ToolRegistry
-from nanobot.agent.turn import (
+from kohaku.agent.child_sessions import ChildAdmission
+from kohaku.agent.loop import AgentLoop
+from kohaku.agent.runner import AgentRunner, AgentRunSpec
+from kohaku.agent.tools.artifact import ReadArtifactTool
+from kohaku.agent.tools.artifact_handoff import ArtifactHandoffTool
+from kohaku.agent.tools.delegation import DelegateTaskTool
+from kohaku.agent.tools.execution import KnownToolResult
+from kohaku.agent.tools.filesystem import ReadFileTool
+from kohaku.agent.tools.registry import ToolRegistry
+from kohaku.agent.turn import (
     RunRecord,
     RunStatus,
     SessionRunRef,
@@ -29,22 +29,22 @@ from nanobot.agent.turn import (
     TurnRequest,
     TurnSource,
 )
-from nanobot.providers.base import GenerationSettings, LLMResponse, ToolCallRequest
-from nanobot.session.artifact import ArtifactValidationError, parse_artifact_descriptor
-from nanobot.session.artifact_grants import (
+from kohaku.providers.base import GenerationSettings, LLMResponse, ToolCallRequest
+from kohaku.session.artifact import ArtifactValidationError, parse_artifact_descriptor
+from kohaku.session.artifact_grants import (
     ArtifactDirectChildBinding,
     ArtifactGrantSet,
     ArtifactHandoffCollector,
     ArtifactHandoffReceipt,
     CanonicalChildArtifactInput,
 )
-from nanobot.session.artifact_reader import ArtifactReader
-from nanobot.session.artifact_store import PrivateArtifactStore
-from nanobot.session.execution_owner import ExecutionOwnershipError, acquire_execution
-from nanobot.session.manager import JsonlSessionStore, Session
-from nanobot.session.source_store import SourceSessionStore
-from nanobot.session.turn_writer import SourceTurnWriter
-from nanobot.utils.llm_runtime import LLMRuntime
+from kohaku.session.artifact_reader import ArtifactReader
+from kohaku.session.artifact_store import PrivateArtifactStore
+from kohaku.session.execution_owner import ExecutionOwnershipError, acquire_execution
+from kohaku.session.manager import JsonlSessionStore, Session
+from kohaku.session.source_store import SourceSessionStore
+from kohaku.session.turn_writer import SourceTurnWriter
+from kohaku.utils.llm_runtime import LLMRuntime
 from tests.agent.test_migration_engine import ScriptedProvider
 from tests.session.test_artifact import fixture
 
@@ -1288,7 +1288,7 @@ async def test_child_downward_grants_close_when_usage_reset_fails(tmp_path, monk
     def fail_reset(token):
         raise RuntimeError("usage reset failed")
 
-    monkeypatch.setattr("nanobot.agent.runner.reset_llm_usage_source", fail_reset)
+    monkeypatch.setattr("kohaku.agent.runner.reset_llm_usage_source", fail_reset)
     with pytest.raises(RuntimeError, match="usage reset failed"):
         await _run_child_with_downward_grant(tmp_path, LLMResponse(content="done"))
 
@@ -1375,8 +1375,8 @@ async def _durable_child_evidence(tmp_path):
 async def test_child_evidence_preserves_finalization_order_and_partial_failures(tmp_path, monkeypatch, fault):
     from contextlib import contextmanager
 
-    import nanobot.session.artifact_grants as grants_module
-    import nanobot.session.execution_owner as execution_module
+    import kohaku.session.artifact_grants as grants_module
+    import kohaku.session.execution_owner as execution_module
 
     async with _durable_child_evidence(tmp_path) as (child, collector, receipt, store, descriptor, event_id):
         if fault == "missing_tool":
@@ -1534,7 +1534,7 @@ async def test_child_evidence_preserves_finalization_order_and_partial_failures(
 
 @pytest.mark.parametrize("case", ["native", "unknown", "borrowed", "source_changed", "corrupt_blob"])
 async def test_native_selection_operation_verifies_before_returning_without_granting(tmp_path, monkeypatch, case):
-    from nanobot.session.execution_owner import execution_transaction
+    from kohaku.session.execution_owner import execution_transaction
 
     async with published_artifact(tmp_path) as (_, writer, tool, store, descriptor, _):
         reader = ArtifactReader(writer, "root_history", store, tool)
@@ -1580,7 +1580,7 @@ async def test_native_selection_operation_verifies_before_returning_without_gran
 
 
 async def test_child_evidence_operation_returns_only_verified_descriptor_identities(tmp_path, monkeypatch):
-    from nanobot.session.execution_owner import execution_transaction
+    from kohaku.session.execution_owner import execution_transaction
 
     async with _durable_child_evidence(tmp_path) as (child, collector, receipt, store, _, _):
         selected = receipt._descriptors[0]

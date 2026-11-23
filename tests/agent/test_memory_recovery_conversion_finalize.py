@@ -9,10 +9,10 @@ from pathlib import Path
 
 import pytest
 
-from nanobot.agent import memory_recovery_conversion_apply as apply
-from nanobot.agent import memory_recovery_conversion_finalize as finalize
-from nanobot.agent import memory_recovery_conversion_runtime as prepare
-from nanobot.agent.memory_recovery_manifest import MemoryRecoveryManifest
+from kohaku.agent import memory_recovery_conversion_apply as apply
+from kohaku.agent import memory_recovery_conversion_finalize as finalize
+from kohaku.agent import memory_recovery_conversion_runtime as prepare
+from kohaku.agent.memory_recovery_manifest import MemoryRecoveryManifest
 
 _WORKSPACE_ID = "a" * 32
 
@@ -75,10 +75,10 @@ def _finalize(tmp_path: Path):
 
 
 def _phases(tmp_path: Path) -> list[str]:
-    from nanobot.agent import memory_recovery as codec
-    from nanobot.agent import memory_recovery_conversion as conversion
-    from nanobot.agent import memory_recovery_storage as storage
-    from nanobot.agent import memory_recovery_transaction as transaction
+    from kohaku.agent import memory_recovery as codec
+    from kohaku.agent import memory_recovery_conversion as conversion
+    from kohaku.agent import memory_recovery_storage as storage
+    from kohaku.agent import memory_recovery_transaction as transaction
 
     with storage.open_workspace_memory(tmp_path) as authority, authority.operation() as operation:
         raw = authority.snapshot_target(".consolidation.pending.json").content
@@ -254,9 +254,9 @@ def test_receipt_replacement_same_bytes_replays_by_content(tmp_path: Path) -> No
     assert not (memory / "HISTORY.md.bak.2").exists()
     assert target.read_bytes() == content
     # Conversion completion does not advance the independent receipt transaction.
-    from nanobot.agent import memory_recovery as codec
-    from nanobot.agent import memory_recovery_storage as storage
-    from nanobot.agent import memory_recovery_transaction as transaction
+    from kohaku.agent import memory_recovery as codec
+    from kohaku.agent import memory_recovery_storage as storage
+    from kohaku.agent import memory_recovery_transaction as transaction
 
     with storage.open_workspace_memory(tmp_path) as authority, authority.operation() as operation:
         receipt = codec._validate_payload(codec._decode(content), content)
@@ -322,7 +322,7 @@ def test_target_drift_after_finalized_append_prevents_complete(
 
 
 def test_output_blob_drift_blocks_archive(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    from nanobot.agent import memory_recovery_storage as storage
+    from kohaku.agent import memory_recovery_storage as storage
 
     memory = _workspace(tmp_path)
     digest = hashlib.sha256((memory / "history.jsonl").read_bytes()).hexdigest()

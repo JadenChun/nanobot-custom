@@ -4,9 +4,9 @@ import base64
 from pathlib import Path
 from unittest.mock import MagicMock
 
-from nanobot.attachments.ingress import AttachmentIngress
-from nanobot.attachments.policy import AttachmentIngressLimits, AttachmentPolicy
-from nanobot.attachments.store import AttachmentStore
+from kohaku.attachments.ingress import AttachmentIngress
+from kohaku.attachments.policy import AttachmentIngressLimits, AttachmentPolicy
+from kohaku.attachments.store import AttachmentStore
 
 _PNG = base64.b64decode(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+yF9kAAAAASUVORK5CYII="

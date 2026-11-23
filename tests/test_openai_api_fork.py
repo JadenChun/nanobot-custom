@@ -7,9 +7,9 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from nanobot.agent.turn import TurnResult, TurnSource
-from nanobot.api.server import API_SESSION_KEY, handle_chat_completions
-from nanobot.providers.base import LLMUsage
+from kohaku.agent.turn import TurnResult, TurnSource
+from kohaku.api.server import API_SESSION_KEY, handle_chat_completions
+from kohaku.providers.base import LLMUsage
 
 
 def _request(body: dict, agent: MagicMock) -> MagicMock:

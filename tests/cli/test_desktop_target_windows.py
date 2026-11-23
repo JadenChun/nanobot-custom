@@ -9,8 +9,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from nanobot.cli import desktop_target
-from nanobot.cli.desktop_target import DesktopTargetError
+from kohaku.cli import desktop_target
+from kohaku.cli.desktop_target import DesktopTargetError
 
 
 def _set_pointer(pointer, value, value_type=wintypes.LPVOID):

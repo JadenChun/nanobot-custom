@@ -7,15 +7,15 @@ from pathlib import Path
 
 import pytest
 
-import nanobot.cron.occurrence_store as occurrence_module
-import nanobot.cron.runtime_inspection as inspection
-from nanobot.cron.occurrence_store import (
+import kohaku.cron.occurrence_store as occurrence_module
+import kohaku.cron.runtime_inspection as inspection
+from kohaku.cron.occurrence_store import (
     CronOccurrenceStore,
     OccurrenceCorruptError,
     OccurrenceNotFoundError,
     OccurrencePersistenceError,
 )
-from nanobot.cron.scheduler_store import SchedulerStore, _PrivateFiles
+from kohaku.cron.scheduler_store import SchedulerStore, _PrivateFiles
 from tests.cli.test_cron_runtime_inspection import snapshot
 
 

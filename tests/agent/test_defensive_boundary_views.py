@@ -4,19 +4,19 @@ from types import SimpleNamespace
 
 import pytest
 
-from nanobot.agent.capabilities import role_capabilities, role_tool_names
-from nanobot.agent.context_governance import ContextGovernor
-from nanobot.agent.memory import MemoryStore
-from nanobot.agent.model_runtime import ModelRuntimeResolver
-from nanobot.agent.tools.image_generation import ImageGenerationTool
-from nanobot.agent.tools.trend_vpngate import VpnGateDiscoveryError, parse_api_response
-from nanobot.channels.delivery_contract import ChannelTextPartReceipt, ChannelTextReceipt
-from nanobot.sdk.clients import SessionClient
-from nanobot.session.artifact import ArtifactValidationError
-from nanobot.session.artifact_verification import verify_published_artifact
-from nanobot.session.mode_storage import SessionModeError, SessionModeStorage
-from nanobot.session.source import SourceValidationError
-from nanobot.session.source_root import SourceRootAuthority, SourceRootAuthorityError
+from kohaku.agent.capabilities import role_capabilities, role_tool_names
+from kohaku.agent.context_governance import ContextGovernor
+from kohaku.agent.memory import MemoryStore
+from kohaku.agent.model_runtime import ModelRuntimeResolver
+from kohaku.agent.tools.image_generation import ImageGenerationTool
+from kohaku.agent.tools.trend_vpngate import VpnGateDiscoveryError, parse_api_response
+from kohaku.channels.delivery_contract import ChannelTextPartReceipt, ChannelTextReceipt
+from kohaku.sdk.clients import SessionClient
+from kohaku.session.artifact import ArtifactValidationError
+from kohaku.session.artifact_verification import verify_published_artifact
+from kohaku.session.mode_storage import SessionModeError, SessionModeStorage
+from kohaku.session.source import SourceValidationError
+from kohaku.session.source_root import SourceRootAuthority, SourceRootAuthorityError
 
 
 class _NotText:
@@ -197,7 +197,7 @@ def test_source_name_refusal_retains_prior_backend_authority(name, monkeypatch):
 
 @pytest.mark.parametrize("text", NOT_TEXT)
 def test_source_text_refusal_retains_backend_and_write_authority(text, monkeypatch):
-    from nanobot.session import mode_storage
+    from kohaku.session import mode_storage
 
     trace = []
     root = object.__new__(SourceRootAuthority)

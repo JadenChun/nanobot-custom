@@ -7,8 +7,8 @@ from pathlib import Path
 def test_config_base_import_does_not_load_config_schema():
     code = """
 import sys
-from nanobot.config_base import Base
-print("nanobot.config.schema" in sys.modules)
+from kohaku.config_base import Base
+print("kohaku.config.schema" in sys.modules)
 """
     result = subprocess.run(
         [sys.executable, "-c", code],
@@ -22,7 +22,7 @@ print("nanobot.config.schema" in sys.modules)
 
 def test_builtin_tool_configs_do_not_depend_on_config_schema_base():
     repo = Path(__file__).resolve().parents[2]
-    tool_paths = sorted((repo / "nanobot/agent/tools").glob("*.py"))
+    tool_paths = sorted((repo / "kohaku/agent/tools").glob("*.py"))
 
     violations = []
     for path in tool_paths:
@@ -30,7 +30,7 @@ def test_builtin_tool_configs_do_not_depend_on_config_schema_base():
         for node in ast.walk(tree):
             if not isinstance(node, ast.ImportFrom):
                 continue
-            if node.module != "nanobot.config.schema":
+            if node.module != "kohaku.config.schema":
                 continue
             if any(alias.name == "Base" for alias in node.names):
                 violations.append(str(path.relative_to(repo)))
@@ -40,8 +40,8 @@ def test_builtin_tool_configs_do_not_depend_on_config_schema_base():
 
 def test_tool_first_import_preserves_schema_rebuild_and_historical_aliases():
     code = """
-from nanobot.agent.tools.web import WebToolsConfig
-from nanobot.config.schema import Config, ToolsConfig, WebToolsConfig as HistoricalWebToolsConfig
+from kohaku.agent.tools.web import WebToolsConfig
+from kohaku.config.schema import Config, ToolsConfig, WebToolsConfig as HistoricalWebToolsConfig
 assert HistoricalWebToolsConfig is WebToolsConfig
 assert ToolsConfig.model_rebuild(force=True) is True
 assert Config.model_rebuild(force=True) is True

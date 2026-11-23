@@ -4,21 +4,21 @@ from contextlib import asynccontextmanager
 
 import pytest
 
-from nanobot.agent.tools.artifact import ReadArtifactTool
-from nanobot.agent.tools.artifact_handoff import ArtifactHandoffTool
-from nanobot.agent.tools.base import Tool
-from nanobot.agent.tools.filesystem import ReadFileTool
-from nanobot.agent.tools.image import ImageGenerationTool
-from nanobot.agent.tools.registry import ToolRegistry
-from nanobot.agent.tools.social_crawl import SocialCrawlTool
-from nanobot.agent.tools.trend_vpn import (
+from kohaku.agent.tools.artifact import ReadArtifactTool
+from kohaku.agent.tools.artifact_handoff import ArtifactHandoffTool
+from kohaku.agent.tools.base import Tool
+from kohaku.agent.tools.filesystem import ReadFileTool
+from kohaku.agent.tools.image import ImageGenerationTool
+from kohaku.agent.tools.registry import ToolRegistry
+from kohaku.agent.tools.social_crawl import SocialCrawlTool
+from kohaku.agent.tools.trend_vpn import (
     TrendVpnBrowserFetchTool,
     TrendVpnFetchTool,
     TrendVpnSessionCloseTool,
     TrendVpnSessionStartTool,
 )
-from nanobot.session.artifact_grants import ArtifactHandoffCollector
-from nanobot.session.artifact_reader import ArtifactReader
+from kohaku.session.artifact_grants import ArtifactHandoffCollector
+from kohaku.session.artifact_reader import ArtifactReader
 from tests.session.test_artifact_reader import setup_read
 
 NAMES = (

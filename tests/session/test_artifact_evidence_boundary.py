@@ -4,8 +4,8 @@ from pathlib import Path
 
 import pytest
 
-from nanobot.session.artifact_reader import ArtifactReader
-from nanobot.session.artifact_rematerialization import ArtifactRematerializer
+from kohaku.session.artifact_reader import ArtifactReader
+from kohaku.session.artifact_rematerialization import ArtifactRematerializer
 from tests.session.test_artifact_reader import setup_read
 from tests.session.test_artifact_store import make_store
 

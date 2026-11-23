@@ -49,7 +49,7 @@ import {
   type ThreadViewportHandle,
   type ThreadViewportState,
 } from "@/components/thread/ThreadViewport";
-import { useNanobotStream, type SendAttachment, type SendOptions } from "@/hooks/useNanobotStream";
+import { useKohakuStream, type SendAttachment, type SendOptions } from "@/hooks/useKohakuStream";
 import { useSessionHistory, type RevealPromptTarget } from "@/hooks/useSessions";
 import { NextTurnSettingsTracker, type NextTurnSettingKind } from "@/lib/next-turn-settings";
 import {
@@ -74,7 +74,7 @@ import {
   installedMcpPresetsFromPayload,
   isMcpPresetsPayload,
 } from "@/lib/mcp-preset-events";
-import { messageDeliveryErrorKind, type CanonicalRunSnapshot, type StreamError } from "@/lib/nanobot-client";
+import { messageDeliveryErrorKind, type CanonicalRunSnapshot, type StreamError } from "@/lib/kohaku-client";
 import { inferProviderFromModelName, providerDisplayLabel } from "@/lib/provider-brand";
 import { parseRiskyApprovalPrompt } from "@/lib/risky-approval";
 import {
@@ -1614,7 +1614,7 @@ export function ThreadShell({
     setMessages,
     streamError,
     dismissStreamError,
-  } = useNanobotStream(
+  } = useKohakuStream(
     chatId,
     initial,
     hasPendingToolCalls,
@@ -3053,7 +3053,7 @@ export function ThreadShell({
     }
   }, [chatId, displayMessages]);
 
-  // Persist thread to in-memory cache after paint so ``useNanobotStream``'s chat switch
+  // Persist thread to in-memory cache after paint so ``useKohakuStream``'s chat switch
   // ``useEffect`` reset has flushed; ``skipLayoutCacheRef`` drops the first run that still
   // sees the *previous* chat's ``messages`` (avoids stale rows leaking across sessions).
   useEffect(() => {

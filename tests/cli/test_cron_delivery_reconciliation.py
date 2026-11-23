@@ -9,8 +9,8 @@ from pathlib import Path
 
 from typer.testing import CliRunner
 
-import nanobot.cli.cron_delivery as cron_cli
-from nanobot.cli.cron_delivery import cron_delivery_app
+import kohaku.cli.cron_delivery as cron_cli
+from kohaku.cli.cron_delivery import cron_delivery_app
 
 runner = CliRunner()
 
@@ -39,7 +39,7 @@ def test_help_and_absent_inspection_create_nothing(tmp_path: Path) -> None:
 
 
 def test_registered_group_help_creates_nothing(tmp_path: Path, monkeypatch) -> None:
-    import nanobot.cli.commands as commands
+    import kohaku.cli.commands as commands
 
     monkeypatch.setattr(commands, "set_cli_process_identity", lambda _args: None)
     before = set(tmp_path.rglob("*"))

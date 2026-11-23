@@ -6,21 +6,21 @@ from unittest.mock import Mock
 
 import pytest
 
-from nanobot.agent.context_governance import (
+from kohaku.agent.context_governance import (
     ContextGovernanceConfig,
     ContextGovernor,
     ModelRequestState,
 )
-from nanobot.agent.loop import AgentLoop
-from nanobot.agent.tools.base import Tool
-from nanobot.agent.tools.registry import ToolRegistry
-from nanobot.agent.turn import TurnRequest
-from nanobot.providers.base import LLMResponse, ToolCallRequest
-from nanobot.providers.conversation_state import ProviderConversationStateController
-from nanobot.providers.image_history import recent_image_messages
-from nanobot.session.source import SourceValidationError, validate_execution_links
-from nanobot.session.source_projection import RuntimeNode, SourceNode
-from nanobot.session.source_request import SourceRequestLedger, SourceTranscript
+from kohaku.agent.loop import AgentLoop
+from kohaku.agent.tools.base import Tool
+from kohaku.agent.tools.registry import ToolRegistry
+from kohaku.agent.turn import TurnRequest
+from kohaku.providers.base import LLMResponse, ToolCallRequest
+from kohaku.providers.conversation_state import ProviderConversationStateController
+from kohaku.providers.image_history import recent_image_messages
+from kohaku.session.source import SourceValidationError, validate_execution_links
+from kohaku.session.source_projection import RuntimeNode, SourceNode
+from kohaku.session.source_request import SourceRequestLedger, SourceTranscript
 from tests.agent import test_migration_engine as engine_fixtures
 from tests.agent.test_migration_source_engine import upgrade
 from tests.providers.test_recent_image_history import CapturingProvider, history, image, images
@@ -53,7 +53,7 @@ async def test_budget_sees_only_selected_images_and_keeps_all_text(monkeypatch, 
         estimates.append(deepcopy(messages))
         return (900 * len(images(messages)) + 50, "image fixture")
 
-    monkeypatch.setattr("nanobot.agent.context_governance.estimate_prompt_tokens_chain", estimate)
+    monkeypatch.setattr("kohaku.agent.context_governance.estimate_prompt_tokens_chain", estimate)
     result, context = await ContextGovernor().prepare_request(
         state, deepcopy(raw), tool_definitions=tools, transcript=raw,
     )

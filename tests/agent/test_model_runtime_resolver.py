@@ -3,12 +3,12 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from nanobot.agent.model_runtime import ModelRuntimeResolver
-from nanobot.config.schema import ModelPresetConfig
-from nanobot.providers.base import GenerationSettings
-from nanobot.providers.capabilities import ModelCapabilities
-from nanobot.providers.factory import ProviderSnapshot
-from nanobot.utils.llm_runtime import LLMRuntime, runtime_from_provider_snapshot
+from kohaku.agent.model_runtime import ModelRuntimeResolver
+from kohaku.config.schema import ModelPresetConfig
+from kohaku.providers.base import GenerationSettings
+from kohaku.providers.capabilities import ModelCapabilities
+from kohaku.providers.factory import ProviderSnapshot
+from kohaku.utils.llm_runtime import LLMRuntime, runtime_from_provider_snapshot
 
 
 def _provider(

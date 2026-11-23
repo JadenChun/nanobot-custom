@@ -7,8 +7,8 @@ from pathlib import Path
 
 import pytest
 
-from nanobot.config.schema import RemoteAccessConfig
-from nanobot.remote.supervision import (
+from kohaku.config.schema import RemoteAccessConfig
+from kohaku.remote.supervision import (
     UNIT_PREFIX,
     ServicePlan,
     SupervisionError,
@@ -89,7 +89,7 @@ def test_supervision_cli_plan_carries_listener_port(tmp_path: Path) -> None:
         [
             sys.executable,
             "-m",
-            "nanobot.remote.supervision",
+            "kohaku.remote.supervision",
             "--state-dir",
             str(tmp_path),
             "--socket",

@@ -46,7 +46,7 @@ export class SkillMenu {
 
   constructor(renderer: CliRenderer, theme: PickerMenuTheme) {
     this.picker = new PickerMenu(renderer, theme, {
-      id: "nanobot-tui-skill-menu",
+      id: "kohaku-tui-skill-menu",
       key: (item) => item.name,
       searchText: (item) => `${item.name} ${item.description}`,
       render: (item) => `$${item.name}  ${item.description.replace(/\s+/gu, " ")}`,
