@@ -4,11 +4,11 @@ from copy import deepcopy
 
 import pytest
 
-from nanobot.session.source import SourceValidationError, new_source_event
-from nanobot.session.source_compaction import SourceCompactionCandidate
-from nanobot.session.source_projection import CheckpointNode, RuntimeNode, SourceNode, source_nodes
-from nanobot.session.source_request import SourceTranscript
-from nanobot.session.source_store import SourceSnapshot, SourceState
+from kohaku.session.source import SourceValidationError, new_source_event
+from kohaku.session.source_compaction import SourceCompactionCandidate
+from kohaku.session.source_projection import CheckpointNode, RuntimeNode, SourceNode, source_nodes
+from kohaku.session.source_request import SourceTranscript
+from kohaku.session.source_store import SourceSnapshot, SourceState
 
 
 def event(role, content, *, stream='root', parent=None, **extra):
@@ -358,9 +358,9 @@ def test_select_historical_prefix_propagates_malformed_dependency_evidence():
 
 
 async def test_select_historical_prefix_accepts_only_verified_artifact_projection(tmp_path):
-    from nanobot.session.artifact import ArtifactValidationError
-    from nanobot.session.artifact_projection import ArtifactProjector
-    from nanobot.session.artifact_reader import ArtifactReader
+    from kohaku.session.artifact import ArtifactValidationError
+    from kohaku.session.artifact_projection import ArtifactProjector
+    from kohaku.session.artifact_reader import ArtifactReader
     from tests.session.test_artifact_reader import setup_read
 
     async with setup_read(tmp_path, 'evidence' * 6_000) as (writer, tool, store, _, _):

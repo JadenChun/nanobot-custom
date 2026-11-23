@@ -6,15 +6,15 @@ from types import SimpleNamespace
 
 import pytest
 
-from nanobot.agent.loop import AgentLoop
-from nanobot.bus.events import InboundMessage
-from nanobot.channels.telegram.runtime import TelegramChannel
-from nanobot.cli import gateway_runtime
-from nanobot.config.schema import Config
-from nanobot.providers.base import LLMResponse
-from nanobot.providers.factory import ProviderSnapshot
-from nanobot.providers.unconfigured_provider import UnconfiguredProvider
-from nanobot.triggers.local_store import LocalTriggerStore
+from kohaku.agent.loop import AgentLoop
+from kohaku.bus.events import InboundMessage
+from kohaku.channels.telegram.runtime import TelegramChannel
+from kohaku.cli import gateway_runtime
+from kohaku.config.schema import Config
+from kohaku.providers.base import LLMResponse
+from kohaku.providers.factory import ProviderSnapshot
+from kohaku.providers.unconfigured_provider import UnconfiguredProvider
+from kohaku.triggers.local_store import LocalTriggerStore
 
 
 @pytest.mark.parametrize("scenario", ["queued", "recovered", "busy", "shutdown"])
@@ -108,14 +108,14 @@ def test_gateway_owns_local_trigger_delivery(tmp_path, monkeypatch, scenario):
     def foreground(*_args, **_kwargs):
         yield
 
-    monkeypatch.setattr("nanobot.config.loader.get_config_path", lambda: path)
-    monkeypatch.setattr("nanobot.providers.factory.build_provider_snapshot", snapshot)
+    monkeypatch.setattr("kohaku.config.loader.get_config_path", lambda: path)
+    monkeypatch.setattr("kohaku.providers.factory.build_provider_snapshot", snapshot)
     monkeypatch.setattr(AgentLoop, "run", run)
     monkeypatch.setattr(TelegramChannel, "start", start)
     monkeypatch.setattr(TelegramChannel, "stop", stop)
     monkeypatch.setattr(TelegramChannel, "send", send)
-    monkeypatch.setattr("nanobot.gateway.runtime.monitor_gateway_clients", idle)
-    monkeypatch.setattr("nanobot.gateway.runtime.GatewayRuntime.foreground_instance", foreground)
+    monkeypatch.setattr("kohaku.gateway.runtime.monitor_gateway_clients", idle)
+    monkeypatch.setattr("kohaku.gateway.runtime.GatewayRuntime.foreground_instance", foreground)
     monkeypatch.setattr(gateway_runtime, "_install_gateway_shutdown_handlers", lambda *_a, **_kw: lambda: None)
     monkeypatch.setattr(gateway_runtime, "_tcp_endpoint_reachable", lambda *_: False)
     monkeypatch.setattr(gateway_runtime, "_webui_endpoint_reachable", lambda *_: False)
@@ -123,7 +123,7 @@ def test_gateway_owns_local_trigger_delivery(tmp_path, monkeypatch, scenario):
     monkeypatch.setattr(gateway_runtime, "sync_workspace_templates", lambda *_: None)
     monkeypatch.setattr(gateway_runtime, "_health_server", health)
     if scenario == "shutdown":
-        from nanobot.cron.gateway import GatewayCron
+        from kohaku.cron.gateway import GatewayCron
 
         close_cron = GatewayCron.aclose
 

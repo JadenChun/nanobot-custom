@@ -8,11 +8,11 @@ from unittest.mock import MagicMock, patch
 import httpx
 import pytest
 
-from nanobot.agent.tools import mcp as mcp_mod
-from nanobot.agent.tools.mcp import _probe_http_url, connect_mcp_servers
-from nanobot.agent.tools.registry import ToolRegistry
-from nanobot.config.schema import MCPServerConfig
-from nanobot.security.network import configure_ssrf_whitelist
+from kohaku.agent.tools import mcp as mcp_mod
+from kohaku.agent.tools.mcp import _probe_http_url, connect_mcp_servers
+from kohaku.agent.tools.registry import ToolRegistry
+from kohaku.config.schema import MCPServerConfig
+from kohaku.security.network import configure_ssrf_whitelist
 
 _PROXY_ENV_VARS = ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy")
 
@@ -57,7 +57,7 @@ async def test_probe_uses_default_port_for_http(monkeypatch: pytest.MonkeyPatch)
     attempts: list[tuple[str, int]] = []
 
     monkeypatch.setattr(
-        "nanobot.agent.tools.mcp.resolve_url_target",
+        "kohaku.agent.tools.mcp.resolve_url_target",
         lambda _url: (True, "", ("93.184.216.34",)),
     )
 
@@ -65,7 +65,7 @@ async def test_probe_uses_default_port_for_http(monkeypatch: pytest.MonkeyPatch)
         attempts.append((host, port))
         raise ConnectionRefusedError
 
-    monkeypatch.setattr("nanobot.agent.tools.mcp.asyncio.open_connection", _open_connection)
+    monkeypatch.setattr("kohaku.agent.tools.mcp.asyncio.open_connection", _open_connection)
 
     assert await _probe_http_url("http://unreachable-host.test/mcp") is False
     assert attempts == [("93.184.216.34", 80)]
@@ -76,7 +76,7 @@ async def test_probe_rejects_public_name_resolving_to_loopback():
     def _resolver(hostname, port, family=0, type_=0):
         return [(socket.AF_INET, socket.SOCK_STREAM, 0, "", ("127.0.0.1", 0))]
 
-    with patch("nanobot.security.network.socket.getaddrinfo", _resolver):
+    with patch("kohaku.security.network.socket.getaddrinfo", _resolver):
         assert await _probe_http_url("http://example.com:8765/mcp") is False
 
 
@@ -90,9 +90,9 @@ async def test_probe_skips_direct_tcp_when_global_proxy_env_is_set(monkeypatch):
 
     monkeypatch.setenv("HTTPS_PROXY", "http://proxy.example:8080")
     monkeypatch.setenv("NO_PROXY", "localhost,127.0.0.1,::1")
-    monkeypatch.setattr("nanobot.agent.tools.mcp.asyncio.open_connection", _open_connection)
+    monkeypatch.setattr("kohaku.agent.tools.mcp.asyncio.open_connection", _open_connection)
 
-    with patch("nanobot.security.network.socket.getaddrinfo", _resolver):
+    with patch("kohaku.security.network.socket.getaddrinfo", _resolver):
         assert await _probe_http_url("https://mcp.example.com/mcp") is True
 
 
@@ -119,8 +119,8 @@ async def test_probe_tries_next_validated_ip_when_first_is_unreachable(monkeypat
             raise OSError("first address unreachable")
         return object(), FakeWriter()
 
-    monkeypatch.setattr("nanobot.security.network.socket.getaddrinfo", _resolver)
-    monkeypatch.setattr("nanobot.agent.tools.mcp.asyncio.open_connection", _open_connection)
+    monkeypatch.setattr("kohaku.security.network.socket.getaddrinfo", _resolver)
+    monkeypatch.setattr("kohaku.agent.tools.mcp.asyncio.open_connection", _open_connection)
 
     assert await _probe_http_url("http://mcp.example:8765/mcp") is True
     assert attempts == [
@@ -154,7 +154,7 @@ async def test_connect_skips_unreachable_streamable_http():
 
     registry = ToolRegistry()
     servers = {"dead": _make_http_cfg("http://93.184.216.34:19999/mcp")}
-    with patch("nanobot.agent.tools.mcp._probe_http_url", _unreachable):
+    with patch("kohaku.agent.tools.mcp._probe_http_url", _unreachable):
         stacks = await connect_mcp_servers(servers, registry)
     assert stacks == {}
     assert len(registry._tools) == 0
@@ -168,7 +168,7 @@ async def test_connect_skips_unreachable_sse():
 
     registry = ToolRegistry()
     servers = {"dead": _make_http_cfg("http://93.184.216.34:19999/sse", transport="sse")}
-    with patch("nanobot.agent.tools.mcp._probe_http_url", _unreachable):
+    with patch("kohaku.agent.tools.mcp._probe_http_url", _unreachable):
         stacks = await connect_mcp_servers(servers, registry)
     assert stacks == {}
     assert len(registry._tools) == 0
@@ -237,7 +237,7 @@ async def test_probe_not_called_for_stdio():
         called = True
         return await original_probe(url, **kw)
 
-    with patch("nanobot.agent.tools.mcp._probe_http_url", _spy_probe):
+    with patch("kohaku.agent.tools.mcp._probe_http_url", _spy_probe):
         cfg = MagicMock()
         cfg.type = "stdio"
         cfg.url = None

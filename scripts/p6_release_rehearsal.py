@@ -39,24 +39,24 @@ class _ExternalEffectAttemptError(RuntimeError):
 
 
 _REQUIRED_ASSETS = (
-    "nanobot/__init__.py",
-    "nanobot/templates/IDENTITY.md",
-    "nanobot/templates/TOOLS.md",
-    "nanobot/skills/README.md",
-    "nanobot/skills/desktop-use/SKILL.md",
-    "nanobot/skills/mobile-app-testing/SKILL.md",
-    "nanobot/skills/mobile-dogfood/SKILL.md",
-    "nanobot/skills/webapp-testing/SKILL.md",
-    "nanobot/skills/video-understanding/SKILL.md",
-    "nanobot/skills/video-understanding/scripts/extract_keyframes.py",
-    "nanobot/crawler/worker.py",
-    "nanobot/channels/telegram/webui/index.ts",
-    "nanobot/channels/websocket/webui/index.ts",
-    "nanobot/web/dist/index.html",
+    "kohaku/__init__.py",
+    "kohaku/templates/IDENTITY.md",
+    "kohaku/templates/TOOLS.md",
+    "kohaku/skills/README.md",
+    "kohaku/skills/desktop-use/SKILL.md",
+    "kohaku/skills/mobile-app-testing/SKILL.md",
+    "kohaku/skills/mobile-dogfood/SKILL.md",
+    "kohaku/skills/webapp-testing/SKILL.md",
+    "kohaku/skills/video-understanding/SKILL.md",
+    "kohaku/skills/video-understanding/scripts/extract_keyframes.py",
+    "kohaku/crawler/worker.py",
+    "kohaku/channels/telegram/webui/index.ts",
+    "kohaku/channels/websocket/webui/index.ts",
+    "kohaku/web/dist/index.html",
 )
 _FORBIDDEN_COMPONENTS = {
     ".git",
-    ".nanobot",
+    ".kohaku",
     "__pycache__",
     "build",
     "dist",
@@ -77,7 +77,7 @@ _FORBIDDEN_INSTALL_MARKERS = (
     "python -m pip",
     "bun install",
     "npm install",
-    "nanobot webui",
+    "kohaku webui",
 )
 
 
@@ -241,7 +241,7 @@ def _forbidden_member_reason(name: str) -> str | None:
     if any(part in _FORBIDDEN_COMPONENTS for part in path.parts if part != "dist"):
         return "local-state-or-test-member"
     packaged_webui = any(
-        path.parts[index : index + 3] == ("nanobot", "web", "dist")
+        path.parts[index : index + 3] == ("kohaku", "web", "dist")
         for index in range(max(0, len(path.parts) - 2))
     )
     if "dist" in path.parts and not packaged_webui:
@@ -504,14 +504,14 @@ def _command_has_option(tokens: list[str], option: str) -> bool:
 
 
 def _command_has_gateway(tokens: list[str]) -> bool:
-    """Accept only a direct nanobot executable followed by ``gateway``.
+    """Accept only a direct kohaku executable followed by ``gateway``.
 
     Wrapper commands such as ``env``, ``sh -c``, and arbitrary executables
-    with a ``nanobot gateway`` argument are deliberately unsupported here.
+    with a ``kohaku gateway`` argument are deliberately unsupported here.
     Keeping the accepted shape narrow makes this static check fail closed.
     """
 
-    return len(tokens) >= 2 and Path(tokens[0]).name == "nanobot" and tokens[1] == "gateway"
+    return len(tokens) >= 2 and Path(tokens[0]).name == "kohaku" and tokens[1] == "gateway"
 
 
 def inspect_service_unit(path: Path) -> ServiceReport:
@@ -566,7 +566,7 @@ def inspect_service_unit(path: Path) -> ServiceReport:
             missing.append("ExecStart command")
         if tokens:
             if not _command_has_gateway(tokens):
-                missing.append("nanobot gateway")
+                missing.append("kohaku gateway")
             if not _command_has_option(tokens, "--config"):
                 missing.append("--config ")
             if not _command_has_option(tokens, "--log-file"):
@@ -585,7 +585,7 @@ def inspect_service_unit(path: Path) -> ServiceReport:
 
 
 def _write_legacy_session(path: Path, key: str, content: str) -> Path:
-    from nanobot.session.manager import JsonlSessionStore
+    from kohaku.session.manager import JsonlSessionStore
 
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
@@ -735,8 +735,8 @@ def _rehearsal_effect_guard() -> Iterator[list[str]]:
             level: int = 0,
         ) -> Any:
             blocked_namespace = (
-                name in {"nanobot.providers", "nanobot.channels"}
-                or name.startswith(("nanobot.providers.", "nanobot.channels."))
+                name in {"kohaku.providers", "kohaku.channels"}
+                or name.startswith(("kohaku.providers.", "kohaku.channels."))
             )
             if level == 0 and blocked_namespace:
                 label = f"import:{name}"
@@ -752,10 +752,10 @@ def _rehearsal_effect_guard() -> Iterator[list[str]]:
 def _run_state_rehearsal_body() -> dict[str, Any]:
     """Run the state-only body after its dependencies have been imported."""
 
-    from nanobot.cron.action_store import CronActionStore
-    from nanobot.session.manager import SessionManager
+    from kohaku.cron.action_store import CronActionStore
+    from kohaku.session.manager import SessionManager
 
-    with tempfile.TemporaryDirectory(prefix="nanobot-p6-rehearsal-") as raw_root:
+    with tempfile.TemporaryDirectory(prefix="kohaku-p6-rehearsal-") as raw_root:
         root = Path(raw_root).resolve()
         workspace = root / "workspace"
         sessions_root = root / "new-state" / "sessions"
@@ -818,8 +818,8 @@ def run_state_rehearsal() -> dict[str, Any]:
     """Exercise copied-state conversion and rollback in a temporary root."""
     # The imports intentionally happen before the allowlist is installed:
     # provider and channel namespaces are never permitted as rehearsal imports.
-    from nanobot.cron.action_store import CronActionStore as _CronActionStore
-    from nanobot.session.manager import SessionManager as _SessionManager
+    from kohaku.cron.action_store import CronActionStore as _CronActionStore
+    from kohaku.session.manager import SessionManager as _SessionManager
 
     del _CronActionStore, _SessionManager
     try:

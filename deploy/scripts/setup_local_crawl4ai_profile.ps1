@@ -43,7 +43,7 @@ function Initialize-LocalCrawl4AiProfile {
     }
     $chrome = Find-LocalMicrosoftEdge
 
-    # .nanobot-profile-ready is removed until the operator explicitly confirms closure.
+    # .kohaku-profile-ready is removed until the operator explicitly confirms closure.
     New-Item -ItemType Directory -Path $paths.ProfilePath -Force | Out-Null
     Remove-Item -LiteralPath $paths.MarkerPath -Force -ErrorAction SilentlyContinue
     $browserArguments = @("--user-data-dir", $paths.ProfilePath, "--no-first-run", "--new-window") + $LoginUrls

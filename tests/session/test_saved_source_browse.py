@@ -6,11 +6,11 @@ from pathlib import Path
 
 import pytest
 
-from nanobot.session.mode_storage import MODE_JSON_LIMIT
-from nanobot.session.runtime_authority import DurableSessionAuthority
-from nanobot.session.session_mode import SessionModeError
-from nanobot.session.source import new_source_event
-from nanobot.session.source_store import SourceSessionStore
+from kohaku.session.mode_storage import MODE_JSON_LIMIT
+from kohaku.session.runtime_authority import DurableSessionAuthority
+from kohaku.session.session_mode import SessionModeError
+from kohaku.session.source import new_source_event
+from kohaku.session.source_store import SourceSessionStore
 
 KEY = "websocket:saved-source"
 

@@ -3,7 +3,7 @@
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
-from nanobot.webui.inbound_commands import WebUICommandRouter, WebUIRequestResult
+from kohaku.webui.inbound_commands import WebUICommandRouter, WebUIRequestResult
 
 
 def _router(callback):

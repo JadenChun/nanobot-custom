@@ -8,13 +8,13 @@ from dataclasses import replace
 
 import pytest
 
-from nanobot.agent.tools.context import RequestContext, request_context
-from nanobot.agent.tools.exec_session import ExecCompletion, ExecSessionManager
-from nanobot.agent.tools.shell import ExecTool
-from nanobot.bus.events import OutboundMessage
-from nanobot.process_completion import ProcessCompletionRuntime
-from nanobot.security.workspace_access import build_workspace_scope
-from nanobot.session.manager import SessionManager
+from kohaku.agent.tools.context import RequestContext, request_context
+from kohaku.agent.tools.exec_session import ExecCompletion, ExecSessionManager
+from kohaku.agent.tools.shell import ExecTool
+from kohaku.bus.events import OutboundMessage
+from kohaku.process_completion import ProcessCompletionRuntime
+from kohaku.security.workspace_access import build_workspace_scope
+from kohaku.session.manager import SessionManager
 from tests.tools.test_exec_session_tools import _python_command
 
 

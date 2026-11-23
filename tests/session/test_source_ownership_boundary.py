@@ -6,15 +6,15 @@ from types import SimpleNamespace
 
 import pytest
 
-from nanobot.session import execution_owner
-from nanobot.session.execution_owner import (
+from kohaku.session import execution_owner
+from kohaku.session.execution_owner import (
     ExecutionBusyError,
     ExecutionOwnershipError,
     acquire_execution,
     execution_lock_guard,
 )
-from nanobot.session.manager import JsonlSessionStore, Session, SessionStorageError
-from nanobot.session.source_store import SourceSessionStore, SourceSnapshot
+from kohaku.session.manager import JsonlSessionStore, Session, SessionStorageError
+from kohaku.session.source_store import SourceSessionStore, SourceSnapshot
 from tests.session.test_execution_owner import seed
 
 TIMESTAMP = "2026-10-13T00:00:00+00:00"

@@ -2,8 +2,8 @@ import asyncio
 
 import pytest
 
-from nanobot.agent.tools.message import MessageTool, capture_message_deliveries
-from nanobot.agent.turn import DeliveryState, DeliveryTarget, TurnContext
+from kohaku.agent.tools.message import MessageTool, capture_message_deliveries
+from kohaku.agent.turn import DeliveryState, DeliveryTarget, TurnContext
 
 
 def context(chat):
@@ -75,10 +75,10 @@ async def test_actual_run_stage_retains_runner_outcome_and_plain_tool_ledger(con
     from types import SimpleNamespace
     from unittest.mock import AsyncMock
 
-    from nanobot.agent.loop import AgentLoop, TurnKind
-    from nanobot.agent.loop import TurnContext as StageContext
-    from nanobot.agent.runner import AgentRunResult
-    from nanobot.bus.events import InboundMessage
+    from kohaku.agent.loop import AgentLoop, TurnKind
+    from kohaku.agent.loop import TurnContext as StageContext
+    from kohaku.agent.runner import AgentRunResult
+    from kohaku.bus.events import InboundMessage
 
     async def send(msg):
         pass
@@ -134,7 +134,7 @@ async def test_contextual_capture_requires_one_ledger_and_restores_after_cancel(
 
 
 async def test_trusted_route_does_not_inherit_other_request_metadata():
-    from nanobot.agent.tools.context import RequestContext, current_request_context, request_context
+    from kohaku.agent.tools.context import RequestContext, current_request_context, request_context
     async def send(msg):
         pass
     tool = MessageTool(send_callback=send)
@@ -160,7 +160,7 @@ async def test_denied_media_has_no_submission_or_ledger(tmp_path):
 
 
 async def test_ledger_nested_metadata_and_buttons_are_detached():
-    from nanobot.agent.tools.context import RequestContext, request_context
+    from kohaku.agent.tools.context import RequestContext, request_context
     async def send(msg):
         msg.metadata['nested']['value'] = 2
         msg.buttons[0][0] = 'changed'

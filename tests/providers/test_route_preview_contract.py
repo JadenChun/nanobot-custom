@@ -11,17 +11,17 @@ from types import SimpleNamespace
 
 import pytest
 
-from nanobot.providers.base import (
+from kohaku.providers.base import (
     GenerationSettings,
     LLMProvider,
     LLMResponse,
     ProviderCallContext,
 )
-from nanobot.providers.fallback_provider import FallbackProvider
-from nanobot.providers.openai_compat_provider import OpenAICompatProvider
-from nanobot.providers.pooled_provider import PooledProvider
-from nanobot.providers.provider_policy import ESTIMATED_COMPAT_POLICY, ProviderPolicy
-from nanobot.providers.request_budget import ProviderRequestLimits
+from kohaku.providers.fallback_provider import FallbackProvider
+from kohaku.providers.openai_compat_provider import OpenAICompatProvider
+from kohaku.providers.pooled_provider import PooledProvider
+from kohaku.providers.provider_policy import ESTIMATED_COMPAT_POLICY, ProviderPolicy
+from kohaku.providers.request_budget import ProviderRequestLimits
 
 PRIMARY = {
     "provider": "primary-provider",
@@ -430,7 +430,7 @@ def test_r5_pooled_wrapper_supports_source_summary_only_if_every_leaf_does() -> 
 async def test_dispatch_reports_a_route_change_instead_of_using_a_stale_quote() -> None:
     from dataclasses import replace
 
-    from nanobot.providers.base import ProviderRouteChanged
+    from kohaku.providers.base import ProviderRouteChanged
 
     primary = _leaf(PRIMARY)
     fallback_provider = _leaf(FALLBACK)

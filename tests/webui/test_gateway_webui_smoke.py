@@ -15,10 +15,10 @@ import httpx
 import pytest
 import websockets
 
-from nanobot.agent.tools.sandbox import managed_bwrap_available
-from nanobot.session.manager import SessionManager
-from nanobot.session.recovery import PENDING_USER_TURN_KEY, RUNTIME_CHECKPOINT_KEY
-from nanobot.session.runtime_authority import DurableSessionAuthority, OfflineSessionOperator
+from kohaku.agent.tools.sandbox import managed_bwrap_available
+from kohaku.session.manager import SessionManager
+from kohaku.session.recovery import PENDING_USER_TURN_KEY, RUNTIME_CHECKPOINT_KEY
+from kohaku.session.runtime_authority import DurableSessionAuthority, OfflineSessionOperator
 
 _BOOTSTRAP_SECRET = "smoke-secret"
 

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from nanobot.webui.transcript import (
+from kohaku.webui.transcript import (
     replay_transcript_to_ui_messages,
     validate_retained_transcript_record,
 )

@@ -13,11 +13,11 @@ from unittest.mock import Mock
 
 import pytest
 
-from nanobot.cli import commands
-from nanobot.config.schema import Config
-from nanobot.session import artifact_operator, runtime_authority
-from nanobot.session.artifact_operator import ArtifactOperatorError
-from nanobot.session.runtime_authority import OfflineSessionOperator, SessionAuthorityLease
+from kohaku.cli import commands
+from kohaku.config.schema import Config
+from kohaku.session import artifact_operator, runtime_authority
+from kohaku.session.artifact_operator import ArtifactOperatorError
+from kohaku.session.runtime_authority import OfflineSessionOperator, SessionAuthorityLease
 from tests.session.test_artifact_operator import copied_artifact_fixture
 
 _ENTRIES = ("cli", "inspect", "rematerialize")

@@ -1,7 +1,7 @@
 {
   "contract": "nanobot-mobile-fixture",
   "version": 1,
-  "label": "fixture, not a Nanobot backend",
+  "label": "fixture, not a Kohaku backend",
   "transport": {
     "bind": "loopback-only",
     "default_host": "127.0.0.1",

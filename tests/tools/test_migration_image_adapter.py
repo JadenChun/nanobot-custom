@@ -9,12 +9,12 @@ from unittest.mock import AsyncMock
 import httpx
 import pytest
 
-from nanobot.agent.tools.context import ToolContext
-from nanobot.agent.tools.image_configuration import effective_image_configuration
-from nanobot.agent.tools.image_generation import ImageGenerationTool, ImageGenerationToolConfig
-from nanobot.config.schema import Config, ImageConfig, ToolsConfig
-from nanobot.providers.codex_cli_image import CodexCLIImageGenerationClient
-from nanobot.providers.image_generation import (
+from kohaku.agent.tools.context import ToolContext
+from kohaku.agent.tools.image_configuration import effective_image_configuration
+from kohaku.agent.tools.image_generation import ImageGenerationTool, ImageGenerationToolConfig
+from kohaku.config.schema import Config, ImageConfig, ToolsConfig
+from kohaku.providers.codex_cli_image import CodexCLIImageGenerationClient
+from kohaku.providers.image_generation import (
     GeneratedImageResponse,
     ImageGenerationError,
     OpenRouterImageGenerationClient,
@@ -59,7 +59,7 @@ async def test_invalid_calls_never_construct_backend(tmp_path, count, path, monk
 
 
 async def test_output_copy_and_artifact_and_empty_response(tmp_path, monkeypatch):
-    monkeypatch.setattr('nanobot.config.loader._current_config_path', tmp_path / 'config.json')
+    monkeypatch.setattr('kohaku.config.loader._current_config_path', tmp_path / 'config.json')
     tool = ImageGenerationTool(workspace=tmp_path, config=ImageGenerationToolConfig())
     client = SimpleNamespace(generate=AsyncMock(return_value=GeneratedImageResponse([DATA], '', {})))
     monkeypatch.setattr(tool, '_provider_client', lambda: client)
@@ -76,7 +76,7 @@ async def test_output_copy_and_artifact_and_empty_response(tmp_path, monkeypatch
 
 
 async def test_denied_destination_and_publication_failure_do_not_regenerate(tmp_path, monkeypatch):
-    monkeypatch.setattr('nanobot.config.loader._current_config_path', tmp_path / 'config.json')
+    monkeypatch.setattr('kohaku.config.loader._current_config_path', tmp_path / 'config.json')
     workspace = tmp_path / 'workspace'
     workspace.mkdir()
     tool = ImageGenerationTool(workspace=workspace, config=ImageGenerationToolConfig())
@@ -92,7 +92,7 @@ async def test_denied_destination_and_publication_failure_do_not_regenerate(tmp_
         if not kwargs and Path(target) == destination:
             raise OSError('publication failed')
         return original_replace(source, target, **kwargs)
-    monkeypatch.setattr('nanobot.agent.tools.image_generation.os.replace', fail_destination_publication)
+    monkeypatch.setattr('kohaku.agent.tools.image_generation.os.replace', fail_destination_publication)
     result = await tool.execute('test', output_path='out.png')
     assert result.is_error and 'retained artifacts' in result
     retained = json.loads(str(result).split('retained artifacts: ', 1)[1])
@@ -123,7 +123,7 @@ async def test_codex_cli_uses_owned_argv_and_rejects_unrelated_files(tmp_path, m
     root.mkdir()
     stale = root / 'stale.png'
     stale.write_bytes(RAW)
-    monkeypatch.setattr('nanobot.providers.codex_cli_image.resolve_command', lambda _: '/fake/codex')
+    monkeypatch.setattr('kohaku.providers.codex_cli_image.resolve_command', lambda _: '/fake/codex')
     observed = []
     async def invoke(args, **kwargs):
         observed.append((args, kwargs))
@@ -141,7 +141,7 @@ async def test_codex_cli_uses_owned_argv_and_rejects_unrelated_files(tmp_path, m
         output = {'fresh': str(root / 'new.png'), 'basename': 'new.png', 'relative': 'generated_images/new.png', 'ambiguous': 'new.png',
                   'stale': str(stale), 'touched': str(stale), 'unattributed': 'done'}.get(mode, str(outside))
         return SimpleNamespace(returncode=0, timed_out=mode == 'timeout', stdout=output.encode(), stderr=b'')
-    monkeypatch.setattr('nanobot.providers.codex_cli_image.run_owned_process', invoke)
+    monkeypatch.setattr('kohaku.providers.codex_cli_image.run_owned_process', invoke)
     client = CodexCLIImageGenerationClient(ImageConfig(codex_home=str(tmp_path), codex_timeout=12))
     if mode in {'fresh', 'basename', 'relative'}:
         response = await client.generate(prompt='  a tree  ', model='chosen')
@@ -156,7 +156,7 @@ async def test_codex_cli_uses_owned_argv_and_rejects_unrelated_files(tmp_path, m
 
 
 async def test_default_canonical_tool_reports_missing_cli(tmp_path, monkeypatch):
-    monkeypatch.setattr('nanobot.providers.codex_cli_image.resolve_command', lambda _: None)
+    monkeypatch.setattr('kohaku.providers.codex_cli_image.resolve_command', lambda _: None)
     context = ToolContext(config=ToolsConfig(), workspace=str(tmp_path))
     assert ImageGenerationTool.enabled(context)
     result = await ImageGenerationTool.create(context).execute('test')
@@ -164,8 +164,8 @@ async def test_default_canonical_tool_reports_missing_cli(tmp_path, monkeypatch)
 
 
 async def test_protected_reference_is_denied_before_backend(tmp_path, monkeypatch):
-    from nanobot.agent.tools.filesystem import WriteFileTool
-    from nanobot.context_repo import ContextRepoManager, ResourceAccessPolicy
+    from kohaku.agent.tools.filesystem import WriteFileTool
+    from kohaku.context_repo import ContextRepoManager, ResourceAccessPolicy
 
     (tmp_path / 'nanobot.context.json').write_text(json.dumps({'protected': ['secret.png']}))
     (tmp_path / 'secret.png').write_bytes(RAW)
@@ -177,11 +177,11 @@ async def test_protected_reference_is_denied_before_backend(tmp_path, monkeypatc
 
 
 async def test_reload_without_previous_tool_keeps_sandbox_path_restriction(tmp_path, monkeypatch):
-    from nanobot.agent.tools.image_generation import reload_image_generation_tool
-    from nanobot.agent.tools.registry import ToolRegistry
-    from nanobot.config.loader import save_config
+    from kohaku.agent.tools.image_generation import reload_image_generation_tool
+    from kohaku.agent.tools.registry import ToolRegistry
+    from kohaku.config.loader import save_config
 
-    monkeypatch.setattr('nanobot.config.loader._current_config_path', tmp_path / 'config.json')
+    monkeypatch.setattr('kohaku.config.loader._current_config_path', tmp_path / 'config.json')
     config = Config()
     config.tools.exec.sandbox = 'bwrap'
     config.tools.restrict_to_workspace = False
@@ -197,12 +197,12 @@ async def test_reload_without_previous_tool_keeps_sandbox_path_restriction(tmp_p
 
 
 async def test_authorized_external_output_and_symlink_escape(tmp_path, monkeypatch):
-    from nanobot.agent.tools.filesystem import WriteFileTool
-    from nanobot.context_repo import ContextRepoManager, ResourceAccessPolicy
+    from kohaku.agent.tools.filesystem import WriteFileTool
+    from kohaku.context_repo import ContextRepoManager, ResourceAccessPolicy
 
     instance = tmp_path / 'instance'
     instance.mkdir()
-    monkeypatch.setattr('nanobot.config.loader._current_config_path', instance / 'config.json')
+    monkeypatch.setattr('kohaku.config.loader._current_config_path', instance / 'config.json')
     workspace, repo, outside = (tmp_path / name for name in ('workspace', 'repo', 'outside'))
     for root in (workspace, repo, outside):
         root.mkdir()
@@ -228,8 +228,8 @@ async def test_authorized_external_output_and_symlink_escape(tmp_path, monkeypat
 async def test_cli_cancellation_propagates_through_canonical_tool(tmp_path, monkeypatch):
     import asyncio
 
-    monkeypatch.setattr('nanobot.providers.codex_cli_image.resolve_command', lambda _: '/fake/codex')
-    monkeypatch.setattr('nanobot.providers.codex_cli_image.run_owned_process', AsyncMock(side_effect=asyncio.CancelledError))
+    monkeypatch.setattr('kohaku.providers.codex_cli_image.resolve_command', lambda _: '/fake/codex')
+    monkeypatch.setattr('kohaku.providers.codex_cli_image.run_owned_process', AsyncMock(side_effect=asyncio.CancelledError))
     tools = ToolsConfig(image={'codexHome': str(tmp_path)})
     tool = ImageGenerationTool.create(ToolContext(config=tools, workspace=str(tmp_path)))
     with pytest.raises(asyncio.CancelledError):
@@ -237,7 +237,7 @@ async def test_cli_cancellation_propagates_through_canonical_tool(tmp_path, monk
 
 
 def test_explicit_settings_disable_switches_out_of_legacy_mode():
-    from nanobot.webui.settings_capabilities import update_image_generation_settings
+    from kohaku.webui.settings_capabilities import update_image_generation_settings
 
     config = Config()
     assert effective_image_configuration(config.tools).config.enabled
@@ -252,11 +252,11 @@ async def test_cli_rejects_replacement_during_capture(tmp_path, monkeypatch):
     root = tmp_path / 'generated_images'
     root.mkdir()
     target = root / 'new.png'
-    monkeypatch.setattr('nanobot.providers.codex_cli_image.resolve_command', lambda _: '/fake/codex')
+    monkeypatch.setattr('kohaku.providers.codex_cli_image.resolve_command', lambda _: '/fake/codex')
     async def invoke(*args, **kwargs):
         target.write_bytes(RAW)
         return SimpleNamespace(returncode=0, timed_out=False, stdout=str(target).encode(), stderr=b'')
-    monkeypatch.setattr('nanobot.providers.codex_cli_image.run_owned_process', invoke)
+    monkeypatch.setattr('kohaku.providers.codex_cli_image.run_owned_process', invoke)
     original = Path.read_bytes
     reads = 0
     def read(path):

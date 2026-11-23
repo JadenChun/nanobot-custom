@@ -17,12 +17,12 @@ import type {
 import { useLogoFallback } from "@/hooks/useLogoFallback";
 import { normalizeLocale } from "@/i18n/config";
 import { logoFallbackUrls } from "@/lib/provider-brand";
-import type { ChannelRuntimeStatus, NanobotFeatureInfo } from "@/lib/types";
+import type { ChannelRuntimeStatus, KohakuFeatureInfo } from "@/lib/types";
 
 export type ChannelFilter = "all" | "on" | "off";
 
 export function channelSetup(
-  feature: NanobotFeatureInfo,
+  feature: KohakuFeatureInfo,
   locale = "en",
 ): ChannelSetupPresentation {
   const definition = channelUiPresentation(feature.name, feature.webui)?.setup;
@@ -45,12 +45,12 @@ export function channelSetup(
     officialLabel: setupMessages?.officialLabel,
     summary:
       setupMessages?.summary
-      ?? "Enable turns on this channel in nanobot, but this integration still needs platform-specific setup before it can receive messages.",
+      ?? "Enable turns on this channel in Kohaku, but this integration still needs platform-specific setup before it can receive messages.",
     tryIt: setupMessages?.tryIt,
     steps: setupMessages?.steps ?? [
-      `Open ~/.nanobot/config.json and find channels.${feature.name}.`,
+      `Open ~/.kohaku/config.json and find channels.${feature.name}.`,
       "Add the credentials required by that platform, using the channel documentation as the source of truth.",
-      "Restart nanobot, then send a small test message from that platform.",
+      "Restart Kohaku, then send a small test message from that platform.",
     ],
     fields: definition?.fields?.map((field) => localizeField(field.key)),
     manualFields: definition?.manualFields?.map((field) => localizeField(field.key)),
@@ -123,7 +123,7 @@ export function ChannelLogo({
   feature,
   showBrandLogos,
 }: {
-  feature: NanobotFeatureInfo;
+  feature: KohakuFeatureInfo;
   showBrandLogos: boolean;
 }) {
   const presentation = channelUiPresentation(feature.name, feature.webui);
@@ -174,46 +174,46 @@ export function ChannelLogo({
   );
 }
 
-function channelDisplayName(feature: NanobotFeatureInfo): string {
+function channelDisplayName(feature: KohakuFeatureInfo): string {
   return channelUiPresentation(feature.name, feature.webui)?.displayName ?? feature.display_name;
 }
 
 export function localizedChannelDisplayName(
-  feature: NanobotFeatureInfo,
+  feature: KohakuFeatureInfo,
   t: ReturnType<typeof useTranslation>["t"],
 ): string {
   const fallback = channelDisplayName(feature);
   return channelTranslator(t, channelUiOwner(feature.name))("displayName", fallback);
 }
 
-export function channelDescription(feature: NanobotFeatureInfo, t: ReturnType<typeof useTranslation>["t"]): string {
+export function channelDescription(feature: KohakuFeatureInfo, t: ReturnType<typeof useTranslation>["t"]): string {
   const fallback =
-    `Use nanobot from ${channelDisplayName(feature)}.`;
+    `Use Kohaku from ${channelDisplayName(feature)}.`;
   return channelTranslator(t, channelUiOwner(feature.name))("description", fallback);
 }
 
-export function channelRequirements(feature: NanobotFeatureInfo, t: ReturnType<typeof useTranslation>["t"]): string {
+export function channelRequirements(feature: KohakuFeatureInfo, t: ReturnType<typeof useTranslation>["t"]): string {
   const fallback =
     "Channel credentials and gateway settings";
   return channelTranslator(t, channelUiOwner(feature.name))("requirements", fallback);
 }
 
-export function channelMatchesFilter(feature: NanobotFeatureInfo, filter: ChannelFilter): boolean {
+export function channelMatchesFilter(feature: KohakuFeatureInfo, filter: ChannelFilter): boolean {
   if (filter === "on") return channelIsRunning(feature);
   if (filter === "off") return !channelIsRunning(feature);
   return true;
 }
 
-export function channelIsRunning(feature: NanobotFeatureInfo): boolean {
+export function channelIsRunning(feature: KohakuFeatureInfo): boolean {
   return feature.runtime_status === "running";
 }
 
-export function channelToggleChecked(feature: NanobotFeatureInfo): boolean {
+export function channelToggleChecked(feature: KohakuFeatureInfo): boolean {
   return feature.runtime_status === "running" || feature.runtime_status === "starting";
 }
 
 export function channelStatusLabel(
-  feature: NanobotFeatureInfo,
+  feature: KohakuFeatureInfo,
   tx: (key: string, fallback: string) => string,
 ): string {
   if (feature.runtime_status === "failed") {
@@ -228,7 +228,7 @@ export function channelStatusLabel(
 }
 
 export function channelSearchText(
-  feature: NanobotFeatureInfo,
+  feature: KohakuFeatureInfo,
   t?: ReturnType<typeof useTranslation>["t"],
 ): string {
   return [

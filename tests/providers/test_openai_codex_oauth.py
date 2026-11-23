@@ -10,14 +10,14 @@ from urllib.parse import parse_qs, urlencode, urlsplit
 import pytest
 from oauth_cli_kit.models import OAuthToken
 
-import nanobot.providers.openai_codex_oauth as codex_oauth
-from nanobot.providers.codex_auth import (
+import kohaku.providers.openai_codex_oauth as codex_oauth
+from kohaku.providers.codex_auth import (
     get_codex_credential_view,
     get_codex_login_status,
     logout_codex,
 )
-from nanobot.providers.oauth_credentials import CredentialStatus
-from nanobot.providers.openai_codex_oauth import (
+from kohaku.providers.oauth_credentials import CredentialStatus
+from kohaku.providers.openai_codex_oauth import (
     OpenAICodexOAuthError,
     OpenAICodexOAuthInputError,
     complete_openai_codex_oauth_login,
@@ -27,7 +27,7 @@ from nanobot.providers.openai_codex_oauth import (
 
 @pytest.fixture(autouse=True)
 def _isolated_authority(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("NANOBOT_CODEX_AUTH_PATH", str(tmp_path / "codex.json"))
+    monkeypatch.setenv("KOHAKU_CODEX_AUTH_PATH", str(tmp_path / "codex.json"))
 
 
 def _authorization_url(state: str = "expected-state") -> str:
@@ -301,7 +301,7 @@ def test_cancelled_login_cannot_publish_after_the_exchange_completes(
         release_exchange.set()
         flow._thread.join(timeout=2)
 
-        assert not Path(os.environ["NANOBOT_CODEX_AUTH_PATH"]).exists()
+        assert not Path(os.environ["KOHAKU_CODEX_AUTH_PATH"]).exists()
         assert get_codex_login_status() is CredentialStatus.ABSENT
         with pytest.raises(OpenAICodexOAuthError, match="cancelled"):
             flow.complete()
@@ -344,7 +344,7 @@ def test_inflight_login_cannot_publish_after_logout(
         release_exchange.set()
         flow._thread.join(timeout=2)
 
-        assert not Path(os.environ["NANOBOT_CODEX_AUTH_PATH"]).exists()
+        assert not Path(os.environ["KOHAKU_CODEX_AUTH_PATH"]).exists()
         assert get_codex_login_status() is CredentialStatus.LOGGED_OUT
         with pytest.raises(OpenAICodexOAuthError):
             flow.complete()
@@ -373,7 +373,7 @@ def test_expired_login_cannot_publish_after_the_exchange_completes(
         release_exchange.set()
         flow._thread.join(timeout=2)
 
-        assert not Path(os.environ["NANOBOT_CODEX_AUTH_PATH"]).exists()
+        assert not Path(os.environ["KOHAKU_CODEX_AUTH_PATH"]).exists()
         assert get_codex_login_status() is CredentialStatus.ABSENT
     finally:
         release_exchange.set()

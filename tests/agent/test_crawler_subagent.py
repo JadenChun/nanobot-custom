@@ -3,18 +3,18 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from nanobot.agent.delegation import ForegroundAgentManager
-from nanobot.agent.foreground import build_foreground_dependencies
-from nanobot.agent.loop import AgentLoop
-from nanobot.agent.tools.registry import ToolRegistry
-from nanobot.agent.tools.social_crawl import SocialCrawlTool
-from nanobot.agent.turn import TurnRequest
-from nanobot.bus.queue import MessageBus
-from nanobot.config.schema import Config
-from nanobot.providers.base import GenerationSettings, LLMResponse, ToolCallRequest
-from nanobot.providers.factory import ProviderSnapshot
-from nanobot.runtime_context import RuntimeContextBlock
-from nanobot.utils.llm_runtime import LLMRuntime
+from kohaku.agent.delegation import ForegroundAgentManager
+from kohaku.agent.foreground import build_foreground_dependencies
+from kohaku.agent.loop import AgentLoop
+from kohaku.agent.tools.registry import ToolRegistry
+from kohaku.agent.tools.social_crawl import SocialCrawlTool
+from kohaku.agent.turn import TurnRequest
+from kohaku.bus.queue import MessageBus
+from kohaku.config.schema import Config
+from kohaku.providers.base import GenerationSettings, LLMResponse, ToolCallRequest
+from kohaku.providers.factory import ProviderSnapshot
+from kohaku.runtime_context import RuntimeContextBlock
+from kohaku.utils.llm_runtime import LLMRuntime
 from tests.agent.test_migration_engine import ScriptedProvider
 from tests.agent.test_migration_source_engine import upgrade
 
@@ -71,7 +71,7 @@ def _enable_crawler(config, *, model="vendor/cheap-crawler-model", input_tokens=
 
 
 def _install_crawler_snapshot(monkeypatch, crawler_provider, *, use_provider_generation=False):
-    import nanobot.extensions.crawler as crawler_module
+    import kohaku.extensions.crawler as crawler_module
 
     def snapshot(config, *, preset):
         generation = (
@@ -161,7 +161,7 @@ def test_crawler_role_can_use_a_provider_separate_from_main_agent(tmp_path) -> N
 
 @pytest.mark.asyncio
 async def test_main_loop_exposes_only_foreground_crawler_delegation(tmp_path, monkeypatch) -> None:
-    from nanobot.agent.loop import AgentLoop
+    from kohaku.agent.loop import AgentLoop
 
     monkeypatch.setenv("CRAWL4AI_WORKER_ENABLED", "true")
     provider = MagicMock()
@@ -178,7 +178,7 @@ async def test_main_loop_exposes_only_foreground_crawler_delegation(tmp_path, mo
         },
         providers={"openrouter": {"apiKey": "crawler-key"}},
     )
-    monkeypatch.setattr("nanobot.migration_guard.require_runtime_ready", lambda: None)
+    monkeypatch.setattr("kohaku.migration_guard.require_runtime_ready", lambda: None)
     loop = AgentLoop.from_config(config, bus=MessageBus(), tool_registry=ToolRegistry(),
                                  provider=provider)
 

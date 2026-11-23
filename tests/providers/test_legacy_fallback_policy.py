@@ -2,9 +2,9 @@ from types import SimpleNamespace
 
 import pytest
 
-from nanobot.config.schema import Config
-from nanobot.providers.base import LLMProvider, LLMResponse
-from nanobot.providers.legacy_fallback_provider import LegacyFallbackProvider
+from kohaku.config.schema import Config
+from kohaku.providers.base import LLMProvider, LLMResponse
+from kohaku.providers.legacy_fallback_provider import LegacyFallbackProvider
 
 
 class Leaf(LLMProvider):
@@ -34,7 +34,7 @@ def wrapper(*leaves):
 
 
 def test_generation_constructor_and_assignment_preserve_exact_candidate_identity():
-    from nanobot.providers.base import GenerationSettings
+    from kohaku.providers.base import GenerationSettings
 
     leaves = [Leaf([]) for _ in range(3)]
     original = GenerationSettings(max_tokens=71, temperature=0.25, reasoning_effort='high')
@@ -51,8 +51,8 @@ def test_generation_constructor_and_assignment_preserve_exact_candidate_identity
 
 
 def test_generation_identity_propagates_through_nested_pool_legacy():
-    from nanobot.providers.base import GenerationSettings
-    from nanobot.providers.pooled_provider import PooledProvider
+    from kohaku.providers.base import GenerationSettings
+    from kohaku.providers.pooled_provider import PooledProvider
 
     first, second, third = (Leaf([]) for _ in range(3))
     original = GenerationSettings(max_tokens=71)
@@ -110,7 +110,7 @@ async def test_all_cooling_probes_earliest_expiry_and_caches_candidates():
 
 
 async def test_generation_assignment_reaches_all_cached_leaves():
-    from nanobot.providers.base import GenerationSettings
+    from kohaku.providers.base import GenerationSettings
     first, second = Leaf([]), Leaf([])
     provider = wrapper(first, second)
     provider.generation = GenerationSettings(max_tokens=71)
@@ -118,7 +118,7 @@ async def test_generation_assignment_reaches_all_cached_leaves():
 
 
 async def test_fallback_owned_state_resumes_only_its_candidate():
-    from nanobot.providers.base import ProviderCallContext, ProviderConversationState
+    from kohaku.providers.base import ProviderCallContext, ProviderConversationState
 
     class StatefulLeaf(Leaf):
         def supports_native_compaction(self, model=None):
@@ -165,7 +165,7 @@ async def test_delivered_stream_never_advances_legacy_chain(delta):
 
 
 def test_factory_selects_legacy_policy_and_preserves_primary_generation():
-    from nanobot.providers.factory import make_provider
+    from kohaku.providers.factory import make_provider
     config = Config.model_validate({'agents': {'defaults': {
         'provider': 'openai', 'model': 'primary', 'maxTokens': 81,
         'fallback': [{'provider': 'openai', 'model': 'secondary'}]}},
@@ -201,7 +201,7 @@ def test_empty_legacy_chain_is_rejected():
 async def test_legacy_retry_forwarding_preserves_call_forms_and_forces_standard(
     monkeypatch, keyword_dependencies, requested_mode,
 ):
-    from nanobot.providers.fallback_provider import FallbackProvider
+    from kohaku.providers.fallback_provider import FallbackProvider
 
     provider = wrapper(Leaf([]), Leaf([]))
     response = LLMResponse(content='terminal')

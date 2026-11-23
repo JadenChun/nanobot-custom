@@ -8,9 +8,9 @@ from pathlib import Path
 
 import pytest
 
-from nanobot.session.source_store import SourceState
-from nanobot.webui import transcript as tr
-from nanobot.webui.transcript import (
+from kohaku.session.source_store import SourceState
+from kohaku.webui import transcript as tr
+from kohaku.webui.transcript import (
     _PROMPT_SOURCE_EVENT,
     _RECORD_ORIGIN,
     _record_origin,
@@ -18,7 +18,7 @@ from nanobot.webui.transcript import (
     append_transcript_object,
     replay_transcript_to_ui_messages,
 )
-from nanobot.webui.transcript_index import (
+from kohaku.webui.transcript_index import (
     INDEX_PAGE_SIZE,
     delete_transcript_index,
     read_history_window,
@@ -111,13 +111,13 @@ def _write_turns(
 
 @pytest.fixture
 def isolated_webui_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    import nanobot.webui.thread_disk  # noqa: F401 - bind real get_webui_dir before patching
+    import kohaku.webui.thread_disk  # noqa: F401 - bind real get_webui_dir before patching
 
     webui_dir = tmp_path / "webui"
     webui_dir.mkdir(parents=True, exist_ok=True)
-    monkeypatch.setattr("nanobot.config.paths.get_webui_dir", lambda: webui_dir)
-    monkeypatch.setattr("nanobot.config.paths.get_data_dir", lambda: tmp_path)
-    monkeypatch.setattr("nanobot.webui.transcript.get_webui_dir", lambda: webui_dir)
+    monkeypatch.setattr("kohaku.config.paths.get_webui_dir", lambda: webui_dir)
+    monkeypatch.setattr("kohaku.config.paths.get_data_dir", lambda: tmp_path)
+    monkeypatch.setattr("kohaku.webui.transcript.get_webui_dir", lambda: webui_dir)
     return webui_dir
 
 
@@ -465,8 +465,8 @@ async def test_g2_managed_browse_proof_plus_index_reads_zero_canonical_body_byte
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """End-to-end G2 proof: managed browse metadata + display index reads 0 canonical body bytes."""
-    from nanobot.session.runtime_authority import DurableSessionAuthority
-    from nanobot.session.source_store import SourceSessionStore
+    from kohaku.session.runtime_authority import DurableSessionAuthority
+    from kohaku.session.source_store import SourceSessionStore
 
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
@@ -530,8 +530,8 @@ async def test_gateway_http_history_and_turns_serve_bounded_windows_with_zero_ca
     from websockets.datastructures import Headers
     from websockets.http11 import Request
 
-    from nanobot.session.runtime_authority import DurableSessionAuthority
-    from nanobot.session.source_store import SourceSessionStore
+    from kohaku.session.runtime_authority import DurableSessionAuthority
+    from kohaku.session.source_store import SourceSessionStore
     from tests.webui.test_child_thread_route import _make_channel
 
     workspace = tmp_path / "workspace"
@@ -726,8 +726,8 @@ def test_preupgrade_unbound_oversized_tail_opens_and_pages_for_gen0_only(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Pre-origin-stamping chats with oversized tail rows must open and page backward."""
-    from nanobot.webui import transcript_index as ti
-    from nanobot.webui.transcript import build_webui_thread_response
+    from kohaku.webui import transcript_index as ti
+    from kohaku.webui.transcript import build_webui_thread_response
 
     orig_tail = ti.read_preindex_latest_tail
     monkeypatch.setattr(
@@ -780,7 +780,7 @@ def test_mixed_preupgrade_and_stamped_history_shows_full_history_for_gen0(
     isolated_webui_dir: Path,
 ) -> None:
     """Pre-upgrade unbound history must stay visible once stamped rows are appended."""
-    from nanobot.webui.transcript import build_webui_thread_response, session_turn_index
+    from kohaku.webui.transcript import build_webui_thread_response, session_turn_index
 
     gen0 = _source(generation=0)
     origin = tr._record_origin(gen0)
@@ -842,7 +842,7 @@ def test_mixed_preupgrade_and_stamped_history_shows_full_history_for_gen0(
 def test_mixed_history_never_adopts_foreign_origin_or_reset_lifetime(
     isolated_webui_dir: Path,
 ) -> None:
-    from nanobot.webui.transcript import build_webui_thread_response
+    from kohaku.webui.transcript import build_webui_thread_response
 
     gen0 = _source(generation=0)
     foreign = tr._record_origin(_source(generation=0, incarnation="inc-old"))

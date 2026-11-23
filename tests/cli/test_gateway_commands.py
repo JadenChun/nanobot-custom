@@ -6,9 +6,9 @@ import typer
 from rich.console import Console
 from typer.testing import CliRunner
 
-from nanobot.cli.gateway import _resolved_config_selector, create_gateway_app
-from nanobot.config.schema import Config
-from nanobot.gateway import (
+from kohaku.cli.gateway import _resolved_config_selector, create_gateway_app
+from kohaku.config.schema import Config
+from kohaku.gateway import (
     GatewayAlreadyRunningError,
     GatewayInstance,
     GatewayRuntimePaths,
@@ -16,7 +16,7 @@ from nanobot.gateway import (
     GatewayStatus,
     RuntimeResult,
 )
-from nanobot.gateway.service import GatewayServiceOptions, GatewayServiceResult
+from kohaku.gateway.service import GatewayServiceOptions, GatewayServiceResult
 
 runner = CliRunner()
 
@@ -24,7 +24,7 @@ runner = CliRunner()
 @pytest.fixture(autouse=True)
 def _allow_synthetic_gateway_command_runtime(monkeypatch) -> None:
     """Exercise command wiring without weakening the production migration guard."""
-    monkeypatch.setattr("nanobot.migration_guard.require_runtime_ready", lambda: None)
+    monkeypatch.setattr("kohaku.migration_guard.require_runtime_ready", lambda: None)
 
 
 def test_default_config_has_the_same_gateway_identity_when_explicit(
@@ -32,7 +32,7 @@ def test_default_config_has_the_same_gateway_identity_when_explicit(
     tmp_path: Path,
 ) -> None:
     config_path = tmp_path / "config.json"
-    monkeypatch.setattr("nanobot.config.loader._current_config_path", config_path)
+    monkeypatch.setattr("kohaku.config.loader._current_config_path", config_path)
 
     assert _resolved_config_selector(None) == config_path
     assert _resolved_config_selector(str(config_path)) == config_path
@@ -99,9 +99,9 @@ class FakeServiceInstaller:
             True,
             "service_install_dry_run" if dry_run else "service_installed",
             "systemd",
-            self.tmp_path / "nanobot-gateway.service",
+            self.tmp_path / "kohaku-gateway.service",
             (("systemctl", "--user", "daemon-reload"),),
-            "[Unit]\nDescription=Nanobot Gateway\n",
+            "[Unit]\nDescription=Kohaku Gateway\n",
         )
 
     def uninstall(self, *, name: str, manager: str, dry_run: bool) -> GatewayServiceResult:
@@ -111,8 +111,8 @@ class FakeServiceInstaller:
             True,
             "service_uninstall_dry_run" if dry_run else "service_uninstalled",
             "systemd",
-            self.tmp_path / "nanobot-gateway.service",
-            (("systemctl", "--user", "disable", "--now", "nanobot-gateway.service"),),
+            self.tmp_path / "kohaku-gateway.service",
+            (("systemctl", "--user", "disable", "--now", "kohaku-gateway.service"),),
         )
 
 
@@ -424,7 +424,7 @@ def test_gateway_restart_does_not_create_a_persistent_gateway(tmp_path):
 
     assert result.exit_code == 1
     assert "there is nothing to restart" in result.stdout
-    assert "nanobot gateway --background" in result.stdout
+    assert "kohaku gateway --background" in result.stdout
 
 
 def test_gateway_restart_explains_foreground_lifecycle(tmp_path):

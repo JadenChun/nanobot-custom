@@ -22,12 +22,12 @@ from unittest.mock import Mock
 
 import pytest
 
-from nanobot.agent.tools.context import RequestContext, request_context
-from nanobot.agent.tools.filesystem import ReadFileTool
-from nanobot.agent.tools.registry import ToolRegistry
-from nanobot.config.loader import set_config_path
-from nanobot.config.paths import get_media_dir
-from nanobot.security.workspace_policy import WorkspaceBoundaryError
+from kohaku.agent.tools.context import RequestContext, request_context
+from kohaku.agent.tools.filesystem import ReadFileTool
+from kohaku.agent.tools.registry import ToolRegistry
+from kohaku.config.loader import set_config_path
+from kohaku.config.paths import get_media_dir
+from kohaku.security.workspace_policy import WorkspaceBoundaryError
 
 INSTANCE_ARTIFACT_BYTES = b"\x89PNG\r\n\x1a\n" + b"instance-artifact-marker-c3"
 AMBIENT_ARTIFACT_BYTES = b"ambient-artifact-marker-c5"
@@ -217,10 +217,10 @@ async def test_c7_loop_registered_read_file_reads_instance_artifact(
     refuse the ambient-only file, a path outside both roots, and a protected
     credential file.
     """
-    import nanobot.migration_guard as guard
-    import nanobot.providers.factory as factory
-    from nanobot.agent.loop import AgentLoop
-    from nanobot.config.schema import Config
+    import kohaku.migration_guard as guard
+    import kohaku.providers.factory as factory
+    from kohaku.agent.loop import AgentLoop
+    from kohaku.config.schema import Config
 
     monkeypatch.setattr(guard, "require_runtime_ready", lambda: None)
     monkeypatch.setattr(factory, "make_provider", lambda _config: _StubProvider())

@@ -16,11 +16,11 @@ from typing import Any
 
 import pytest
 
-import nanobot.session.mode_storage as mode_storage
-from nanobot.session import source_store
-from nanobot.session.runtime_authority import DurableSessionAuthority
-from nanobot.session.session_mode import SessionModeError
-from nanobot.session.source import SourceValidationError, new_source_event
+import kohaku.session.mode_storage as mode_storage
+from kohaku.session import source_store
+from kohaku.session.runtime_authority import DurableSessionAuthority
+from kohaku.session.session_mode import SessionModeError
+from kohaku.session.source import SourceValidationError, new_source_event
 
 
 def _event(content: str, run_id: str) -> dict[str, Any]:

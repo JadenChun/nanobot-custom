@@ -2,7 +2,7 @@
 
 import pytest
 
-from nanobot.webui.transcript import replay_transcript_to_ui_messages
+from kohaku.webui.transcript import replay_transcript_to_ui_messages
 
 
 @pytest.mark.parametrize("phase", ["succeeded", "cancelled"])

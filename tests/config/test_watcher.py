@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 from watchfiles import Change
 
-import nanobot.config.watcher as config_watcher
+import kohaku.config.watcher as config_watcher
 
 
 @pytest.mark.asyncio

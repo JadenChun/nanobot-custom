@@ -6,8 +6,8 @@ from typing import cast
 from websockets.datastructures import Headers
 from websockets.http11 import Request as WsRequest
 
-from nanobot.channels.websocket.runtime import WebSocketConfig
-from nanobot.webui.ws_http import GatewayHTTPHandler
+from kohaku.channels.websocket.runtime import WebSocketConfig
+from kohaku.webui.ws_http import GatewayHTTPHandler
 
 
 def _handler(config: WebSocketConfig) -> GatewayHTTPHandler:

@@ -6,16 +6,16 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from nanobot.agent.context import ContextBuilder
-from nanobot.agent.skills import SkillsLoader
-from nanobot.channels.websocket.runtime import WebSocketConfig
-from nanobot.config.loader import load_config, save_config
-from nanobot.config.schema import Config
-from nanobot.context_repo.manager import ContextRepoManager
-from nanobot.context_repo.policy import ResourceAccessPolicy
-from nanobot.security.folder_grants import FolderGrantStore
-from nanobot.webui.gateway_services import build_gateway_services
-from nanobot.webui.skills_api import (
+from kohaku.agent.context import ContextBuilder
+from kohaku.agent.skills import SkillsLoader
+from kohaku.channels.websocket.runtime import WebSocketConfig
+from kohaku.config.loader import load_config, save_config
+from kohaku.config.schema import Config
+from kohaku.context_repo.manager import ContextRepoManager
+from kohaku.context_repo.policy import ResourceAccessPolicy
+from kohaku.security.folder_grants import FolderGrantStore
+from kohaku.webui.gateway_services import build_gateway_services
+from kohaku.webui.skills_api import (
     _RESTRICTED_CATALOG_NOTICE,
     SkillManagementError,
     delete_webui_skill,
@@ -451,7 +451,7 @@ def test_plugin_helpers_do_not_read_paths_before_policy_preflight(
         helper_calls.append(path)
         raise AssertionError("plugin helper ran before every plugin path was authorized")
 
-    monkeypatch.setattr("nanobot.webui.skills_api.enabled_agent_plugin_skills", plugin_helper)
+    monkeypatch.setattr("kohaku.webui.skills_api.enabled_agent_plugin_skills", plugin_helper)
 
     original_read_text = Path.read_text
 
@@ -506,7 +506,7 @@ def test_gateway_without_session_manager_keeps_protected_skill_context(
         expected_revision=0,
     )
     monkeypatch.setattr(
-        "nanobot.webui.gateway_services.FolderGrantStore.for_workspace",
+        "kohaku.webui.gateway_services.FolderGrantStore.for_workspace",
         lambda _workspace, *, sessions_root=None, **_kwargs: grants,
     )
 
@@ -549,9 +549,9 @@ def test_shared_skills_are_visible_loadable_and_managed_without_path_leaks(
     disabled = {"shared-skill"}
     config = _config("shared-skill")
     saved: list[object] = []
-    monkeypatch.setattr("nanobot.webui.skills_api.load_config", lambda _path=None: config)
+    monkeypatch.setattr("kohaku.webui.skills_api.load_config", lambda _path=None: config)
     monkeypatch.setattr(
-        "nanobot.webui.skills_api.save_config",
+        "kohaku.webui.skills_api.save_config",
         lambda value, _path=None: saved.append(value),
     )
 
@@ -899,9 +899,9 @@ def test_set_webui_skill_enabled_persists_and_updates_runtime(
     _write_skill(tmp_path, "custom-skill")
     config = _config()
     saved: list[object] = []
-    monkeypatch.setattr("nanobot.webui.skills_api.load_config", lambda _path=None: config)
+    monkeypatch.setattr("kohaku.webui.skills_api.load_config", lambda _path=None: config)
     monkeypatch.setattr(
-        "nanobot.webui.skills_api.save_config",
+        "kohaku.webui.skills_api.save_config",
         lambda value, _path=None: saved.append(value),
     )
     disabled: set[str] = set()
@@ -933,7 +933,7 @@ def test_skill_state_uses_explicit_gateway_config(
     gateway_path = tmp_path / "gateway.json"
     save_config(Config(), default_path)
     save_config(Config(), gateway_path)
-    monkeypatch.setattr("nanobot.config.loader._current_config_path", default_path)
+    monkeypatch.setattr("kohaku.config.loader._current_config_path", default_path)
 
     set_webui_skill_enabled(
         workspace,
@@ -954,9 +954,9 @@ def test_delete_webui_skill_only_deletes_workspace_skills(
     directory = _write_skill(tmp_path, "custom-skill")
     config = _config("custom-skill")
     saved: list[object] = []
-    monkeypatch.setattr("nanobot.webui.skills_api.load_config", lambda _path=None: config)
+    monkeypatch.setattr("kohaku.webui.skills_api.load_config", lambda _path=None: config)
     monkeypatch.setattr(
-        "nanobot.webui.skills_api.save_config",
+        "kohaku.webui.skills_api.save_config",
         lambda value, _path=None: saved.append(value),
     )
     disabled = {"custom-skill"}
@@ -1008,12 +1008,12 @@ def test_delete_webui_skill_restores_directory_when_config_save_fails(
 ) -> None:
     directory = _write_skill(tmp_path, "custom-skill")
     config = _config("custom-skill")
-    monkeypatch.setattr("nanobot.webui.skills_api.load_config", lambda _path=None: config)
+    monkeypatch.setattr("kohaku.webui.skills_api.load_config", lambda _path=None: config)
 
     def fail_save(_config: object, _path: Path | None = None) -> None:
         raise OSError("disk full")
 
-    monkeypatch.setattr("nanobot.webui.skills_api.save_config", fail_save)
+    monkeypatch.setattr("kohaku.webui.skills_api.save_config", fail_save)
     disabled = {"custom-skill"}
 
     with pytest.raises(OSError, match="disk full"):

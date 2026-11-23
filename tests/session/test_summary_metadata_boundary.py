@@ -7,11 +7,11 @@ from dataclasses import replace
 
 import pytest
 
-from nanobot.session import checkpoint_dependencies as dependencies
-from nanobot.session.artifact import ArtifactValidationError
-from nanobot.session.artifact_store import ArtifactStorageError
-from nanobot.session.source import SourceValidationError
-from nanobot.session.source_store import SourceSessionStore, SourceSnapshot
+from kohaku.session import checkpoint_dependencies as dependencies
+from kohaku.session.artifact import ArtifactValidationError
+from kohaku.session.artifact_store import ArtifactStorageError
+from kohaku.session.source import SourceValidationError
+from kohaku.session.source_store import SourceSessionStore, SourceSnapshot
 from tests.session.test_checkpoint_dependency_publication import publication_inputs
 
 

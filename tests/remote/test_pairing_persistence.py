@@ -6,16 +6,16 @@ from pathlib import Path
 
 import pytest
 
-from nanobot.remote.auth import AuthRejectedError, TokenService
-from nanobot.remote.device_proof import DeviceProofClaims
-from nanobot.remote.pairing import (
+from kohaku.remote.auth import AuthRejectedError, TokenService
+from kohaku.remote.device_proof import DeviceProofClaims
+from kohaku.remote.pairing import (
     PairingBusyError,
     PairingDeviceRevokedError,
     PairingNotFoundError,
     PairingOffer,
     PairingService,
 )
-from nanobot.remote.store import RemoteAccessStore
+from kohaku.remote.store import RemoteAccessStore
 from tests.remote.proof_helpers import (
     approve_and_prove,
     collect_with_key,
@@ -113,7 +113,7 @@ def test_approved_result_is_not_replayed_after_restart(tmp_path: Path) -> None:
 
 
 def test_approved_unissued_survives_restart_with_fresh_proof(tmp_path: Path) -> None:
-    from nanobot.remote.device_proof import DeviceProofClaims
+    from kohaku.remote.device_proof import DeviceProofClaims
     from tests.remote.proof_helpers import new_device_key, sign_claims
 
     store, tokens, pairing, clock = setup(tmp_path)
@@ -137,8 +137,8 @@ def test_approved_unissued_survives_restart_with_fresh_proof(tmp_path: Path) -> 
 
 @pytest.mark.parametrize("disposition", ["cancel", "expired", "revoked"])
 def test_approved_restart_does_not_revive_cancel_expiry_or_revocation(tmp_path, disposition):
-    from nanobot.remote.device_proof import DeviceProofClaims
-    from nanobot.remote.pairing import PairingError
+    from kohaku.remote.device_proof import DeviceProofClaims
+    from kohaku.remote.pairing import PairingError
     from tests.remote.proof_helpers import new_device_key, sign_claims
 
     store, tokens, pairing, clock = setup(tmp_path)

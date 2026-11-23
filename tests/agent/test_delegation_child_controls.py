@@ -6,9 +6,9 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from nanobot.agent.delegation import ForegroundAgentManager
-from nanobot.session.manager import SessionManager
-from nanobot.webui.inbound_commands import WebUICommandRouter, WebUIRequestResult
+from kohaku.agent.delegation import ForegroundAgentManager
+from kohaku.session.manager import SessionManager
+from kohaku.webui.inbound_commands import WebUICommandRouter, WebUIRequestResult
 
 
 def _manager(tmp_path):

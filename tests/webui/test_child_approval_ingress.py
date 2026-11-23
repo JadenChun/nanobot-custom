@@ -11,21 +11,21 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
-from nanobot.agent.loop import AgentLoop
-from nanobot.agent.tools.registry import ToolRegistry
-from nanobot.bus.outbound_events import StreamDeltaEvent, TurnEndEvent, WebUIAdmissionRejectedEvent
-from nanobot.bus.runtime_events import TurnCompleted, TurnRunStatusChanged, TurnRuntimeAdmitted
-from nanobot.channels.websocket.runtime import WebSocketChannel, WebSocketConfig, _parse_envelope
-from nanobot.channels.websocket.tests.test_websocket_channel import (
+from kohaku.agent.loop import AgentLoop
+from kohaku.agent.tools.registry import ToolRegistry
+from kohaku.bus.outbound_events import StreamDeltaEvent, TurnEndEvent, WebUIAdmissionRejectedEvent
+from kohaku.bus.runtime_events import TurnCompleted, TurnRunStatusChanged, TurnRuntimeAdmitted
+from kohaku.channels.websocket.runtime import WebSocketChannel, WebSocketConfig, _parse_envelope
+from kohaku.channels.websocket.tests.test_websocket_channel import (
     _authenticate_local_webui_connection,
 )
-from nanobot.providers.base import LLMProvider, LLMResponse, ToolCallRequest
-from nanobot.session import webui_turns as turns
-from nanobot.session.execution_owner import ExecutionBusyError
-from nanobot.session.persistence_metadata import SOURCE_PENDING_FOLLOWUPS_METADATA_KEY
-from nanobot.webui.gateway_services import build_gateway_services
-from nanobot.webui.metadata import WEBUI_TURN_METADATA_KEY
-from nanobot.webui.transcript import read_transcript_lines
+from kohaku.providers.base import LLMProvider, LLMResponse, ToolCallRequest
+from kohaku.session import webui_turns as turns
+from kohaku.session.execution_owner import ExecutionBusyError
+from kohaku.session.persistence_metadata import SOURCE_PENDING_FOLLOWUPS_METADATA_KEY
+from kohaku.webui.gateway_services import build_gateway_services
+from kohaku.webui.metadata import WEBUI_TURN_METADATA_KEY
+from kohaku.webui.transcript import read_transcript_lines
 from tests.agent.test_migration_engine import ScriptedProvider
 from tests.agent.test_migration_source_engine import upgrade
 
@@ -435,7 +435,7 @@ async def test_streaming_sibling_controls_do_not_touch_parent_and_stop_remains_r
             terminal_order.append("terminal-finish")
 
         unsubscribe_terminal = loop.bus.subscribe(hold_terminal, TurnCompleted)
-        import nanobot.agent.loop as loop_module
+        import kohaku.agent.loop as loop_module
 
         monkeypatch.setattr(loop_module, "_BUS_CLEANUP_TIMEOUT_SECONDS", 0.02)
         monkeypatch.setattr(loop_module, "STOP_SETTLE_TIMEOUT", 0.05)

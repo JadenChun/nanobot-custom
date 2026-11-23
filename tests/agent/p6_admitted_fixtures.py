@@ -16,18 +16,18 @@ from typing import Protocol
 
 import pytest
 
-from nanobot.agent.loop import AgentLoop
-from nanobot.agent.tools.mcp import MCPProvider
-from nanobot.agent.tools.registry import ToolRegistry
-from nanobot.agent.turn_delivery import TurnDeliveryFactory
-from nanobot.bus.queue import MessageBus
-from nanobot.config import loader
-from nanobot.config.schema import Config
-from nanobot.cron.service import CronService
-from nanobot.runtime_composition import RuntimeComposition, RuntimeFactories, RuntimeState
-from nanobot.security import network
-from nanobot.session.manager import Session, SessionManager
-from nanobot.session.runtime_authority import (
+from kohaku.agent.loop import AgentLoop
+from kohaku.agent.tools.mcp import MCPProvider
+from kohaku.agent.tools.registry import ToolRegistry
+from kohaku.agent.turn_delivery import TurnDeliveryFactory
+from kohaku.bus.queue import MessageBus
+from kohaku.config import loader
+from kohaku.config.schema import Config
+from kohaku.cron.service import CronService
+from kohaku.runtime_composition import RuntimeComposition, RuntimeFactories, RuntimeState
+from kohaku.security import network
+from kohaku.session.manager import Session, SessionManager
+from kohaku.session.runtime_authority import (
     BorrowedSessionAuthority,
     DurableSessionAuthority,
     OfflineSessionOperator,
@@ -57,7 +57,7 @@ class AdmittedGraphs:
         self.tmp_path = tmp_path
         self.patches = patches
         self.graphs: list[tuple[RuntimeComposition, bool]] = []
-        patches.setattr("nanobot.migration_guard.require_runtime_ready", lambda: None)
+        patches.setattr("kohaku.migration_guard.require_runtime_ready", lambda: None)
         # Legacy fallback must never inspect a real or an outer runner home.
         patches.setattr(Path, "home", classmethod(lambda _cls: tmp_path / "absent-home"))
         patches.setattr(loader, "_current_config_path", loader._current_config_path)
@@ -66,18 +66,18 @@ class AdmittedGraphs:
             patches.setattr(socket.socket, name, _denied)
         for name in ("getaddrinfo", "create_connection"):
             patches.setattr(socket, name, _denied)
-        patches.setattr("nanobot.agent.tools.sandbox.managed_bwrap_available", lambda: False)
+        patches.setattr("kohaku.agent.tools.sandbox.managed_bwrap_available", lambda: False)
         patches.setattr(subprocess, "Popen", _denied)
         for name in ("system", "fork", "posix_spawn", "posix_spawnp", "execv", "execve"):
             if hasattr(os, name):
                 patches.setattr(os, name, _denied)
         patches.setattr(asyncio, "create_subprocess_exec", _denied)
         patches.setattr(asyncio, "create_subprocess_shell", _denied)
-        patches.setattr("nanobot.channels.manager.ChannelManager.acquire", _denied)
+        patches.setattr("kohaku.channels.manager.ChannelManager.acquire", _denied)
         patches.setattr(MCPProvider, "connect", _denied)
         patches.setattr(CronService, "start", _denied)
         patches.setattr(AgentLoop, "run", _denied)
-        patches.setattr("nanobot.providers.factory.make_provider", _denied)
+        patches.setattr("kohaku.providers.factory.make_provider", _denied)
 
     async def acquire(
         self, root: Path, build: AgentBuilder, *, config: Config | None = None,

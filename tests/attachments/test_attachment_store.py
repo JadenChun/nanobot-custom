@@ -5,9 +5,9 @@ from pathlib import Path
 
 import pytest
 
-from nanobot.attachments.models import AttachmentRecord
-from nanobot.attachments.store import AttachmentStore
-from nanobot.utils.media_decode import FileSizeExceeded
+from kohaku.attachments.models import AttachmentRecord
+from kohaku.attachments.store import AttachmentStore
+from kohaku.utils.media_decode import FileSizeExceeded
 
 _PNG = base64.b64decode(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+yF9kAAAAASUVORK5CYII="

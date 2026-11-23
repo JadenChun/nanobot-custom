@@ -7,8 +7,8 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 import pytest_asyncio
 
-from nanobot.agent.turn import TurnResult, TurnSource
-from nanobot.api.server import create_app
+from kohaku.agent.turn import TurnResult, TurnSource
+from kohaku.api.server import create_app
 from tests.api_http_client import InProcessApiClient
 
 try:

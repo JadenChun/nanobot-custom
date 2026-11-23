@@ -14,22 +14,22 @@ from pathlib import Path
 import pytest
 from filelock import FileLock
 
-from nanobot.agent.idle_compaction import IdleCompactionPolicy
-from nanobot.agent.idle_runtime import IdleRuntimeBindingRegistry
-from nanobot.agent.idle_scanner import (
+from kohaku.agent.idle_compaction import IdleCompactionPolicy
+from kohaku.agent.idle_runtime import IdleRuntimeBindingRegistry
+from kohaku.agent.idle_scanner import (
     IdleBlockerSnapshot,
     IdleCompactionScanner,
     IdleScannerIneligible,
     InMemoryIdleBlockerAuthority,
 )
-from nanobot.agent.idle_summary import IdleDependencyVerification, IdleSummaryBindingError
-from nanobot.providers.base import GenerationSettings
-from nanobot.session.artifact_reader import ArtifactReader
-from nanobot.session.idle_checkpoint import IdlePolicyBinding
-from nanobot.session.manager import JsonlSessionStore
-from nanobot.session.source_discovery import SourceDiscoveryLimits
-from nanobot.session.source_store import SourceSessionStore
-from nanobot.utils.llm_runtime import LLMRuntime
+from kohaku.agent.idle_summary import IdleDependencyVerification, IdleSummaryBindingError
+from kohaku.providers.base import GenerationSettings
+from kohaku.session.artifact_reader import ArtifactReader
+from kohaku.session.idle_checkpoint import IdlePolicyBinding
+from kohaku.session.manager import JsonlSessionStore
+from kohaku.session.source_discovery import SourceDiscoveryLimits
+from kohaku.session.source_store import SourceSessionStore
+from kohaku.utils.llm_runtime import LLMRuntime
 from tests.agent.test_idle_summary import _adapter, _Attempt, _authority, _limits, _Provider
 from tests.agent.test_source_dependency_compaction import _record_retrieval
 from tests.session.test_artifact_reader import setup_read

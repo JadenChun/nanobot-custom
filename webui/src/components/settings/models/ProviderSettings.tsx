@@ -44,7 +44,7 @@ import { useLogoFallback } from "@/hooks/useLogoFallback";
 import { providerBrand } from "@/lib/provider-brand";
 import { cn } from "@/lib/utils";
 import type {
-  NanobotFeaturesPayload,
+  KohakuFeaturesPayload,
   ProviderOAuthAuthorizationRequired,
   SettingsPayload,
 } from "@/lib/types";
@@ -668,7 +668,7 @@ export function ProvidersSettings({
   isRestarting,
 }: {
   settings: SettingsPayload;
-  nanobotFeatures: NanobotFeaturesPayload | null;
+  nanobotFeatures: KohakuFeaturesPayload | null;
   featureAction: string | null;
   capabilityError: string | null;
   expandedProvider: string | null;
@@ -839,7 +839,7 @@ export function ProvidersSettings({
                         : provider.name === "openai_codex" && remoteBrowserAccess
                           ? tx(
                               "settings.oauth.codexRemoteSignInHelp",
-                              "Sign in through this browser, then paste the full localhost callback URL back into nanobot.",
+                              "Sign in through this browser, then paste the full localhost callback URL back into Kohaku.",
                             )
                           : provider.name === "xai_grok" && remoteBrowserAccess
                           ? tx(

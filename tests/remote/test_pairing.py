@@ -6,8 +6,8 @@ from pathlib import Path
 
 import pytest
 
-from nanobot.remote.auth import TokenService
-from nanobot.remote.pairing import (
+from kohaku.remote.auth import TokenService
+from kohaku.remote.pairing import (
     PairingBusyError,
     PairingCodeInvalidError,
     PairingConsumedError,
@@ -19,8 +19,8 @@ from nanobot.remote.pairing import (
     PairingRejectedError,
     PairingService,
 )
-from nanobot.remote.protocol import OWNER_PAIRING_SCOPES
-from nanobot.remote.store import RemoteAccessStore
+from kohaku.remote.protocol import OWNER_PAIRING_SCOPES
+from kohaku.remote.store import RemoteAccessStore
 from tests.remote.proof_helpers import (
     approve_and_prove,
     collect_by_code_with_key,

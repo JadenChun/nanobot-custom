@@ -7,11 +7,11 @@ from copy import deepcopy
 from typing import Any
 from unittest.mock import Mock
 
-from nanobot.agent.runner import AgentRunSpec
-from nanobot.agent.tools.registry import ToolRegistry
-from nanobot.config.schema import AgentDefaults
-from nanobot.providers.base import GenerationSettings, LLMProvider
-from nanobot.utils.llm_runtime import LLMRuntime
+from kohaku.agent.runner import AgentRunSpec
+from kohaku.agent.tools.registry import ToolRegistry
+from kohaku.config.schema import AgentDefaults
+from kohaku.providers.base import GenerationSettings, LLMProvider
+from kohaku.utils.llm_runtime import LLMRuntime
 
 
 class _CapturedTestTools:

@@ -6,15 +6,15 @@ from typing import overload
 
 import pytest
 
-from nanobot.agent.context import ContextBuilder
-from nanobot.agent.message_content import content_to_text
-from nanobot.agent.tools.execution import KnownToolResult
-from nanobot.agent.trace import sanitize_trace
-from nanobot.runtime_context import RUNTIME_CONTEXT_HISTORY_META
-from nanobot.session.execution_owner import acquire_execution
-from nanobot.session.manager import JsonlSessionStore, Session
-from nanobot.session.source import SourceValidationError
-from nanobot.session.turn_writer import SourceTurnWriter
+from kohaku.agent.context import ContextBuilder
+from kohaku.agent.message_content import content_to_text
+from kohaku.agent.tools.execution import KnownToolResult
+from kohaku.agent.trace import sanitize_trace
+from kohaku.runtime_context import RUNTIME_CONTEXT_HISTORY_META
+from kohaku.session.execution_owner import acquire_execution
+from kohaku.session.manager import JsonlSessionStore, Session
+from kohaku.session.source import SourceValidationError
+from kohaku.session.turn_writer import SourceTurnWriter
 
 
 class WireMapping(Mapping[object, object]):

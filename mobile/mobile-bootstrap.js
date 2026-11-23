@@ -74,8 +74,8 @@
                   } : {},
                   isExactNotification: false,
                   foreground: true,
-                  smallIcon: "ic_stat_nanobot",
-                  largeIcon: "ic_nanobot_notification"
+                  smallIcon: "ic_stat_kohaku",
+                  largeIcon: "ic_kohaku_notification"
                 }]
               });
               return true;
@@ -191,7 +191,7 @@
   // Mirror WebUI console output to logcat: the packaged client has no devtools
   // bridge, so mobile-only connection faults are otherwise invisible.
   (function () {
-    var probe = window.NanobotNativeProbe;
+    var probe = window.KohakuNativeProbe;
     if (!probe || typeof probe.log !== "function") return;
     ["log", "warn", "error"].forEach(function (level) {
       var original = console[level];
@@ -288,7 +288,7 @@
     input.autocomplete = "off";
     input.autocapitalize = "off";
     input.spellcheck = false;
-    input.placeholder = "nanobot://pair?…";
+    input.placeholder = "kohaku://pair?…";
     inputRow.appendChild(input);
     var pairButton = textElement("button", "mobile-pairing-primary", "Pair with link");
     pairButton.type = "submit";
@@ -415,7 +415,7 @@
       } catch (_) {
         return null;
       }
-      if (url.protocol !== "nanobot:" || url.host !== "pair") return null;
+      if (url.protocol !== "kohaku:" || url.host !== "pair") return null;
       var origin = url.searchParams.get("origin") || "";
       var installationId = url.searchParams.get("installation") || "";
       var challenge = url.searchParams.get("challenge") || "";
@@ -426,10 +426,10 @@
     function linkFromInput(raw) {
       var value = String(raw || "").trim();
       if (!value) return null;
-      if (value.indexOf("nanobot://") === 0) return value;
-      if (value.indexOf("origin=") >= 0) return "nanobot://pair?" + value.replace(/^\?/, "");
+      if (value.indexOf("kohaku://") === 0) return value;
+      if (value.indexOf("origin=") >= 0) return "kohaku://pair?" + value.replace(/^\?/, "");
       if (identityRef && identityRef.origin && /^[A-Za-z0-9._-]{16,256}$/.test(value)) {
-        return "nanobot://pair?" + [
+        return "kohaku://pair?" + [
           "origin=" + encodeURIComponent(identityRef.origin),
           "installation=" + encodeURIComponent(identityRef.installationId),
           "challenge=" + encodeURIComponent(value)
@@ -575,8 +575,8 @@
           throw new Error("pairing identity is unavailable");
         }
         identityRef = identity;
-        console.log("NANOBOT_MOBILE_PAIRING_ID " + identity.installationId);
-        console.log("NANOBOT_PAIRING_PANELS " + document.querySelectorAll(".mobile-pairing").length);
+        console.log("KOHAKU_MOBILE_PAIRING_ID " + identity.installationId);
+        console.log("KOHAKU_PAIRING_PANELS " + document.querySelectorAll(".mobile-pairing").length);
         return identity;
       }).catch(function (error) {
         identityPromise = null;
@@ -975,7 +975,7 @@
 
     async function connectTarget(link) {
       setSplashStatus("Connecting to Tailscale…");
-      await transport.start(link.origin, link.installationId, "nanobot-" + String(link.installationId).slice(-6));
+      await transport.start(link.origin, link.installationId, "kohaku-" + String(link.installationId).slice(-6));
       for (var i = 0; i < 40; i += 1) {
         var status = await plugin.status();
         if (status && status.state === "ready") {
@@ -1159,7 +1159,7 @@
           clearInterval(pollTimer);
           pollTimer = null;
         }
-        window.removeEventListener("nanobot-native-resume", onAutoResume);
+        window.removeEventListener("kohaku-native-resume", onAutoResume);
         window.removeEventListener("online", onAutoResume);
         panel.remove();
       }
@@ -1213,7 +1213,7 @@
         pollTimer = setInterval(onAutoResume, 2000);
       }
 
-      window.addEventListener("nanobot-native-resume", onAutoResume);
+      window.addEventListener("kohaku-native-resume", onAutoResume);
       window.addEventListener("online", onAutoResume);
 
       var login = textElement("button", "mobile-pairing-button", "Open Tailscale login");

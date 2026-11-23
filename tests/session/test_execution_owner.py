@@ -6,13 +6,13 @@ from dataclasses import replace
 
 import pytest
 
-from nanobot.session.execution_owner import (
+from kohaku.session.execution_owner import (
     ExecutionBusyError,
     ExecutionOwnershipError,
     acquire_execution,
 )
-from nanobot.session.manager import JsonlSessionStore, Session, SessionWriteConflict
-from nanobot.session.source import new_source_event
+from kohaku.session.manager import JsonlSessionStore, Session, SessionWriteConflict
+from kohaku.session.source import new_source_event
 
 
 @pytest.fixture
@@ -261,7 +261,7 @@ async def test_failed_acquisition_cannot_dispatch_and_leaves_recoverable_state(b
     entered = False
     with monkeypatch.context() as patch:
         if phase == "before":
-            patch.setattr("nanobot.session.manager.os.replace", lambda *_: (_ for _ in ()).throw(OSError("replace")))
+            patch.setattr("kohaku.session.manager.os.replace", lambda *_: (_ for _ in ()).throw(OSError("replace")))
         else:
             patch.setattr(type(backend), "_fsync_directory", lambda *_: (_ for _ in ()).throw(OSError("fsync")))
         with pytest.raises(OSError):
@@ -278,7 +278,7 @@ async def test_failed_release_retains_abandoned_lease_and_invalidates_capability
     with pytest.raises(OSError):
         async with acquire_execution(backend, original.state.session_key, run_id="failed-close") as owner:
             if phase == "before":
-                monkeypatch.setattr("nanobot.session.manager.os.replace", lambda *_: (_ for _ in ()).throw(OSError("replace")))
+                monkeypatch.setattr("kohaku.session.manager.os.replace", lambda *_: (_ for _ in ()).throw(OSError("replace")))
             else:
                 monkeypatch.setattr(type(backend), "_fsync_directory", lambda *_: (_ for _ in ()).throw(OSError("fsync")))
     monkeypatch.undo()

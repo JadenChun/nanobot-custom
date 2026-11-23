@@ -7,14 +7,14 @@ from pathlib import Path
 import httpx
 import pytest
 
-from nanobot.remote.auth import TokenService
-from nanobot.remote.client import OwnerRequestError, RemoteAccessClient
-from nanobot.remote.device_proof import DeviceProofClaims
-from nanobot.remote.http import RemoteHTTPListener
-from nanobot.remote.owner import RemoteAccessOwner
-from nanobot.remote.pairing import PairingService
-from nanobot.remote.staging import TailscaleServeAdapter
-from nanobot.remote.store import RemoteAccessStore
+from kohaku.remote.auth import TokenService
+from kohaku.remote.client import OwnerRequestError, RemoteAccessClient
+from kohaku.remote.device_proof import DeviceProofClaims
+from kohaku.remote.http import RemoteHTTPListener
+from kohaku.remote.owner import RemoteAccessOwner
+from kohaku.remote.pairing import PairingService
+from kohaku.remote.staging import TailscaleServeAdapter
+from kohaku.remote.store import RemoteAccessStore
 from tests.remote.proof_helpers import (
     complete_proof,
     encode_proof_base64url,

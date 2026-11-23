@@ -14,12 +14,12 @@ from typing import Any
 
 import pytest
 
-from nanobot.agent.policy import RiskyActionPolicy
-from nanobot.agent.tools.filesystem import WriteFileTool
-from nanobot.agent.tools.repositories import SaveKnowledgeTool
-from nanobot.context_repo.catalog import RepositoryCatalog, RepositoryEntry
-from nanobot.providers.base import ToolCallRequest
-from nanobot.utils.git_sync import sync_context_repo
+from kohaku.agent.policy import RiskyActionPolicy
+from kohaku.agent.tools.filesystem import WriteFileTool
+from kohaku.agent.tools.repositories import SaveKnowledgeTool
+from kohaku.context_repo.catalog import RepositoryCatalog, RepositoryEntry
+from kohaku.providers.base import ToolCallRequest
+from kohaku.utils.git_sync import sync_context_repo
 from tests.context_repo.test_git_sync_safe_push import (
     _bootstrap_remote_with_initial,
     _git_out,

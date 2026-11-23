@@ -8,15 +8,15 @@ from pathlib import Path
 
 import pytest
 
-from nanobot.attachments.lifecycle import (
+from kohaku.attachments.lifecycle import (
     migrate_legacy_media,
     prune_unreferenced,
     reference_evidence,
     referenced_hashes,
 )
-from nanobot.attachments.store import AttachmentStore
-from nanobot.config.loader import set_config_path
-from nanobot.session.manager import JsonlSessionStore, Session
+from kohaku.attachments.store import AttachmentStore
+from kohaku.config.loader import set_config_path
+from kohaku.session.manager import JsonlSessionStore, Session
 from tests.attachments.test_media_publication_retention import tree
 
 _PNG = base64.b64decode(
@@ -110,7 +110,7 @@ def test_migrate_legacy_media_rewrites_events_and_keeps_backup(
     image = channel / "legacy.png"
     image.write_bytes(_PNG)
     store = AttachmentStore(media_root / "attachments", media_root=media_root)
-    monkeypatch.setattr("nanobot.config.paths.get_media_dir", lambda *_: media_root)
+    monkeypatch.setattr("kohaku.config.paths.get_media_dir", lambda *_: media_root)
 
     sessions = tmp_path / "sessions"
     sessions.mkdir()
@@ -138,7 +138,7 @@ def test_migrate_legacy_media_dry_run_does_not_write(
     image = channel / "legacy.png"
     image.write_bytes(_PNG)
     store = AttachmentStore(media_root / "attachments", media_root=media_root)
-    monkeypatch.setattr("nanobot.config.paths.get_media_dir", lambda *_: media_root)
+    monkeypatch.setattr("kohaku.config.paths.get_media_dir", lambda *_: media_root)
     sessions = tmp_path / "sessions"
     sessions.mkdir()
     session_file = sessions / "session.jsonl"
@@ -172,8 +172,8 @@ def test_unreadable_session_evidence_prevents_attachment_prune(
         encoding="utf-8",
     )
 
-    import nanobot.attachments._inventory as inventory
-    import nanobot.attachments.lifecycle as lifecycle
+    import kohaku.attachments._inventory as inventory
+    import kohaku.attachments.lifecycle as lifecycle
     original_read = lifecycle.read_bytes
 
     def _unreadable_read(self: Path, *args: object, **kwargs: object):

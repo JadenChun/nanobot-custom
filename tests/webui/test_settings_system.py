@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from nanobot.config.schema import Config
-from nanobot.webui.settings_system import (
+from kohaku.config.schema import Config
+from kohaku.webui.settings_system import (
     coerce_channel_value,
     system_settings_payload,
     update_agent_system_settings,

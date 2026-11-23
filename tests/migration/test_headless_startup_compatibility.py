@@ -7,9 +7,9 @@ from unittest.mock import patch
 
 import pytest
 
-from nanobot.bus.queue import MessageBus
-from nanobot.channels.manager import ChannelManager
-from nanobot.config.loader import load_config
+from kohaku.bus.queue import MessageBus
+from kohaku.channels.manager import ChannelManager
+from kohaku.config.loader import load_config
 
 
 @pytest.mark.asyncio
@@ -36,12 +36,12 @@ async def test_channel_manager_construction_keeps_websocket_disabled_and_read_on
     config = load_config(config_path)
 
     with (
-        patch("nanobot.channels.manager._default_webui_dist") as webui_dist,
-        patch("nanobot.webui.gateway_services.build_gateway_services") as build_gateway,
-        patch("nanobot.cli.webui_support.inspect_webui_bundle") as inspect_bundle,
-        patch("nanobot.cli.webui_support.ensure_webui_bundle") as ensure_bundle,
-        patch("nanobot.cli.webui_support._launch_browser") as launch_browser,
-        patch("nanobot.config.loader.save_config") as save_config,
+        patch("kohaku.channels.manager._default_webui_dist") as webui_dist,
+        patch("kohaku.webui.gateway_services.build_gateway_services") as build_gateway,
+        patch("kohaku.cli.webui_support.inspect_webui_bundle") as inspect_bundle,
+        patch("kohaku.cli.webui_support.ensure_webui_bundle") as ensure_bundle,
+        patch("kohaku.cli.webui_support._launch_browser") as launch_browser,
+        patch("kohaku.config.loader.save_config") as save_config,
     ):
         manager = ChannelManager(config, MessageBus(), webui_static_dist=True)
         try:

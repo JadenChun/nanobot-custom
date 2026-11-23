@@ -3,23 +3,23 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from nanobot.agent.delegation import ForegroundAgentManager
-from nanobot.agent.policy import ToolPolicy
-from nanobot.agent.runner import AgentRunResult
-from nanobot.agent.tools.context import RequestContext, request_context
-from nanobot.agent.tools.delegation import DelegateTaskTool, PlanTaskTool, ReviewWorkTool
-from nanobot.agent.tools.explore import ExploreTool
-from nanobot.agent.turn import RunStatus, ToolOutcome, TurnContext, TurnResult
-from nanobot.bus.queue import MessageBus
-from nanobot.providers.base import LLMResponse, ToolCallRequest
-from nanobot.security.folder_grants import FolderGrantStore
-from nanobot.security.workspace_access import (
+from kohaku.agent.delegation import ForegroundAgentManager
+from kohaku.agent.policy import ToolPolicy
+from kohaku.agent.runner import AgentRunResult
+from kohaku.agent.tools.context import RequestContext, request_context
+from kohaku.agent.tools.delegation import DelegateTaskTool, PlanTaskTool, ReviewWorkTool
+from kohaku.agent.tools.explore import ExploreTool
+from kohaku.agent.turn import RunStatus, ToolOutcome, TurnContext, TurnResult
+from kohaku.bus.queue import MessageBus
+from kohaku.providers.base import LLMResponse, ToolCallRequest
+from kohaku.security.folder_grants import FolderGrantStore
+from kohaku.security.workspace_access import (
     bind_workspace_scope,
     reset_workspace_scope,
     validate_workspace_scope_payload,
 )
-from nanobot.session.execution_owner import acquire_execution
-from nanobot.session.manager import SessionManager
+from kohaku.session.execution_owner import acquire_execution
+from kohaku.session.manager import SessionManager
 
 
 def _provider() -> MagicMock:
@@ -34,9 +34,9 @@ def _provider() -> MagicMock:
 
 
 def _make_loop(tmp_path, provider: MagicMock):
-    from nanobot.agent.loop import AgentLoop
+    from kohaku.agent.loop import AgentLoop
 
-    with patch("nanobot.migration_guard.require_runtime_ready"):
+    with patch("kohaku.migration_guard.require_runtime_ready"):
         return AgentLoop(bus=MessageBus(), provider=provider, workspace=tmp_path)
 
 
@@ -106,7 +106,7 @@ async def test_cron_turn_uses_the_canonical_context_manager(tmp_path) -> None:
     ownership.  Safe sync and auto-push policy remain covered by the context
     repository suites.
     """
-    from nanobot.agent.turn import TurnSource
+    from kohaku.agent.turn import TurnSource
 
     loop = _make_loop(tmp_path, _provider())
     context_manager = loop._fork_dependencies.resource_policy.context_manager
@@ -313,7 +313,7 @@ async def test_worker_rejects_write_scope_outside_workspace(tmp_path) -> None:
 
 
 def test_orchestrator_prompt_hides_internal_state_and_explains_optional_routing(tmp_path) -> None:
-    from nanobot.agent.context import ContextBuilder
+    from kohaku.agent.context import ContextBuilder
 
     prompt = ContextBuilder(tmp_path).build_system_prompt()
     role_prompt = ForegroundAgentManager(provider=_provider(), workspace=tmp_path)._base_prompt(

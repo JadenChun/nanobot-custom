@@ -8,11 +8,11 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from nanobot.channels.websocket.tests.test_websocket_channel import (
+from kohaku.channels.websocket.tests.test_websocket_channel import (
     _authenticate_local_webui_connection,
     _ch,
 )
-from nanobot.session import webui_turns as wth
+from kohaku.session import webui_turns as wth
 
 
 @pytest.fixture(autouse=True)
@@ -22,7 +22,7 @@ def _isolate_runtime_state(tmp_path, monkeypatch) -> None:
     wth._WEBSOCKET_TURN_WALL_STARTED_AT.clear()
     wth._WEBSOCKET_TURN_IDS.clear()
     wth._WEBSOCKET_TURN_OWNERS.clear()
-    monkeypatch.setattr("nanobot.config.paths.get_data_dir", lambda: tmp_path)
+    monkeypatch.setattr("kohaku.config.paths.get_data_dir", lambda: tmp_path)
     yield
     wth._WEBSOCKET_ACTIVE_TURNS.clear()
     wth._WEBSOCKET_TURN_WALL_STARTED_AT.clear()

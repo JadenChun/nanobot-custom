@@ -4,7 +4,7 @@ from dataclasses import FrozenInstanceError, fields
 
 import pytest
 
-from nanobot.cron.delivery_runtime import DispatchMessage, DispatchRequest, DispatchRequestError
+from kohaku.cron.delivery_runtime import DispatchMessage, DispatchRequest, DispatchRequestError
 
 
 @pytest.mark.parametrize("kind", ("wire_tuple", "wire_list", "typed_tuple", "mixed"))

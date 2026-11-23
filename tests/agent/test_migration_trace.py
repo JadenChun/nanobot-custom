@@ -4,12 +4,12 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
-from nanobot.agent.loop import AgentLoop
-from nanobot.agent.runner import AgentRunResult
-from nanobot.agent.trace import sanitize_trace
-from nanobot.agent.turn import TraceMode, TurnRequest
-from nanobot.events import NO_EVENTS
-from nanobot.runtime_context import RUNTIME_CONTEXT_HISTORY_META
+from kohaku.agent.loop import AgentLoop
+from kohaku.agent.runner import AgentRunResult
+from kohaku.agent.trace import sanitize_trace
+from kohaku.agent.turn import TraceMode, TurnRequest
+from kohaku.events import NO_EVENTS
+from kohaku.runtime_context import RUNTIME_CONTEXT_HISTORY_META
 
 from .test_migration_canonical_admission import host
 
@@ -53,7 +53,7 @@ def stage_host(tmp_path, *, fail=False):
     async def restore(ctx):
         ctx.session = session
     async def build(ctx):
-        from nanobot.agent.context import TranscriptInput
+        from kohaku.agent.context import TranscriptInput
         # Exercise expanded approval/runtime input while preserving original public text.
         ctx.msg.content = 'expanded private input'
         ctx.input_persisted_early = loop._persist_user_message_early(ctx.msg, session, run_id=ctx.run_context.run_id, trace_owner=ctx)
@@ -89,7 +89,7 @@ async def test_real_stage_pipeline_returns_only_this_runs_sanitized_detail(tmp_p
 
 async def test_default_trace_mode_does_not_read_or_sanitize(tmp_path, monkeypatch):
     loop, session = stage_host(tmp_path)
-    monkeypatch.setattr('nanobot.agent.loop.sanitize_trace', Mock(side_effect=AssertionError('sanitized')))
+    monkeypatch.setattr('kohaku.agent.loop.sanitize_trace', Mock(side_effect=AssertionError('sanitized')))
     loop.run_store.load_trace = Mock(side_effect=AssertionError('loaded'))
     result = await loop.execute_turn(TurnRequest(content='input', session_key='cli:test'))
     assert result.messages is None
@@ -124,7 +124,7 @@ async def test_reused_run_id_does_not_select_previous_invocation(tmp_path):
 
 
 async def test_transient_session_trace_does_not_write_detail(tmp_path):
-    from nanobot.session.manager import SessionManager, SessionPolicy
+    from kohaku.session.manager import SessionManager, SessionPolicy
 
     loop, session = stage_host(tmp_path)
     session.policy = SessionPolicy(persist=False)
@@ -140,7 +140,7 @@ async def test_injected_input_runtime_suffix_is_removed_without_rewriting_its_te
     run = loop._run_turn
     async def injecting(ctx):
         await run(ctx)
-        from nanobot.runtime_context import RUNTIME_CONTEXT_MESSAGE_META
+        from kohaku.runtime_context import RUNTIME_CONTEXT_MESSAGE_META
         ctx.all_messages.insert(2, {'role': 'user', 'content': 'Original approval reply: real text\n\nprivate runtime',
             '_meta': {RUNTIME_CONTEXT_MESSAGE_META: {'version': 1, 'suffix': 'private runtime'}}})
     loop._run_turn = injecting
@@ -151,7 +151,7 @@ async def test_injected_input_runtime_suffix_is_removed_without_rewriting_its_te
 async def test_internal_input_trace_uses_original_request_without_prior_detail(tmp_path):
     loop, session = stage_host(tmp_path)
     async def build(ctx):
-        from nanobot.agent.context import TranscriptInput
+        from kohaku.agent.context import TranscriptInput
         ctx.msg.sender_id = 'subagent'
         ctx.msg.metadata['subagent_task_id'] = 'internal'
         ctx.msg.content = 'internal expanded input'

@@ -4,7 +4,7 @@ import copy
 
 import pytest
 
-from nanobot.utils import prompt_budget
+from kohaku.utils import prompt_budget
 
 
 @pytest.mark.parametrize(

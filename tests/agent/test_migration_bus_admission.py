@@ -4,8 +4,8 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
-from nanobot.agent.runner import AgentRunResult
-from nanobot.bus.events import InboundMessage
+from kohaku.agent.runner import AgentRunResult
+from kohaku.bus.events import InboundMessage
 
 from .test_migration_canonical_admission import host
 
@@ -168,7 +168,7 @@ async def test_cleanup_does_not_remove_replacement_queue(tmp_path):
 
 @pytest.mark.parametrize('outcome', ['reject', 'error', 'cancel'])
 async def test_recovery_registration_always_unregistered(tmp_path, outcome):
-    from nanobot.session.recovery import RECOVERY_INBOUND_METADATA_KEY
+    from kohaku.session.recovery import RECOVERY_INBOUND_METADATA_KEY
     loop, delivery, _ = bus_host(tmp_path)
     recovery = SimpleNamespace(register_recovery_task=Mock(), unregister_recovery_task=Mock(), admit=AsyncMock(return_value=False))
     if outcome == 'error':
@@ -189,7 +189,7 @@ async def test_recovery_registration_always_unregistered(tmp_path, outcome):
 
 
 async def test_completion_observes_stage_continuation_metadata(tmp_path):
-    from nanobot.session.turn_continuation import INTERNAL_CONTINUATION_PENDING_META
+    from kohaku.session.turn_continuation import INTERNAL_CONTINUATION_PENDING_META
     loop, delivery, _ = bus_host(tmp_path)
     async def stage(msg, **kwargs):
         msg.metadata[INTERNAL_CONTINUATION_PENDING_META] = True
@@ -236,7 +236,7 @@ async def test_completion_cancellation_preserves_computation_and_aborts_stream(t
 
 
 async def test_hung_cleanup_is_bounded_retains_input_and_releases_lock(tmp_path, monkeypatch):
-    import nanobot.agent.loop as module
+    import kohaku.agent.loop as module
     monkeypatch.setattr(module, '_BUS_CLEANUP_TIMEOUT_SECONDS', 0.01)
     loop, delivery, _ = bus_host(tmp_path)
     entered = asyncio.Event()
@@ -263,7 +263,7 @@ async def test_hung_cleanup_is_bounded_retains_input_and_releases_lock(tmp_path,
 
 
 async def test_redirected_cancel_uses_effective_key_and_compact_completes(tmp_path, monkeypatch):
-    import nanobot.agent.loop as module
+    import kohaku.agent.loop as module
     loop, delivery, _ = bus_host(tmp_path)
     pending = await loop.approval_admission.store(
         session_key='cron:job', channel='telegram', chat_id='42', summary='task',
@@ -295,7 +295,7 @@ async def test_redirected_cancel_uses_effective_key_and_compact_completes(tmp_pa
 
 @pytest.mark.parametrize('compact', [False, True])
 async def test_failure_notices_have_deadlines_before_cleanup(tmp_path, monkeypatch, compact):
-    import nanobot.agent.loop as module
+    import kohaku.agent.loop as module
     monkeypatch.setattr(module, '_BUS_CLEANUP_TIMEOUT_SECONDS', 0.01)
     loop, delivery, _ = bus_host(tmp_path)
     async def hang(*args, **kwargs):
@@ -314,8 +314,8 @@ async def test_failure_notices_have_deadlines_before_cleanup(tmp_path, monkeypat
 
 
 async def test_held_input_wakes_when_late_idle_finishes_without_another_turn(tmp_path, monkeypatch):
-    import nanobot.agent.loop as module
-    from nanobot.bus.queue import MessageBus
+    import kohaku.agent.loop as module
+    from kohaku.bus.queue import MessageBus
 
     monkeypatch.setattr(module, '_BUS_CLEANUP_TIMEOUT_SECONDS', 0.01)
     loop, delivery, _ = bus_host(tmp_path)
@@ -410,7 +410,7 @@ async def test_fence_requires_all_operations_to_settle(tmp_path):
 
 
 async def test_real_bus_leftovers_are_enqueued_once_in_fifo_order(tmp_path):
-    from nanobot.bus.queue import MessageBus
+    from kohaku.bus.queue import MessageBus
 
     loop, _, _ = bus_host(tmp_path)
     loop.bus = MessageBus()
@@ -428,7 +428,7 @@ async def test_real_bus_leftovers_are_enqueued_once_in_fifo_order(tmp_path):
 
 
 async def test_repeated_cancellation_fences_unfinished_stream_abort(tmp_path, monkeypatch):
-    import nanobot.agent.loop as module
+    import kohaku.agent.loop as module
 
     monkeypatch.setattr(module, '_BUS_CLEANUP_TIMEOUT_SECONDS', 0.01)
     loop, delivery, _ = bus_host(tmp_path)
@@ -497,7 +497,7 @@ async def test_repeated_cancellation_fences_unfinished_stream_abort(tmp_path, mo
 async def test_repeated_cancellation_waits_for_one_terminal_before_idle_or_admission(
     tmp_path, monkeypatch,
 ):
-    import nanobot.agent.loop as module
+    import kohaku.agent.loop as module
 
     monkeypatch.setattr(module, '_BUS_CLEANUP_TIMEOUT_SECONDS', 0.01)
     loop, delivery, _ = bus_host(tmp_path)
@@ -565,7 +565,7 @@ async def test_repeated_cancellation_waits_for_one_terminal_before_idle_or_admis
 
 
 async def test_cancellation_idle_joins_after_deadline_before_clear_or_admission(tmp_path, monkeypatch):
-    import nanobot.agent.loop as module
+    import kohaku.agent.loop as module
 
     monkeypatch.setattr(module, '_BUS_CLEANUP_TIMEOUT_SECONDS', 0.01)
     loop, delivery, _ = bus_host(tmp_path)
@@ -628,7 +628,7 @@ async def test_discarded_admitted_cancellation_does_not_publish_terminal(tmp_pat
 
 @pytest.mark.parametrize('phase', ['abort', 'terminal'])
 async def test_cooperative_cancellation_cleanup_timeout_fails_closed(tmp_path, monkeypatch, phase):
-    import nanobot.agent.loop as module
+    import kohaku.agent.loop as module
 
     monkeypatch.setattr(module, '_BUS_CLEANUP_TIMEOUT_SECONDS', 0.01)
     loop, delivery, _ = bus_host(tmp_path)

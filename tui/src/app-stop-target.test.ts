@@ -6,7 +6,7 @@ import {
   type TestRendererSetup,
 } from "@opentui/core/testing"
 
-import { NanobotTui, type AppOptions } from "./app"
+import { KohakuTui, type AppOptions } from "./app"
 import type { MessageOptions, WorkspaceScopePayload } from "./protocol"
 
 const options: AppOptions = {
@@ -92,7 +92,7 @@ describe("targeted stop", () => {
       screenMode: "alternate-screen",
       exitOnCtrlC: false,
     })
-    const app = NanobotTui.mount(
+    const app = KohakuTui.mount(
       setup.renderer,
       options,
       makeClient(sent, sentOptions, undefined, ["turn-1", "turn-2"]),
@@ -141,7 +141,7 @@ describe("targeted stop", () => {
       screenMode: "alternate-screen",
       exitOnCtrlC: false,
     })
-    const app = NanobotTui.mount(
+    const app = KohakuTui.mount(
       setup.renderer,
       options,
       makeClient(sent, sentOptions, undefined, ["turn-1", "turn-2"]),

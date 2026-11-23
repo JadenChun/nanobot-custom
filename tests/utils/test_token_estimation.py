@@ -7,8 +7,8 @@ from collections.abc import Iterator
 import pytest
 from tiktoken import Encoding, load
 
-from nanobot.utils import helpers
-from nanobot.utils.helpers import (
+from kohaku.utils import helpers
+from kohaku.utils.helpers import (
     estimate_message_tokens,
     estimate_prompt_tokens,
     estimate_prompt_tokens_chain,

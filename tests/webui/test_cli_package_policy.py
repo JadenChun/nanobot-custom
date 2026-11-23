@@ -4,8 +4,8 @@ import asyncio
 from types import SimpleNamespace
 from typing import Any
 
-from nanobot.webui.settings_contracts import SettingsRequest
-from nanobot.webui.settings_system import SystemSettingsHandler
+from kohaku.webui.settings_contracts import SettingsRequest
+from kohaku.webui.settings_system import SystemSettingsHandler
 
 
 class _Logger:

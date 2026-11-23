@@ -1,7 +1,7 @@
 [project]
-name = "nanobot-mobile-fixture"
+name = "kohaku-mobile-fixture"
 version = "0.1.0"
-description = "Deterministic non-agent fixture for the Nanobot Android client (M02)"
+description = "Deterministic non-agent fixture for the Kohaku Android client (M02)"
 requires-python = ">=3.12"
 dependencies = [
   "fastapi>=0.116,<1",

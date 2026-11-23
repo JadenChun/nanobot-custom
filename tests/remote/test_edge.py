@@ -13,18 +13,18 @@ from websockets.datastructures import Headers
 from websockets.http11 import Request as WsRequest
 from websockets.http11 import Response
 
-from nanobot.remote import edge as edge_module
-from nanobot.remote.client import RemoteAccessClient
-from nanobot.remote.edge import (
+from kohaku.remote import edge as edge_module
+from kohaku.remote.client import RemoteAccessClient
+from kohaku.remote.edge import (
     AccessIdentity,
     EdgeAuthError,
     MediaResult,
     MobileGatewayEdge,
     OwnerAccessValidator,
 )
-from nanobot.remote.owner import RemoteAccessOwner
-from nanobot.remote.protocol import MutationEnvelope, MutationMode, stable_operation_digest
-from nanobot.remote.replay import OperationReplayCache
+from kohaku.remote.owner import RemoteAccessOwner
+from kohaku.remote.protocol import MutationEnvelope, MutationMode, stable_operation_digest
+from kohaku.remote.replay import OperationReplayCache
 from tests.remote.proof_helpers import encode_proof_base64url, new_device_key, sign_claims
 
 ORIGIN = "https://fedora.taila1e707.ts.net"
@@ -92,7 +92,7 @@ def edge_setup(tmp_path: Path):
 
 
 def _proof_headers(owner: RemoteAccessOwner, pairing_id: str, key, public_der: bytes) -> list[tuple[str, str]]:
-    from nanobot.remote.device_proof import DeviceProofClaims
+    from kohaku.remote.device_proof import DeviceProofClaims
 
     payload = owner.pairing.proof_challenge_claims(pairing_id)
     assert payload is not None
@@ -359,7 +359,7 @@ async def test_chat_read_cannot_send_stop_or_other_mutation_frames(edge_setup) -
     stop = await edge.handle_ws_frame(identity, 7, {"type": "stop"})
     assert stop == {"ok": False, "error": "unknown_frame"}
 
-    from nanobot.remote.operations import mobile_frame_allowed
+    from kohaku.remote.operations import mobile_frame_allowed
 
     assert not mobile_frame_allowed(
         identity.scopes,
@@ -866,7 +866,7 @@ async def test_revoked_owner_socket_revalidation_denies(edge_setup) -> None:
         "install-owner", ("chat.read", "chat.write", "owner"),
         device_fingerprint="1" * 64, device_generation=1, origin=ORIGIN,
     )
-    from nanobot.remote.edge import OwnerAccessValidator
+    from kohaku.remote.edge import OwnerAccessValidator
 
     validator = OwnerAccessValidator(
         RemoteAccessClient(owner.socket_path, timeout=2.0),
@@ -1107,10 +1107,10 @@ async def test_large_signed_video_supports_preview_and_tail_seek(edge_setup, tmp
     import logging
     import re
 
-    from nanobot.config.schema import RemoteAccessConfig
-    from nanobot.remote.composition import build_mobile_edge
-    from nanobot.webui.media_api import sign_media_path
-    from nanobot.webui.media_gateway import WebUIMediaGateway
+    from kohaku.config.schema import RemoteAccessConfig
+    from kohaku.remote.composition import build_mobile_edge
+    from kohaku.webui.media_api import sign_media_path
+    from kohaku.webui.media_gateway import WebUIMediaGateway
 
     owner, _, pair = edge_setup
     limit = 8 * 1024 * 1024

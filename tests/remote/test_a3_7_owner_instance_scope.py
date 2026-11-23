@@ -13,12 +13,12 @@ from pathlib import Path
 import pytest
 from websockets.http11 import Request as WsRequest
 
-from nanobot.config.loader import save_config
-from nanobot.config.schema import Config
-from nanobot.remote.composition import owner_socket_path, remote_access_root
-from nanobot.remote.owner import RemoteAccessOwner
-from nanobot.webui.settings_remote import handle_remote_access
-from nanobot.webui.settings_services import WebUISettingsConfig
+from kohaku.config.loader import save_config
+from kohaku.config.schema import Config
+from kohaku.remote.composition import owner_socket_path, remote_access_root
+from kohaku.remote.owner import RemoteAccessOwner
+from kohaku.webui.settings_remote import handle_remote_access
+from kohaku.webui.settings_services import WebUISettingsConfig
 
 _PREFIX = "/api/settings/remote-access"
 

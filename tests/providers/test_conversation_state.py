@@ -9,7 +9,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from nanobot.providers.base import (
+from kohaku.providers.base import (
     GenerationSettings,
     LLMProvider,
     LLMResponse,
@@ -18,7 +18,7 @@ from nanobot.providers.base import (
     ProviderConversationTransportReceipt,
     ToolCallRequest,
 )
-from nanobot.providers.conversation_state import (
+from kohaku.providers.conversation_state import (
     ConversationRequestBinding,
     ProviderConversationStateController,
     ProviderStateSettlement,
@@ -952,7 +952,7 @@ def test_controller_estimates_active_state_plus_pending_delta(monkeypatch) -> No
         return 100, "test-counter"
 
     monkeypatch.setattr(
-        "nanobot.providers.conversation_state.estimate_prompt_tokens_chain",
+        "kohaku.providers.conversation_state.estimate_prompt_tokens_chain",
         estimate,
     )
 
@@ -1016,7 +1016,7 @@ def test_context_estimate_rejects_the_same_binding_mismatches_as_dispatch(
             )
         )
     monkeypatch.setattr(
-        "nanobot.providers.conversation_state.estimate_prompt_tokens_chain",
+        "kohaku.providers.conversation_state.estimate_prompt_tokens_chain",
         lambda *_args: (_ for _ in ()).throw(AssertionError("must not estimate mismatched state")),
     )
 

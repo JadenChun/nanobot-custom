@@ -1,4 +1,4 @@
-"""Persistence tests for ``nanobot.cron.service.CronService``.
+"""Persistence tests for ``kohaku.cron.service.CronService``.
 
 These tests target the specific failure mode where a corrupt or partially
 written ``jobs.json`` would silently turn into an empty job list on the next
@@ -13,8 +13,8 @@ from typing import Callable
 
 import pytest
 
-from nanobot.cron.service import CronService
-from nanobot.cron.types import CronJob, CronPayload, CronSchedule
+from kohaku.cron.service import CronService
+from kohaku.cron.types import CronJob, CronPayload, CronSchedule
 from tests.cron import p6_compat_fixtures as cases
 from tests.cron.stage3_fixtures import offline_denial  # noqa: F401
 

@@ -7,7 +7,7 @@
     },
     "error": {
       "title": "Không thể kết nối tới Kohaku",
-      "gatewayHint": "Hãy chắc chắn gateway đang chạy (`nanobot gateway`) và trang này được mở trên cùng máy."
+      "gatewayHint": "Hãy chắc chắn gateway đang chạy (`kohaku gateway`) và trang này được mở trên cùng máy."
     },
     "auth": {
       "label": "Mật khẩu",
@@ -1576,7 +1576,7 @@
     "close": "Đóng xem trước tệp",
     "loading": "Đang tải bản xem trước...",
     "failed": "Không thể xem trước tệp này.",
-    "routeMissing": "Xem trước tệp cần gateway mới nhất. Hãy khởi động lại nanobot gateway rồi thử lại.",
+    "routeMissing": "Xem trước tệp cần gateway mới nhất. Hãy khởi động lại kohaku gateway rồi thử lại.",
     "resize": "Đổi kích thước bản xem trước tệp",
     "truncated": "Bản xem trước bị cắt vì tệp này lớn."
   },

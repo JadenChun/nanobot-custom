@@ -8,11 +8,11 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from nanobot.agent.delegation import ForegroundAgentManager
-from nanobot.agent.tools.mcp import MCPToolWrapper, connect_mcp_servers, is_read_only_mcp_tool
-from nanobot.agent.tools.registry import ToolRegistry
-from nanobot.config.schema import MCPServerConfig
-from nanobot.security.network import configure_ssrf_whitelist
+from kohaku.agent.delegation import ForegroundAgentManager
+from kohaku.agent.tools.mcp import MCPToolWrapper, connect_mcp_servers, is_read_only_mcp_tool
+from kohaku.agent.tools.registry import ToolRegistry
+from kohaku.config.schema import MCPServerConfig
+from kohaku.security.network import configure_ssrf_whitelist
 
 
 class _FakeTextContent:
@@ -465,7 +465,7 @@ async def test_connect_mcp_servers_enabled_tools_warns_on_unknown_entries(
     def _warning(message: str, *args: object) -> None:
         warnings.append(message.format(*args))
 
-    monkeypatch.setattr("nanobot.agent.tools.mcp.logger.warning", _warning)
+    monkeypatch.setattr("kohaku.agent.tools.mcp.logger.warning", _warning)
 
     stack = AsyncExitStack()
     await stack.__aenter__()
@@ -513,7 +513,7 @@ async def test_foreground_manager_filters_to_read_only_mcp_tools(
         workspace=tmp_path,
         mcp_servers={"test": MCPServerConfig(url="http://127.0.0.1:8765/mcp")},
     )
-    monkeypatch.setattr("nanobot.agent.tools.mcp._probe_http_url", AsyncMock(return_value=True))
+    monkeypatch.setattr("kohaku.agent.tools.mcp._probe_http_url", AsyncMock(return_value=True))
     configure_ssrf_whitelist(["127.0.0.1/32"])
     try:
         await manager._connect_read_only_mcp()

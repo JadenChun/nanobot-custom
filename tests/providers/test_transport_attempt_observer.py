@@ -13,11 +13,11 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from nanobot.providers.azure_openai_provider import AzureOpenAIProvider
-from nanobot.providers.base import ProviderCallContext
-from nanobot.providers.openai_compat_provider import OpenAICompatProvider
-from nanobot.providers.registry import find_by_name
-from nanobot.providers.xai_grok_provider import (
+from kohaku.providers.azure_openai_provider import AzureOpenAIProvider
+from kohaku.providers.base import ProviderCallContext
+from kohaku.providers.openai_compat_provider import OpenAICompatProvider
+from kohaku.providers.registry import find_by_name
+from kohaku.providers.xai_grok_provider import (
     XAIGrokProvider,
     _XAIIncompleteHostedToolError,
 )
@@ -161,7 +161,7 @@ async def test_c3_xai_recovery_observes_primary_and_recovery_dispatch(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
-        "nanobot.providers.xai_grok_provider.get_xai_oauth_token",
+        "kohaku.providers.xai_grok_provider.get_xai_oauth_token",
         lambda **_kwargs: SimpleNamespace(
             access="subscription-token",
             refresh="refresh-token",
@@ -180,7 +180,7 @@ async def test_c3_xai_recovery_observes_primary_and_recovery_dispatch(
             )
         return "recovered answer", [], "stop", None, None
 
-    monkeypatch.setattr("nanobot.providers.xai_grok_provider._request_xai", fake_request)
+    monkeypatch.setattr("kohaku.providers.xai_grok_provider._request_xai", fake_request)
     provider = XAIGrokProvider()
     provider._extra_body = {"tools": []}
     context = ProviderCallContext(on_transport_attempt=log.observe)

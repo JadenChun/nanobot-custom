@@ -153,7 +153,7 @@ export class Transcript {
   ) {
     this.codeRailColor = RGBA.fromHex(theme.border)
     this.root = new ScrollBoxRenderable(renderer, {
-      id: this.idPrefix ? `${this.idPrefix}-transcript` : "nanobot-tui-transcript",
+      id: this.idPrefix ? `${this.idPrefix}-transcript` : "kohaku-tui-transcript",
       width: "100%",
       minHeight: 0,
       flexGrow: 0,
@@ -220,7 +220,7 @@ export class Transcript {
       paddingLeft: 1,
       paddingRight: 1,
     })
-    const title = this.createText(`>_  nanobot  v${options.version}`, "text", true)
+    const title = this.createText(`>_  Kohaku  v${options.version}`, "text", true)
     const context = this.createText([
       "",
       `${options.model}     ${options.access}`,

@@ -15,17 +15,17 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from nanobot.agent.policy import (
+from kohaku.agent.policy import (
     RiskyActionPolicy,
     nested_launch_id,
     nested_launch_path,
 )
-from nanobot.agent.tools.shell import ExecTool
-from nanobot.agent.turn import ApprovalDecision, TurnContext
-from nanobot.agent.turn_admission import ApprovalAdmission
-from nanobot.providers.base import ToolCallRequest
-from nanobot.utils import git_sync
-from nanobot.utils.git_sync import sync_context_repo
+from kohaku.agent.tools.shell import ExecTool
+from kohaku.agent.turn import ApprovalDecision, TurnContext
+from kohaku.agent.turn_admission import ApprovalAdmission
+from kohaku.providers.base import ToolCallRequest
+from kohaku.utils import git_sync
+from kohaku.utils.git_sync import sync_context_repo
 
 LAUNCH_REFUSAL = "launch_confinement_unproven"
 REDUCED_LAUNCH = "codex --yolo 'fix the bug'"

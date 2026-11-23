@@ -1,12 +1,12 @@
 """Independent factory-level check of the accepted gateway-wide child cap."""
 import asyncio
 
-from nanobot.agent.child_sessions import ChildAdmission
-from nanobot.agent.loop import AgentLoop
-from nanobot.agent.tools.registry import ToolRegistry
-from nanobot.agent.turn import TurnRequest
-from nanobot.providers.base import LLMResponse, ToolCallRequest
-from nanobot.session.manager import SessionManager
+from kohaku.agent.child_sessions import ChildAdmission
+from kohaku.agent.loop import AgentLoop
+from kohaku.agent.tools.registry import ToolRegistry
+from kohaku.agent.turn import TurnRequest
+from kohaku.providers.base import LLMResponse, ToolCallRequest
+from kohaku.session.manager import SessionManager
 from tests.agent import test_migration_engine as engine_fixtures
 from tests.agent.test_migration_engine import ScriptedProvider
 from tests.agent.test_migration_source_engine import upgrade

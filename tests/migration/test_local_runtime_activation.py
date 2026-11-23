@@ -6,23 +6,23 @@ from pathlib import Path
 
 import pytest
 
-from nanobot.agent.loop import AgentLoop
-from nanobot.agent.tools.registry import ToolRegistry
-from nanobot.agent.turn import RunStatus, TurnRequest
-from nanobot.bus.events import InboundMessage
-from nanobot.config.schema import Config
-from nanobot.providers.base import LLMProvider, LLMResponse, ToolCallRequest
-from nanobot.runtime_composition import (
+from kohaku.agent.loop import AgentLoop
+from kohaku.agent.tools.registry import ToolRegistry
+from kohaku.agent.turn import RunStatus, TurnRequest
+from kohaku.bus.events import InboundMessage
+from kohaku.config.schema import Config
+from kohaku.providers.base import LLMProvider, LLMResponse, ToolCallRequest
+from kohaku.runtime_composition import (
     RuntimeComposition,
     RuntimePreflightError,
     RuntimeState,
     runtime_preflight,
 )
-from nanobot.session.execution_owner import acquire_execution
-from nanobot.session.pending_followups import mint_pending_followup_id, record_pending_followup
-from nanobot.session.persistence_metadata import SOURCE_PENDING_FOLLOWUPS_METADATA_KEY
-from nanobot.session.recovery import RecoveryCoordinator
-from nanobot.session.source_store import SourceSessionStore
+from kohaku.session.execution_owner import acquire_execution
+from kohaku.session.pending_followups import mint_pending_followup_id, record_pending_followup
+from kohaku.session.persistence_metadata import SOURCE_PENDING_FOLLOWUPS_METADATA_KEY
+from kohaku.session.recovery import RecoveryCoordinator
+from kohaku.session.source_store import SourceSessionStore
 
 
 class _ScriptedProvider(LLMProvider):
@@ -108,7 +108,7 @@ def test_default_composition_constructs_real_tools_and_reopens_one_turn(
             ),
             LLMResponse(content="read complete", tool_calls=[]),
         ])
-        monkeypatch.setattr("nanobot.providers.factory.make_provider", lambda _config: provider)
+        monkeypatch.setattr("kohaku.providers.factory.make_provider", lambda _config: provider)
 
         first = RuntimeComposition.define(config)
         assert first.state is RuntimeState.NEW
@@ -150,7 +150,7 @@ def test_default_composition_constructs_real_tools_and_reopens_one_turn(
 
 @asynccontextmanager
 async def _running_composition(config, provider, monkeypatch):
-    monkeypatch.setattr("nanobot.providers.factory.make_provider", lambda _config: provider)
+    monkeypatch.setattr("kohaku.providers.factory.make_provider", lambda _config: provider)
     composition = RuntimeComposition.define(config)
     handle = await composition.acquire()
     run_task = asyncio.create_task(handle.agent.run())
@@ -298,7 +298,7 @@ def test_from_config_rejects_malformed_session_evidence_before_effects(
         for path in tmp_path.rglob("*") if path.is_file()
     }
     monkeypatch.setattr(
-        "nanobot.providers.factory.make_provider",
+        "kohaku.providers.factory.make_provider",
         lambda _config: pytest.fail("provider construction preceded session preflight"),
     )
     with pytest.raises(RuntimePreflightError):
@@ -317,7 +317,7 @@ def test_from_config_rejects_unsupported_idle_before_runtime_effects(
     config.agents.defaults.session_ttl_minutes = 15
     before = tuple(tmp_path.iterdir())
     monkeypatch.setattr(
-        "nanobot.providers.factory.make_provider",
+        "kohaku.providers.factory.make_provider",
         lambda _config: pytest.fail("provider construction preceded idle preflight"),
     )
     with pytest.raises(RuntimePreflightError, match="idle"):
@@ -335,7 +335,7 @@ async def test_default_composition_injects_canonical_bus_followup_once(
         [LLMResponse(content="first response"), LLMResponse(content="follow-up handled")],
         block_first=True,
     )
-    monkeypatch.setattr("nanobot.providers.factory.make_provider", lambda _config: provider)
+    monkeypatch.setattr("kohaku.providers.factory.make_provider", lambda _config: provider)
 
     composition = RuntimeComposition.define(config)
     handle = await composition.acquire()

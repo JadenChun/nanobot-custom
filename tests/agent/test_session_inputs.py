@@ -4,12 +4,12 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from nanobot.agent.loop import AgentLoop
-from nanobot.agent.tools.session_messages import SendSessionMessageTool
-from nanobot.bus.events import InboundMessage
-from nanobot.providers.base import GenerationSettings, LLMResponse
-from nanobot.runtime_context import public_history_message
-from nanobot.session.session_messages import SESSION_MESSAGE_METADATA_KEY
+from kohaku.agent.loop import AgentLoop
+from kohaku.agent.tools.session_messages import SendSessionMessageTool
+from kohaku.bus.events import InboundMessage
+from kohaku.providers.base import GenerationSettings, LLMResponse
+from kohaku.runtime_context import public_history_message
+from kohaku.session.session_messages import SESSION_MESSAGE_METADATA_KEY
 from tests.agent import p6_admitted_fixtures
 from tests.agent.test_loop_runner_integration import _execute_inbound
 
@@ -71,7 +71,7 @@ async def test_session_message_runs_as_user_input_and_replies_on_target_route(
     admitted_async,
     session_tool,
 ) -> None:
-    monkeypatch.setattr("nanobot.config.paths.get_data_dir", lambda: tmp_path / "state")
+    monkeypatch.setattr("kohaku.config.paths.get_data_dir", lambda: tmp_path / "state")
     loop = await _loop(tmp_path, admitted_async, session_tool=session_tool)
     loop.sessions.save(loop.sessions.get_or_create("telegram:target"))
     msg = _message()
@@ -109,7 +109,7 @@ async def test_session_message_text_is_not_dispatched_as_a_slash_command(
     admitted_async,
     session_tool,
 ) -> None:
-    monkeypatch.setattr("nanobot.config.paths.get_data_dir", lambda: tmp_path / "state")
+    monkeypatch.setattr("kohaku.config.paths.get_data_dir", lambda: tmp_path / "state")
     loop = await _loop(tmp_path, admitted_async, session_tool=session_tool)
     loop.sessions.save(loop.sessions.get_or_create("telegram:target"))
     # Invoke only this real consumer while the fixture's external-effect fences remain.

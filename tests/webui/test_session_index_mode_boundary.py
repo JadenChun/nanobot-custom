@@ -4,10 +4,10 @@ from pathlib import Path
 
 import pytest
 
-from nanobot.session.manager import Session, SessionManager
-from nanobot.session.runtime_authority import DurableSessionAuthority, OfflineSessionOperator
-from nanobot.session.session_mode import SessionModeError
-from nanobot.webui import session_list_index as index
+from kohaku.session.manager import Session, SessionManager
+from kohaku.session.runtime_authority import DurableSessionAuthority, OfflineSessionOperator
+from kohaku.session.session_mode import SessionModeError
+from kohaku.webui import session_list_index as index
 
 
 @pytest.fixture(autouse=True)

@@ -7,7 +7,7 @@ from dataclasses import replace
 
 import pytest
 
-from nanobot._integration_diagnostics import (
+from kohaku._integration_diagnostics import (
     MAX_BYTES,
     MAX_DEPTH,
     MAX_MESSAGES,
@@ -19,9 +19,9 @@ from nanobot._integration_diagnostics import (
     legacy_evidence,
     operator_compare,
 )
-from nanobot.session.manager import Session, SessionManager
-from nanobot.session.runtime_authority import OfflineSessionOperator
-from nanobot.session.source_store import SourceSnapshot, SourceState
+from kohaku.session.manager import Session, SessionManager
+from kohaku.session.runtime_authority import OfflineSessionOperator
+from kohaku.session.source_store import SourceSnapshot, SourceState
 from tests.migration.p5_stage4_fixtures import (
     Effects,
     config_at,

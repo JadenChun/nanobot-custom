@@ -31,7 +31,7 @@ export class QueuePreview {
     this.theme = theme
     this.editKey = optionArrowUp(platform)
     this.root = new BoxRenderable(renderer, {
-      id: "nanobot-tui-queue-preview",
+      id: "kohaku-tui-queue-preview",
       width: "100%",
       height: 1,
       flexShrink: 0,
@@ -42,14 +42,14 @@ export class QueuePreview {
       backgroundColor: RGBA.defaultBackground(),
     })
     this.header = new TextRenderable(renderer, {
-      id: "nanobot-tui-queue-header",
+      id: "kohaku-tui-queue-header",
       width: "100%",
       height: 1,
       flexShrink: 0,
       truncate: true,
     })
     this.rows = Array.from({ length: MAX_VISIBLE }, (_, index) => new TextRenderable(renderer, {
-      id: `nanobot-tui-queue-row-${index}`,
+      id: `kohaku-tui-queue-row-${index}`,
       width: "100%",
       height: 1,
       flexShrink: 0,

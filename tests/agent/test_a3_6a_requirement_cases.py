@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from nanobot.agent.skills import SkillsLoader
+from kohaku.agent.skills import SkillsLoader
 
 
 def _write_skill(root: Path, name: str, frontmatter: list[str]) -> Path:
@@ -123,7 +123,7 @@ def test_c3_one_satisfied_alternative_makes_skill_available(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, present: str
 ) -> None:
     monkeypatch.setattr(
-        "nanobot.agent.skills.shutil.which",
+        "kohaku.agent.skills.shutil.which",
         lambda command: f"/fake/{command}" if command == present else None,
     )
     loader = _alternatives_loader(tmp_path)
@@ -139,7 +139,7 @@ def test_c3_one_satisfied_alternative_makes_skill_available(
 def test_c4_no_satisfied_alternative_makes_skill_unavailable(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr("nanobot.agent.skills.shutil.which", lambda _command: None)
+    monkeypatch.setattr("kohaku.agent.skills.shutil.which", lambda _command: None)
     loader = _alternatives_loader(tmp_path)
 
     available, reason = loader.get_skill_availability("platform-skill")
@@ -150,7 +150,7 @@ def test_c4_no_satisfied_alternative_makes_skill_unavailable(
 
 def test_mobile_skills_declare_platform_alternatives() -> None:
     """The two mobile skills require npx plus one platform CLI, not all three."""
-    builtin = Path(__file__).resolve().parents[2] / "nanobot" / "skills"
+    builtin = Path(__file__).resolve().parents[2] / "kohaku" / "skills"
     loader = SkillsLoader(builtin.parent, builtin_skills_dir=builtin)
     for name in ("mobile-app-testing", "mobile-dogfood"):
         requirements = loader.get_skill_requirements(name)

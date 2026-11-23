@@ -8,7 +8,7 @@ import httpx
 import pytest
 from openai import AsyncOpenAI
 
-from nanobot.agent.context_governance import (
+from kohaku.agent.context_governance import (
     ContextGovernanceConfig,
     ContextGovernor,
     ContextWindowExceededError,
@@ -16,33 +16,33 @@ from nanobot.agent.context_governance import (
     SourceCompactionState,
     SourceCompactionUnavailableError,
 )
-from nanobot.agent.tools.execution import KnownToolResult
-from nanobot.agent.tools.registry import ToolRegistry
-from nanobot.agent.turn import ToolOutcome
-from nanobot.providers.base import (
+from kohaku.agent.tools.execution import KnownToolResult
+from kohaku.agent.tools.registry import ToolRegistry
+from kohaku.agent.turn import ToolOutcome
+from kohaku.providers.base import (
     GenerationSettings,
     LLMResponse,
     LLMUsage,
     ProviderCallContext,
 )
-from nanobot.providers.conversation_state import ProviderConversationStateController
-from nanobot.providers.key_pool import KeyPoolCoordinator
-from nanobot.providers.openai_compat_provider import OpenAICompatProvider
-from nanobot.providers.registry import find_by_name
-from nanobot.providers.request_budget import derive_provider_request_limits
-from nanobot.session.execution_owner import acquire_execution
-from nanobot.session.manager import SessionWriteConflict
-from nanobot.session.source import SourceValidationError, prefix_digest
-from nanobot.session.source_projection import (
+from kohaku.providers.conversation_state import ProviderConversationStateController
+from kohaku.providers.key_pool import KeyPoolCoordinator
+from kohaku.providers.openai_compat_provider import OpenAICompatProvider
+from kohaku.providers.registry import find_by_name
+from kohaku.providers.request_budget import derive_provider_request_limits
+from kohaku.session.execution_owner import acquire_execution
+from kohaku.session.manager import SessionWriteConflict
+from kohaku.session.source import SourceValidationError, prefix_digest
+from kohaku.session.source_projection import (
     CheckpointNode,
     RuntimeNode,
     SourceNode,
     project_source,
     source_nodes,
 )
-from nanobot.session.source_request import SourceRequestLedger, SourceTranscript
-from nanobot.session.turn_writer import SourceTurnWriter
-from nanobot.utils.llm_runtime import LLMRuntime
+from kohaku.session.source_request import SourceRequestLedger, SourceTranscript
+from kohaku.session.turn_writer import SourceTurnWriter
+from kohaku.utils.llm_runtime import LLMRuntime
 from tests.agent.test_source_compaction_publication import state_for
 from tests.agent.test_source_compaction_publication import store as store
 
@@ -239,7 +239,7 @@ async def test_repeated_pressure_compaction_keeps_live_instruction_and_advances_
 async def test_local_manager_prefix_then_disjoint_canonical_fold_uses_real_source_and_sdk(
     store, tail_first_role, expect_prefix,
 ):
-    from nanobot.providers.base import PreparedRequestBudgetPreview
+    from kohaku.providers.base import PreparedRequestBudgetPreview
 
     model = 'Qwen3.8-27B-UD-Q6_K_XL'
     context_window = 12000
@@ -388,7 +388,7 @@ async def test_local_manager_prefix_then_disjoint_canonical_fold_uses_real_sourc
             messages=view.messages(), tools=tools, model=model, generation=generation,
             provider_context=main_context, stream=True, tool_choice='auto',
         )
-        from nanobot.agent.memory import Consolidator
+        from kohaku.agent.memory import Consolidator
 
         prefix_payload = Consolidator.source_prefix_summary_messages(
             selected_prefix.transcript.messages(),
@@ -551,9 +551,9 @@ async def test_local_manager_prefix_then_disjoint_canonical_fold_uses_real_sourc
 async def test_local_manager_prefix_uses_actual_body_for_quote_heavy_source(store):
     """Price the native prefix actually dispatched, not its larger canonical surrogate."""
 
-    from nanobot.agent.memory import Consolidator
-    from nanobot.providers.base import PreparedRequestBudgetPreview
-    from nanobot.session.checkpoint_dependencies import SummaryDependencyProof
+    from kohaku.agent.memory import Consolidator
+    from kohaku.providers.base import PreparedRequestBudgetPreview
+    from kohaku.session.checkpoint_dependencies import SummaryDependencyProof
 
     model = 'Qwen3.8-27B-UD-Q6_K_XL'
     context_window = 32768
@@ -794,9 +794,9 @@ async def test_shared_overall_deadline_expires_across_progressing_summary_folds(
 async def test_four_actual_auxiliary_folds_share_deadline_across_provider_pacing(
     store, monkeypatch,
 ):
-    from nanobot.agent.memory import Consolidator
-    from nanobot.providers.base import PreparedRequestBudgetPreview
-    from nanobot.session.checkpoint_dependencies import SummaryDependencyProof
+    from kohaku.agent.memory import Consolidator
+    from kohaku.providers.base import PreparedRequestBudgetPreview
+    from kohaku.session.checkpoint_dependencies import SummaryDependencyProof
 
     model = 'Qwen3.8-27B-UD-Q6_K_XL'
     context_window = 32768

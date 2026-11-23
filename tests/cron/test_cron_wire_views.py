@@ -6,10 +6,10 @@ from unittest.mock import Mock
 
 import pytest
 
-from nanobot.agent.tools.cron import CronTool
-from nanobot.cron import types
-from nanobot.cron.service import CronService
-from nanobot.cron.types import CronDestination, CronJobState, CronPayload, CronRunRecord, CronStore
+from kohaku.agent.tools.cron import CronTool
+from kohaku.cron import types
+from kohaku.cron.service import CronService
+from kohaku.cron.types import CronDestination, CronJobState, CronPayload, CronRunRecord, CronStore
 
 
 @pytest.mark.parametrize("container", [list, tuple, iter])

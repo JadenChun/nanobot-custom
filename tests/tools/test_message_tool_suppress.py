@@ -6,13 +6,13 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from nanobot.agent.context import TranscriptInput
-from nanobot.agent.tools.message import MessageTool
-from nanobot.agent.turn import RunPolicyContext, RunStatus, TurnContext
-from nanobot.bus.events import InboundMessage, OutboundMessage
-from nanobot.providers.base import LLMResponse, ToolCallRequest
-from nanobot.utils.progress_events import output_events
-from nanobot.utils.runtime import EMPTY_FINAL_RESPONSE_MESSAGE
+from kohaku.agent.context import TranscriptInput
+from kohaku.agent.tools.message import MessageTool
+from kohaku.agent.turn import RunPolicyContext, RunStatus, TurnContext
+from kohaku.bus.events import InboundMessage, OutboundMessage
+from kohaku.providers.base import LLMResponse, ToolCallRequest
+from kohaku.utils.progress_events import output_events
+from kohaku.utils.runtime import EMPTY_FINAL_RESPONSE_MESSAGE
 from tests.agent.p6_admitted_fixtures import admitted_async as admitted_async
 from tests.tools.p6_message_fixtures import execute_message, make_loop
 

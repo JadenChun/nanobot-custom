@@ -106,7 +106,7 @@ impl PipeAdapter {
         }
         let mut command = Command::new(interpreter);
         command
-            .args(["-I", "-m", "nanobot.desktop"])
+            .args(["-I", "-m", "kohaku.desktop"])
             .current_dir("/")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())

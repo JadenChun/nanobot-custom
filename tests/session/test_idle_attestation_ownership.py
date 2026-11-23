@@ -4,9 +4,9 @@ from dataclasses import replace
 
 import pytest
 
-from nanobot.session.artifact_store import PrivateArtifactStore
-from nanobot.session.idle_checkpoint import IdleCheckpointError
-from nanobot.session.manager import JsonlSessionStore
+from kohaku.session.artifact_store import PrivateArtifactStore
+from kohaku.session.idle_checkpoint import IdleCheckpointError
+from kohaku.session.manager import JsonlSessionStore
 from tests.session.test_idle_checkpoint import _admit, _artifact_source, _seed
 
 

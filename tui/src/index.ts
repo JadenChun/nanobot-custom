@@ -1,4 +1,4 @@
-import { NanobotTui, sessionExitMessage, type AppOptions } from "./app"
+import { KohakuTui, sessionExitMessage, type AppOptions } from "./app"
 import { desktopConnectionSource } from "./desktop"
 
 if (process.argv.slice(2).join(" ") === "--desktop-protocol") {
@@ -7,53 +7,53 @@ if (process.argv.slice(2).join(" ") === "--desktop-protocol") {
 }
 const desktop = desktopConnectionSource()
 
-// Keep in sync with _TUI_DETACH_EXIT_CODE in nanobot/cli/tui_launcher.py.
+// Keep in sync with _TUI_DETACH_EXIT_CODE in kohaku/cli/tui_launcher.py.
 const TUI_DETACH_EXIT_CODE = 90
 
 function themePreference(): AppOptions["theme"] {
-  const value = process.env.NANOBOT_TUI_THEME?.trim() || "auto"
+  const value = process.env.KOHAKU_TUI_THEME?.trim() || "auto"
   if (value === "auto" || value === "dark" || value === "light") return value
-  throw new Error("NANOBOT_TUI_THEME must be auto, dark, or light")
+  throw new Error("KOHAKU_TUI_THEME must be auto, dark, or light")
 }
 
-const workspace = process.env.NANOBOT_TUI_WORKSPACE?.trim() || ""
-const bootstrapUrl = process.env.NANOBOT_TUI_BOOTSTRAP_URL?.trim() || ""
-const wsUrl = process.env.NANOBOT_TUI_WS_URL?.trim() || ""
-const healthUrl = process.env.NANOBOT_TUI_HEALTH_URL?.trim() || ""
-const gatewayStopCommand = process.env.NANOBOT_TUI_GATEWAY_STOP_COMMAND?.trim()
-  || "nanobot gateway stop"
+const workspace = process.env.KOHAKU_TUI_WORKSPACE?.trim() || ""
+const bootstrapUrl = process.env.KOHAKU_TUI_BOOTSTRAP_URL?.trim() || ""
+const wsUrl = process.env.KOHAKU_TUI_WS_URL?.trim() || ""
+const healthUrl = process.env.KOHAKU_TUI_HEALTH_URL?.trim() || ""
+const gatewayStopCommand = process.env.KOHAKU_TUI_GATEWAY_STOP_COMMAND?.trim()
+  || "kohaku gateway stop"
 if (!desktop && !bootstrapUrl && !wsUrl) {
-  throw new Error("NANOBOT_TUI_BOOTSTRAP_URL or NANOBOT_TUI_WS_URL is required")
+  throw new Error("KOHAKU_TUI_BOOTSTRAP_URL or KOHAKU_TUI_WS_URL is required")
 }
 const options: AppOptions = {
   ...(desktop ? { resolveConnection: desktop.resolve, desktopGatewayId: desktop.gatewayId } : bootstrapUrl
     ? {
         bootstrapUrl,
-        bootstrapSecret: process.env.NANOBOT_TUI_BOOTSTRAP_SECRET?.trim() || "",
+        bootstrapSecret: process.env.KOHAKU_TUI_BOOTSTRAP_SECRET?.trim() || "",
         healthUrl: healthUrl || undefined,
       }
     : { wsUrl }),
-  apiUrl: process.env.NANOBOT_TUI_API_URL?.trim() || "",
-  apiToken: process.env.NANOBOT_TUI_API_TOKEN?.trim() || "",
-  chatId: process.env.NANOBOT_TUI_CHAT_ID?.trim() || undefined,
-  model: process.env.NANOBOT_TUI_MODEL?.trim() || "unknown model",
-  modelPreset: process.env.NANOBOT_TUI_MODEL_PRESET?.trim() || "default",
+  apiUrl: process.env.KOHAKU_TUI_API_URL?.trim() || "",
+  apiToken: process.env.KOHAKU_TUI_API_TOKEN?.trim() || "",
+  chatId: process.env.KOHAKU_TUI_CHAT_ID?.trim() || undefined,
+  model: process.env.KOHAKU_TUI_MODEL?.trim() || "unknown model",
+  modelPreset: process.env.KOHAKU_TUI_MODEL_PRESET?.trim() || "default",
   workspace,
-  version: process.env.NANOBOT_TUI_VERSION?.trim() || "dev",
-  access: process.env.NANOBOT_TUI_ACCESS?.trim() || "workspace access",
+  version: process.env.KOHAKU_TUI_VERSION?.trim() || "dev",
+  access: process.env.KOHAKU_TUI_ACCESS?.trim() || "workspace access",
   theme: themePreference(),
   onDetach: (chatId) => {
     process.exitCode = TUI_DETACH_EXIT_CODE
     process.stdout.write("Detached; the agent continues in the background.\n")
     if (!desktop && chatId) process.stdout.write(sessionExitMessage(chatId))
-    process.stdout.write(desktop ? "Desktop remains running. Reconnect with nanobot.\n" : `Stop it with: ${gatewayStopCommand}\n`)
+    process.stdout.write(desktop ? "Desktop remains running. Reconnect with Kohaku.\n" : `Stop it with: ${gatewayStopCommand}\n`)
   },
   onExit: (chatId) => {
     process.stdout.write(desktop ? "Disconnected from Desktop; its backend remains running.\n" : sessionExitMessage(chatId))
   },
 }
 
-let app: NanobotTui | undefined
+let app: KohakuTui | undefined
 let shuttingDown = false
 
 const shutdown = (code = 0) => {
@@ -76,6 +76,6 @@ process.once("unhandledRejection", (error) => {
   process.stderr.write(desktop ? "Desktop terminal connection failed. No backend was started.\n" : `${error instanceof Error ? error.stack || error.message : String(error)}\n`)
 })
 
-app = await NanobotTui.create(options)
+app = await KohakuTui.create(options)
 if (shuttingDown) app.stop()
 else await app.start()

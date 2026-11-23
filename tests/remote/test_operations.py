@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from nanobot.remote.operations import (
+from kohaku.remote.operations import (
     CONTRACT_PATH,
     load_registry,
     owner_operation,
@@ -38,7 +38,7 @@ def test_registry_matches_m36_inventory() -> None:
 def test_enabled_mutations_match_websocket_source_routes() -> None:
     import ast
 
-    tree = ast.parse((ROOT / "nanobot/webui/ws_http.py").read_text())
+    tree = ast.parse((ROOT / "kohaku/webui/ws_http.py").read_text())
     source: dict[str, str] = {}
     for node in tree.body:
         if isinstance(node, ast.Assign) and getattr(node.targets[0], "id", "") == "WEBSOCKET_MUTATION_ROUTES":
@@ -47,7 +47,7 @@ def test_enabled_mutations_match_websocket_source_routes() -> None:
                 if isinstance(key, ast.Constant) and isinstance(value, ast.Constant):
                     source[key.value] = value.value
     settings_source: set[str] = set()
-    settings_tree = ast.parse((ROOT / "nanobot/webui/settings_routes.py").read_text())
+    settings_tree = ast.parse((ROOT / "kohaku/webui/settings_routes.py").read_text())
     for node in ast.walk(settings_tree):
         if isinstance(node, ast.Constant) and isinstance(node.value, str):
             settings_source.add(node.value)

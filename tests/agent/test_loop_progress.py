@@ -9,17 +9,17 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from nanobot.agent.context import TranscriptInput
-from nanobot.agent.hook import AgentHookContext
-from nanobot.agent.hooks import create_file_edit_activity_hook
-from nanobot.agent.loop import AgentLoop
-from nanobot.agent.tools.base import Tool
-from nanobot.agent.tools.context import current_request_context
-from nanobot.agent.tools.filesystem import ReadFileTool, WriteFileTool
-from nanobot.agent.turn import RunPolicyContext, ToolOutcome
-from nanobot.agent.turn import TurnContext as RunContext
-from nanobot.bus.events import InboundMessage
-from nanobot.bus.outbound_events import (
+from kohaku.agent.context import TranscriptInput
+from kohaku.agent.hook import AgentHookContext
+from kohaku.agent.hooks import create_file_edit_activity_hook
+from kohaku.agent.loop import AgentLoop
+from kohaku.agent.tools.base import Tool
+from kohaku.agent.tools.context import current_request_context
+from kohaku.agent.tools.filesystem import ReadFileTool, WriteFileTool
+from kohaku.agent.turn import RunPolicyContext, ToolOutcome
+from kohaku.agent.turn import TurnContext as RunContext
+from kohaku.bus.events import InboundMessage
+from kohaku.bus.outbound_events import (
     GoalStatusEvent,
     ProgressEvent,
     SessionUpdatedEvent,
@@ -28,12 +28,12 @@ from nanobot.bus.outbound_events import (
     StreamEndEvent,
     TurnEndEvent,
 )
-from nanobot.bus.queue import MessageBus
-from nanobot.providers.base import GenerationSettings, LLMResponse, ToolCallRequest
-from nanobot.providers.factory import ProviderSnapshot
-from nanobot.session.webui_turns import WebuiTurnCoordinator, WebuiTurnRoutePolicy
-from nanobot.utils.progress_events import build_tool_event_finish_payloads, output_events
-from nanobot.webui.metadata import (
+from kohaku.bus.queue import MessageBus
+from kohaku.providers.base import GenerationSettings, LLMResponse, ToolCallRequest
+from kohaku.providers.factory import ProviderSnapshot
+from kohaku.session.webui_turns import WebuiTurnCoordinator, WebuiTurnRoutePolicy
+from kohaku.utils.progress_events import build_tool_event_finish_payloads, output_events
+from kohaku.webui.metadata import (
     WEBSOCKET_TURN_OWNER_METADATA_KEY,
     WEBUI_TURN_METADATA_KEY,
 )
@@ -430,7 +430,7 @@ class TestToolEventProgress:
             pass
 
         monkeypatch.setattr(
-            "nanobot.agent.hooks.file_edit_activity.prepare_file_edit_trackers",
+            "kohaku.agent.hooks.file_edit_activity.prepare_file_edit_trackers",
             prepare_file_edit_trackers,
         )
 
@@ -1029,7 +1029,7 @@ class TestToolEventProgress:
         disconnect_webui = _attach_webui_runtime_events(loop, bus)
         owned_turn_owners: set[str] = set()
 
-        from nanobot.session.webui_turns import clear_websocket_turn_if_current
+        from kohaku.session.webui_turns import clear_websocket_turn_if_current
 
         def cleanup_test_turns() -> None:
             disconnect_webui()
@@ -1435,7 +1435,7 @@ class TestToolEventProgress:
             return False
 
         monkeypatch.setattr(
-            "nanobot.session.webui_turns.maybe_generate_webui_title_after_turn",
+            "kohaku.session.webui_turns.maybe_generate_webui_title_after_turn",
             fake_title_after_turn,
         )
         scheduled_title: list[object] = []
@@ -1482,8 +1482,8 @@ class TestToolEventProgress:
         tmp_path: Path,
         metadata: dict[str, object],
     ) -> None:
-        from nanobot.session.manager import SessionManager
-        from nanobot.session.webui_turns import maybe_generate_webui_title_after_turn
+        from kohaku.session.manager import SessionManager
+        from kohaku.session.webui_turns import maybe_generate_webui_title_after_turn
 
         sessions = SessionManager(tmp_path)
         session = sessions.get_or_create("websocket:chat1")
@@ -1571,7 +1571,7 @@ class TestToolEventProgress:
             raise AssertionError("command-only turns should not generate titles")
 
         monkeypatch.setattr(
-            "nanobot.session.webui_turns.maybe_generate_webui_title_after_turn",
+            "kohaku.session.webui_turns.maybe_generate_webui_title_after_turn",
             fake_title_after_turn,
         )
         scheduled: list[object] = []

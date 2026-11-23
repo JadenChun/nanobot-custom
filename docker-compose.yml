@@ -3,12 +3,12 @@ x-common-config: &common-config
     context: .
     dockerfile: Dockerfile
     args:
-      NANOBOT_CHANNELS: ${NANOBOT_CHANNELS:-whatsapp}
+      KOHAKU_CHANNELS: ${KOHAKU_CHANNELS:-whatsapp}
   volumes:
-    - ~/.nanobot:/home/nanobot/.nanobot
+    - ~/.kohaku:/home/kohaku/.kohaku
   cap_drop:
     - ALL
-  # Entrypoint uses these to fix bind-mount ownership and drop to the nanobot user.
+  # Entrypoint uses these to fix bind-mount ownership and drop to the kohaku user.
   cap_add:
     - CHOWN
     - SETGID
@@ -19,8 +19,8 @@ x-common-config: &common-config
     - no-new-privileges:true
 
 services:
-  nanobot-gateway:
-    container_name: nanobot-gateway
+  kohaku-gateway:
+    container_name: kohaku-gateway
     <<: *common-config
     command: ["gateway"]
     restart: unless-stopped
@@ -36,11 +36,11 @@ services:
           cpus: "0.25"
           memory: 256M
 
-  nanobot-api:
-    container_name: nanobot-api
+  kohaku-api:
+    container_name: kohaku-api
     <<: *common-config
     command:
-      ["serve", "--host", "0.0.0.0", "-w", "/home/nanobot/.nanobot/api-workspace"]
+      ["serve", "--host", "0.0.0.0", "-w", "/home/kohaku/.kohaku/api-workspace"]
     restart: unless-stopped
     ports:
       - 127.0.0.1:8900:8900
@@ -53,7 +53,7 @@ services:
           cpus: "0.25"
           memory: 256M
 
-  nanobot-cli:
+  kohaku-cli:
     <<: *common-config
     profiles:
       - cli

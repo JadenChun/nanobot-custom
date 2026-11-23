@@ -8,14 +8,14 @@ from types import MappingProxyType, SimpleNamespace
 
 import pytest
 
-from nanobot.agent import memory_recovery_startup_admission as admission
-from nanobot.agent import memory_recovery_storage as storage
-from nanobot.agent.tools import producer_adapters
-from nanobot.agent.tools.base import Tool
-from nanobot.agent.tools.filesystem import ReadFileTool
-from nanobot.agent.tools.search import GrepTool
-from nanobot.session.manager import JsonlSessionStore
-from nanobot.session.source_root import SourceRootAuthorityError, SourceRootClosedError
+from kohaku.agent import memory_recovery_startup_admission as admission
+from kohaku.agent import memory_recovery_storage as storage
+from kohaku.agent.tools import producer_adapters
+from kohaku.agent.tools.base import Tool
+from kohaku.agent.tools.filesystem import ReadFileTool
+from kohaku.agent.tools.search import GrepTool
+from kohaku.session.manager import JsonlSessionStore
+from kohaku.session.source_root import SourceRootAuthorityError, SourceRootClosedError
 from tests.tools.test_producer_adapters import _receipt
 
 

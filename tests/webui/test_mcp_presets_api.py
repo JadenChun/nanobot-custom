@@ -8,11 +8,11 @@ from pathlib import Path
 import pytest
 from mcp.shared.auth import OAuthToken
 
-from nanobot.agent.plugins import AGENT_PLUGIN_MCP_SCHEMA, AGENT_PLUGIN_SCHEMA
-from nanobot.agent.tools.mcp_oauth import MCPOAuthStorage, mcp_oauth_has_credentials
-from nanobot.config.loader import load_config, save_config
-from nanobot.config.schema import Config
-from nanobot.webui.mcp_presets_api import (
+from kohaku.agent.plugins import AGENT_PLUGIN_MCP_SCHEMA, AGENT_PLUGIN_SCHEMA
+from kohaku.agent.tools.mcp_oauth import MCPOAuthStorage, mcp_oauth_has_credentials
+from kohaku.config.loader import load_config, save_config
+from kohaku.config.schema import Config
+from kohaku.webui.mcp_presets_api import (
     McpPresetError,
     custom_mcp_action,
     mcp_presets_action,
@@ -29,7 +29,7 @@ def _use_config(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
         json.dumps({"agents": {"defaults": {"workspace": str(tmp_path / "workspace")}}}),
         encoding="utf-8",
     )
-    monkeypatch.setattr("nanobot.config.loader._current_config_path", config_path)
+    monkeypatch.setattr("kohaku.config.loader._current_config_path", config_path)
 
 
 def _write_agent_plugin(workspace: Path) -> None:
@@ -415,7 +415,7 @@ def test_test_mcp_preset_reports_missing_dependency(
 ) -> None:
     _use_config(tmp_path, monkeypatch)
     mcp_presets_action("enable", {"name": ["playwright"]})
-    monkeypatch.setattr("nanobot.webui.mcp_presets_api.shutil.which", lambda _command: None)
+    monkeypatch.setattr("kohaku.webui.mcp_presets_api.shutil.which", lambda _command: None)
 
     payload = asyncio.run(mcp_presets_test_action({"name": ["playwright"]}))
 
@@ -430,7 +430,7 @@ def test_test_mcp_preset_connects_and_reports_tools(
     _use_config(tmp_path, monkeypatch)
     mcp_presets_action("enable", {"name": ["playwright"]})
     monkeypatch.setattr(
-        "nanobot.webui.mcp_presets_api.shutil.which",
+        "kohaku.webui.mcp_presets_api.shutil.which",
         lambda command: "fixture-npx" if command == "npx" else None,
     )
     connected: list[list[str]] = []
@@ -454,7 +454,7 @@ def test_test_mcp_preset_connects_and_reports_tools(
         registry.register(FakeTool())
         return {"playwright": FakeStack()}
 
-    monkeypatch.setattr("nanobot.agent.tools.mcp.connect_mcp_servers", fake_connect)
+    monkeypatch.setattr("kohaku.agent.tools.mcp.connect_mcp_servers", fake_connect)
 
     payload = asyncio.run(mcp_presets_test_action({"name": ["playwright"]}))
 
@@ -478,7 +478,7 @@ def test_test_mcp_preset_inspects_tools_outside_the_enabled_allowlist(
     save_config(config)
     before_inspection = (tmp_path / "config.json").read_bytes()
     monkeypatch.setattr(
-        "nanobot.webui.mcp_presets_api.shutil.which",
+        "kohaku.webui.mcp_presets_api.shutil.which",
         lambda command: "fixture-npx" if command == "npx" else None,
     )
     connected: list[list[str]] = []
@@ -504,7 +504,7 @@ def test_test_mcp_preset_inspects_tools_outside_the_enabled_allowlist(
             registry.register(FakeTool(f"mcp_playwright_tool_{index:02d}"))
         return {"playwright": FakeStack()}
 
-    monkeypatch.setattr("nanobot.agent.tools.mcp.connect_mcp_servers", fake_connect)
+    monkeypatch.setattr("kohaku.agent.tools.mcp.connect_mcp_servers", fake_connect)
 
     payload = asyncio.run(mcp_presets_test_action({"name": ["playwright"]}))
 
@@ -525,7 +525,7 @@ def test_mcp_inspection_dependency_gate_and_connection_cleanup(
     mcp_presets_action("enable", {"name": ["playwright"]})
     before = (tmp_path / "config.json").read_bytes()
     monkeypatch.setattr(
-        "nanobot.webui.mcp_presets_api.shutil.which",
+        "kohaku.webui.mcp_presets_api.shutil.which",
         lambda command: "fixture-npx" if dependency_available and command == "npx" else None,
     )
     connected: list[list[str]] = []
@@ -542,7 +542,7 @@ def test_mcp_inspection_dependency_gate_and_connection_cleanup(
         connected.append(list(servers))
         return {"playwright": FakeStack()}
 
-    monkeypatch.setattr("nanobot.agent.tools.mcp.connect_mcp_servers", fake_connect)
+    monkeypatch.setattr("kohaku.agent.tools.mcp.connect_mcp_servers", fake_connect)
     payload = asyncio.run(mcp_presets_test_action({"name": ["playwright"]}))
     assert payload["last_action"]["ok"] is dependency_available
     assert payload["last_action"]["tool_count"] == 0
@@ -573,7 +573,7 @@ def test_test_mcp_preset_scrubs_connection_errors(
     async def fake_connect(_servers, _registry, **_kwargs):
         raise RuntimeError("failed https://mcp.browserbase.com/mcp?browserbaseApiKey=bb_live_secret")
 
-    monkeypatch.setattr("nanobot.agent.tools.mcp.connect_mcp_servers", fake_connect)
+    monkeypatch.setattr("kohaku.agent.tools.mcp.connect_mcp_servers", fake_connect)
 
     payload = asyncio.run(mcp_presets_test_action({"name": ["browserbase"]}))
 
@@ -794,7 +794,7 @@ def test_normalize_mcp_mentions_uses_explicit_gateway_config(
     default_path = tmp_path / "default.json"
     config_path = tmp_path / "gateway.json"
     save_config(Config(), default_path)
-    monkeypatch.setattr("nanobot.config.loader._current_config_path", default_path)
+    monkeypatch.setattr("kohaku.config.loader._current_config_path", default_path)
     custom_mcp_action(
         "custom",
         {

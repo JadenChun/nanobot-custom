@@ -4,14 +4,14 @@ from dataclasses import replace
 
 import pytest
 
-from nanobot.session.source import SourceValidationError
-from nanobot.session.source_projection import (
+from kohaku.session.source import SourceValidationError
+from kohaku.session.source_projection import (
     ArtifactProjectionBinding,
     CheckpointNode,
     RuntimeNode,
     SourceNode,
 )
-from nanobot.session.source_request import SourceRequestLedger, SourceTranscript
+from kohaku.session.source_request import SourceRequestLedger, SourceTranscript
 
 
 def source(identity, text='same'):

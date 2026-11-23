@@ -5,9 +5,9 @@ from pathlib import Path
 
 import pytest
 
-from nanobot.session.artifact import ArtifactValidationError
-from nanobot.session.artifact_grants import ArtifactGrantSet, ArtifactHandoffReceipt
-from nanobot.session.artifact_reader import ArtifactReader
+from kohaku.session.artifact import ArtifactValidationError
+from kohaku.session.artifact_grants import ArtifactGrantSet, ArtifactHandoffReceipt
+from kohaku.session.artifact_reader import ArtifactReader
 from tests.session.test_artifact_grants import _durable_child_evidence, published_artifact
 
 

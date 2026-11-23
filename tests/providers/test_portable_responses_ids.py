@@ -6,13 +6,13 @@ from types import SimpleNamespace
 
 import pytest
 
-from nanobot.providers.openai_responses.converters import convert_messages, normalize_portable_id
-from nanobot.providers.openai_responses.parsing import (
+from kohaku.providers.openai_responses.converters import convert_messages, normalize_portable_id
+from kohaku.providers.openai_responses.parsing import (
     ResponsesStreamCapture,
     consume_sse_with_reasoning,
     parse_response_output,
 )
-from nanobot.providers.openai_responses.state import build_responses_state, prepare_responses_input
+from kohaku.providers.openai_responses.state import build_responses_state, prepare_responses_input
 
 
 def _call(raw: str, item: str = "fc_0") -> dict[str, object]:
@@ -72,7 +72,7 @@ def test_generated_call_hash_cannot_steal_reserved_safe_raw_id(monkeypatch) -> N
     candidate = normalize_portable_id("bad+/", "call_")
     original = normalize_portable_id
     monkeypatch.setattr(
-        "nanobot.providers.openai_responses.converters.normalize_portable_id",
+        "kohaku.providers.openai_responses.converters.normalize_portable_id",
         lambda raw, prefix: candidate if raw in {"bad+/", "other+/"} else original(raw, prefix),
     )
     raws = ["bad+/", "other+/", candidate]

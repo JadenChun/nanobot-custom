@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Build the shared-WebUI debug app with a distinct application ID.
-# The debug package (ai.nanobot.mobile.debug) can be installed alongside the
-# release package (ai.nanobot.mobile) without touching release data.
+# The debug package (ai.kohaku.mobile.debug) can be installed alongside the
+# release package (ai.kohaku.mobile) without touching release data.
 set -euo pipefail
 
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
@@ -9,7 +9,7 @@ script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 source "${script_dir}/mobile-env.sh"
 mobile_require_toolchain
 
-export NANOBOT_MOBILE_WEB_DIR="www-shared"
+export KOHAKU_MOBILE_WEB_DIR="www-shared"
 
 "${script_dir}/build-native-network.sh"
 "${script_dir}/build-shared-webui.sh"

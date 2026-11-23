@@ -6,9 +6,9 @@ import zlib
 
 import pytest
 
-from nanobot.providers.capabilities import default_model_capabilities
-from nanobot.providers.image_pricing import ImageOccurrence
-from nanobot.utils.media_tokens import (
+from kohaku.providers.capabilities import default_model_capabilities
+from kohaku.providers.image_pricing import ImageOccurrence
+from kohaku.utils.media_tokens import (
     MAX_AUDIO_TOKENS,
     MAX_IMAGE_TOKENS,
     MAX_VIDEO_TOKENS,
@@ -123,7 +123,7 @@ def test_media_blocks_cover_chat_responses_and_anthropic_shapes() -> None:
 
 def test_data_uri_header_parser_handles_valid_and_malformed_headers_promptly() -> None:
     snippets = [
-        "from nanobot.utils.media_tokens import inline_media_tokens",
+        "from kohaku.utils.media_tokens import inline_media_tokens",
         "import sys, time",
         "started = time.monotonic()",
         "cases = [",

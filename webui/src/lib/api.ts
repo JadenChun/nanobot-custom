@@ -16,7 +16,7 @@ import type {
   McpPresetsPayload,
   McpOAuthFlowPayload,
   MarketplaceProvider,
-  NanobotFeaturesPayload,
+  KohakuFeaturesPayload,
   ModelConfigurationCreate,
   ModelConfigurationUpdate,
   NetworkSafetySettingsUpdate,
@@ -151,7 +151,7 @@ async function request<T>(
     throw new ApiError(
       res.status,
       isHtml
-        ? "Gateway returned WebUI HTML instead of JSON. Restart nanobot gateway and try again."
+        ? "Gateway returned WebUI HTML instead of JSON. Restart kohaku gateway and try again."
         : "Gateway returned a non-JSON response.",
     );
   }
@@ -1185,7 +1185,7 @@ export interface VersionCheckResult {
   updateAvailable: {
     currentVersion: string;
     latestVersion: string;
-    pypiUrl?: string;
+    releaseUrl?: string;
   } | null;
 }
 
@@ -1431,11 +1431,11 @@ export async function fetchInstalledCliApps(
   );
 }
 
-export async function fetchNanobotFeatures(
+export async function fetchKohakuFeatures(
   token: string,
   base: string = "",
-): Promise<NanobotFeaturesPayload> {
-  return request<NanobotFeaturesPayload>(
+): Promise<KohakuFeaturesPayload> {
+  return request<KohakuFeaturesPayload>(
     `${base}/api/settings/nanobot-features`,
     token,
     undefined,
@@ -1470,12 +1470,12 @@ export async function stopApiService(
   return mutation<ApiServicePayload>(transport, "settings.api_service.stop");
 }
 
-export async function enableNanobotFeature(
+export async function enableKohakuFeature(
   transport: WebUIMutationTransport,
   name: string,
   options: { instanceId?: string } = {},
-): Promise<NanobotFeaturesPayload> {
-  return mutation<NanobotFeaturesPayload>(
+): Promise<KohakuFeaturesPayload> {
+  return mutation<KohakuFeaturesPayload>(
     transport,
     "settings.feature.enable",
     { name, ...(options.instanceId ? { instance_id: options.instanceId } : {}) },
@@ -1483,12 +1483,12 @@ export async function enableNanobotFeature(
   );
 }
 
-export async function disableNanobotFeature(
+export async function disableKohakuFeature(
   transport: WebUIMutationTransport,
   name: string,
   options: { instanceId?: string } = {},
-): Promise<NanobotFeaturesPayload> {
-  return mutation<NanobotFeaturesPayload>(
+): Promise<KohakuFeaturesPayload> {
+  return mutation<KohakuFeaturesPayload>(
     transport,
     "settings.feature.disable",
     { name, ...(options.instanceId ? { instance_id: options.instanceId } : {}) },

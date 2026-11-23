@@ -2,16 +2,16 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from nanobot.agent.runner import AgentRunner, AgentRunSpec
-from nanobot.config.schema import AgentDefaults
-from nanobot.providers.base import (
+from kohaku.agent.runner import AgentRunner, AgentRunSpec
+from kohaku.config.schema import AgentDefaults
+from kohaku.providers.base import (
     GenerationSettings,
     LLMProvider,
     LLMResponse,
     ProviderCallContext,
     ToolCallRequest,
 )
-from nanobot.utils.llm_runtime import LLMRuntime
+from kohaku.utils.llm_runtime import LLMRuntime
 from tests.agent.runner_helpers import install_test_tool_dispatch
 
 

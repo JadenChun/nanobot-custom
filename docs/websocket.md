@@ -1,6 +1,6 @@
 # WebSocket Server Channel
 
-Nanobot can act as a WebSocket server, allowing external clients (web apps, CLIs, scripts) to interact with the agent in real time via persistent connections.
+Kohaku can act as a WebSocket server, allowing external clients (web apps, CLIs, scripts) to interact with the agent in real time via persistent connections.
 
 ## Features
 
@@ -35,10 +35,10 @@ override under `channels.websocket`:
 }
 ```
 
-### 2. Start nanobot
+### 2. Start Kohaku
 
 ```bash
-nanobot gateway
+kohaku gateway
 ```
 
 You should see:
@@ -229,7 +229,7 @@ All fields go under `channels.websocket` in `config.json`.
 | `tokenIssueSecret` | string | `""` | Secret required to obtain tokens via the issue endpoint. If empty, any client can obtain WebSocket connection tokens from `tokenIssuePath` (logged as a warning). `/webui/bootstrap` issues tokens for local/secret-authenticated requests; trusted-proxy requests intentionally receive no bootstrap or API token. |
 | `trustedProxyAuth` | object or `null` | `null` | Optional two-part no-token authorization for a directly connected upstream proxy. Both `trustedPeerCidrs` and a non-empty `assertionHeader` value must match; a CIDR alone never authorizes bootstrap or WebSocket/API access. |
 | `trustedProxyAuth.trustedPeerCidrs` | list of CIDR strings | — | Direct TCP peer networks that may present the assertion. IPv4, IPv6, and IPv4-mapped IPv6 peers are supported; universal CIDRs (`0.0.0.0/0`, `::/0`) are rejected. |
-| `trustedProxyAuth.assertionHeader` | string | — | Header injected by the identity-aware proxy after successful authentication. Routing/client metadata headers (`Host`, `Forwarded`, `X-Forwarded-*`, `X-Real-IP`, `CF-Connecting-IP`) are rejected; nanobot trusts the remaining header's non-empty value but does not cryptographically validate it. |
+| `trustedProxyAuth.assertionHeader` | string | — | Header injected by the identity-aware proxy after successful authentication. Routing/client metadata headers (`Host`, `Forwarded`, `X-Forwarded-*`, `X-Real-IP`, `CF-Connecting-IP`) are rejected; Kohaku trusts the remaining header's non-empty value but does not cryptographically validate it. |
 | `tokenTtlS` | int | `300` | Time-to-live for issued tokens in seconds (30 – 86,400). |
 
 ### Access Control
@@ -264,7 +264,7 @@ For production deployments where `websocketRequiresToken: true`, use short-lived
 
 ### How it works
 
-1. Client sends `GET {tokenIssuePath}` with `Authorization: Bearer {tokenIssueSecret}` (or `X-Nanobot-Auth` header).
+1. Client sends `GET {tokenIssuePath}` with `Authorization: Bearer {tokenIssueSecret}` (or `X-Kohaku-Auth` header).
 2. Server responds with a one-time-use token:
 
 ```json
@@ -283,19 +283,19 @@ parameter is required for the WebSocket handshake or subsequent REST requests.
 ### Trusted proxy no-token bootstrap
 
 `trustedProxyAuth` is an opt-in alternative for deployments where an
-identity-aware reverse proxy authenticates the user before connecting to nanobot.
+identity-aware reverse proxy authenticates the user before connecting to Kohaku.
 The proxy assertion becomes the authentication boundary for the entire WebUI
 surface: `/webui/bootstrap`, the WebSocket handshake, and REST API routes.
 Bootstrap is accepted only when **both** the direct TCP peer matches one of
 `trustedPeerCidrs` and the configured assertion header is present and non-empty.
 A trusted address by itself is never sufficient.
 
-Nanobot deliberately uses only `connection.remote_address` for the peer check.
+Kohaku deliberately uses only `connection.remote_address` for the peer check.
 It never uses `X-Forwarded-For`, `Forwarded`, `X-Real-IP`, `CF-Connecting-IP`,
-or `X-Forwarded-Host` to decide whether the proxy is trusted. Nanobot trusts the
+or `X-Forwarded-Host` to decide whether the proxy is trusted. Kohaku trusts the
 assertion supplied by the explicitly trusted peer, but does not cryptographically
 validate or interpret the JWT/assertion contents. Do not enable this option if
-untrusted clients can connect directly to the nanobot listener.
+untrusted clients can connect directly to the kohaku listener.
 
 The configured assertion header must be a proxy-generated authentication
 assertion, not a routing or client metadata header. Headers such as `Host`,
@@ -311,7 +311,7 @@ user at the edge and forward the resulting `Cf-Access-Jwt-Assertion`:
   "channels": {
     "websocket": {
       "host": "127.0.0.1",
-      "publicWsUrl": "wss://nanobot.example.com/",
+      "publicWsUrl": "wss://kohaku.example.com/",
       "trustedProxyAuth": {
         "trustedPeerCidrs": ["127.0.0.1/32", "::1/128"],
         "assertionHeader": "Cf-Access-Jwt-Assertion"
@@ -322,8 +322,8 @@ user at the edge and forward the resulting `Cf-Access-Jwt-Assertion`:
 ```
 
 This works only when the directly connected `cloudflared` process reaches
-nanobot over the configured loopback address and supplies a non-empty assertion.
-Keep nanobot firewalled from untrusted clients; this configuration is not a
+Kohaku over the configured loopback address and supplies a non-empty assertion.
+Keep Kohaku firewalled from untrusted clients; this configuration is not a
 CIDR-based bootstrap bypass.
 
 ### Example setup
@@ -401,7 +401,7 @@ Legacy clients that only send plain text or `{"content": ...}` keep working unch
 
 ### Security boundary
 
-`chat_id` is a *capability*: anyone holding a valid WebSocket auth credential and the chat_id can attach to that conversation and see its output. This is safe for nanobot's local, single-user model. Multi-tenant deployments should namespace chat_ids per user (or introduce a per-tenant auth gate) — nanobot does not do this today.
+`chat_id` is a *capability*: anyone holding a valid WebSocket auth credential and the chat_id can attach to that conversation and see its output. This is safe for Kohaku's local, single-user model. Multi-tenant deployments should namespace chat_ids per user (or introduce a per-tenant auth gate) — Kohaku does not do this today.
 
 ## Security Notes
 
@@ -416,7 +416,7 @@ Legacy clients that only send plain text or `{"content": ...}` keep working unch
 Outbound `message` events may include a `media` field containing local filesystem paths. Remote clients cannot access these files directly — they need either:
 
 - A shared filesystem mount, or
-- An HTTP file server serving the nanobot media directory
+- An HTTP file server serving the Kohaku media directory
 
 ## Common Patterns
 

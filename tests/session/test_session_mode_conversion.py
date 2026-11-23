@@ -7,11 +7,11 @@ from pathlib import Path
 
 import pytest
 
-from nanobot.session.execution_owner import acquire_execution
-from nanobot.session.manager import Session, SessionManager, SessionStorageError
-from nanobot.session.runtime_authority import DurableSessionAuthority, OfflineSessionOperator
-from nanobot.session.session_mode import SessionModeError
-from nanobot.session.source import SourceValidationError
+from kohaku.session.execution_owner import acquire_execution
+from kohaku.session.manager import Session, SessionManager, SessionStorageError
+from kohaku.session.runtime_authority import DurableSessionAuthority, OfflineSessionOperator
+from kohaku.session.session_mode import SessionModeError
+from kohaku.session.source import SourceValidationError
 
 
 def test_bootstrap_then_convert_preserves_rollback_and_commits_canonical(tmp_path: Path) -> None:

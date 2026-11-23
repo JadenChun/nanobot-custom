@@ -6,19 +6,19 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from nanobot.agent.loop import AgentLoop
-from nanobot.bus.queue import MessageBus
-from nanobot.bus.runtime_events import RuntimeModelChanged
-from nanobot.config.errors import ConfigLoadError
-from nanobot.config.loader import save_config
-from nanobot.config.schema import Config, ModelPresetConfig
-from nanobot.providers.base import GenerationSettings
-from nanobot.providers.factory import ProviderSnapshot, load_provider_snapshot
-from nanobot.session.model_selection import (
+from kohaku.agent.loop import AgentLoop
+from kohaku.bus.queue import MessageBus
+from kohaku.bus.runtime_events import RuntimeModelChanged
+from kohaku.config.errors import ConfigLoadError
+from kohaku.config.loader import save_config
+from kohaku.config.schema import Config, ModelPresetConfig
+from kohaku.providers.base import GenerationSettings
+from kohaku.providers.factory import ProviderSnapshot, load_provider_snapshot
+from kohaku.session.model_selection import (
     SESSION_MODEL_PRESET_METADATA_KEY,
     model_preset_from_metadata,
 )
-from nanobot.webui.settings_api import update_agent_settings
+from kohaku.webui.settings_api import update_agent_settings
 from tests.agent.p6_admitted_fixtures import (
     AgentInputs,
     AsyncAdmittedFactory,
@@ -158,7 +158,7 @@ def test_provider_snapshot_missing_env_reports_explicit_config_path(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
-    name = "NANOBOT_TEST_REFRESH_MISSING_KEY"
+    name = "KOHAKU_TEST_REFRESH_MISSING_KEY"
     monkeypatch.delenv(name, raising=False)
     config_path = tmp_path / "custom.json"
     config_path.write_text(
@@ -377,11 +377,11 @@ def test_settings_context_window_refreshes_runtime_state(
     config.agents.defaults.context_window_tokens = 65_536
     config.providers.openai.api_key = "sk-test"
     save_config(config, config_path)
-    monkeypatch.setattr("nanobot.config.loader._current_config_path", config_path)
+    monkeypatch.setattr("kohaku.config.loader._current_config_path", config_path)
 
     def loader(*, preset_name: str | None = None) -> ProviderSnapshot:
         with monkeypatch.context() as factory_patch:
-            factory_patch.setattr("nanobot.providers.factory.make_provider", _synthetic_config_provider)
+            factory_patch.setattr("kohaku.providers.factory.make_provider", _synthetic_config_provider)
             return load_provider_snapshot(config_path, preset_name=preset_name)
 
     loop, config_path = _make_config_loop(
@@ -398,8 +398,8 @@ def test_settings_context_window_refreshes_runtime_state(
 
 
 def test_runtime_refresh_unadmitted_constructor_refuses_before_effects(tmp_path, monkeypatch) -> None:
-    from nanobot.agent.memory_recovery_startup_admission import StartupReceiptAdmissionError
-    from nanobot.session.manager import SessionManager
+    from kohaku.agent.memory_recovery_startup_admission import StartupReceiptAdmissionError
+    from kohaku.session.manager import SessionManager
 
     provider = _provider("unadmitted-model")
     bus = MessageBus()
@@ -428,8 +428,8 @@ def test_runtime_refresh_unadmitted_constructor_refuses_before_effects(tmp_path,
 def test_runtime_refresh_settings_use_acquired_config_without_optional_effects(
     tmp_path, monkeypatch, admitted_sync,
 ) -> None:
-    from nanobot.config.loader import load_config
-    from nanobot.providers import factory
+    from kohaku.config.loader import load_config
+    from kohaku.providers import factory
 
     config = Config()
     config.agents.defaults.model = "openai/gpt-4o"

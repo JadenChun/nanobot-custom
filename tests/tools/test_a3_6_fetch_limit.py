@@ -10,9 +10,9 @@ import socket
 import httpx
 import pytest
 
-from nanobot.agent.tools import web as web_module
-from nanobot.agent.tools.web import WebFetchTool
-from nanobot.config.schema import WebFetchConfig
+from kohaku.agent.tools import web as web_module
+from kohaku.agent.tools.web import WebFetchTool
+from kohaku.config.schema import WebFetchConfig
 
 
 def _fake_resolve_public(hostname, port, family=0, type_=0):
@@ -49,7 +49,7 @@ def _handler(request: httpx.Request) -> httpx.Response:
 
 @pytest.fixture(autouse=True)
 def _fixture_server(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("nanobot.security.network.socket.getaddrinfo", _fake_resolve_public)
+    monkeypatch.setattr("kohaku.security.network.socket.getaddrinfo", _fake_resolve_public)
     monkeypatch.setattr(
         web_module,
         "_pinned_dns_transport",

@@ -5,11 +5,11 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from nanobot.agent.runner import AgentRunner
-from nanobot.agent.tools.registry import ToolRegistry
-from nanobot.bus.queue import MessageBus
-from nanobot.bus.runtime_events import RuntimeEventPublisher, TurnCompleted
-from nanobot.providers.base import LLMResponse, LLMUsage
+from kohaku.agent.runner import AgentRunner
+from kohaku.agent.tools.registry import ToolRegistry
+from kohaku.bus.queue import MessageBus
+from kohaku.bus.runtime_events import RuntimeEventPublisher, TurnCompleted
+from kohaku.providers.base import LLMResponse, LLMUsage
 from tests.agent.runner_helpers import make_run_spec
 
 
@@ -29,7 +29,7 @@ async def test_runner_exposes_request_bound_context_snapshot() -> None:
 
 
 async def test_publisher_snapshot_truth_table_independent_of_rounds_and_reset() -> None:
-    from nanobot.providers.base import ContextUsageSnapshot
+    from kohaku.providers.base import ContextUsageSnapshot
 
     bus = MessageBus()
     publisher = RuntimeEventPublisher(bus)
@@ -58,14 +58,14 @@ async def test_publisher_snapshot_truth_table_independent_of_rounds_and_reset() 
     {"context_tokens": -1, "context_window_tokens": 12000},
     {"context_tokens": 2000, "context_window_tokens": 0}])
 def test_snapshot_malformed_present_is_unavailable(payload) -> None:
-    from nanobot.providers.base import ContextUsageSnapshot
+    from kohaku.providers.base import ContextUsageSnapshot
 
     assert ContextUsageSnapshot.from_value(payload) == ContextUsageSnapshot(None, None)
 
 
 @pytest.mark.parametrize("invalidate", [False, True])
 async def test_unmeasured_preserves_own_window_but_cannot_resurrect_after_invalidation(invalidate) -> None:
-    from nanobot.providers.base import ContextUsageSnapshot, ProviderCallContext
+    from kohaku.providers.base import ContextUsageSnapshot, ProviderCallContext
 
     provider = MagicMock()
     runner = AgentRunner()
@@ -96,8 +96,8 @@ async def test_unmeasured_preserves_own_window_but_cannot_resurrect_after_invali
 
 @pytest.mark.parametrize("later_request", [False, True])
 async def test_native_success_cannot_authorize_its_own_old_dispatch_but_later_request_can(monkeypatch, later_request) -> None:
-    from nanobot.agent.context import TranscriptInput
-    from nanobot.providers.base import (
+    from kohaku.agent.context import TranscriptInput
+    from kohaku.providers.base import (
         ContextUsageSnapshot,
         ProviderConversationState,
         ToolCallRequest,
@@ -121,7 +121,7 @@ async def test_native_success_cannot_authorize_its_own_old_dispatch_but_later_re
     tools = MagicMock()
     tools.get_definitions.return_value = []
     tools.execute = AsyncMock(return_value="tool result")
-    monkeypatch.setattr("nanobot.agent.context_governance.estimate_prompt_tokens_chain", lambda *_a: (100, "test"))
+    monkeypatch.setattr("kohaku.agent.context_governance.estimate_prompt_tokens_chain", lambda *_a: (100, "test"))
     result = await AgentRunner().run(make_run_spec(
         provider, initial_messages=None,
         transcript_input=TranscriptInput(history=[], current_message="inspect"),
@@ -139,15 +139,15 @@ async def test_native_success_cannot_authorize_its_own_old_dispatch_but_later_re
 async def test_real_silent_image_replacement_relay_survives_runner_error_and_cancellation(cancelled, replacement) -> None:
     import asyncio
 
-    from nanobot.agent.turn_delivery import TurnDeliveryFactory
-    from nanobot.agent.turn_hooks import AgentTurnHookSpec, build_agent_turn_hook
-    from nanobot.bus.events import InboundMessage
-    from nanobot.bus.outbound_events import StreamEndEvent, TurnEndEvent
-    from nanobot.providers.base import ContextUsageSnapshot
-    from nanobot.session.source_projection import SourceNode
-    from nanobot.session.source_request import SourceRequestLedger, SourceTranscript
-    from nanobot.webui.outbound_wire import encode_turn_end
-    from nanobot.webui.transcript import replay_transcript_to_ui_messages
+    from kohaku.agent.turn_delivery import TurnDeliveryFactory
+    from kohaku.agent.turn_hooks import AgentTurnHookSpec, build_agent_turn_hook
+    from kohaku.bus.events import InboundMessage
+    from kohaku.bus.outbound_events import StreamEndEvent, TurnEndEvent
+    from kohaku.providers.base import ContextUsageSnapshot
+    from kohaku.session.source_projection import SourceNode
+    from kohaku.session.source_request import SourceRequestLedger, SourceTranscript
+    from kohaku.webui.outbound_wire import encode_turn_end
+    from kohaku.webui.transcript import replay_transcript_to_ui_messages
     from tests.agent.test_migration_engine import ScriptedProvider
 
     def image(label):
@@ -195,7 +195,7 @@ async def test_real_silent_image_replacement_relay_survives_runner_error_and_can
 
 
 async def test_state_creation_failure_relays_no_update_and_preserves_original(monkeypatch) -> None:
-    from nanobot.agent.hook import AgentHook
+    from kohaku.agent.hook import AgentHook
 
     observed = []
     class Observer(AgentHook):

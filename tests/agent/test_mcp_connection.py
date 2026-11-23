@@ -15,17 +15,17 @@ from mcp.shared.exceptions import McpError
 from mcp.shared.message import SessionMessage
 from mcp.types import ErrorData
 
-from nanobot.agent.tools import mcp as mcp_runtime
-from nanobot.agent.tools.base import Tool
-from nanobot.agent.tools.mcp import (
+from kohaku.agent.tools import mcp as mcp_runtime
+from kohaku.agent.tools.base import Tool
+from kohaku.agent.tools.mcp import (
     MCPProvider,
     MCPReadinessAbortedError,
     MCPResourceWrapper,
     MCPToolWrapper,
 )
-from nanobot.agent.tools.registry import ToolRegistry
-from nanobot.config.loader import load_config, save_config
-from nanobot.config.schema import MCPServerConfig
+from kohaku.agent.tools.registry import ToolRegistry
+from kohaku.config.loader import load_config, save_config
+from kohaku.config.schema import MCPServerConfig
 
 
 def _mcp_notification(method: str, params: dict[str, Any] | None = None) -> SessionMessage:
@@ -154,7 +154,7 @@ async def test_connect_mcp_retries_when_no_servers_connect(tmp_path, monkeypatch
         attempts += 1
         return {}
 
-    monkeypatch.setattr("nanobot.agent.tools.mcp.connect_mcp_servers", _fake_connect)
+    monkeypatch.setattr("kohaku.agent.tools.mcp.connect_mcp_servers", _fake_connect)
 
     await provider.connect()
     await provider.connect()
@@ -176,9 +176,9 @@ async def test_connect_mcp_does_not_report_failure_before_oauth_authorization(
     )
     provider, _registry = _make_provider(mcp_servers={"oauth-app": cfg})
     connect = AsyncMock()
-    monkeypatch.setattr("nanobot.agent.tools.mcp.connect_mcp_servers", connect)
+    monkeypatch.setattr("kohaku.agent.tools.mcp.connect_mcp_servers", connect)
     monkeypatch.setattr(
-        "nanobot.agent.tools.mcp_oauth.mcp_oauth_has_credentials",
+        "kohaku.agent.tools.mcp_oauth.mcp_oauth_has_credentials",
         lambda _name, _url, **_kwargs: False,
     )
 
@@ -212,7 +212,7 @@ async def test_mcp_provider_closes_connections_independently_from_agent_loop(
         stacks = {name: _OwnerCheckedStack() for name in servers}
         return stacks
 
-    monkeypatch.setattr("nanobot.agent.tools.mcp.connect_mcp_servers", _fake_connect)
+    monkeypatch.setattr("kohaku.agent.tools.mcp.connect_mcp_servers", _fake_connect)
 
     await provider.connect()
     registry.register(_FakeMcpTool("mcp_playwright_search"))
@@ -325,7 +325,7 @@ async def test_reload_mcp_servers_adds_and_removes_tools_without_restart(
     monkeypatch: pytest.MonkeyPatch,
 ):
     config_path = tmp_path / "config.json"
-    monkeypatch.setattr("nanobot.config.loader._current_config_path", config_path)
+    monkeypatch.setattr("kohaku.config.loader._current_config_path", config_path)
     config = load_config()
     config.tools.mcp_servers["browserbase"] = MCPServerConfig(
         type="stdio",
@@ -348,7 +348,7 @@ async def test_reload_mcp_servers_adds_and_removes_tools_without_restart(
             stacks[name] = stack
         return stacks
 
-    monkeypatch.setattr("nanobot.agent.tools.mcp.connect_mcp_servers", _fake_connect)
+    monkeypatch.setattr("kohaku.agent.tools.mcp.connect_mcp_servers", _fake_connect)
     provider, registry = _make_provider(mcp_servers={})
 
     added = await provider.reload()
@@ -397,7 +397,7 @@ async def test_reload_is_a_direct_provider_operation_without_an_agent_loop(
             stacks[name] = stack
         return stacks
 
-    monkeypatch.setattr("nanobot.agent.tools.mcp.connect_mcp_servers", _fake_connect)
+    monkeypatch.setattr("kohaku.agent.tools.mcp.connect_mcp_servers", _fake_connect)
     registry = ToolRegistry()
     provider = MCPProvider({}, registry, server_loader=lambda: configured)
 
@@ -437,7 +437,7 @@ async def test_reload_timeout_marks_attempted_server_failed_and_allows_retry(
         await stack.__aenter__()
         return {name: stack for name in servers}
 
-    monkeypatch.setattr("nanobot.agent.tools.mcp.connect_mcp_servers", _fake_connect)
+    monkeypatch.setattr("kohaku.agent.tools.mcp.connect_mcp_servers", _fake_connect)
     provider = MCPProvider(
         {"test": server},
         ToolRegistry(),
@@ -466,7 +466,7 @@ async def test_reload_mcp_servers_retries_configured_server_without_live_stack(
     monkeypatch: pytest.MonkeyPatch,
 ):
     config_path = tmp_path / "config.json"
-    monkeypatch.setattr("nanobot.config.loader._current_config_path", config_path)
+    monkeypatch.setattr("kohaku.config.loader._current_config_path", config_path)
     config = load_config()
     config.tools.mcp_servers["browserbase"] = MCPServerConfig(
         type="stdio",
@@ -483,7 +483,7 @@ async def test_reload_mcp_servers_retries_configured_server_without_live_stack(
             stacks[name] = stack
         return stacks
 
-    monkeypatch.setattr("nanobot.agent.tools.mcp.connect_mcp_servers", _fake_connect)
+    monkeypatch.setattr("kohaku.agent.tools.mcp.connect_mcp_servers", _fake_connect)
     provider, registry = _make_provider(
         mcp_servers={"browserbase": config.tools.mcp_servers["browserbase"]}
     )
@@ -504,7 +504,7 @@ async def test_reload_mcp_servers_skips_oauth_server_waiting_for_authorization(
     monkeypatch: pytest.MonkeyPatch,
 ):
     config_path = tmp_path / "config.json"
-    monkeypatch.setattr("nanobot.config.loader._current_config_path", config_path)
+    monkeypatch.setattr("kohaku.config.loader._current_config_path", config_path)
     config = load_config()
     notion = MCPServerConfig(
         type="streamableHttp",
@@ -527,9 +527,9 @@ async def test_reload_mcp_servers_skips_oauth_server_waiting_for_authorization(
         await stack.__aenter__()
         return {"linear": stack}
 
-    monkeypatch.setattr("nanobot.agent.tools.mcp.connect_mcp_servers", _fake_connect)
+    monkeypatch.setattr("kohaku.agent.tools.mcp.connect_mcp_servers", _fake_connect)
     monkeypatch.setattr(
-        "nanobot.agent.tools.mcp_oauth.mcp_oauth_has_credentials",
+        "kohaku.agent.tools.mcp_oauth.mcp_oauth_has_credentials",
         lambda name, _url, **_kwargs: name == "linear",
     )
     provider, _registry = _make_provider(mcp_servers={"notion": notion})
@@ -594,7 +594,7 @@ async def test_mcp_tool_reconnects_after_session_terminated(
             stacks[name] = stack
         return stacks
 
-    monkeypatch.setattr("nanobot.agent.tools.mcp.connect_mcp_servers", _fake_connect)
+    monkeypatch.setattr("kohaku.agent.tools.mcp.connect_mcp_servers", _fake_connect)
 
     await provider.connect()
     old_tool = registry.get("mcp_remote_quote")
@@ -654,7 +654,7 @@ async def test_mcp_reconnect_handler_uses_sanitized_server_prefix(
             stacks[name] = stack
         return stacks
 
-    monkeypatch.setattr("nanobot.agent.tools.mcp.connect_mcp_servers", _fake_connect)
+    monkeypatch.setattr("kohaku.agent.tools.mcp.connect_mcp_servers", _fake_connect)
 
     await provider.connect()
     old_tool = registry.get("mcp_remote_quote")
@@ -719,7 +719,7 @@ async def test_concurrent_mcp_reconnect_reuses_fresh_session(
             stacks[name] = stack
         return stacks
 
-    monkeypatch.setattr("nanobot.agent.tools.mcp.connect_mcp_servers", _fake_connect)
+    monkeypatch.setattr("kohaku.agent.tools.mcp.connect_mcp_servers", _fake_connect)
 
     await provider.connect()
     old_alpha = registry.get("mcp_remote_resource_alpha")
@@ -779,7 +779,7 @@ async def test_owner_cancellation_gives_the_waiter_one_bounded_readiness_outcome
         connect_count += 1
         await fake_connect(servers, candidate_registry, **kwargs)
 
-    monkeypatch.setattr("nanobot.agent.tools.mcp.connect_mcp_servers", _counted_connect)
+    monkeypatch.setattr("kohaku.agent.tools.mcp.connect_mcp_servers", _counted_connect)
 
     owner = asyncio.create_task(provider.connect())
     await started.wait()
@@ -814,7 +814,7 @@ async def test_waiter_cancellation_stays_scoped_to_the_waiter(
         connect_count += 1
         await fake_connect(servers, candidate_registry, **kwargs)
 
-    monkeypatch.setattr("nanobot.agent.tools.mcp.connect_mcp_servers", _counted_connect)
+    monkeypatch.setattr("kohaku.agent.tools.mcp.connect_mcp_servers", _counted_connect)
 
     owner = asyncio.create_task(provider.connect())
     await started.wait()

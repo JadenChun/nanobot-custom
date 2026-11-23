@@ -6,24 +6,24 @@ from dataclasses import replace
 
 import pytest
 
-from nanobot.agent.tools.artifact import ReadArtifactTool
-from nanobot.agent.tools.execution import KnownToolResult
-from nanobot.agent.tools.registry import ToolRegistry
-from nanobot.session.artifact_projection import ArtifactProjector
-from nanobot.session.artifact_reader import ArtifactReader
-from nanobot.session.artifact_store import PrivateArtifactStore
-from nanobot.session.checkpoint_dependencies import (
+from kohaku.agent.tools.artifact import ReadArtifactTool
+from kohaku.agent.tools.execution import KnownToolResult
+from kohaku.agent.tools.registry import ToolRegistry
+from kohaku.session.artifact_projection import ArtifactProjector
+from kohaku.session.artifact_reader import ArtifactReader
+from kohaku.session.artifact_store import PrivateArtifactStore
+from kohaku.session.checkpoint_dependencies import (
     ConsumedSummaryChunk,
     RetrievalDependency,
     SummaryDependencyProof,
     derive_summary_references,
     validate_summary_dependencies,
 )
-from nanobot.session.source import SourceValidationError, new_source_event
-from nanobot.session.source_compaction import SourceCompactionCandidate
-from nanobot.session.source_projection import CheckpointNode, SourceNode, source_nodes
-from nanobot.session.source_request import SourceTranscript
-from nanobot.session.source_store import SourceSnapshot, SourceState
+from kohaku.session.source import SourceValidationError, new_source_event
+from kohaku.session.source_compaction import SourceCompactionCandidate
+from kohaku.session.source_projection import CheckpointNode, SourceNode, source_nodes
+from kohaku.session.source_request import SourceTranscript
+from kohaku.session.source_store import SourceSnapshot, SourceState
 from tests.session.test_artifact_reader import setup_read
 
 

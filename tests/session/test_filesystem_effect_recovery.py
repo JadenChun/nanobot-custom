@@ -8,18 +8,18 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from nanobot.agent.runner import AgentRunner
-from nanobot.agent.tools.apply_patch import ApplyPatchTool
-from nanobot.agent.tools.context import ToolContext
-from nanobot.agent.tools.filesystem import EditFileTool, WriteFileTool
-from nanobot.agent.tools.registry import ToolRegistry
-from nanobot.agent.turn import ToolOutcome, TurnContext
-from nanobot.config.schema import ToolsConfig
-from nanobot.providers.base import LLMResponse, ToolCallRequest
-from nanobot.session.execution_owner import ExecutionOwnershipError, acquire_execution
-from nanobot.session.manager import JsonlSessionStore, Session
-from nanobot.session.source import validate_execution_links
-from nanobot.session.turn_writer import SourceTurnWriter
+from kohaku.agent.runner import AgentRunner
+from kohaku.agent.tools.apply_patch import ApplyPatchTool
+from kohaku.agent.tools.context import ToolContext
+from kohaku.agent.tools.filesystem import EditFileTool, WriteFileTool
+from kohaku.agent.tools.registry import ToolRegistry
+from kohaku.agent.turn import ToolOutcome, TurnContext
+from kohaku.config.schema import ToolsConfig
+from kohaku.providers.base import LLMResponse, ToolCallRequest
+from kohaku.session.execution_owner import ExecutionOwnershipError, acquire_execution
+from kohaku.session.manager import JsonlSessionStore, Session
+from kohaku.session.source import validate_execution_links
+from kohaku.session.turn_writer import SourceTurnWriter
 from tests.agent.runner_helpers import make_run_spec
 
 
@@ -168,7 +168,7 @@ async def run_mutation(backend, tool, arguments, *, reject_result=False):
 
 @pytest.mark.parametrize("failure", ["record_write", "write_then_raise", "rollback", "mkdir", "cancel"])
 async def test_patch_failures_retain_evidence_and_stop_the_turn(backend, monkeypatch, failure):
-    from nanobot.agent.tools.filesystem_effect import FilesystemEffectCancelled
+    from kohaku.agent.tools.filesystem_effect import FilesystemEffectCancelled
 
     tool = ApplyPatchTool(workspace=backend.workspace)
     target = backend.workspace / "new-parent" / "target.txt" if failure == "mkdir" else backend.workspace / "target.txt"
@@ -216,8 +216,8 @@ async def test_patch_failures_retain_evidence_and_stop_the_turn(backend, monkeyp
 
 @pytest.mark.parametrize("failure", ["touch", "replace_then_raise", "mkdir", "cancel"])
 async def test_binary_image_publication_failure_fences_the_source(backend, monkeypatch, failure):
-    import nanobot.agent.tools.filesystem as filesystem
-    from nanobot.agent.tools.image_generation import ImageGenerationTool, ImageGenerationToolConfig
+    import kohaku.agent.tools.filesystem as filesystem
+    from kohaku.agent.tools.image_generation import ImageGenerationTool, ImageGenerationToolConfig
 
     writer = WriteFileTool(workspace=backend.workspace)
     tool = ImageGenerationTool(workspace=backend.workspace,

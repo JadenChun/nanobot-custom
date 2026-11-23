@@ -9,13 +9,13 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from nanobot.agent.tools.context import ForkToolDependencies, ToolContext
-from nanobot.agent.tools.loader import ToolLoader
-from nanobot.agent.tools.registry import ToolRegistry
-from nanobot.agent.write_guard import FileLockRegistry
-from nanobot.config.schema import ToolsConfig
-from nanobot.context_repo import ContextRepoManager, ResourceAccessPolicy
-from nanobot.security.workspace_access import (
+from kohaku.agent.tools.context import ForkToolDependencies, ToolContext
+from kohaku.agent.tools.loader import ToolLoader
+from kohaku.agent.tools.registry import ToolRegistry
+from kohaku.agent.write_guard import FileLockRegistry
+from kohaku.config.schema import ToolsConfig
+from kohaku.context_repo import ContextRepoManager, ResourceAccessPolicy
+from kohaku.security.workspace_access import (
     bind_workspace_scope,
     build_workspace_scope,
     reset_workspace_scope,
@@ -30,7 +30,7 @@ def context(tmp_path):
 
 
 def load(context, monkeypatch):
-    monkeypatch.setattr('nanobot.migration_guard.require_runtime_ready', lambda: None)
+    monkeypatch.setattr('kohaku.migration_guard.require_runtime_ready', lambda: None)
     loader = ToolLoader()
     loader.discover = MagicMock(side_effect=AssertionError('built-in discovery must not run'))
     loader._discover_plugins = MagicMock(return_value={})
@@ -79,13 +79,13 @@ async def test_foreground_automation_requires_native_access(
     )
     launcher = workspace.with_name("npx")
     launcher.write_text(
-        '#!/bin/sh\nshift 2\nprintf "%s\\n" "$PWD" "$@" > "$NANOBOT_TEST_AUTOMATION_RECEIPT"\n',
+        '#!/bin/sh\nshift 2\nprintf "%s\\n" "$PWD" "$@" > "$KOHAKU_TEST_AUTOMATION_RECEIPT"\n',
         encoding="utf-8",
     )
     launcher.chmod(0o755)
     monkeypatch.setenv("PATH", str(launcher.parent) + os.pathsep + os.environ["PATH"])
     receipt = workspace.with_name("receipt")
-    monkeypatch.setenv("NANOBOT_TEST_AUTOMATION_RECEIPT", str(receipt))
+    monkeypatch.setenv("KOHAKU_TEST_AUTOMATION_RECEIPT", str(receipt))
     _, registry = load(context, monkeypatch)
 
     with automation_scope(workspace, access_mode):
@@ -112,9 +112,9 @@ def test_tool_loader_rejects_non_core_scope(context):
 def test_non_core_scope_stops_snapshot_discovery_factory_and_registry(context):
     registry = ToolRegistry()
     with (
-        patch("nanobot.agent.tools.loader.snapshot_external_context") as snapshot,
-        patch("nanobot.agent.tools.loader.entry_points") as discovery,
-        patch("nanobot.agent.tools.fork_factories.construct_core_tools") as factory,
+        patch("kohaku.agent.tools.loader.snapshot_external_context") as snapshot,
+        patch("kohaku.agent.tools.loader.entry_points") as discovery,
+        patch("kohaku.agent.tools.fork_factories.construct_core_tools") as factory,
         patch.object(registry, "register") as register,
         pytest.raises(ValueError, match="scope"),
     ):
@@ -126,8 +126,8 @@ def test_non_core_scope_stops_snapshot_discovery_factory_and_registry(context):
 
 
 def test_exact_default_main_tools_and_dependency_handoff(context, monkeypatch):
-    monkeypatch.delenv('NANOBOT_TREND_VPN_TOOLS_ENABLED', raising=False)
-    monkeypatch.setattr('nanobot.extensions.optional_tools.vpn_tools_enabled', lambda: False)
+    monkeypatch.delenv('KOHAKU_TREND_VPN_TOOLS_ENABLED', raising=False)
+    monkeypatch.setattr('kohaku.extensions.optional_tools.vpn_tools_enabled', lambda: False)
     names, registry = load(context, monkeypatch)
     assert set(names) == {'read_file', 'write_file', 'edit_file', 'list_dir', 'exec',
                           'exec_session', 'list_exec_sessions', 'web_search',
@@ -143,7 +143,7 @@ def test_exact_default_main_tools_and_dependency_handoff(context, monkeypatch):
 
 
 def test_missing_dependencies_and_collisions_leave_registry_unchanged(context, monkeypatch):
-    monkeypatch.setattr('nanobot.migration_guard.require_runtime_ready', lambda: None)
+    monkeypatch.setattr('kohaku.migration_guard.require_runtime_ready', lambda: None)
     registry = ToolRegistry()
     bare = ToolContext(config=context.config, workspace=context.workspace)
     with pytest.raises(ValueError, match='foreground_manager'):
@@ -163,14 +163,14 @@ def test_crawler_requires_both_switches(context, monkeypatch, enabled, flag):
     from dataclasses import replace
 
     context.fork_dependencies = replace(context.fork_dependencies, crawler_enabled=enabled)
-    monkeypatch.setattr('nanobot.extensions.optional_tools.crawl_tools_enabled', lambda: flag)
+    monkeypatch.setattr('kohaku.extensions.optional_tools.crawl_tools_enabled', lambda: flag)
     names, _ = load(context, monkeypatch)
     assert ('crawl_research' in names) == (enabled and flag)
     assert 'social_crawl' not in names
 
 
 def test_optional_constructor_settings_and_one_image(context, monkeypatch):
-    from nanobot.agent.tools.image_generation import ImageGenerationTool
+    from kohaku.agent.tools.image_generation import ImageGenerationTool
 
     context.config.agent_browser.package = 'configured-browser'
     context.config.agent_device.enabled = False
@@ -188,7 +188,7 @@ def test_optional_constructor_settings_and_one_image(context, monkeypatch):
 
 @pytest.mark.parametrize('scope', ['subagent', 'worker', 'crawler', 'unknown'])
 def test_generic_scope_cannot_add_background_capabilities(context, monkeypatch, scope):
-    monkeypatch.setattr('nanobot.migration_guard.require_runtime_ready', lambda: None)
+    monkeypatch.setattr('kohaku.migration_guard.require_runtime_ready', lambda: None)
     with pytest.raises(ValueError, match='scope'):
         ToolLoader().load(context, ToolRegistry(), scope=scope)
 
@@ -215,13 +215,13 @@ def test_vpn_preserves_exact_existing_flag(context, monkeypatch, flag, enabled):
 def test_construction_retains_required_dependency_guards(context, missing_fields, message):
     from dataclasses import replace
 
-    from nanobot.agent.tools.fork_factories import construct_core_tools
+    from kohaku.agent.tools.fork_factories import construct_core_tools
 
     context.fork_dependencies = replace(
         context.fork_dependencies, **dict.fromkeys(missing_fields),
     )
     with (
-        patch('nanobot.agent.tools.fork_factories.ToolFactory') as factory,
+        patch('kohaku.agent.tools.fork_factories.ToolFactory') as factory,
         pytest.raises(ValueError) as error,
     ):
         construct_core_tools(context)
@@ -230,7 +230,7 @@ def test_construction_retains_required_dependency_guards(context, missing_fields
 
 
 def test_browser_session_config_reaches_only_the_browser_tool(context, monkeypatch):
-    from nanobot.config.schema import AgentBrowserConfig
+    from kohaku.config.schema import AgentBrowserConfig
 
     context.config = ToolsConfig(
         agent_browser=AgentBrowserConfig(

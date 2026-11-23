@@ -2,9 +2,9 @@ from pathlib import Path
 
 import pytest
 
-import nanobot.session.mode_storage as mode_storage
-from nanobot.session.runtime_authority import DurableSessionAuthority
-from nanobot.session.source import new_source_event
+import kohaku.session.mode_storage as mode_storage
+from kohaku.session.runtime_authority import DurableSessionAuthority
+from kohaku.session.source import new_source_event
 
 
 @pytest.mark.asyncio

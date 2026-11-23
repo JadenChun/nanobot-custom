@@ -20,9 +20,9 @@ import pytest
 from websockets.datastructures import Headers
 from websockets.http11 import Request
 
-from nanobot.session.source_store import SourceSessionStore, SourceState
-from nanobot.webui import transcript as tr
-from nanobot.webui.transcript import (
+from kohaku.session.source_store import SourceSessionStore, SourceState
+from kohaku.webui import transcript as tr
+from kohaku.webui.transcript import (
     _record_origin,
     active_transcript_path,
     append_transcript_object,
@@ -31,7 +31,7 @@ from nanobot.webui.transcript import (
     read_transcript_lines,
     replay_transcript_to_ui_messages,
 )
-from nanobot.webui.transcript_index import (
+from kohaku.webui.transcript_index import (
     delete_transcript_index,
     read_history_window,
     rebuild_transcript_index,
@@ -45,13 +45,13 @@ LARGE_TURNS = 220
 
 @pytest.fixture
 def isolated_webui(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    import nanobot.webui.thread_disk  # noqa: F401 - bind the real dir before patching
+    import kohaku.webui.thread_disk  # noqa: F401 - bind the real dir before patching
 
     webui_dir = tmp_path / "webui"
     webui_dir.mkdir(parents=True, exist_ok=True)
-    monkeypatch.setattr("nanobot.config.paths.get_webui_dir", lambda: webui_dir)
-    monkeypatch.setattr("nanobot.config.paths.get_data_dir", lambda: tmp_path)
-    monkeypatch.setattr("nanobot.webui.transcript.get_webui_dir", lambda: webui_dir)
+    monkeypatch.setattr("kohaku.config.paths.get_webui_dir", lambda: webui_dir)
+    monkeypatch.setattr("kohaku.config.paths.get_data_dir", lambda: tmp_path)
+    monkeypatch.setattr("kohaku.webui.transcript.get_webui_dir", lambda: webui_dir)
     return webui_dir
 
 
@@ -192,7 +192,7 @@ def test_large_history_http_windows_are_bounded_and_paginate_without_gaps(
 ) -> None:
     from types import SimpleNamespace
 
-    from nanobot.session.runtime_authority import DurableSessionAuthority
+    from kohaku.session.runtime_authority import DurableSessionAuthority
     from tests.webui.test_child_thread_route import _make_channel
 
     workspace = tmp_path / "workspace"
@@ -303,16 +303,16 @@ async def test_cold_start_recovers_only_the_unsettled_session(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from nanobot.bus.queue import MessageBus
-    from nanobot.session.pending_followups import (
+    from kohaku.bus.queue import MessageBus
+    from kohaku.session.pending_followups import (
         mint_pending_followup_id,
         record_pending_followup,
     )
-    from nanobot.session.persistence_metadata import (
+    from kohaku.session.persistence_metadata import (
         SOURCE_PENDING_FOLLOWUPS_METADATA_KEY,
     )
-    from nanobot.session.recovery import RecoveryCoordinator
-    from nanobot.session.runtime_authority import DurableSessionAuthority
+    from kohaku.session.recovery import RecoveryCoordinator
+    from kohaku.session.runtime_authority import DurableSessionAuthority
 
     workspace = tmp_path / "workspace"
     workspace.mkdir()
@@ -335,8 +335,8 @@ async def test_cold_start_recovers_only_the_unsettled_session(
             assert saved is not None
             _write_turns(key, 40, source=saved.state)
 
-        from nanobot.bus.events import InboundMessage
-        from nanobot.session.execution_owner import acquire_execution
+        from kohaku.bus.events import InboundMessage
+        from kohaku.session.execution_owner import acquire_execution
 
         message = InboundMessage(
             channel="websocket",
@@ -469,7 +469,7 @@ async def test_active_and_next_turn_isolation_end_to_end(
     preferences) rather than re-implementing the authority drill, which
     `tests/session/test_next_turn_preferences.py` already proves in full.
     """
-    from nanobot.session.runtime_authority import DurableSessionAuthority
+    from kohaku.session.runtime_authority import DurableSessionAuthority
 
     workspace = tmp_path / "workspace"
     workspace.mkdir()

@@ -1397,7 +1397,7 @@ export function sanitizeConnectionFailure(error: unknown): string {
   return "connection failed"
 }
 
-export class NanobotClient {
+export class KohakuClient {
   private identityVerified = false
   private handshakeTimer: ReturnType<typeof setTimeout> | null = null
   private socket: WebSocket | null = null

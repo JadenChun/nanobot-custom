@@ -5,7 +5,7 @@ from contextlib import contextmanager
 
 import pytest
 
-from nanobot.session.artifact_store import (
+from kohaku.session.artifact_store import (
     ArtifactBlobTransaction,
     ArtifactStorageError,
     PrivateArtifactStore,

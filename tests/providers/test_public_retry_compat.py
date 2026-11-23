@@ -12,9 +12,9 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from nanobot.providers.base import ProviderCallContext
-from nanobot.providers.openai_compat_provider import OpenAICompatProvider
-from nanobot.providers.registry import find_by_name
+from kohaku.providers.base import ProviderCallContext
+from kohaku.providers.openai_compat_provider import OpenAICompatProvider
+from kohaku.providers.registry import find_by_name
 
 
 def _chat_response(content: str = "from chat") -> SimpleNamespace:
@@ -83,7 +83,7 @@ def _client() -> SimpleNamespace:
 
 @pytest.mark.asyncio
 async def test_plain_chat_omitted_context_keeps_responses_fallback() -> None:
-    with patch("nanobot.providers.openai_compat_provider.AsyncOpenAI") as client_class:
+    with patch("kohaku.providers.openai_compat_provider.AsyncOpenAI") as client_class:
         client = _client()
         client_class.return_value = client
         provider = _provider()
@@ -100,7 +100,7 @@ async def test_plain_chat_omitted_context_keeps_responses_fallback() -> None:
 
 @pytest.mark.asyncio
 async def test_chat_once_omitted_context_is_single_attempt() -> None:
-    with patch("nanobot.providers.openai_compat_provider.AsyncOpenAI") as client_class:
+    with patch("kohaku.providers.openai_compat_provider.AsyncOpenAI") as client_class:
         client = _client()
         client_class.return_value = client
         provider = _provider()
@@ -118,7 +118,7 @@ async def test_chat_once_omitted_context_is_single_attempt() -> None:
 @pytest.mark.asyncio
 @pytest.mark.parametrize("explicit_context", [False, True], ids=["omitted", "explicit-default"])
 async def test_chat_with_retry_keeps_responses_fallback(explicit_context: bool) -> None:
-    with patch("nanobot.providers.openai_compat_provider.AsyncOpenAI") as client_class:
+    with patch("kohaku.providers.openai_compat_provider.AsyncOpenAI") as client_class:
         client = _client()
         client_class.return_value = client
         provider = _provider()
@@ -142,7 +142,7 @@ async def test_chat_with_retry_keeps_responses_fallback(explicit_context: bool) 
 async def test_chat_stream_with_retry_keeps_responses_fallback(
     explicit_context: bool,
 ) -> None:
-    with patch("nanobot.providers.openai_compat_provider.AsyncOpenAI") as client_class:
+    with patch("kohaku.providers.openai_compat_provider.AsyncOpenAI") as client_class:
         client = _client()
         client.chat.completions.create = AsyncMock(return_value=_chat_stream())
         client_class.return_value = client
@@ -164,7 +164,7 @@ async def test_chat_stream_with_retry_keeps_responses_fallback(
 
 @pytest.mark.asyncio
 async def test_chat_stream_once_omitted_context_is_single_attempt() -> None:
-    with patch("nanobot.providers.openai_compat_provider.AsyncOpenAI") as client_class:
+    with patch("kohaku.providers.openai_compat_provider.AsyncOpenAI") as client_class:
         client = _client()
         client.chat.completions.create = AsyncMock(return_value=_chat_stream())
         client_class.return_value = client

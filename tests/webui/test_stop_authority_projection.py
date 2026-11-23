@@ -12,8 +12,8 @@ from urllib.parse import quote
 
 import pytest
 
-from nanobot.channels.websocket.tests.ws_test_client import http_get
-from nanobot.session.manager import Session
+from kohaku.channels.websocket.tests.ws_test_client import http_get
+from kohaku.session.manager import Session
 from tests.webui.test_child_thread_route import (
     _auth_headers,
     _make_channel,

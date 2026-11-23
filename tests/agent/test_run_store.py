@@ -4,14 +4,14 @@ from pathlib import Path
 
 import pytest
 
-from nanobot.agent.run_store import RunStore
-from nanobot.agent.turn import (
+from kohaku.agent.run_store import RunStore
+from kohaku.agent.turn import (
     RunRecord,
     RunStatus,
     SessionRunRef,
     TurnSource,
 )
-from nanobot.session.manager import SessionManager
+from kohaku.session.manager import SessionManager
 
 
 def _record(run_id: str = "run-1") -> RunRecord:
@@ -58,7 +58,7 @@ def test_interrupted_atomic_write_keeps_previous_record(tmp_path: Path, monkeypa
     def interrupted_replace(source: str | os.PathLike[str], destination: str | os.PathLike[str]) -> None:
         raise KeyboardInterrupt("simulated interruption")
 
-    monkeypatch.setattr("nanobot.agent.run_store.os.replace", interrupted_replace)
+    monkeypatch.setattr("kohaku.agent.run_store.os.replace", interrupted_replace)
     with pytest.raises(KeyboardInterrupt):
         store.save(_record())
 
@@ -131,7 +131,7 @@ def test_cancelled_insert_competitor_after_render_wins(tmp_path, monkeypatch):
         Path(destination).write_bytes(competitor)
         link(source, destination)
 
-    monkeypatch.setattr("nanobot.agent.run_store.os.link", competing_link)
+    monkeypatch.setattr("kohaku.agent.run_store.os.link", competing_link)
     assert not store.insert_cancelled_terminal(record)
     assert store.path_for(record.run_id).read_bytes() == competitor
     assert not list(store.runs_dir.glob("*.tmp"))
@@ -178,9 +178,9 @@ def test_cancelled_insert_faults_clean_staging(tmp_path, monkeypatch, fault):
             unlink(path)
             fail()
 
-        monkeypatch.setattr("nanobot.agent.run_store.os.unlink", unlink_then_fail)
+        monkeypatch.setattr("kohaku.agent.run_store.os.unlink", unlink_then_fail)
     else:
-        monkeypatch.setattr("nanobot.agent.run_store." + {
+        monkeypatch.setattr("kohaku.agent.run_store." + {
             "render": "json.dump", "fsync": "os.fsync", "link": "os.link",
         }[fault], fail)
     with pytest.raises(OSError):

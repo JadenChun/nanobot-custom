@@ -22,7 +22,7 @@ export class BranchMenu {
 
   constructor(renderer: CliRenderer, theme: PickerMenuTheme) {
     this.picker = new PickerMenu(renderer, theme, {
-      id: "nanobot-tui-branch-menu",
+      id: "kohaku-tui-branch-menu",
       searchText: (point) => point.preview,
       render: (point) => `After turn ${point.beforeUserIndex}  ${point.preview}`,
       emptyText: "No completed replies to branch from",

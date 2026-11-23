@@ -1,10 +1,10 @@
 import subprocess
 from pathlib import Path
 
-from nanobot.context_repo.catalog import RepositoryCatalog
-from nanobot.context_repo.discovery import discover_repositories
-from nanobot.context_repo.policy import ResourceAccessPolicy
-from nanobot.security.folder_grants import FolderGrantStore
+from kohaku.context_repo.catalog import RepositoryCatalog
+from kohaku.context_repo.discovery import discover_repositories
+from kohaku.context_repo.policy import ResourceAccessPolicy
+from kohaku.security.folder_grants import FolderGrantStore
 
 
 def _git_repo(path: Path) -> Path:

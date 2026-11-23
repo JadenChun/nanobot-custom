@@ -6,17 +6,17 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from nanobot.agent.loop import AgentLoop, _AdmittedTurnIO, _TurnExecutionOptions
-from nanobot.agent.tools.registry import ToolRegistry
-from nanobot.agent.turn import DeliveryTarget, TurnRequest
-from nanobot.bus.queue import MessageBus
-from nanobot.config.schema import Config
-from nanobot.cron.service import CronService
-from nanobot.providers.base import GenerationSettings, LLMProvider, LLMResponse
-from nanobot.runtime_composition import RuntimeComposition, RuntimeFactories
-from nanobot.session.manager import Session, SessionManager
-from nanobot.session.runtime_authority import BorrowedSessionAuthority, OfflineSessionOperator
-from nanobot.session.webui_turns import WebuiTurnCoordinator
+from kohaku.agent.loop import AgentLoop, _AdmittedTurnIO, _TurnExecutionOptions
+from kohaku.agent.tools.registry import ToolRegistry
+from kohaku.agent.turn import DeliveryTarget, TurnRequest
+from kohaku.bus.queue import MessageBus
+from kohaku.config.schema import Config
+from kohaku.cron.service import CronService
+from kohaku.providers.base import GenerationSettings, LLMProvider, LLMResponse
+from kohaku.runtime_composition import RuntimeComposition, RuntimeFactories
+from kohaku.session.manager import Session, SessionManager
+from kohaku.session.runtime_authority import BorrowedSessionAuthority, OfflineSessionOperator
+from kohaku.session.webui_turns import WebuiTurnCoordinator
 
 
 class _OwnedMCP:
@@ -30,7 +30,7 @@ class _OwnedMCP:
 @pytest.fixture
 async def _make_full_loop(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     """Explicit positive-fixture admission; OS full denial is the outer effect fence."""
-    monkeypatch.setattr("nanobot.migration_guard.require_runtime_ready", lambda: None)
+    monkeypatch.setattr("kohaku.migration_guard.require_runtime_ready", lambda: None)
     graphs = []
 
     async def acquire(root: Path, *, keys=(), borrowed=False):

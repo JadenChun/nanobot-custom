@@ -7,14 +7,14 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from nanobot.bus.outbound_events import StreamDeltaEvent, StreamEndEvent
+from kohaku.bus.outbound_events import StreamDeltaEvent, StreamEndEvent
 
 
 def _make_loop(tmp_path, *, tools_config=None):
     """Create an AgentLoop with the real canonical dependency graph."""
-    from nanobot.agent.loop import AgentLoop
-    from nanobot.bus.queue import MessageBus
-    from nanobot.config.schema import ToolsConfig
+    from kohaku.agent.loop import AgentLoop
+    from kohaku.bus.queue import MessageBus
+    from kohaku.config.schema import ToolsConfig
 
     bus = MessageBus()
     provider = MagicMock()
@@ -23,7 +23,7 @@ def _make_loop(tmp_path, *, tools_config=None):
 
     # Open the migration guard only for construction.  Turn and dispatch
     # assertions below run with real context/session/dependency implementations.
-    with patch("nanobot.migration_guard.require_runtime_ready"):
+    with patch("kohaku.migration_guard.require_runtime_ready"):
         loop = AgentLoop(
             bus=bus,
             provider=provider,
@@ -37,9 +37,9 @@ def _make_loop(tmp_path, *, tools_config=None):
 class TestHandleStop:
     @pytest.mark.asyncio
     async def test_stop_no_active_task(self, tmp_path):
-        from nanobot.bus.events import InboundMessage
-        from nanobot.command.builtin import cmd_stop
-        from nanobot.command.router import CommandContext
+        from kohaku.bus.events import InboundMessage
+        from kohaku.command.builtin import cmd_stop
+        from kohaku.command.router import CommandContext
 
         loop, _bus = _make_loop(tmp_path)
         msg = InboundMessage(channel="test", sender_id="u1", chat_id="c1", content="/stop")
@@ -49,9 +49,9 @@ class TestHandleStop:
 
     @pytest.mark.asyncio
     async def test_stop_cancels_active_task(self, tmp_path):
-        from nanobot.bus.events import InboundMessage
-        from nanobot.command.builtin import cmd_stop
-        from nanobot.command.router import CommandContext
+        from kohaku.bus.events import InboundMessage
+        from kohaku.command.builtin import cmd_stop
+        from kohaku.command.router import CommandContext
 
         loop, _bus = _make_loop(tmp_path)
         cancelled = asyncio.Event()
@@ -76,9 +76,9 @@ class TestHandleStop:
 
     @pytest.mark.asyncio
     async def test_stop_cancels_multiple_tasks(self, tmp_path):
-        from nanobot.bus.events import InboundMessage
-        from nanobot.command.builtin import cmd_stop
-        from nanobot.command.router import CommandContext
+        from kohaku.bus.events import InboundMessage
+        from kohaku.command.builtin import cmd_stop
+        from kohaku.command.router import CommandContext
 
         loop, _bus = _make_loop(tmp_path)
         events = [asyncio.Event(), asyncio.Event()]
@@ -105,8 +105,8 @@ class TestHandleStop:
 
 class TestDispatch:
     def test_exec_tool_not_registered_when_disabled(self, tmp_path):
-        from nanobot.agent.tools.shell import ExecToolConfig
-        from nanobot.config.schema import ToolsConfig
+        from kohaku.agent.tools.shell import ExecToolConfig
+        from kohaku.config.schema import ToolsConfig
 
         loop, _bus = _make_loop(
             tmp_path,
@@ -117,8 +117,8 @@ class TestDispatch:
 
     @pytest.mark.asyncio
     async def test_dispatch_processes_and_publishes(self, tmp_path):
-        from nanobot.agent.turn import TurnResult
-        from nanobot.bus.events import InboundMessage, OutboundMessage
+        from kohaku.agent.turn import TurnResult
+        from kohaku.bus.events import InboundMessage, OutboundMessage
 
         loop, bus = _make_loop(tmp_path)
         msg = InboundMessage(channel="test", sender_id="u1", chat_id="c1", content="hello")
@@ -139,8 +139,8 @@ class TestDispatch:
 
     @pytest.mark.asyncio
     async def test_cli_dispatch_marks_only_the_final_response_as_turn_complete(self, tmp_path):
-        from nanobot.agent.turn import TurnResult
-        from nanobot.bus.events import InboundMessage, OutboundMessage
+        from kohaku.agent.turn import TurnResult
+        from kohaku.bus.events import InboundMessage, OutboundMessage
 
         loop, bus = _make_loop(tmp_path)
         msg = InboundMessage(channel="cli", sender_id="u1", chat_id="marketing", content="hello")
@@ -166,8 +166,8 @@ class TestDispatch:
 
     @pytest.mark.asyncio
     async def test_cli_dispatch_publishes_empty_completion_after_message_tool_delivery(self, tmp_path):
-        from nanobot.agent.turn import TurnResult
-        from nanobot.bus.events import InboundMessage
+        from kohaku.agent.turn import TurnResult
+        from kohaku.bus.events import InboundMessage
 
         loop, bus = _make_loop(tmp_path)
         msg = InboundMessage(channel="cli", sender_id="u1", chat_id="marketing", content="hello")
@@ -190,8 +190,8 @@ class TestDispatch:
 
     @pytest.mark.asyncio
     async def test_dispatch_streaming_preserves_message_metadata(self, tmp_path):
-        from nanobot.agent.turn import TurnResult
-        from nanobot.bus.events import InboundMessage
+        from kohaku.agent.turn import TurnResult
+        from kohaku.bus.events import InboundMessage
 
         loop, bus = _make_loop(tmp_path)
         msg = InboundMessage(
@@ -230,8 +230,8 @@ class TestDispatch:
 
     @pytest.mark.asyncio
     async def test_dispatch_preserves_stream_completion_before_final_response(self, tmp_path):
-        from nanobot.agent.turn import TurnResult
-        from nanobot.bus.events import InboundMessage, OutboundMessage
+        from kohaku.agent.turn import TurnResult
+        from kohaku.bus.events import InboundMessage, OutboundMessage
 
         loop, bus = _make_loop(tmp_path)
         msg = InboundMessage(
@@ -277,8 +277,8 @@ class TestDispatch:
 
     @pytest.mark.asyncio
     async def test_dispatch_preserves_stream_merge_boundary_and_final_response(self, tmp_path):
-        from nanobot.agent.turn import TurnResult
-        from nanobot.bus.events import InboundMessage, OutboundMessage
+        from kohaku.agent.turn import TurnResult
+        from kohaku.bus.events import InboundMessage, OutboundMessage
 
         loop, bus = _make_loop(tmp_path)
         msg = InboundMessage(
@@ -331,8 +331,8 @@ class TestDispatch:
 
     @pytest.mark.asyncio
     async def test_dispatch_delivers_approval_response_from_turn_result(self, tmp_path):
-        from nanobot.agent.turn import TurnResult
-        from nanobot.bus.events import InboundMessage, OutboundMessage
+        from kohaku.agent.turn import TurnResult
+        from kohaku.bus.events import InboundMessage, OutboundMessage
 
         loop, bus = _make_loop(tmp_path)
         msg = InboundMessage(
@@ -371,8 +371,8 @@ class TestDispatch:
 
     @pytest.mark.asyncio
     async def test_processing_lock_serializes(self, tmp_path):
-        from nanobot.agent.turn import TurnResult
-        from nanobot.bus.events import InboundMessage, OutboundMessage
+        from kohaku.agent.turn import TurnResult
+        from kohaku.bus.events import InboundMessage, OutboundMessage
 
         loop, bus = _make_loop(tmp_path)
         order = []

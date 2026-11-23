@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from nanobot.context_repo import ContextRepoManager
+from kohaku.context_repo import ContextRepoManager
 
 
 def _skill(path: Path, marker: str) -> None:

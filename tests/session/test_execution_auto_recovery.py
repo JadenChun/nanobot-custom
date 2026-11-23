@@ -2,9 +2,9 @@
 
 import pytest
 
-from nanobot.session.execution_owner import ExecutionOwnershipError, acquire_execution
-from nanobot.session.manager import JsonlSessionStore
-from nanobot.session.source import new_source_event
+from kohaku.session.execution_owner import ExecutionOwnershipError, acquire_execution
+from kohaku.session.manager import JsonlSessionStore
+from kohaku.session.source import new_source_event
 from tests.session.test_execution_owner import seed
 
 

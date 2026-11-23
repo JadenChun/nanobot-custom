@@ -8,7 +8,7 @@ from types import TracebackType, coroutine
 
 import pytest
 
-import nanobot.api.server as api
+import kohaku.api.server as api
 
 
 class _CoroutineWrapper(Coroutine[object, object, object]):

@@ -4,20 +4,20 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from nanobot.agent.loop import AgentLoop, TurnContext, TurnKind
-from nanobot.agent.runner import AgentRunResult
-from nanobot.agent.turn import TurnContext as RunTurnContext
-from nanobot.agent.turn_delivery import TurnDelivery
-from nanobot.bus.events import InboundMessage, OutboundMessage
-from nanobot.bus.outbound_events import GoalStatusEvent
-from nanobot.bus.runtime_events import TurnRunStatusChanged
-from nanobot.channels.websocket.runtime import WebSocketChannel
-from nanobot.providers.base import GenerationSettings, LLMResponse
-from nanobot.session import webui_turns as wth
-from nanobot.session.manager import Session
-from nanobot.session.webui_turns import WebuiTurnCoordinator, WebuiTurnRoutePolicy
-from nanobot.utils.llm_runtime import LLMRuntime
-from nanobot.webui.metadata import WEBSOCKET_TURN_OWNER_METADATA_KEY
+from kohaku.agent.loop import AgentLoop, TurnContext, TurnKind
+from kohaku.agent.runner import AgentRunResult
+from kohaku.agent.turn import TurnContext as RunTurnContext
+from kohaku.agent.turn_delivery import TurnDelivery
+from kohaku.bus.events import InboundMessage, OutboundMessage
+from kohaku.bus.outbound_events import GoalStatusEvent
+from kohaku.bus.runtime_events import TurnRunStatusChanged
+from kohaku.channels.websocket.runtime import WebSocketChannel
+from kohaku.providers.base import GenerationSettings, LLMResponse
+from kohaku.session import webui_turns as wth
+from kohaku.session.manager import Session
+from kohaku.session.webui_turns import WebuiTurnCoordinator, WebuiTurnRoutePolicy
+from kohaku.utils.llm_runtime import LLMRuntime
+from kohaku.webui.metadata import WEBSOCKET_TURN_OWNER_METADATA_KEY
 from tests.agent.p6_admitted_fixtures import AgentInputs, AsyncAdmittedFactory
 from tests.agent.p6_admitted_fixtures import admitted_async as admitted_async
 
@@ -169,7 +169,7 @@ async def test_process_direct_reuses_existing_session_lock(
 
 @pytest.mark.asyncio
 async def test_process_direct_applies_per_run_hooks(tmp_path: Path, admitted_async) -> None:
-    from nanobot.agent.hook import AgentHook, AgentRunHookContext
+    from kohaku.agent.hook import AgentHook, AgentRunHookContext
 
     loop = await _make_loop(tmp_path, admitted_async, "api:per-run-hook")
     events: list[tuple[str, str | None]] = []

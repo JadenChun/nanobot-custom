@@ -9,17 +9,17 @@ from pathlib import Path
 
 import pytest
 
-from nanobot.agent.loop import AgentLoop
-from nanobot.agent.policy import RiskyActionPolicy
-from nanobot.agent.tools.desktop_use import DesktopUseTool
-from nanobot.agent.tools.registry import ToolRegistry
-from nanobot.agent.turn import (
+from kohaku.agent.loop import AgentLoop
+from kohaku.agent.policy import RiskyActionPolicy
+from kohaku.agent.tools.desktop_use import DesktopUseTool
+from kohaku.agent.tools.registry import ToolRegistry
+from kohaku.agent.turn import (
     ApprovalDecision,
     DeliveryTarget,
     RunStatus,
     TurnRequest,
 )
-from nanobot.providers.base import LLMResponse, ToolCallRequest
+from kohaku.providers.base import LLMResponse, ToolCallRequest
 from tests.agent import test_migration_engine as engine_fixtures
 from tests.agent.test_migration_engine import ScriptedProvider
 from tests.agent.test_migration_source_engine import upgrade

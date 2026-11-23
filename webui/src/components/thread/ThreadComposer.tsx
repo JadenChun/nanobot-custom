@@ -113,11 +113,11 @@ import type {
   SendAttachment,
   SendOptions,
   SubmittedTurn,
-} from "@/hooks/useNanobotStream";
+} from "@/hooks/useKohakuStream";
 import type {
   QueuedAttemptBinding,
   QueuedAttemptOutcome,
-} from "@/lib/nanobot-client";
+} from "@/lib/kohaku-client";
 import { useVoiceRecorder, type VoiceRecorderErrorKey } from "@/hooks/useVoiceRecorder";
 import { getMobileRuntime } from "@/lib/mobile-runtime";
 import type {

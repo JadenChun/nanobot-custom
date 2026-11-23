@@ -5,14 +5,14 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
-from nanobot.agent.hook import AgentHook, AgentRunHookContext
-from nanobot.agent.runner import AgentRunResult
-from nanobot.agent.tools.base import Tool
-from nanobot.agent.turn import RunStatus, TraceMode, TurnResult, TurnSource
-from nanobot.bus.events import OutboundMessage
-from nanobot.nanobot import Nanobot
-from nanobot.providers.base import LLMResponse, LLMUsage, ToolCallRequest
-from nanobot.sdk.types import result_from_turn
+from kohaku.agent.hook import AgentHook, AgentRunHookContext
+from kohaku.agent.runner import AgentRunResult
+from kohaku.agent.tools.base import Tool
+from kohaku.agent.turn import RunStatus, TraceMode, TurnResult, TurnSource
+from kohaku.bus.events import OutboundMessage
+from kohaku.kohaku import Kohaku
+from kohaku.providers.base import LLMResponse, LLMUsage, ToolCallRequest
+from kohaku.sdk.types import result_from_turn
 from tests.agent import test_migration_engine as engine_fixtures
 from tests.agent.test_migration_engine import ScriptedProvider
 
@@ -25,7 +25,7 @@ def bot_host(tmp_path):
     loop = host(tmp_path)
     loop.runtime_resolver = SimpleNamespace(resolve_override=Mock(return_value=None))
     loop.runtime_event_publisher = SimpleNamespace(run_status_changed=AsyncMock(), clear_turn=Mock())
-    bot = object.__new__(Nanobot)
+    bot = object.__new__(Kohaku)
     bot._loop, bot._config, bot._mcp_provider = loop, None, None
     return bot, loop
 
@@ -139,15 +139,15 @@ async def test_sdk_cancelled_lock_waiter_does_not_publish_idle(tmp_path):
 
 
 def test_top_level_sdk_aliases_still_match():
-    from nanobot import Nanobot as PublicNanobot
-    from nanobot import RunResult as PublicResult
-    from nanobot.nanobot import RunResult
-    assert PublicNanobot is Nanobot and PublicResult is RunResult
+    from kohaku import Kohaku as PublicKohaku
+    from kohaku import RunResult as PublicResult
+    from kohaku.kohaku import RunResult
+    assert PublicKohaku is Kohaku and PublicResult is RunResult
 
 
 @pytest.mark.parametrize('streamed', [False, True])
 async def test_model_selector_conflict_rejected_before_admission(tmp_path, streamed):
-    from nanobot.agent.model_runtime import ModelRuntimeResolver
+    from kohaku.agent.model_runtime import ModelRuntimeResolver
     bot, loop = bot_host(tmp_path)
     loop.runtime_resolver = object.__new__(ModelRuntimeResolver)
     call = bot.run_streamed if streamed else bot.run
@@ -227,16 +227,16 @@ async def test_from_config_real_runner_keeps_default_trace_private_and_sanitizes
         )]),
         LLMResponse(content="streamed answer"),
     ])
-    monkeypatch.setattr("nanobot.config.loader.load_config", lambda _path: engine_config)
-    monkeypatch.setattr("nanobot.providers.factory.make_provider", lambda _config: provider)
+    monkeypatch.setattr("kohaku.config.loader.load_config", lambda _path: engine_config)
+    monkeypatch.setattr("kohaku.providers.factory.make_provider", lambda _config: provider)
 
-    from nanobot.session.manager import SessionManager
-    from nanobot.session.runtime_authority import BorrowedSessionAuthority
+    from kohaku.session.manager import SessionManager
+    from kohaku.session.runtime_authority import BorrowedSessionAuthority
 
     manager = SessionManager(
         engine_config.workspace_path,
     )
-    bot = Nanobot.from_config(
+    bot = Kohaku.from_config(
         workspace=engine_config.workspace_path,
         session_authority=BorrowedSessionAuthority(manager),
     )

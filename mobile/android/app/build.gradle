@@ -1,12 +1,12 @@
 apply plugin: 'com.android.application'
 apply plugin: 'kotlin-android'
 
-def unsignedRelease = project.findProperty('nanobotUnsignedRelease') == 'true'
-def releaseKeystorePath = System.getenv("NANOBOT_MOBILE_KEYSTORE") ?: "${System.properties['user.home']}/.config/nanobot-mobile/release.keystore"
-def releaseKeyAlias = System.getenv("NANOBOT_MOBILE_KEY_ALIAS")
-def releaseStorePassword = System.getenv("NANOBOT_MOBILE_KEYSTORE_PASSWORD")
-def releaseKeyPassword = System.getenv("NANOBOT_MOBILE_KEY_PASSWORD") ?: releaseStorePassword
-def releasePasswordFile = System.getenv("NANOBOT_MOBILE_KEYSTORE_PASSWORD_FILE")
+def unsignedRelease = project.findProperty('kohakuUnsignedRelease') == 'true'
+def releaseKeystorePath = System.getenv("KOHAKU_MOBILE_KEYSTORE") ?: "${System.properties['user.home']}/.config/kohaku-mobile/release.keystore"
+def releaseKeyAlias = System.getenv("KOHAKU_MOBILE_KEY_ALIAS")
+def releaseStorePassword = System.getenv("KOHAKU_MOBILE_KEYSTORE_PASSWORD")
+def releaseKeyPassword = System.getenv("KOHAKU_MOBILE_KEY_PASSWORD") ?: releaseStorePassword
+def releasePasswordFile = System.getenv("KOHAKU_MOBILE_KEYSTORE_PASSWORD_FILE")
 if (!releaseStorePassword && releasePasswordFile) {
     def passwordSource = new File(releasePasswordFile)
     if (passwordSource.isFile()) {
@@ -18,13 +18,13 @@ def releaseKeystore = new File(releaseKeystorePath)
 def hasReleaseSigning = !unsignedRelease && releaseKeystore.isFile() && releaseKeyAlias && releaseStorePassword
 
 android {
-    namespace = "ai.nanobot.mobile"
+    namespace = "ai.kohaku.mobile"
     compileSdk = rootProject.ext.compileSdkVersion
     buildToolsVersion = "36.0.0"
     ndkVersion = "29.0.14206865"
     def mobileAbis = project.findProperty('mobileAbis')?.split(',') ?: ['x86_64', 'arm64-v8a']
     defaultConfig {
-        applicationId "ai.nanobot.mobile"
+        applicationId "ai.kohaku.mobile"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode 1
@@ -112,8 +112,8 @@ tasks.register("verifyReleaseSigning") {
     doLast {
         if (!hasReleaseSigning && !unsignedRelease) {
             throw new GradleException(
-                "Release signing is not configured. Set NANOBOT_MOBILE_KEYSTORE, " +
-                "NANOBOT_MOBILE_KEY_ALIAS and a password environment variable, or run " +
+                "Release signing is not configured. Set KOHAKU_MOBILE_KEYSTORE, " +
+                "KOHAKU_MOBILE_KEY_ALIAS and a password environment variable, or run " +
                 "mobile/scripts/build-release.sh."
             )
         }

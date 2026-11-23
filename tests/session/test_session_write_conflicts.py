@@ -5,7 +5,7 @@ from copy import deepcopy
 
 import pytest
 
-from nanobot.session.manager import (
+from kohaku.session.manager import (
     JsonlSessionStore,
     Session,
     SessionStorageError,
@@ -104,7 +104,7 @@ def test_before_replace_failure_keeps_disk_and_caller_bookkeeping(store, monkeyp
     before = store.get_session_path(session.key).read_bytes()
     messages = deepcopy(session.messages)
     with monkeypatch.context() as patch:
-        patch.setattr("nanobot.session.manager.os.replace", lambda *_: (_ for _ in ()).throw(OSError()))
+        patch.setattr("kohaku.session.manager.os.replace", lambda *_: (_ for _ in ()).throw(OSError()))
         with pytest.raises(OSError):
             store.save(session)
     assert store.get_session_path(session.key).read_bytes() == before
@@ -116,7 +116,7 @@ def test_before_replace_failure_keeps_disk_and_caller_bookkeeping(store, monkeyp
 def test_after_replace_failure_retry_does_not_duplicate_append(store, monkeypatch):
     session = seed(store)
     session.add_message("assistant", "new")
-    from nanobot.session import manager
+    from kohaku.session import manager
     original_replace = manager.os.replace
     def replace_then_fail(source, target):
         original_replace(source, target)
@@ -233,7 +233,7 @@ def test_summary_insertion_is_revision_checked_without_reset_generation(store):
 
 
 def test_cached_metadata_update_is_not_replayed_over_later_update(tmp_path):
-    from nanobot.session.manager import SessionManager
+    from kohaku.session.manager import SessionManager
     manager = SessionManager(tmp_path / "workspace", sessions_root=tmp_path / "private")
     session = manager.get_or_create("test:metadata")
     manager.save(session)
@@ -256,7 +256,7 @@ def test_stale_runtime_sidecar_cannot_replace_newer_revision(store):
 
 
 def provider_state(identifier):
-    from nanobot.providers.base import ProviderConversationState
+    from kohaku.providers.base import ProviderConversationState
     return ProviderConversationState(
         kind="openai_responses", provider="test", model="test", version=1,
         payload={"response_id": identifier},

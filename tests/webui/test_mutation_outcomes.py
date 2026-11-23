@@ -9,8 +9,8 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from nanobot.webui.inbound_commands import WebUICommandRouter, WebUIRequestResult
-from nanobot.webui.replay_store import DurableWebUIReplay
+from kohaku.webui.inbound_commands import WebUICommandRouter, WebUIRequestResult
+from kohaku.webui.replay_store import DurableWebUIReplay
 
 
 def _bare_router(dispatch) -> WebUICommandRouter:
@@ -58,7 +58,7 @@ async def test_execute_outcomes_distinguish_applied_partial_refused_timeout_and_
     assert refused.status == 409
     assert refused.outcome == "not_applied"
 
-    from nanobot.remote import operations as operations_module
+    from kohaku.remote import operations as operations_module
 
     spec = SimpleNamespace(timeout_s=0.01, max_request_bytes=1024)
     monkeypatch.setattr(

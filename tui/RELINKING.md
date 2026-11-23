@@ -18,10 +18,10 @@ Corresponding upstream source:
 To rebuild against a modified JavaScriptCore/WebKit, first build Bun 1.3.13 from its complete
 source checkout together with the WebKit revision above by following Bun's pinned license and
 build instructions. Then unpack
-`nanobot-tui-source.tar.gz` from the release archive and run the resulting Bun executable:
+`kohaku-tui-source.tar.gz` from the release archive and run the resulting Bun executable:
 
 ```bash
-cd nanobot-tui-source/tui
+cd kohaku-tui-source/tui
 /path/to/modified/bun install --frozen-lockfile
 /path/to/modified/bun run build -- <target>
 ```

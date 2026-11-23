@@ -2,8 +2,8 @@ import json
 
 import pytest
 
-from nanobot._migration_preflight import _Copy, _UnsafeError
-from nanobot.cli.migration_preflight import main
+from kohaku._migration_preflight import _Copy, _UnsafeError
+from kohaku.cli.migration_preflight import main
 
 
 def test_shared_ancestor_sibling_change_does_not_change_copy_boundary(tmp_path):

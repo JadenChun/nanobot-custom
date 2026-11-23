@@ -13,7 +13,7 @@ from typing import Any
 
 import pytest
 
-from nanobot.agent import memory_recovery_storage as storage
+from kohaku.agent import memory_recovery_storage as storage
 
 _R2_SLOT_CASES = (
     ("require_entry_binding", "_entry_binding", (object(),), {}),

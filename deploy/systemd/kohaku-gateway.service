@@ -1,0 +1,24 @@
+[Unit]
+Description=Marketing Agent Kohaku Gateway
+Wants=network-online.target
+After=network-online.target oauth-broker.service
+
+[Service]
+Type=simple
+User=marketing-agent
+Group=marketing-agent
+WorkingDirectory=/opt/marketing-agent/client-marketing-assistance
+Environment=PYTHONUNBUFFERED=1
+Environment=AGENT_VPN_BROKER_ENABLED=true
+EnvironmentFile=/opt/marketing-agent/secrets/kohaku.env
+ExecStart=/opt/marketing-agent/kohaku/.venv/bin/kohaku gateway --config /opt/marketing-agent/.kohaku/config.json --log-file /opt/marketing-agent/logs/kohaku-gateway.log
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=false
+ReadWritePaths=/opt/marketing-agent/.kohaku /opt/marketing-agent/client-marketing-assistance /opt/marketing-agent/logs /opt/marketing-agent/.cache /opt/marketing-agent/.codex /opt/marketing-agent/.local
+
+[Install]
+WantedBy=multi-user.target

@@ -8,12 +8,12 @@ from pathlib import Path
 
 from mcp.shared.auth import OAuthToken
 
-from nanobot.agent.tools.mcp_oauth import (
+from kohaku.agent.tools.mcp_oauth import (
     MCPOAuthStorage,
     mcp_oauth_has_credentials,
 )
-from nanobot.config.loader import load_config, set_config_path
-from nanobot.webui.mcp_presets_api import mcp_presets_action
+from kohaku.config.loader import load_config, set_config_path
+from kohaku.webui.mcp_presets_api import mcp_presets_action
 
 _SERVER_URL = "https://mcp.example.com/mcp"
 

@@ -7,7 +7,7 @@ from dataclasses import replace
 
 import pytest
 
-from nanobot.agent.child_backend import (
+from kohaku.agent.child_backend import (
     ChildAdmission,
     ChildBackendBinding,
     ChildBackendRegistry,

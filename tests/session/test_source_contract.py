@@ -4,7 +4,7 @@ from copy import deepcopy
 
 import pytest
 
-from nanobot.session.source import (
+from kohaku.session.source import (
     SourceValidationError,
     canonical_events,
     merge_source_events,

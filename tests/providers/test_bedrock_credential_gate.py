@@ -5,7 +5,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from nanobot.providers.bedrock_provider import BedrockProvider
+from kohaku.providers.bedrock_provider import BedrockProvider
 
 KEY = "AWS_BEARER_TOKEN_BEDROCK"
 

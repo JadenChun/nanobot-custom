@@ -6,9 +6,9 @@ from types import SimpleNamespace
 from websockets.datastructures import Headers
 from websockets.http11 import Request
 
-from nanobot.channels.websocket.runtime import WebSocketConfig
-from nanobot.webui.gateway_tokens import GatewayTokenStore
-from nanobot.webui.ws_http import GatewayHTTPHandler
+from kohaku.channels.websocket.runtime import WebSocketConfig
+from kohaku.webui.gateway_tokens import GatewayTokenStore
+from kohaku.webui.ws_http import GatewayHTTPHandler
 
 
 def test_terminal_probe_is_private_stable_and_does_not_issue_credentials():

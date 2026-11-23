@@ -8,17 +8,17 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
-from nanobot.agent.loop import AgentLoop, _TurnExecutionOptions
-from nanobot.agent.tools.registry import ToolRegistry
-from nanobot.agent.turn import TurnRequest
-from nanobot.bus.events import InboundMessage
-from nanobot.bus.queue import MessageBus
-from nanobot.config.schema import Config
-from nanobot.providers.base import LLMResponse, ToolCallRequest
-from nanobot.session.model_selection import SESSION_MODEL_PRESET_METADATA_KEY
-from nanobot.session.runtime_authority import DurableSessionAuthority
-from nanobot.webui.temporary_chats import WebUITemporaryChats
-from nanobot.webui.workspaces import WebUIWorkspaceController
+from kohaku.agent.loop import AgentLoop, _TurnExecutionOptions
+from kohaku.agent.tools.registry import ToolRegistry
+from kohaku.agent.turn import TurnRequest
+from kohaku.bus.events import InboundMessage
+from kohaku.bus.queue import MessageBus
+from kohaku.config.schema import Config
+from kohaku.providers.base import LLMResponse, ToolCallRequest
+from kohaku.session.model_selection import SESSION_MODEL_PRESET_METADATA_KEY
+from kohaku.session.runtime_authority import DurableSessionAuthority
+from kohaku.webui.temporary_chats import WebUITemporaryChats
+from kohaku.webui.workspaces import WebUIWorkspaceController
 
 
 class ScriptedProvider:
@@ -33,7 +33,7 @@ class ScriptedProvider:
 
 @pytest.fixture
 def engine_config(tmp_path, monkeypatch: pytest.MonkeyPatch) -> Config:
-    monkeypatch.setattr("nanobot.migration_guard.require_runtime_ready", lambda: None)
+    monkeypatch.setattr("kohaku.migration_guard.require_runtime_ready", lambda: None)
     monkeypatch.setattr("subprocess.Popen", Mock(side_effect=AssertionError("process execution")))
     for target in (
         "socket.socket.connect",
@@ -326,7 +326,7 @@ async def test_live_temporary_engine_turns_share_identity_history_and_exclude_du
 
         monkeypatch.setattr(loop, "_restore_turn", capture)
         hidden_logs = Mock()
-        monkeypatch.setattr("nanobot.agent.loop.logger", hidden_logs)
+        monkeypatch.setattr("kohaku.agent.loop.logger", hidden_logs)
         results = []
         for content in ("first private message", "second private message"):
             inbound = InboundMessage(channel="websocket", sender_id="webui", chat_id=chat_id,

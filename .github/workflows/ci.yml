@@ -98,11 +98,11 @@ jobs:
         run: bun run build
 
       - name: Verify bundle output
-        run: test -f nanobot/web/dist/index.html
+        run: test -f kohaku/web/dist/index.html
 
       - name: Verify fresh WebUI bundle for release
         env:
-          NANOBOT_REQUIRE_FRESH_WEBUI: "1"
+          KOHAKU_REQUIRE_FRESH_WEBUI: "1"
         run: |
           python3 - <<'PY'
           import sys
@@ -110,7 +110,7 @@ jobs:
 
           root = Path.cwd()
           sys.path.insert(0, str(root))
-          from nanobot.webui.build import (
+          from kohaku.webui.build import (
               describe_webui_bundle_status,
               inspect_webui_bundle,
               require_fresh_webui_bundle,
@@ -118,7 +118,7 @@ jobs:
 
           status = inspect_webui_bundle(
               source_dir=root / "webui",
-              dist_dir=root / "nanobot" / "web" / "dist",
+              dist_dir=root / "kohaku" / "web" / "dist",
           )
           require_fresh_webui_bundle(status)
           print(describe_webui_bundle_status(status))
@@ -128,7 +128,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: webui-dist
-          path: nanobot/web/dist
+          path: kohaku/web/dist
           if-no-files-found: error
 
   test:
@@ -148,11 +148,11 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: webui-dist
-          path: nanobot/web/dist
+          path: kohaku/web/dist
 
       - name: Verify WebUI bundle
         shell: bash
-        run: test -f nanobot/web/dist/index.html
+        run: test -f kohaku/web/dist/index.html
 
       - name: Set up Python 3.14
         uses: actions/setup-python@v5
@@ -209,7 +209,7 @@ jobs:
           print(f"python={platform.python_version()}")
           print(f"uv={command('uv', '--version')}")
           print(f"uv_lock_sha256={hashlib.sha256((root / 'uv.lock').read_bytes()).hexdigest()}")
-          print(f"webui_bundle_sha256={digest_tree(root / 'nanobot/web/dist')}")
+          print(f"webui_bundle_sha256={digest_tree(root / 'kohaku/web/dist')}")
           print(f"pytest_args={os.environ.get('PYTEST_ARGS', '')}")
           PY
           uv pip freeze > artifacts/pip-freeze.txt
@@ -217,13 +217,39 @@ jobs:
       # Channel requirements live in manifests rather than uv.lock. Avoid a
       # later uv run sync pruning the packages installed by the previous step.
       - name: Lint with ruff
-        run: uv run --no-sync ruff check nanobot tests conftest.py
+        run: uv run --no-sync ruff check kohaku tests conftest.py
 
       - name: Prepare the frozen type baseline
         if: ${{ !cancelled() && steps.verification_setup.outcome == 'success' }}
         run: |
-          mkdir -p /tmp/a3-0-baseline
-          cp .github/baselines/a3-0/pyproject.toml /tmp/a3-0-baseline/pyproject.toml
+          python3 - <<'PY'
+          import json
+          import os
+          import tomllib
+          from pathlib import Path
+
+          # Relocate the frozen package paths after the source rename.
+          # Keep the original report, diagnostic signatures, and checker rules.
+          destination = Path(os.environ["RUNNER_TEMP"]) / "a3-0-baseline"
+          destination.mkdir()
+          config = Path(".github/baselines/a3-0/pyproject.toml").read_text()
+          source_scope = 'include = ["nanobot"]'
+          if (
+              tomllib.loads(config)["tool"]["basedpyright"]["include"] != ["nanobot"]
+              or config.count(source_scope) != 1
+          ):
+              raise SystemExit("Unexpected frozen checker source scope")
+          (destination / "pyproject.toml").write_text(
+              config.replace(source_scope, 'include = ["kohaku"]', 1)
+          )
+
+          report = json.loads(Path(".github/baselines/a3-0-basedpyright.json").read_text())
+          original_source = Path("/tmp/a3-0-baseline/nanobot")
+          for diagnostic in report["generalDiagnostics"]:
+              relative = Path(diagnostic["file"]).relative_to(original_source)
+              diagnostic["file"] = str(destination / "kohaku" / relative)
+          (destination / "basedpyright.json").write_text(json.dumps(report))
+          PY
 
       - name: Type check with BasedPyright (strict)
         if: ${{ !cancelled() && steps.verification_setup.outcome == 'success' }}
@@ -235,8 +261,8 @@ jobs:
         if: ${{ !cancelled() && steps.verification_setup.outcome == 'success' }}
         run: >-
           uv run --no-sync python scripts/check_type_regressions.py
-          .github/baselines/a3-0-basedpyright.json basedpyright.json
-          --baseline-root /tmp/a3-0-baseline
+          "$RUNNER_TEMP/a3-0-baseline/basedpyright.json" basedpyright.json
+          --baseline-root "$RUNNER_TEMP/a3-0-baseline"
           --current-root "${{ github.workspace }}"
 
       - name: Run tests with coverage
@@ -247,7 +273,7 @@ jobs:
         run: >-
           uv run --no-sync python -m pytest
           ${{ env.PYTEST_ARGS }}
-          --cov=nanobot --cov-report=term-missing:skip-covered
+          --cov=kohaku --cov-report=term-missing:skip-covered
           --durations=25 --durations-min=1.0
           --junitxml=artifacts/pytest.xml
 
@@ -259,7 +285,7 @@ jobs:
         run: >-
           uv run --no-sync python -m pytest
           tests/cli/test_commands.py
-          --cov=nanobot --cov-append --cov-report=term-missing:skip-covered
+          --cov=kohaku --cov-append --cov-report=term-missing:skip-covered
           --durations=25 --durations-min=1.0
           --junitxml=artifacts/cli.xml
 
@@ -358,21 +384,21 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Build image with default channel dependencies
-        run: docker build -t nanobot:test .
+        run: docker build -t kohaku:test .
 
       - name: Verify Docker Compose startup and privilege boundary
         env:
           HOME: ${{ runner.temp }}
         run: |
-          docker compose run --rm --no-deps --build -T nanobot-cli status
-          docker compose run --rm --no-deps -T --entrypoint sh nanobot-cli -s <<'OUTER'
+          docker compose run --rm --no-deps --build -T kohaku-cli status
+          docker compose run --rm --no-deps -T --entrypoint sh kohaku-cli -s <<'OUTER'
           set -eu
           field() {
             awk -v key="$1:" '$1 == key { print $2 }' /proc/self/status
           }
           test "$(id -u)" = "0"
           test "$(field NoNewPrivs)" = "1"
-          setpriv --reuid=nanobot --regid=nanobot --init-groups sh -s <<'INNER'
+          setpriv --reuid=kohaku --regid=kohaku --init-groups sh -s <<'INNER'
           set -eu
           field() {
             awk -v key="$1:" '$1 == key { print $2 }' /proc/self/status
@@ -392,17 +418,17 @@ jobs:
           from pathlib import Path
 
           config = json.loads(Path(os.environ["RUNNER_TEMP"], "bwrap-compose.json").read_text())
-          for service_name in ("nanobot-gateway", "nanobot-api", "nanobot-cli"):
+          for service_name in ("kohaku-gateway", "kohaku-api", "kohaku-cli"):
               service = config["services"][service_name]
               assert {"CHOWN", "SETGID", "SETUID", "SYS_ADMIN"} <= set(service["cap_add"])
               assert "no-new-privileges:true" in service["security_opt"]
           PY
 
       - name: Verify default WhatsApp dependencies
-        run: docker run --rm --entrypoint python nanobot:test -c "import neonize, segno"
+        run: docker run --rm --entrypoint python kohaku:test -c "import neonize, segno"
 
       - name: Verify runtime dependency permissions
         run: >-
-          docker run --rm --user 1000:1000 --entrypoint sh nanobot:test -c
-          'test -w /app/.venv && test ! -w /app && test ! -w /app/nanobot &&
+          docker run --rm --user 1000:1000 --entrypoint sh kohaku:test -c
+          'test -w /app/.venv && test ! -w /app && test ! -w /app/kohaku &&
           python -m scripts.install_channel_dependencies discord && python -c "import discord"'

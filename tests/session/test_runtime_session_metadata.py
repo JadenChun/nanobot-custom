@@ -4,8 +4,8 @@ from typing import Literal
 
 import pytest
 
-from nanobot.session.manager import SessionManager
-from nanobot.session.runtime_authority import (
+from kohaku.session.manager import SessionManager
+from kohaku.session.runtime_authority import (
     RUNTIME_SESSION_METADATA_KEY,
     RUNTIME_SESSION_METADATA_VERSION,
     RuntimeSessionMetadata,

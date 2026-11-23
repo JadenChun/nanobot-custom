@@ -8,18 +8,18 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from nanobot.agent.hook import AgentHook, AgentHookContext
-from nanobot.agent.runner import AgentRunner
-from nanobot.agent.tools.base import Tool, ToolResult
-from nanobot.agent.tools.context import ToolContext
-from nanobot.agent.tools.execution import execute_tool_calls
-from nanobot.agent.tools.loader import ToolLoader
-from nanobot.agent.tools.registry import ToolRegistry
-from nanobot.agent.turn import ToolOutcome, TurnContext
-from nanobot.config.schema import AgentDefaults, ToolsConfig
-from nanobot.providers.base import LLMResponse, ToolCallRequest
-from nanobot.providers.openai_compat_provider import OpenAICompatProvider
-from nanobot.providers.openai_responses.parsing import parse_response_output
+from kohaku.agent.hook import AgentHook, AgentHookContext
+from kohaku.agent.runner import AgentRunner
+from kohaku.agent.tools.base import Tool, ToolResult
+from kohaku.agent.tools.context import ToolContext
+from kohaku.agent.tools.execution import execute_tool_calls
+from kohaku.agent.tools.loader import ToolLoader
+from kohaku.agent.tools.registry import ToolRegistry
+from kohaku.agent.turn import ToolOutcome, TurnContext
+from kohaku.config.schema import AgentDefaults, ToolsConfig
+from kohaku.providers.base import LLMResponse, ToolCallRequest
+from kohaku.providers.openai_compat_provider import OpenAICompatProvider
+from kohaku.providers.openai_responses.parsing import parse_response_output
 from tests.agent.runner_helpers import install_test_tool_dispatch, make_run_spec
 
 _MAX_TOOL_RESULT_CHARS = AgentDefaults().max_tool_result_chars
@@ -180,9 +180,9 @@ def _load_entry_point_plugin(tool_cls: type[Tool], tmp_path) -> ToolRegistry:
 
     registry = ToolRegistry()
     with (
-        patch("nanobot.migration_guard.require_runtime_ready"),
-        patch("nanobot.agent.tools.fork_factories.construct_core_tools", return_value=[]),
-        patch("nanobot.agent.tools.loader.entry_points", return_value=[mock_ep]),
+        patch("kohaku.migration_guard.require_runtime_ready"),
+        patch("kohaku.agent.tools.fork_factories.construct_core_tools", return_value=[]),
+        patch("kohaku.agent.tools.loader.entry_points", return_value=[mock_ep]),
     ):
         ToolLoader(test_classes=[]).load(ToolContext(config=ToolsConfig(), workspace=str(tmp_path)), registry)
     return registry
@@ -394,7 +394,7 @@ async def test_runner_rejects_near_miss_tool_name_without_executing():
 @pytest.mark.asyncio
 @pytest.mark.parametrize("arguments", ['{path:"notes.txt"}', "null"])
 async def test_runner_rejects_openai_compat_invalid_arguments_without_executing(arguments):
-    with patch("nanobot.providers.openai_compat_provider.AsyncOpenAI"):
+    with patch("kohaku.providers.openai_compat_provider.AsyncOpenAI"):
         parsed = OpenAICompatProvider()._parse({
             "choices": [{
                 "message": {

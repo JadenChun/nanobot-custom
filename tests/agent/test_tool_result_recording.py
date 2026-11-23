@@ -5,16 +5,16 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from nanobot.agent.hook import AgentHook, AgentHookContext
-from nanobot.agent.policy import DelegatedReadOnlyPolicy
-from nanobot.agent.runner import AgentRunner
-from nanobot.agent.tools.base import ToolResult
-from nanobot.agent.tools.execution import execute_tool_calls
-from nanobot.agent.tools.registry import ToolRegistry
-from nanobot.agent.turn import ToolOutcome, TurnContext
-from nanobot.providers.base import LLMResponse, ToolCallRequest
-from nanobot.session.execution_owner import ExecutionOwnershipError, acquire_execution
-from nanobot.session.manager import JsonlSessionStore, Session
+from kohaku.agent.hook import AgentHook, AgentHookContext
+from kohaku.agent.policy import DelegatedReadOnlyPolicy
+from kohaku.agent.runner import AgentRunner
+from kohaku.agent.tools.base import ToolResult
+from kohaku.agent.tools.execution import execute_tool_calls
+from kohaku.agent.tools.registry import ToolRegistry
+from kohaku.agent.turn import ToolOutcome, TurnContext
+from kohaku.providers.base import LLMResponse, ToolCallRequest
+from kohaku.session.execution_owner import ExecutionOwnershipError, acquire_execution
+from kohaku.session.manager import JsonlSessionStore, Session
 from tests.agent.runner_helpers import install_test_tool_dispatch, make_run_spec
 
 
@@ -260,7 +260,7 @@ async def test_repeated_lookup_rejection_is_recorded_without_dispatch():
 
 
 async def test_completed_result_survives_later_cancellation_in_real_source_store(tmp_path):
-    from nanobot.session.source import new_source_event
+    from kohaku.session.source import new_source_event
 
     backend = JsonlSessionStore(tmp_path)
     session = Session("test:durable")

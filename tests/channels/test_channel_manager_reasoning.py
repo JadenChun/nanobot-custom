@@ -20,15 +20,15 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from nanobot.bus.events import OutboundMessage
-from nanobot.bus.outbound_events import (
+from kohaku.bus.events import OutboundMessage
+from kohaku.bus.outbound_events import (
     ProgressEvent,
     outbound_message_for_event,
 )
-from nanobot.bus.queue import MessageBus
-from nanobot.channels.base import BaseChannel
-from nanobot.channels.manager import ChannelManager
-from nanobot.config.schema import Config
+from kohaku.bus.queue import MessageBus
+from kohaku.channels.base import BaseChannel
+from kohaku.channels.manager import ChannelManager
+from kohaku.config.schema import Config
 
 
 class _MockChannel(BaseChannel):
@@ -71,7 +71,7 @@ def manager() -> ChannelManager:
 
 async def test_websocket_gateway_uses_configured_workspace_restriction(tmp_path, monkeypatch):
     monkeypatch.setattr(
-        "nanobot.webui.workspaces.read_webui_default_access_mode",
+        "kohaku.webui.workspaces.read_webui_default_access_mode",
         lambda: "default",
     )
     config = Config.model_validate(
@@ -334,7 +334,7 @@ async def test_result_mode_drops_progress_but_keeps_tool_hint_and_final_media(ma
 
 @pytest.mark.asyncio
 async def test_manager_stream_retry_id_is_stable_private_and_fresh(manager, monkeypatch):
-    from nanobot.bus.outbound_events import StreamDeltaEvent
+    from kohaku.bus.outbound_events import StreamDeltaEvent
     message = outbound_message_for_event(channel='mock', chat_id='42', event=StreamDeltaEvent(content='x'))
     message.metadata['_delivery_id'] = 'caller-forged'
     seen = []
@@ -344,7 +344,7 @@ async def test_manager_stream_retry_id_is_stable_private_and_fresh(manager, monk
             raise OSError('retry fixture')
     monkeypatch.setattr(manager, '_send_once', send)
     monkeypatch.setattr(manager.channels['mock'], 'should_retry_send_error', lambda exc: True)
-    monkeypatch.setattr('nanobot.channels.manager.asyncio.sleep', AsyncMock())
+    monkeypatch.setattr('kohaku.channels.manager.asyncio.sleep', AsyncMock())
     await manager._send_with_retry(manager.channels['mock'], message)
     await manager._send_with_retry(manager.channels['mock'], message)
     assert seen[0] == seen[1] and seen[2] != seen[1]

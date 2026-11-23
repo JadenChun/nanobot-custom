@@ -9,16 +9,16 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from nanobot import migration_guard
-from nanobot.agent.loop import AgentLoop
-from nanobot.agent.memory import Consolidator
-from nanobot.agent.subagent import RetiredSubagentAuthority
-from nanobot.config import loader
-from nanobot.providers.base import GenerationSettings, LLMResponse
-from nanobot.runtime_composition import RuntimeState
-from nanobot.security import network
-from nanobot.session.manager import SessionManager
-from nanobot.session.runtime_authority import DurableSessionAuthority
+from kohaku import migration_guard
+from kohaku.agent.loop import AgentLoop
+from kohaku.agent.memory import Consolidator
+from kohaku.agent.subagent import RetiredSubagentAuthority
+from kohaku.config import loader
+from kohaku.providers.base import GenerationSettings, LLMResponse
+from kohaku.runtime_composition import RuntimeState
+from kohaku.security import network
+from kohaku.session.manager import SessionManager
+from kohaku.session.runtime_authority import DurableSessionAuthority
 from tests.agent.p6_admitted_fixtures import (
     AdmittedGraphs,
     AgentInputs,

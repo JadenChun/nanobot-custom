@@ -1,15 +1,15 @@
 # Python SDK
 
-Use nanobot programmatically — load config, run the agent, get results.
+Use kohaku programmatically — load config, run the agent, get results.
 
 ## Quick Start
 
 ```python
 import asyncio
-from nanobot import Nanobot
+from kohaku import Kohaku
 
 async def main():
-    bot = Nanobot.from_config()
+    bot = Kohaku.from_config()
     result = await bot.run("What time is it in Tokyo?")
     print(result.content)
 
@@ -18,13 +18,13 @@ asyncio.run(main())
 
 ## API
 
-### `Nanobot.from_config(config_path?, *, workspace?)`
+### `Kohaku.from_config(config_path?, *, workspace?)`
 
-Create a `Nanobot` from a config file.
+Create a `Kohaku` from a config file.
 
 | Param | Type | Default | Description |
 |-------|------|---------|-------------|
-| `config_path` | `str \| Path \| None` | `None` | Path to `config.json`. Defaults to `~/.nanobot/config.json`. |
+| `config_path` | `str \| Path \| None` | `None` | Path to `config.json`. Defaults to `~/.kohaku/config.json`. |
 | `workspace` | `str \| Path \| None` | `None` | Override workspace directory from config. |
 
 Raises `FileNotFoundError` if an explicit path doesn't exist.
@@ -80,7 +80,7 @@ Subclass `AgentHook` and override any method:
 ### Example: Audit Hook
 
 ```python
-from nanobot.agent import AgentHook, AgentHookContext
+from kohaku.agent import AgentHook, AgentHookContext
 
 class AuditHook(AgentHook):
     def __init__(self):
@@ -120,8 +120,8 @@ class Censor(AgentHook):
 
 ```python
 import asyncio
-from nanobot import Nanobot
-from nanobot.agent import AgentHook, AgentHookContext
+from kohaku import Kohaku
+from kohaku.agent import AgentHook, AgentHookContext
 
 class TimingHook(AgentHook):
     async def before_iteration(self, ctx: AgentHookContext) -> None:
@@ -134,7 +134,7 @@ class TimingHook(AgentHook):
         print(f"[timing] iteration took {elapsed:.2f}s")
 
 async def main():
-    bot = Nanobot.from_config(workspace="/my/project")
+    bot = Kohaku.from_config(workspace="/my/project")
     result = await bot.run(
         "Explain the main function",
         hooks=[TimingHook()],

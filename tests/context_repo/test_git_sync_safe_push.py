@@ -28,8 +28,8 @@ import json
 import subprocess
 from pathlib import Path
 
-from nanobot.utils import git_sync
-from nanobot.utils.git_sync import sync_context_repo
+from kohaku.utils import git_sync
+from kohaku.utils.git_sync import sync_context_repo
 
 # ---------------------------------------------------------------------------
 # Helpers (mirror the existing test_git_sync.py style)

@@ -10,7 +10,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 INVENTORY = ROOT / "mobile/contracts/desktop-parity.json"
-SERVER_OUT = ROOT / "nanobot/remote/contracts/operations-v1.json"
+SERVER_OUT = ROOT / "kohaku/remote/contracts/operations-v1.json"
 MOBILE_OUT = ROOT / "mobile/contracts/operations-v1.json"
 
 

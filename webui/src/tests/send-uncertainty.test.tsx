@@ -6,8 +6,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { ThreadShell } from "@/components/thread/ThreadShell";
 import { preloadMarkdownText } from "@/components/MarkdownText";
 import { folderAccessThreadFixture } from "@/tests/fixtures/folder-access-request";
-import { useNanobotStream } from "@/hooks/useNanobotStream";
-import { NanobotClient } from "@/lib/nanobot-client";
+import { useKohakuStream } from "@/hooks/useKohakuStream";
+import { KohakuClient } from "@/lib/kohaku-client";
 import type { InboundEvent, UIMessage } from "@/lib/types";
 import { ClientProvider } from "@/providers/ClientProvider";
 
@@ -53,7 +53,7 @@ class FakeSocket {
   }
 }
 
-const clients: NanobotClient[] = [];
+const clients: KohakuClient[] = [];
 
 afterEach(() => {
   act(() => { for (const client of clients.splice(0)) client.close(); });
@@ -65,7 +65,7 @@ describe("send uncertainty integration", () => {
   it("projects an ACK-lost frame as unknown and reconnects without replaying it", () => {
     vi.useFakeTimers();
     FakeSocket.instances = [];
-    const client = new NanobotClient({
+    const client = new KohakuClient({
       url: "ws://test",
       maxBackoffMs: 500,
       socketFactory: (url) => new FakeSocket(url) as unknown as WebSocket,
@@ -85,7 +85,7 @@ describe("send uncertainty integration", () => {
     }
 
     const { result, unmount } = renderHook(
-      () => useNanobotStream("chat-uncertain", []),
+      () => useKohakuStream("chat-uncertain", []),
       { wrapper: Wrapper },
     );
     let submitted: ReturnType<typeof result.current.send> = null;
@@ -129,7 +129,7 @@ describe("send uncertainty integration", () => {
 describe("admission refused for session recovery", () => {
   function renderChat(chatId: string) {
     vi.stubGlobal("fetch", vi.fn(async () => ({ ok: false, status: 404, json: async () => ({}) })));
-    const client = new NanobotClient({ url: "ws://test", reconnect: false,
+    const client = new KohakuClient({ url: "ws://test", reconnect: false,
       socketFactory: (url) => new FakeSocket(url) as unknown as WebSocket });
     clients.push(client);
     client.connect();
@@ -236,7 +236,7 @@ describe("canonical activity projection over the actual client and shell", () =>
       }
       return { ok: false, status: 404, json: async () => ({}) };
     }));
-    const client = new NanobotClient({ url: "ws://test", maxBackoffMs: 500,
+    const client = new KohakuClient({ url: "ws://test", maxBackoffMs: 500,
       socketFactory: (url) => new FakeSocket(url) as unknown as WebSocket });
     clients.push(client);
     client.connect();
@@ -291,12 +291,12 @@ describe("canonical activity projection over the actual client and shell", () =>
   });
 
   it("does not infer admission from attached or turn_end and accepts a later exact receipt", async () => {
-    const client = new NanobotClient({ url: "ws://test", maxBackoffMs: 500,
+    const client = new KohakuClient({ url: "ws://test", maxBackoffMs: 500,
       socketFactory: (url) => new FakeSocket(url) as unknown as WebSocket });
     clients.push(client);
     client.connect();
     FakeSocket.instances[0]!.fakeOpen();
-    const { result } = renderHook(() => useNanobotStream("held-admission"), {
+    const { result } = renderHook(() => useKohakuStream("held-admission"), {
       wrapper: ({ children }) => <ClientProvider client={client} token="tok">{children}</ClientProvider>,
     });
     let submitted!: NonNullable<ReturnType<typeof result.current.send>>;
@@ -340,7 +340,7 @@ describe("live activity metadata conservatism", () => {
       }
       return { ok: false, status: 404, json: async () => ({}) };
     }));
-    const client = new NanobotClient({ url: "ws://test", maxBackoffMs: 500,
+    const client = new KohakuClient({ url: "ws://test", maxBackoffMs: 500,
       socketFactory: (url) => new FakeSocket(url) as unknown as WebSocket });
     clients.push(client);
     client.connect();
@@ -403,7 +403,7 @@ describe("UNKNOWN queue and independent draft projection", () => {
       }
       return { ok: false, status: 404, json: async () => ({}) };
     }));
-    const client = new NanobotClient({ url: "ws://test", maxBackoffMs: 500,
+    const client = new KohakuClient({ url: "ws://test", maxBackoffMs: 500,
       socketFactory: (url) => new FakeSocket(url) as unknown as WebSocket });
     clients.push(client);
     client.connect();
@@ -483,12 +483,12 @@ describe("UNKNOWN queue and independent draft projection", () => {
 
 describe("chat isolation for mounted admission uncertainty", () => {
   it("resyncs the map query and does not leak a retired chat's late proof/output into a newer view", async () => {
-    const client = new NanobotClient({ url: "ws://test", maxBackoffMs: 500,
+    const client = new KohakuClient({ url: "ws://test", maxBackoffMs: 500,
       socketFactory: (url) => new FakeSocket(url) as unknown as WebSocket });
     clients.push(client);
     client.connect();
     FakeSocket.instances[0]!.fakeOpen();
-    const { result, rerender } = renderHook(({ chatId }) => useNanobotStream(chatId), {
+    const { result, rerender } = renderHook(({ chatId }) => useKohakuStream(chatId), {
       initialProps: { chatId: "old-view" },
       wrapper: ({ children }) => <ClientProvider client={client} token="tok">{children}</ClientProvider>,
     });

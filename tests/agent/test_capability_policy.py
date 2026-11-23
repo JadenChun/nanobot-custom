@@ -5,18 +5,18 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from nanobot.agent.capabilities import role_capabilities
-from nanobot.agent.delegation import ForegroundAgentManager
-from nanobot.agent.policy import DelegatedReadOnlyPolicy, RiskyActionPolicy
-from nanobot.agent.tools.agent_browser import AgentBrowserTool
-from nanobot.agent.tools.agent_device import AgentDeviceTool
-from nanobot.agent.tools.filesystem import SearchFilesTool
-from nanobot.agent.tools.registry import ToolRegistry
-from nanobot.agent.tools.social_crawl import SocialCrawlTool
-from nanobot.agent.turn import RunStatus, ToolOutcome, TurnRequest
-from nanobot.context_repo import ResourceAccessPolicy
-from nanobot.providers.base import GenerationSettings, LLMResponse, ToolCallRequest
-from nanobot.utils.llm_runtime import LLMRuntime
+from kohaku.agent.capabilities import role_capabilities
+from kohaku.agent.delegation import ForegroundAgentManager
+from kohaku.agent.policy import DelegatedReadOnlyPolicy, RiskyActionPolicy
+from kohaku.agent.tools.agent_browser import AgentBrowserTool
+from kohaku.agent.tools.agent_device import AgentDeviceTool
+from kohaku.agent.tools.filesystem import SearchFilesTool
+from kohaku.agent.tools.registry import ToolRegistry
+from kohaku.agent.tools.social_crawl import SocialCrawlTool
+from kohaku.agent.turn import RunStatus, ToolOutcome, TurnRequest
+from kohaku.context_repo import ResourceAccessPolicy
+from kohaku.providers.base import GenerationSettings, LLMResponse, ToolCallRequest
+from kohaku.utils.llm_runtime import LLMRuntime
 
 
 def _provider() -> MagicMock:
@@ -223,8 +223,8 @@ async def test_approval_effect_binding_requires_new_decision_for_different_effec
     assert decision.metadata["effect_id"]
     assert decision.metadata["approval_id"]
 
-    from nanobot.agent.turn import ApprovalDecision, TurnContext
-    from nanobot.agent.turn_admission import ApprovalAdmission
+    from kohaku.agent.turn import ApprovalDecision, TurnContext
+    from kohaku.agent.turn_admission import ApprovalAdmission
 
     admission = ApprovalAdmission()
     pending = await admission.store(
@@ -269,8 +269,8 @@ async def test_delegated_unsafe_browser_call_is_blocked_before_tool_execution() 
         },
     }
     tool.execute = AsyncMock(return_value="executed")
-    from nanobot.agent.runner import AgentRunner, AgentRunSpec
-    from nanobot.agent.tools.registry import ToolRegistry
+    from kohaku.agent.runner import AgentRunner, AgentRunSpec
+    from kohaku.agent.tools.registry import ToolRegistry
 
     registry = ToolRegistry()
     registry.register(tool)
@@ -294,8 +294,8 @@ async def test_delegated_unsafe_browser_call_is_blocked_before_tool_execution() 
 async def test_nested_read_only_stop_reaches_outer_turn_without_approval_or_extra_call(
     tmp_path,
 ) -> None:
-    from nanobot.agent.loop import AgentLoop
-    from nanobot.bus.queue import MessageBus
+    from kohaku.agent.loop import AgentLoop
+    from kohaku.bus.queue import MessageBus
 
     provider = _provider()
     provider.chat_with_retry.return_value = LLMResponse(
@@ -307,7 +307,7 @@ async def test_nested_read_only_stop_reaches_outer_turn_without_approval_or_extr
         )],
         usage=None,
     )
-    with patch("nanobot.migration_guard.require_runtime_ready"):
+    with patch("kohaku.migration_guard.require_runtime_ready"):
         loop = AgentLoop(bus=MessageBus(), provider=provider, workspace=tmp_path)
     loop._fork_dependencies.foreground_manager.run_plan = AsyncMock(return_value=ToolOutcome(
         content="Blocked by delegated capability policy.",
@@ -356,7 +356,7 @@ def test_browser_device_are_sequential_and_crawler_schema_has_no_click() -> None
 async def test_social_crawl_defense_in_depth_blocks_click_without_backend_request(monkeypatch) -> None:
     request = AsyncMock()
     monkeypatch.setattr(
-        "nanobot.agent.tools.social_crawl.SocialCrawlClient.request_async",
+        "kohaku.agent.tools.social_crawl.SocialCrawlClient.request_async",
         request,
     )
 
@@ -373,8 +373,8 @@ async def test_social_crawl_defense_in_depth_blocks_click_without_backend_reques
 async def test_read_only_browser_and_device_guards_do_not_start_processes(monkeypatch) -> None:
     browser_process = AsyncMock()
     device_process = AsyncMock()
-    monkeypatch.setattr("nanobot.agent.tools.agent_browser.run_owned_process", browser_process)
-    monkeypatch.setattr("nanobot.agent.tools.agent_device.run_owned_process", device_process)
+    monkeypatch.setattr("kohaku.agent.tools.agent_browser.run_owned_process", browser_process)
+    monkeypatch.setattr("kohaku.agent.tools.agent_device.run_owned_process", device_process)
 
     browser_result = await AgentBrowserTool(read_only=True).execute(args=["click", "@e1"])
     device_result = await AgentDeviceTool(read_only=True).execute(args=["press", "@e1"])

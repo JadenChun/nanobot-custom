@@ -3,8 +3,8 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
-from nanobot.bus.queue import MessageBus
-from nanobot.channels.telegram.runtime import TelegramChannel, TelegramConfig
+from kohaku.bus.queue import MessageBus
+from kohaku.channels.telegram.runtime import TelegramChannel, TelegramConfig
 
 
 @pytest.mark.parametrize('handler', ['_on_start', '_on_help', '_forward_command', '_on_message',
@@ -67,7 +67,7 @@ async def test_buffered_album_rechecks_revoked_authorization(monkeypatch):
                                             'chat_type': 'group', 'contents': ['text'],
                                             'media': [], 'metadata': {}}
     channel.config.allow_chats = ['-20']
-    monkeypatch.setattr('nanobot.channels.telegram.runtime.asyncio.sleep', AsyncMock())
+    monkeypatch.setattr('kohaku.channels.telegram.runtime.asyncio.sleep', AsyncMock())
     await channel._flush_media_group('album')
     channel._handle_message.assert_not_awaited()
     assert 'album' not in channel._media_group_buffers
@@ -84,7 +84,7 @@ async def test_revoked_album_cancels_only_its_owned_typing_task(monkeypatch, new
     channel._media_group_buffers['album'] = {'sender_id': '42', 'chat_id': '-10',
         'chat_type': 'group', 'typing_task': owned}
     channel._handle_message = AsyncMock()
-    monkeypatch.setattr('nanobot.channels.telegram.runtime.asyncio.sleep', AsyncMock())
+    monkeypatch.setattr('kohaku.channels.telegram.runtime.asyncio.sleep', AsyncMock())
     try:
         await channel._flush_media_group('album')
         assert owned.cancelled()
@@ -103,7 +103,7 @@ async def test_fast_command_uses_only_configured_argv_and_preserves_reply_thread
         reply_to_message=True), MessageBus())
     process = SimpleNamespace(communicate=AsyncMock(return_value=(b'report output', b'')), returncode=0)
     spawn = AsyncMock(return_value=process)
-    monkeypatch.setattr('nanobot.channels.telegram.runtime.asyncio.create_subprocess_exec', spawn)
+    monkeypatch.setattr('kohaku.channels.telegram.runtime.asyncio.create_subprocess_exec', spawn)
     channel._send_text = AsyncMock()
     channel._handle_message = AsyncMock()
     channel._remember_thread_context = Mock()
@@ -127,10 +127,10 @@ async def test_fast_command_failure_reaps_owned_process(monkeypatch, failure):
     error = asyncio.TimeoutError() if failure == 'timeout' else asyncio.CancelledError()
     process = SimpleNamespace(communicate=AsyncMock(side_effect=error), returncode=None,
                               pid=12345, wait=AsyncMock(), kill=Mock())
-    monkeypatch.setattr('nanobot.channels.telegram.runtime.asyncio.create_subprocess_exec',
+    monkeypatch.setattr('kohaku.channels.telegram.runtime.asyncio.create_subprocess_exec',
                         AsyncMock(return_value=process))
     kill = Mock()
-    monkeypatch.setattr('nanobot.agent.tools.shell.os.killpg', kill)
+    monkeypatch.setattr('kohaku.agent.tools.shell.os.killpg', kill)
     with pytest.raises(type(error)):
         await channel._try_fast_command(SimpleNamespace(text='/report'))
     process.wait.assert_awaited_once()
@@ -150,10 +150,10 @@ async def test_repeated_cancellation_does_not_abandon_fast_command_cleanup(monke
         assert child is process
         cleaning.set()
         await release.wait()
-    monkeypatch.setattr('nanobot.channels.telegram.runtime.asyncio.create_subprocess_exec',
+    monkeypatch.setattr('kohaku.channels.telegram.runtime.asyncio.create_subprocess_exec',
                         AsyncMock(return_value=process))
     clean = AsyncMock(side_effect=cleanup)
-    monkeypatch.setattr('nanobot.agent.tools.shell.ExecTool.kill_process_tree', clean)
+    monkeypatch.setattr('kohaku.agent.tools.shell.ExecTool.kill_process_tree', clean)
     task = asyncio.create_task(channel._try_fast_command(SimpleNamespace(text='/report')))
     await started.wait()
     task.cancel()
@@ -168,9 +168,9 @@ async def test_repeated_cancellation_does_not_abandon_fast_command_cleanup(monke
 
 
 async def test_quota_menu_routing_and_reset_display(monkeypatch):
-    from nanobot.command.builtin import build_help_text, cmd_quota, register_builtin_commands
-    from nanobot.command.router import CommandRouter
-    from nanobot.providers import codex_auth
+    from kohaku.command.builtin import build_help_text, cmd_quota, register_builtin_commands
+    from kohaku.command.router import CommandRouter
+    from kohaku.providers import codex_auth
     assert any(command.command == 'quota' for command in TelegramChannel.BOT_COMMANDS)
     assert TelegramChannel.TELEGRAM_BUS_SLASH_COMMAND_RE.match('/quota@mybot')
     assert '/quota' in build_help_text()
@@ -186,8 +186,8 @@ async def test_quota_menu_routing_and_reset_display(monkeypatch):
 
 
 async def test_quota_error_does_not_expose_auth_response(monkeypatch):
-    from nanobot.command.builtin import cmd_quota
-    from nanobot.providers import codex_auth
+    from kohaku.command.builtin import cmd_quota
+    from kohaku.providers import codex_auth
     def fail():
         raise RuntimeError('secret-token-in-response')
     monkeypatch.setattr(codex_auth, 'get_codex_usage', fail)
@@ -197,9 +197,9 @@ async def test_quota_error_does_not_expose_auth_response(monkeypatch):
 
 
 def test_webui_partial_save_preserves_fast_commands_and_chat_restrictions():
-    from nanobot.channels.registry import load_channel_plugin
-    from nanobot.config.schema import Config
-    from nanobot.webui.settings_system import save_channel_config_values
+    from kohaku.channels.registry import load_channel_plugin
+    from kohaku.config.schema import Config
+    from kohaku.webui.settings_system import save_channel_config_values
     original = {'enabled': False, 'token': 'synthetic', 'allowFrom': ['42'],
                 'allowChats': ['-10'], 'fastCommands': {'/report': ['runner', '--fixed']},
                 'fastCommandWorkdir': '/configured', 'fastCommandTimeout': 19}

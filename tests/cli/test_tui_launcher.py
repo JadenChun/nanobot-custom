@@ -10,9 +10,9 @@ from types import SimpleNamespace
 import pytest
 import typer
 
-import nanobot.cli.tui_launcher as tui_launcher
-from nanobot.cli.agent import agent
-from nanobot.cli.tui_launcher import (
+import kohaku.cli.tui_launcher as tui_launcher
+from kohaku.cli.agent import agent
+from kohaku.cli.tui_launcher import (
     TuiSessionError,
     TuiUnavailableError,
     _download_release_tui,
@@ -24,13 +24,13 @@ from nanobot.cli.tui_launcher import (
     launch_tui,
     resolve_tui_command,
 )
-from nanobot.config.schema import Config, ModelPresetConfig
+from kohaku.config.schema import Config, ModelPresetConfig
 
 
 @pytest.fixture
 def admitted_tui_config(tmp_path, monkeypatch):
     """Positive entry-point fixture; receipt admission and config binding stay real."""
-    from nanobot.config import loader
+    from kohaku.config import loader
 
     path = tmp_path / "config.json"
     path.write_text(json.dumps({
@@ -40,7 +40,7 @@ def admitted_tui_config(tmp_path, monkeypatch):
     assert config.runtime_data_dir == tmp_path
     monkeypatch.setattr(loader, "_current_config_path", path)
     monkeypatch.setattr(Path, "home", classmethod(lambda _cls: tmp_path / "absent-home"))
-    monkeypatch.setattr("nanobot.migration_guard.require_runtime_ready", lambda: None)
+    monkeypatch.setattr("kohaku.migration_guard.require_runtime_ready", lambda: None)
 
     def denied(*_args, **_kwargs):
         pytest.fail("TUI entry tests must not start external resources")
@@ -50,13 +50,13 @@ def admitted_tui_config(tmp_path, monkeypatch):
         monkeypatch.setattr(socket.socket, name, denied)
     for name in ("getaddrinfo", "create_connection"):
         monkeypatch.setattr(socket, name, denied)
-    monkeypatch.setattr("nanobot.runtime_composition.RuntimeComposition.acquire", denied)
+    monkeypatch.setattr("kohaku.runtime_composition.RuntimeComposition.acquire", denied)
     return config
 
 
 def test_native_tui_entry_checks_startup_receipt_before_launch(monkeypatch, tmp_path):
-    from nanobot.agent.memory_recovery_startup_admission import StartupReceiptAdmissionError
-    from nanobot.config import loader
+    from kohaku.agent.memory_recovery_startup_admission import StartupReceiptAdmissionError
+    from kohaku.config import loader
 
     config_path = tmp_path / "config.json"
     workspace = tmp_path / "workspace"
@@ -168,7 +168,7 @@ def test_launcher_passes_the_canonical_model_preset_to_the_tui(
             assert wait_for_stop is False
             released.append(True)
 
-    monkeypatch.setattr("nanobot.cli.tui_launcher.resolve_tui_command", lambda: ["nanobot-tui"])
+    monkeypatch.setattr("kohaku.cli.tui_launcher.resolve_tui_command", lambda: ["nanobot-tui"])
     def ensure_gateway(*args: object, **kwargs: object) -> SimpleNamespace:
         assert events == ["spawned"]
         assert kwargs["wait_until_ready"] is False
@@ -177,7 +177,7 @@ def test_launcher_passes_the_canonical_model_preset_to_the_tui(
             lease=FakeLease(),
         )
 
-    monkeypatch.setattr("nanobot.cli.tui_launcher._ensure_gateway", ensure_gateway)
+    monkeypatch.setattr("kohaku.cli.tui_launcher._ensure_gateway", ensure_gateway)
 
     class FakeProcess:
         def wait(self) -> int:
@@ -190,7 +190,7 @@ def test_launcher_passes_the_canonical_model_preset_to_the_tui(
         events.append("spawned")
         return FakeProcess()
 
-    monkeypatch.setattr("nanobot.cli.tui_launcher.subprocess.Popen", popen)
+    monkeypatch.setattr("kohaku.cli.tui_launcher.subprocess.Popen", popen)
 
     result = launch_tui(
         config,
@@ -201,18 +201,18 @@ def test_launcher_passes_the_canonical_model_preset_to_the_tui(
     )
 
     assert result == 0
-    assert captured["NANOBOT_TUI_MODEL"] == "openai/gpt-5.6"
-    assert captured["NANOBOT_TUI_MODEL_PRESET"] == "Deep Research"
-    assert captured["NANOBOT_TUI_WORKSPACE"] == str(Path.cwd().resolve())
-    assert captured["NANOBOT_TUI_BOOTSTRAP_URL"] == (
+    assert captured["KOHAKU_TUI_MODEL"] == "openai/gpt-5.6"
+    assert captured["KOHAKU_TUI_MODEL_PRESET"] == "Deep Research"
+    assert captured["KOHAKU_TUI_WORKSPACE"] == str(Path.cwd().resolve())
+    assert captured["KOHAKU_TUI_BOOTSTRAP_URL"] == (
         "http://127.0.0.1:8765/webui/bootstrap"
     )
-    assert captured["NANOBOT_TUI_HEALTH_URL"] == "http://127.0.0.1:18790/health"
-    assert captured["NANOBOT_TUI_BOOTSTRAP_SECRET"] == "bootstrap-secret"
-    assert "NANOBOT_TUI_WS_URL" not in captured
-    assert "NANOBOT_TUI_API_TOKEN" not in captured
-    assert "NANOBOT_TUI_CHAT_ID" not in captured
-    assert "NANOBOT_TUI_STATE_PATH" not in captured
+    assert captured["KOHAKU_TUI_HEALTH_URL"] == "http://127.0.0.1:18790/health"
+    assert captured["KOHAKU_TUI_BOOTSTRAP_SECRET"] == "bootstrap-secret"
+    assert "KOHAKU_TUI_WS_URL" not in captured
+    assert "KOHAKU_TUI_API_TOKEN" not in captured
+    assert "KOHAKU_TUI_CHAT_ID" not in captured
+    assert "KOHAKU_TUI_STATE_PATH" not in captured
     assert events == ["spawned", "waited"]
     assert released == [True]
 
@@ -238,12 +238,12 @@ def test_launcher_terminates_the_tui_when_gateway_start_fails(
     def fail_gateway(*args: object, **kwargs: object) -> None:
         raise RuntimeError("gateway failed")
 
-    monkeypatch.setattr("nanobot.cli.tui_launcher.resolve_tui_command", lambda: ["nanobot-tui"])
+    monkeypatch.setattr("kohaku.cli.tui_launcher.resolve_tui_command", lambda: ["nanobot-tui"])
     monkeypatch.setattr(
-        "nanobot.cli.tui_launcher.subprocess.Popen",
+        "kohaku.cli.tui_launcher.subprocess.Popen",
         lambda *args, **kwargs: FakeProcess(),
     )
-    monkeypatch.setattr("nanobot.cli.tui_launcher._ensure_gateway", fail_gateway)
+    monkeypatch.setattr("kohaku.cli.tui_launcher._ensure_gateway", fail_gateway)
 
     with pytest.raises(RuntimeError, match="gateway failed"):
         launch_tui(
@@ -291,8 +291,8 @@ def test_launcher_keeps_the_tui_alive_while_an_existing_gateway_recovers(
             events.append("waited")
             return 0
 
-    monkeypatch.setattr("nanobot.gateway.GatewayRuntime", FakeRuntime)
-    monkeypatch.setattr("nanobot.cli.tui_launcher.resolve_tui_command", lambda: ["nanobot-tui"])
+    monkeypatch.setattr("kohaku.gateway.GatewayRuntime", FakeRuntime)
+    monkeypatch.setattr("kohaku.cli.tui_launcher.resolve_tui_command", lambda: ["nanobot-tui"])
     # Stub only this launcher's child; lease cleanup still needs real subprocess
     # calls to check live process state (including ps on macOS/Linux).
     monkeypatch.setattr(
@@ -304,7 +304,7 @@ def test_launcher_keeps_the_tui_alive_while_an_existing_gateway_recovers(
         ),
     )
     monkeypatch.setattr(
-        "nanobot.cli.tui_launcher._webui_endpoint_reachable",
+        "kohaku.cli.tui_launcher._webui_endpoint_reachable",
         lambda _url: pytest.fail(
             "launcher must not probe readiness for a live recovering gateway"
         ),
@@ -357,15 +357,15 @@ def test_launcher_promotes_the_gateway_when_the_tui_detaches(
             events.append("waited")
             return tui_launcher._TUI_DETACH_EXIT_CODE
 
-    monkeypatch.setattr("nanobot.cli.tui_launcher.resolve_tui_command", lambda: ["nanobot-tui"])
+    monkeypatch.setattr("kohaku.cli.tui_launcher.resolve_tui_command", lambda: ["nanobot-tui"])
     def popen(command: list[str], *, env: dict[str, str]) -> FakeProcess:
         assert command == ["nanobot-tui"]
         captured.update(env)
         return FakeProcess()
 
-    monkeypatch.setattr("nanobot.cli.tui_launcher.subprocess.Popen", popen)
+    monkeypatch.setattr("kohaku.cli.tui_launcher.subprocess.Popen", popen)
     monkeypatch.setattr(
-        "nanobot.cli.tui_launcher._ensure_gateway",
+        "kohaku.cli.tui_launcher._ensure_gateway",
         lambda *args, **kwargs: SimpleNamespace(
             base_url="http://127.0.0.1:8765",
             lease=FakeLease(),
@@ -384,8 +384,8 @@ def test_launcher_promotes_the_gateway_when_the_tui_detaches(
 
     assert result == 0
     assert events == ["waited", "promoted", "released"]
-    assert captured["NANOBOT_TUI_GATEWAY_STOP_COMMAND"] == (
-        f"nanobot gateway stop --config '{config_path}' --workspace '{workspace.resolve()}'"
+    assert captured["KOHAKU_TUI_GATEWAY_STOP_COMMAND"] == (
+        f"kohaku gateway stop --config '{config_path}' --workspace '{workspace.resolve()}'"
     )
 
 
@@ -394,7 +394,7 @@ def test_explicit_tui_binary_must_exist(
     tmp_path: Path,
 ) -> None:
     missing = tmp_path / "missing"
-    monkeypatch.setenv("NANOBOT_TUI_BIN", str(missing))
+    monkeypatch.setenv("KOHAKU_TUI_BIN", str(missing))
     with pytest.raises(TuiUnavailableError, match="does not exist"):
         resolve_tui_command()
 
@@ -402,9 +402,9 @@ def test_explicit_tui_binary_must_exist(
 def test_windows_arm64_fails_instead_of_using_the_classic_prompt(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.delenv("NANOBOT_TUI_BIN", raising=False)
-    monkeypatch.setattr("nanobot.cli.tui_launcher.platform.system", lambda: "Windows")
-    monkeypatch.setattr("nanobot.cli.tui_launcher.platform.machine", lambda: "ARM64")
+    monkeypatch.delenv("KOHAKU_TUI_BIN", raising=False)
+    monkeypatch.setattr("kohaku.cli.tui_launcher.platform.system", lambda: "Windows")
+    monkeypatch.setattr("kohaku.cli.tui_launcher.platform.machine", lambda: "ARM64")
 
     with pytest.raises(TuiUnavailableError, match="Windows ARM64"):
         resolve_tui_command()
@@ -416,14 +416,14 @@ def test_source_checkout_does_not_fall_back_to_a_release_tui_without_bun(
 ) -> None:
     source_dir = tmp_path / "tui"
     source_dir.mkdir()
-    monkeypatch.delenv("NANOBOT_TUI_BIN", raising=False)
+    monkeypatch.delenv("KOHAKU_TUI_BIN", raising=False)
     monkeypatch.setattr(
-        "nanobot.cli.tui_launcher._source_checkout_tui_dir",
+        "kohaku.cli.tui_launcher._source_checkout_tui_dir",
         lambda: source_dir,
     )
-    monkeypatch.setattr("nanobot.cli.tui_launcher.shutil.which", lambda _name: None)
+    monkeypatch.setattr("kohaku.cli.tui_launcher.shutil.which", lambda _name: None)
     monkeypatch.setattr(
-        "nanobot.cli.tui_launcher._download_release_tui",
+        "kohaku.cli.tui_launcher._download_release_tui",
         lambda _asset: pytest.fail("a source checkout must not download a release TUI"),
     )
 
@@ -436,7 +436,7 @@ def test_source_checkout_requires_project_and_tui_markers(
     tmp_path: Path,
 ) -> None:
     project_root = tmp_path / "project"
-    module_path = project_root / "nanobot" / "cli" / "tui_launcher.py"
+    module_path = project_root / "kohaku" / "cli" / "tui_launcher.py"
     source_dir = project_root / "tui"
     module_path.parent.mkdir(parents=True)
     source_dir.mkdir()
@@ -463,11 +463,11 @@ def test_interactive_agent_uses_native_tui(
         launched["kwargs"] = kwargs
         return 0
 
-    monkeypatch.setattr("nanobot.cli.agent._load_runtime_config", lambda *_args: config)
-    monkeypatch.setattr("nanobot.cli.tui_launcher.launch_tui", launch)
-    monkeypatch.setattr("nanobot.config.loader.get_config_path", lambda: config_path)
-    monkeypatch.setattr("nanobot.cli.agent.sys.stdin", SimpleNamespace(isatty=lambda: True))
-    monkeypatch.setattr("nanobot.cli.agent.sys.stdout", SimpleNamespace(isatty=lambda: True))
+    monkeypatch.setattr("kohaku.cli.agent._load_runtime_config", lambda *_args: config)
+    monkeypatch.setattr("kohaku.cli.tui_launcher.launch_tui", launch)
+    monkeypatch.setattr("kohaku.config.loader.get_config_path", lambda: config_path)
+    monkeypatch.setattr("kohaku.cli.agent.sys.stdin", SimpleNamespace(isatty=lambda: True))
+    monkeypatch.setattr("kohaku.cli.agent.sys.stdout", SimpleNamespace(isatty=lambda: True))
 
     agent(
         message=None,
@@ -500,12 +500,12 @@ def test_interactive_agent_does_not_silently_fall_back(
     def unavailable(*_args: object, **_kwargs: object) -> int:
         raise TuiUnavailableError("missing sidecar")
 
-    monkeypatch.setattr("nanobot.cli.agent._load_runtime_config", lambda *_args: config)
-    monkeypatch.setattr("nanobot.cli.agent.console.print", lambda value: output.append(value))
-    monkeypatch.setattr("nanobot.cli.tui_launcher.launch_tui", unavailable)
-    monkeypatch.setattr("nanobot.config.loader.get_config_path", lambda: tmp_path / "config.json")
-    monkeypatch.setattr("nanobot.cli.agent.sys.stdin", SimpleNamespace(isatty=lambda: True))
-    monkeypatch.setattr("nanobot.cli.agent.sys.stdout", SimpleNamespace(isatty=lambda: True))
+    monkeypatch.setattr("kohaku.cli.agent._load_runtime_config", lambda *_args: config)
+    monkeypatch.setattr("kohaku.cli.agent.console.print", lambda value: output.append(value))
+    monkeypatch.setattr("kohaku.cli.tui_launcher.launch_tui", unavailable)
+    monkeypatch.setattr("kohaku.config.loader.get_config_path", lambda: tmp_path / "config.json")
+    monkeypatch.setattr("kohaku.cli.agent.sys.stdin", SimpleNamespace(isatty=lambda: True))
+    monkeypatch.setattr("kohaku.cli.agent.sys.stdout", SimpleNamespace(isatty=lambda: True))
 
     with pytest.raises(typer.Exit) as exc_info:
         agent(
@@ -522,7 +522,7 @@ def test_interactive_agent_does_not_silently_fall_back(
     assert exc_info.value.exit_code == 1
     assert output == [
         "[red]Native TUI unavailable: missing sidecar[/red]",
-        "[dim]Use `nanobot agent --classic` only if you want the old prompt.[/dim]",
+        "[dim]Use `kohaku agent --classic` only if you want the old prompt.[/dim]",
     ]
 
 
@@ -531,10 +531,10 @@ def test_native_tui_rejects_a_classic_session_selector(
     tmp_path: Path,
     admitted_tui_config,
 ) -> None:
-    monkeypatch.setattr("nanobot.cli.agent._load_runtime_config", lambda *_args: admitted_tui_config)
-    monkeypatch.setattr("nanobot.config.loader.get_config_path", lambda: tmp_path / "config.json")
-    monkeypatch.setattr("nanobot.cli.agent.sys.stdin", SimpleNamespace(isatty=lambda: True))
-    monkeypatch.setattr("nanobot.cli.agent.sys.stdout", SimpleNamespace(isatty=lambda: True))
+    monkeypatch.setattr("kohaku.cli.agent._load_runtime_config", lambda *_args: admitted_tui_config)
+    monkeypatch.setattr("kohaku.config.loader.get_config_path", lambda: tmp_path / "config.json")
+    monkeypatch.setattr("kohaku.cli.agent.sys.stdin", SimpleNamespace(isatty=lambda: True))
+    monkeypatch.setattr("kohaku.cli.agent.sys.stdout", SimpleNamespace(isatty=lambda: True))
 
     with pytest.raises(typer.BadParameter, match="only WebSocket sessions"):
         agent(
@@ -553,9 +553,9 @@ def test_default_agent_does_not_fall_back_outside_a_terminal(
     monkeypatch: pytest.MonkeyPatch,
     admitted_tui_config,
 ) -> None:
-    monkeypatch.setattr("nanobot.cli.agent._load_runtime_config", lambda *_args: admitted_tui_config)
-    monkeypatch.setattr("nanobot.cli.agent.sys.stdin", SimpleNamespace(isatty=lambda: False))
-    monkeypatch.setattr("nanobot.cli.agent.sys.stdout", SimpleNamespace(isatty=lambda: True))
+    monkeypatch.setattr("kohaku.cli.agent._load_runtime_config", lambda *_args: admitted_tui_config)
+    monkeypatch.setattr("kohaku.cli.agent.sys.stdin", SimpleNamespace(isatty=lambda: False))
+    monkeypatch.setattr("kohaku.cli.agent.sys.stdout", SimpleNamespace(isatty=lambda: True))
 
     with pytest.raises(typer.BadParameter, match="requires an interactive terminal"):
         agent(
@@ -584,9 +584,9 @@ def test_classic_options_require_an_explicit_classic_prompt(
     option: str,
     admitted_tui_config,
 ) -> None:
-    monkeypatch.setattr("nanobot.cli.agent._load_runtime_config", lambda *_args: admitted_tui_config)
-    monkeypatch.setattr("nanobot.cli.agent.sys.stdin", SimpleNamespace(isatty=lambda: True))
-    monkeypatch.setattr("nanobot.cli.agent.sys.stdout", SimpleNamespace(isatty=lambda: True))
+    monkeypatch.setattr("kohaku.cli.agent._load_runtime_config", lambda *_args: admitted_tui_config)
+    monkeypatch.setattr("kohaku.cli.agent.sys.stdin", SimpleNamespace(isatty=lambda: True))
+    monkeypatch.setattr("kohaku.cli.agent.sys.stdout", SimpleNamespace(isatty=lambda: True))
 
     with pytest.raises(typer.BadParameter, match=f"{option} requires --classic"):
         agent(
@@ -615,9 +615,9 @@ def test_source_checkout_refreshes_locked_tui_dependencies(
         assert kwargs["cwd"] == source_dir
         return subprocess.CompletedProcess(command, 0, "", "")
 
-    monkeypatch.setattr("nanobot.cli.tui_launcher.subprocess.run", install)
+    monkeypatch.setattr("kohaku.cli.tui_launcher.subprocess.run", install)
     monkeypatch.setattr(
-        "nanobot.cli.tui_launcher.named_executable",
+        "kohaku.cli.tui_launcher.named_executable",
         lambda executable, **_kwargs: f"{executable}-named",
     )
 
@@ -634,7 +634,7 @@ def test_source_checkout_fails_when_locked_dependencies_cannot_be_refreshed(
     source_dir = tmp_path / "tui"
     source_dir.mkdir()
     monkeypatch.setattr(
-        "nanobot.cli.tui_launcher.subprocess.run",
+        "kohaku.cli.tui_launcher.subprocess.run",
         lambda *args, **kwargs: subprocess.CompletedProcess(args, 1, "", "lockfile mismatch"),
     )
 
@@ -646,7 +646,7 @@ def test_release_tui_is_verified_and_cached(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    asset = "nanobot-tui-linux-x64"
+    asset = "kohaku-tui-linux-x64"
     binary = b"native-tui"
     archive, checksum = _release_archive(asset, binary=binary)
     downloads: list[str] = []
@@ -655,9 +655,9 @@ def test_release_tui_is_verified_and_cached(
         downloads.append(url)
         return checksum if url.endswith(".sha256") else archive
 
-    monkeypatch.setattr("nanobot.cli.tui_launcher.__version__", "9.9.9")
-    monkeypatch.setattr("nanobot.cli.tui_launcher.get_data_dir", lambda: tmp_path)
-    monkeypatch.setattr("nanobot.cli.tui_launcher._read_release_asset", read_asset)
+    monkeypatch.setattr("kohaku.cli.tui_launcher.__version__", "9.9.9")
+    monkeypatch.setattr("kohaku.cli.tui_launcher.get_data_dir", lambda: tmp_path)
+    monkeypatch.setattr("kohaku.cli.tui_launcher._read_release_asset", read_asset)
 
     target = _download_release_tui(asset)
 
@@ -676,7 +676,7 @@ def test_release_tui_replaces_a_corrupted_cached_binary(
     tmp_path: Path,
 ) -> None:
     binary = b"native-tui"
-    asset = "nanobot-tui-linux-x64"
+    asset = "kohaku-tui-linux-x64"
     archive, checksum = _release_archive(asset, binary=binary)
     downloads: list[str] = []
 
@@ -684,9 +684,9 @@ def test_release_tui_replaces_a_corrupted_cached_binary(
         downloads.append(url)
         return checksum if url.endswith(".sha256") else archive
 
-    monkeypatch.setattr("nanobot.cli.tui_launcher.__version__", "9.9.9")
-    monkeypatch.setattr("nanobot.cli.tui_launcher.get_data_dir", lambda: tmp_path)
-    monkeypatch.setattr("nanobot.cli.tui_launcher._read_release_asset", read_asset)
+    monkeypatch.setattr("kohaku.cli.tui_launcher.__version__", "9.9.9")
+    monkeypatch.setattr("kohaku.cli.tui_launcher.get_data_dir", lambda: tmp_path)
+    monkeypatch.setattr("kohaku.cli.tui_launcher._read_release_asset", read_asset)
 
     target = _download_release_tui(asset)
     assert target is not None
@@ -701,7 +701,7 @@ def test_release_tui_replaces_corrupted_cached_notices(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    asset = "nanobot-tui-linux-x64"
+    asset = "kohaku-tui-linux-x64"
     archive, checksum = _release_archive(asset)
     downloads: list[str] = []
 
@@ -709,9 +709,9 @@ def test_release_tui_replaces_corrupted_cached_notices(
         downloads.append(url)
         return checksum if url.endswith(".sha256") else archive
 
-    monkeypatch.setattr("nanobot.cli.tui_launcher.__version__", "9.9.9")
-    monkeypatch.setattr("nanobot.cli.tui_launcher.get_data_dir", lambda: tmp_path)
-    monkeypatch.setattr("nanobot.cli.tui_launcher._read_release_asset", read_asset)
+    monkeypatch.setattr("kohaku.cli.tui_launcher.__version__", "9.9.9")
+    monkeypatch.setattr("kohaku.cli.tui_launcher.get_data_dir", lambda: tmp_path)
+    monkeypatch.setattr("kohaku.cli.tui_launcher._read_release_asset", read_asset)
 
     target = _download_release_tui(asset)
     assert target is not None
@@ -727,12 +727,12 @@ def test_release_tui_rejects_bad_checksum(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    asset = "nanobot-tui-linux-x64"
+    asset = "kohaku-tui-linux-x64"
     archive, _checksum = _release_archive(asset)
-    monkeypatch.setattr("nanobot.cli.tui_launcher.__version__", "9.9.9")
-    monkeypatch.setattr("nanobot.cli.tui_launcher.get_data_dir", lambda: tmp_path)
+    monkeypatch.setattr("kohaku.cli.tui_launcher.__version__", "9.9.9")
+    monkeypatch.setattr("kohaku.cli.tui_launcher.get_data_dir", lambda: tmp_path)
     monkeypatch.setattr(
-        "nanobot.cli.tui_launcher._read_release_asset",
+        "kohaku.cli.tui_launcher._read_release_asset",
         lambda url, *, max_bytes: (
             f"{'0' * 64}  {asset}.zip\n".encode() if url.endswith(".sha256") else archive
         ),
@@ -746,12 +746,12 @@ def test_release_tui_rejects_an_archive_without_required_notices(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    asset = "nanobot-tui-linux-x64"
+    asset = "kohaku-tui-linux-x64"
     archive, checksum = _release_archive(asset, omit="THIRD_PARTY_NOTICES.txt")
-    monkeypatch.setattr("nanobot.cli.tui_launcher.__version__", "9.9.9")
-    monkeypatch.setattr("nanobot.cli.tui_launcher.get_data_dir", lambda: tmp_path)
+    monkeypatch.setattr("kohaku.cli.tui_launcher.__version__", "9.9.9")
+    monkeypatch.setattr("kohaku.cli.tui_launcher.get_data_dir", lambda: tmp_path)
     monkeypatch.setattr(
-        "nanobot.cli.tui_launcher._read_release_asset",
+        "kohaku.cli.tui_launcher._read_release_asset",
         lambda url, *, max_bytes: checksum if url.endswith(".sha256") else archive,
     )
 
@@ -763,7 +763,7 @@ def test_release_tui_rejects_an_empty_required_file(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    asset = "nanobot-tui-linux-x64"
+    asset = "kohaku-tui-linux-x64"
     archive, _checksum = _release_archive(asset)
     source = io.BytesIO(archive)
     output = io.BytesIO()
@@ -774,10 +774,10 @@ def test_release_tui_rejects_an_empty_required_file(
     payload = output.getvalue()
     checksum = f"{hashlib.sha256(payload).hexdigest()}  {asset}.zip\n".encode()
 
-    monkeypatch.setattr("nanobot.cli.tui_launcher.__version__", "9.9.9")
-    monkeypatch.setattr("nanobot.cli.tui_launcher.get_data_dir", lambda: tmp_path)
+    monkeypatch.setattr("kohaku.cli.tui_launcher.__version__", "9.9.9")
+    monkeypatch.setattr("kohaku.cli.tui_launcher.get_data_dir", lambda: tmp_path)
     monkeypatch.setattr(
-        "nanobot.cli.tui_launcher._read_release_asset",
+        "kohaku.cli.tui_launcher._read_release_asset",
         lambda url, *, max_bytes: checksum if url.endswith(".sha256") else payload,
     )
 
@@ -801,10 +801,10 @@ def test_gateway_reuse_requires_the_matching_managed_instance(
         def status(self) -> SimpleNamespace:
             return SimpleNamespace(running=False, port=None)
 
-    monkeypatch.setattr("nanobot.gateway.GatewayRuntime", FakeRuntime)
-    monkeypatch.setattr("nanobot.cli.tui_launcher._webui_endpoint_reachable", lambda _url: True)
+    monkeypatch.setattr("kohaku.gateway.GatewayRuntime", FakeRuntime)
+    monkeypatch.setattr("kohaku.cli.tui_launcher._webui_endpoint_reachable", lambda _url: True)
 
-    with pytest.raises(TuiUnavailableError, match="different nanobot instance"):
+    with pytest.raises(TuiUnavailableError, match="different kohaku instance"):
         _ensure_gateway(
             config,
             config_path=tmp_path / "config.json",
@@ -831,10 +831,10 @@ def test_gateway_reuses_the_matching_managed_instance(
         def stop(self, *, timeout_s: int) -> None:
             raise AssertionError(f"unowned gateway stopped with timeout {timeout_s}")
 
-    monkeypatch.setattr("nanobot.gateway.GatewayRuntime", FakeRuntime)
-    monkeypatch.setattr("nanobot.cli.tui_launcher._webui_endpoint_reachable", lambda _url: True)
+    monkeypatch.setattr("kohaku.gateway.GatewayRuntime", FakeRuntime)
+    monkeypatch.setattr("kohaku.cli.tui_launcher._webui_endpoint_reachable", lambda _url: True)
     monkeypatch.setattr(
-        "nanobot.cli.tui_launcher._gateway_health_ready",
+        "kohaku.cli.tui_launcher._gateway_health_ready",
         lambda *_args, **_kwargs: True,
     )
 
@@ -868,9 +868,9 @@ def test_gateway_reuse_returns_a_degraded_live_gateway_without_waiting(
                 log_path=tmp_path / "gateway.log",
             )
 
-    monkeypatch.setattr("nanobot.gateway.GatewayRuntime", FakeRuntime)
+    monkeypatch.setattr("kohaku.gateway.GatewayRuntime", FakeRuntime)
     monkeypatch.setattr(
-        "nanobot.cli.tui_launcher._webui_endpoint_reachable",
+        "kohaku.cli.tui_launcher._webui_endpoint_reachable",
         lambda _url: pytest.fail("non-blocking reuse must not probe readiness"),
     )
     monkeypatch.setattr(
@@ -915,13 +915,13 @@ def test_gateway_reuse_waits_for_a_live_gateway_to_recover_its_webui_listener(
                 log_path=tmp_path / "gateway.log",
             )
 
-    monkeypatch.setattr("nanobot.gateway.GatewayRuntime", FakeRuntime)
+    monkeypatch.setattr("kohaku.gateway.GatewayRuntime", FakeRuntime)
     monkeypatch.setattr(
-        "nanobot.cli.tui_launcher._webui_endpoint_reachable",
+        "kohaku.cli.tui_launcher._webui_endpoint_reachable",
         lambda _url: next(endpoint_results),
     )
     monkeypatch.setattr(
-        "nanobot.cli.tui_launcher._gateway_health_ready",
+        "kohaku.cli.tui_launcher._gateway_health_ready",
         lambda *_args, **_kwargs: True,
     )
     clock = iter((0.0, 0.0, 0.1))
@@ -961,9 +961,9 @@ def test_gateway_reuse_with_explicit_wait_rejects_a_live_but_unready_gateway(
                 log_path=tmp_path / "gateway.log",
             )
 
-    monkeypatch.setattr("nanobot.gateway.GatewayRuntime", FakeRuntime)
+    monkeypatch.setattr("kohaku.gateway.GatewayRuntime", FakeRuntime)
     monkeypatch.setattr(
-        "nanobot.cli.tui_launcher._webui_endpoint_reachable",
+        "kohaku.cli.tui_launcher._webui_endpoint_reachable",
         lambda _url: False,
     )
     clock = iter((0.0, tui_launcher._GATEWAY_READY_TIMEOUT_S))
@@ -1012,7 +1012,7 @@ def test_gateway_started_for_tui_stops_when_its_last_lease_exits(
             )
 
         def start_on_demand(self, options: object) -> SimpleNamespace:
-            from nanobot.gateway import GatewayClientLease
+            from kohaku.gateway import GatewayClientLease
 
             GatewayClientLease(self, kind="test-tui").mark_ephemeral()
             return self.start_background(options)
@@ -1025,13 +1025,13 @@ def test_gateway_started_for_tui_stops_when_its_last_lease_exits(
 
         _stop = stop
 
-    monkeypatch.setattr("nanobot.gateway.GatewayRuntime", FakeRuntime)
+    monkeypatch.setattr("kohaku.gateway.GatewayRuntime", FakeRuntime)
     monkeypatch.setattr(
-        "nanobot.cli.tui_launcher._webui_endpoint_reachable",
+        "kohaku.cli.tui_launcher._webui_endpoint_reachable",
         lambda _url: started,
     )
     monkeypatch.setattr(
-        "nanobot.cli.tui_launcher._gateway_health_ready",
+        "kohaku.cli.tui_launcher._gateway_health_ready",
         lambda *_args, **_kwargs: started,
     )
 

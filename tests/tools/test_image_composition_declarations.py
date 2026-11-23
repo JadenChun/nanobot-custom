@@ -8,21 +8,21 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from nanobot.agent.skills import BUILTIN_SKILLS_DIR
-from nanobot.agent.tools.context import ToolContext
-from nanobot.agent.tools.file_state import FileStates
-from nanobot.agent.tools.filesystem import (
+from kohaku.agent.skills import BUILTIN_SKILLS_DIR
+from kohaku.agent.tools.context import ToolContext
+from kohaku.agent.tools.file_state import FileStates
+from kohaku.agent.tools.filesystem import (
     EditFileTool,
     ListDirTool,
     ReadFileTool,
     SearchFilesTool,
     WriteFileTool,
 )
-from nanobot.agent.tools.image_generation import ImageGenerationTool, reload_image_generation_tool
-from nanobot.agent.tools.registry import ToolRegistry
-from nanobot.config import loader
-from nanobot.config.schema import Config, ToolsConfig
-from nanobot.providers.image_generation import ImageGenerationError
+from kohaku.agent.tools.image_generation import ImageGenerationTool, reload_image_generation_tool
+from kohaku.agent.tools.registry import ToolRegistry
+from kohaku.config import loader
+from kohaku.config.schema import Config, ToolsConfig
+from kohaku.providers.image_generation import ImageGenerationError
 from tests.tools.test_image_generation_tool import PNG_DATA_URL, FakeImageClient
 
 

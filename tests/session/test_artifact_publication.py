@@ -5,13 +5,13 @@ from dataclasses import replace
 
 import pytest
 
-from nanobot.session.artifact import parse_artifact_descriptor, published_artifacts
-from nanobot.session.artifact_store import ArtifactStorageError, PrivateArtifactStore
-from nanobot.session.execution_owner import ExecutionOwnershipError, acquire_execution
-from nanobot.session.manager import JsonlSessionStore, Session, SessionWriteConflict
-from nanobot.session.source import SourceValidationError, prefix_digest
-from nanobot.session.source_store import SourceSessionStore
-from nanobot.session.turn_writer import SourceTurnWriter
+from kohaku.session.artifact import parse_artifact_descriptor, published_artifacts
+from kohaku.session.artifact_store import ArtifactStorageError, PrivateArtifactStore
+from kohaku.session.execution_owner import ExecutionOwnershipError, acquire_execution
+from kohaku.session.manager import JsonlSessionStore, Session, SessionWriteConflict
+from kohaku.session.source import SourceValidationError, prefix_digest
+from kohaku.session.source_store import SourceSessionStore
+from kohaku.session.turn_writer import SourceTurnWriter
 from tests.session.test_artifact import fixture
 from tests.session.test_source_turn_writer import assistant, result
 
@@ -156,7 +156,7 @@ async def test_publication_admission_failures_preserve_source(tmp_path, failure)
                 scope.mkdir(mode=0o700)
             if failure == 'unconfigured':
                 source = backend.source
-            from nanobot.session.artifact import ArtifactValidationError
+            from kohaku.session.artifact import ArtifactValidationError
             with pytest.raises((ArtifactValidationError, ArtifactStorageError,
                                 ExecutionOwnershipError, SourceValidationError)):
                 source.commit_artifact_descriptor(descriptor.session_key, before.state, descriptor,

@@ -11,10 +11,10 @@ from typing import Any
 
 import pytest
 
-from nanobot.agent import memory_recovery_startup_admission as admission
-from nanobot.agent import memory_recovery_storage as storage
-from nanobot.agent.memory_recovery import MemoryReceiptRecoveryRequiredError
-from nanobot.session.manager import JsonlSessionStore
+from kohaku.agent import memory_recovery_startup_admission as admission
+from kohaku.agent import memory_recovery_storage as storage
+from kohaku.agent.memory_recovery import MemoryReceiptRecoveryRequiredError
+from kohaku.session.manager import JsonlSessionStore
 
 
 def _storage_capable() -> bool:

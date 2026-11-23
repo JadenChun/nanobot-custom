@@ -4,12 +4,12 @@ from __future__ import annotations
 
 from copy import deepcopy
 
-from nanobot.agent.loop import AgentLoop
-from nanobot.agent.tools.base import Tool
-from nanobot.agent.tools.registry import ToolRegistry
-from nanobot.agent.turn import ToolOutcome, TurnRequest
-from nanobot.providers.base import LLMResponse, ToolCallRequest
-from nanobot.session.artifact import published_artifacts
+from kohaku.agent.loop import AgentLoop
+from kohaku.agent.tools.base import Tool
+from kohaku.agent.tools.registry import ToolRegistry
+from kohaku.agent.turn import ToolOutcome, TurnRequest
+from kohaku.providers.base import LLMResponse, ToolCallRequest
+from kohaku.session.artifact import published_artifacts
 from tests.agent import test_migration_engine as engine_fixtures
 from tests.agent.test_migration_engine import ScriptedProvider
 

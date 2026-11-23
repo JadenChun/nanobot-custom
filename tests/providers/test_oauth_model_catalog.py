@@ -11,18 +11,18 @@ from types import SimpleNamespace
 import httpx
 import pytest
 
-from nanobot.providers.oauth_model_catalog import (
+from kohaku.providers.oauth_model_catalog import (
     OAuthModelCatalog,
     get_oauth_model_catalog,
     invalidate_oauth_model_catalog,
 )
-from nanobot.providers.openai_codex_provider import (
+from kohaku.providers.openai_codex_provider import (
     DEFAULT_OPENAI_CODEX_MODELS_URL,
     OPENAI_CODEX_CATALOG_CLIENT_VERSION,
 )
-from nanobot.providers.registry import ProviderModelSpec
-from nanobot.providers.xai_grok_provider import DEFAULT_XAI_GROK_MODELS_URL
-from nanobot.providers.xai_oauth import XAIToken
+from kohaku.providers.registry import ProviderModelSpec
+from kohaku.providers.xai_grok_provider import DEFAULT_XAI_GROK_MODELS_URL
+from kohaku.providers.xai_oauth import XAIToken
 
 
 @pytest.fixture(autouse=True)
@@ -99,18 +99,18 @@ def test_xai_catalog_fetches_remote_models_and_reuses_capability_metadata(
         )
 
     monkeypatch.setattr(
-        "nanobot.providers.xai_grok_provider.get_xai_oauth_storage_path",
+        "kohaku.providers.xai_grok_provider.get_xai_oauth_storage_path",
         lambda _owner=None: tmp_path / "auth" / "xai.json",
     )
     monkeypatch.setattr(
-        "nanobot.providers.xai_grok_provider.get_xai_oauth_login_status",
+        "kohaku.providers.xai_grok_provider.get_xai_oauth_login_status",
         lambda _owner=None: token,
     )
     monkeypatch.setattr(
-        "nanobot.providers.xai_grok_provider.get_xai_oauth_token",
+        "kohaku.providers.xai_grok_provider.get_xai_oauth_token",
         lambda **_kwargs: token,
     )
-    monkeypatch.setattr("nanobot.providers.xai_grok_provider.httpx.Client", fake_client)
+    monkeypatch.setattr("kohaku.providers.xai_grok_provider.httpx.Client", fake_client)
 
     catalog = get_oauth_model_catalog("xai_grok")
 
@@ -192,23 +192,23 @@ def test_openai_codex_catalog_uses_account_catalog_and_filters_hidden_models(
         )
 
     monkeypatch.setattr(
-        "nanobot.providers.openai_codex_provider.get_codex_credential_view",
+        "kohaku.providers.openai_codex_provider.get_codex_credential_view",
         lambda **_kwargs: SimpleNamespace(
             generation="generation-codex",
             token=SimpleNamespace(access="secret", account_id="account-42"),
         ),
     )
     monkeypatch.setattr(
-        "nanobot.providers.openai_codex_provider.get_codex_authority",
+        "kohaku.providers.openai_codex_provider.get_codex_authority",
         lambda _owner=None: SimpleNamespace(
             get_view_or_import=lambda: SimpleNamespace(generation="generation-codex")
         ),
     )
     monkeypatch.setattr(
-        "nanobot.providers.openai_codex_provider.get_codex_token",
+        "kohaku.providers.openai_codex_provider.get_codex_token",
         lambda **_kwargs: SimpleNamespace(access="secret", account_id="account-42"),
     )
-    monkeypatch.setattr("nanobot.providers.openai_codex_provider.httpx.Client", fake_client)
+    monkeypatch.setattr("kohaku.providers.openai_codex_provider.httpx.Client", fake_client)
 
     catalog = get_oauth_model_catalog("openai_codex")
 
@@ -291,7 +291,7 @@ def test_github_copilot_catalog_only_lists_compatible_chat_models(
         )
 
     monkeypatch.setattr(
-        "nanobot.providers.github_copilot_provider.get_copilot_authority",
+        "kohaku.providers.github_copilot_provider.get_copilot_authority",
         lambda _owner=None: SimpleNamespace(
             get_view_or_import=lambda: SimpleNamespace(
                 generation="generation-copilot",
@@ -300,13 +300,13 @@ def test_github_copilot_catalog_only_lists_compatible_chat_models(
         ),
     )
     monkeypatch.setattr(
-        "nanobot.providers.github_copilot_provider.get_copilot_bearer_view",
+        "kohaku.providers.github_copilot_provider.get_copilot_bearer_view",
         lambda **_kwargs: SimpleNamespace(
             bearer="copilot-secret",
             endpoint="https://api.individual.githubcopilot.com",
         ),
     )
-    monkeypatch.setattr("nanobot.providers.github_copilot_provider.httpx.Client", fake_client)
+    monkeypatch.setattr("kohaku.providers.github_copilot_provider.httpx.Client", fake_client)
 
     catalog = get_oauth_model_catalog("github_copilot")
 
@@ -358,7 +358,7 @@ def test_catalog_single_flights_concurrent_refreshes() -> None:
 def test_codex_catalog_never_publishes_a_models_after_a_to_b_to_c_churn(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from nanobot.providers import openai_codex_provider as provider
+    from kohaku.providers import openai_codex_provider as provider
 
     current = {"generation": "a"}
 
@@ -399,7 +399,7 @@ def test_codex_catalog_never_publishes_a_models_after_a_to_b_to_c_churn(
 def test_copilot_catalog_never_publishes_a_models_after_a_to_b_to_c_churn(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from nanobot.providers import github_copilot_provider as provider
+    from kohaku.providers import github_copilot_provider as provider
 
     current = {"generation": "a"}
 

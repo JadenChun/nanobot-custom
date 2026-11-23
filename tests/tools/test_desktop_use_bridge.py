@@ -7,7 +7,7 @@ from types import ModuleType, SimpleNamespace
 
 import pytest
 
-from nanobot.agent.tools import desktop_use as desktop
+from kohaku.agent.tools import desktop_use as desktop
 
 
 class Bridge:

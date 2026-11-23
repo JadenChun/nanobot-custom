@@ -12,18 +12,18 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from nanobot.agent.loop import AgentLoop
-from nanobot.agent.memory import MemoryStore
-from nanobot.agent.tools.base import Tool
-from nanobot.agent.tools.registry import ManagedToolDispatchGuard, ToolRegistry
-from nanobot.bus.events import InboundMessage
-from nanobot.bus.outbound_events import ContextCompactionEvent, StopTargetEvent
-from nanobot.bus.runtime_events import TurnCompleted
-from nanobot.command.builtin import cmd_stop
-from nanobot.command.router import CommandContext
-from nanobot.providers.base import GenerationSettings, LLMResponse
-from nanobot.runtime_composition import RuntimeState
-from nanobot.session.runtime_authority import DurableSessionAuthority
+from kohaku.agent.loop import AgentLoop
+from kohaku.agent.memory import MemoryStore
+from kohaku.agent.tools.base import Tool
+from kohaku.agent.tools.registry import ManagedToolDispatchGuard, ToolRegistry
+from kohaku.bus.events import InboundMessage
+from kohaku.bus.outbound_events import ContextCompactionEvent, StopTargetEvent
+from kohaku.bus.runtime_events import TurnCompleted
+from kohaku.command.builtin import cmd_stop
+from kohaku.command.router import CommandContext
+from kohaku.providers.base import GenerationSettings, LLMResponse
+from kohaku.runtime_composition import RuntimeState
+from kohaku.session.runtime_authority import DurableSessionAuthority
 from tests.agent.p6_admitted_fixtures import AdmittedGraphs, AgentInputs
 from tests.agent.p6_admitted_fixtures import admitted_async as admitted_async
 

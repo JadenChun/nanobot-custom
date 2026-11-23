@@ -6,11 +6,11 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from nanobot.agent.context import TranscriptInput
-from nanobot.agent.loop import AgentLoop, TurnContext, TurnKind, _TurnExecutionOptions
-from nanobot.agent.tools.context import RequestContext
-from nanobot.agent.tools.filesystem import ReadFileTool
-from nanobot.agent.turn import (
+from kohaku.agent.context import TranscriptInput
+from kohaku.agent.loop import AgentLoop, TurnContext, TurnKind, _TurnExecutionOptions
+from kohaku.agent.tools.context import RequestContext
+from kohaku.agent.tools.filesystem import ReadFileTool
+from kohaku.agent.turn import (
     ApprovalDecision,
     DeliveryTarget,
     RunPolicyContext,
@@ -19,13 +19,13 @@ from nanobot.agent.turn import (
     TurnRequest,
     TurnSource,
 )
-from nanobot.agent.turn import TurnContext as RunTurnContext
-from nanobot.bus.events import InboundMessage
-from nanobot.bus.queue import MessageBus
-from nanobot.config.schema import ChannelsConfig
-from nanobot.providers.base import LLMResponse
-from nanobot.session.source_projection import source_nodes
-from nanobot.utils.document import reference_non_image_attachments
+from kohaku.agent.turn import TurnContext as RunTurnContext
+from kohaku.bus.events import InboundMessage
+from kohaku.bus.queue import MessageBus
+from kohaku.config.schema import ChannelsConfig
+from kohaku.providers.base import LLMResponse
+from kohaku.session.source_projection import source_nodes
+from kohaku.utils.document import reference_non_image_attachments
 from tests.agent.p6_admitted_fixtures import AgentInputs, AsyncAdmittedFactory
 from tests.agent.p6_admitted_fixtures import admitted_async as admitted_async
 
@@ -108,7 +108,7 @@ async def test_document_attachment_is_referenced_and_read_on_demand(
     media_dir.mkdir()
     csv_path = media_dir / "report.csv"
     csv_path.write_text("name,value\nnanobot,1", encoding="utf-8")
-    monkeypatch.setattr("nanobot.agent.tools.path_utils.get_media_dir", lambda: media_dir)
+    monkeypatch.setattr("kohaku.agent.tools.path_utils.get_media_dir", lambda: media_dir)
 
     loop = await _make_loop(
         tmp_path, admitted_async,
@@ -193,7 +193,7 @@ async def test_channel_media_is_adopted_into_canonical_store(
             "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+yF9kAAAAASUVORK5CYII="
         )
     )
-    monkeypatch.setattr("nanobot.config.paths.get_media_dir", lambda *_: media_root)
+    monkeypatch.setattr("kohaku.config.paths.get_media_dir", lambda *_: media_root)
 
     loop = await _make_loop(tmp_path, admitted_async)
     msg = InboundMessage(
@@ -229,8 +229,8 @@ async def test_attachment_record_survives_session_reload(tmp_path: Path, admitte
         )
     )
     loop = await _make_loop(tmp_path, admitted_async)
-    from nanobot.attachments.store import AttachmentStore
-    from nanobot.config.paths import get_media_dir
+    from kohaku.attachments.store import AttachmentStore
+    from kohaku.config.paths import get_media_dir
 
     media_root = get_media_dir()
     store = AttachmentStore(media_root / "attachments", media_root=media_root)
@@ -389,8 +389,8 @@ def test_attachment_setup_unadmitted_constructor_refuses_before_effects(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from nanobot.agent.memory_recovery_startup_admission import StartupReceiptAdmissionError
-    from nanobot.session.manager import SessionManager
+    from kohaku.agent.memory_recovery_startup_admission import StartupReceiptAdmissionError
+    from kohaku.session.manager import SessionManager
 
     provider = MagicMock()
     bus = MessageBus()
@@ -421,7 +421,7 @@ async def test_attachment_setup_uses_owned_workspace_and_inert_composition(
     tmp_path: Path,
     admitted_async,
 ) -> None:
-    from nanobot.config.loader import load_config
+    from kohaku.config.loader import load_config
 
     channels = ChannelsConfig(extract_document_text=False)
     loop = await _make_loop(tmp_path, admitted_async, channels)
@@ -463,11 +463,11 @@ async def test_canonical_attachment_input_is_durable_before_runner(
     ))
     monkeypatch.chdir(loop.workspace)
     monkeypatch.setattr(
-        "nanobot.utils.document.extract_text",
+        "kohaku.utils.document.extract_text",
         MagicMock(side_effect=AssertionError("automatic document extraction")),
     )
     monkeypatch.setattr(
-        "nanobot.utils.document.open_document_line_source",
+        "kohaku.utils.document.open_document_line_source",
         MagicMock(side_effect=AssertionError("automatic document extraction")),
     )
     media = {

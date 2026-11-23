@@ -9,9 +9,9 @@ from pathlib import Path
 
 import pytest
 
-from nanobot.remote.client import OwnerRequestError, OwnerUnavailableError, RemoteAccessClient
-from nanobot.remote.device_proof import DeviceProofClaims
-from nanobot.remote.owner import RemoteAccessOwner
+from kohaku.remote.client import OwnerRequestError, OwnerUnavailableError, RemoteAccessClient
+from kohaku.remote.device_proof import DeviceProofClaims
+from kohaku.remote.owner import RemoteAccessOwner
 from tests.remote.proof_helpers import (
     encode_proof_base64url,
     new_device_key,
@@ -79,7 +79,7 @@ def test_owner_ipc_owner_pairing_pending_qr_and_manual_code(tmp_path) -> None:
         }
         assert offer["transport"] == "tailscale"
         assert len(offer["pairing_code"]) == 8
-        assert offer["qr_link"].startswith("nanobot://pair?")
+        assert offer["qr_link"].startswith("kohaku://pair?")
         assert offer["state"] == "offer_created"
 
         pending = client.pending_pairings()
@@ -199,7 +199,7 @@ def test_subprocess_owner_is_reachable_and_cleans_up(tmp_path) -> None:
         [
             sys.executable,
             "-m",
-            "nanobot.remote.owner",
+            "kohaku.remote.owner",
             "--state-dir",
             str(root),
             "--socket",
@@ -228,7 +228,7 @@ def test_subprocess_owner_is_reachable_and_cleans_up(tmp_path) -> None:
 
 
 def test_remote_modules_do_not_import_agent_runtime() -> None:
-    root = Path(__file__).resolve().parents[2] / "nanobot" / "remote"
+    root = Path(__file__).resolve().parents[2] / "kohaku" / "remote"
     source = "\n".join(path.read_text(encoding="utf-8") for path in root.glob("*.py"))
-    for forbidden in ("import nanobot.agent", "from nanobot.agent", "gateway_runtime", "AgentLoop"):
+    for forbidden in ("import kohaku.agent", "from kohaku.agent", "gateway_runtime", "AgentLoop"):
         assert forbidden not in source

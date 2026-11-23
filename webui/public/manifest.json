@@ -13,22 +13,22 @@
   "orientation": "any",
   "icons": [
     {
-      "src": "/brand/nanobot_apple_touch.png?v=62d969a7",
+      "src": "/brand/kohaku_apple_touch.png?v=62d969a7",
       "sizes": "180x180",
       "type": "image/png"
     },
     {
-      "src": "/brand/nanobot_icon_192.png?v=62d969a7",
+      "src": "/brand/kohaku_icon_192.png?v=62d969a7",
       "sizes": "192x192",
       "type": "image/png"
     },
     {
-      "src": "/brand/nanobot_icon_512.png?v=62d969a7",
+      "src": "/brand/kohaku_icon_512.png?v=62d969a7",
       "sizes": "512x512",
       "type": "image/png"
     },
     {
-      "src": "/brand/nanobot_icon_maskable.png?v=62d969a7",
+      "src": "/brand/kohaku_icon_maskable.png?v=62d969a7",
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "maskable"

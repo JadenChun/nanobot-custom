@@ -219,7 +219,7 @@ describe("Settings system domains", () => {
       timeout: 120,
       api_key_hint: null,
       endpoint: "http://127.0.0.1:8900/v1",
-      command: "nanobot serve",
+      command: "kohaku serve",
     };
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
@@ -441,7 +441,7 @@ describe("Settings system domains", () => {
     expect(matrixRow).toHaveAttribute("aria-pressed", "true");
     expect(screen.getAllByText("Matrix")).toHaveLength(2);
     expect(screen.getAllByText("Use nanobot from Matrix rooms.")).toHaveLength(2);
-    expect(screen.queryByText(/Enabling Nanobot features may install Python packages/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Enabling Kohaku features may install Python packages/)).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("switch", { name: "Matrix channel" }));
     expect(screen.getByRole("dialog", { name: "Install support for Matrix?" })).toBeInTheDocument();
     expect(screen.getByText("Kohaku will add what Matrix needs, then turn it on. Continue?")).toBeInTheDocument();

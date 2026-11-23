@@ -6,12 +6,12 @@ from pathlib import Path
 import pytest
 from websockets.http11 import Request as WsRequest
 
-from nanobot.config.loader import save_config
-from nanobot.config.schema import Config
-from nanobot.remote.auth import AuthRejectedError
-from nanobot.remote.owner import RemoteAccessOwner
-from nanobot.webui.settings_remote import handle_remote_access
-from nanobot.webui.settings_services import WebUISettingsConfig
+from kohaku.config.loader import save_config
+from kohaku.config.schema import Config
+from kohaku.remote.auth import AuthRejectedError
+from kohaku.remote.owner import RemoteAccessOwner
+from kohaku.webui.settings_remote import handle_remote_access
+from kohaku.webui.settings_services import WebUISettingsConfig
 from tests.remote.proof_helpers import new_device_key
 
 
@@ -123,7 +123,7 @@ def test_owner_pairing_start_requires_consent_and_exposes_pending(tmp_path: Path
         assert pairing["transport"] == "tailscale"
         assert pairing["expires_in"] > 0
         assert len(pairing["pairing_code"]) == 8
-        assert pairing["qr_link"].startswith("nanobot://pair?")
+        assert pairing["qr_link"].startswith("kohaku://pair?")
 
         pending = handle_remote_access(
             settings,
@@ -251,7 +251,7 @@ def test_tailscale_readiness_route(tmp_path: Path, monkeypatch) -> None:
     settings = WebUISettingsConfig(config_path)
     seen_ports: list[int | None] = []
     monkeypatch.setattr(
-        "nanobot.remote.tailscale.tailscale_status",
+        "kohaku.remote.tailscale.tailscale_status",
         lambda *, expected_port=None: (
             seen_ports.append(expected_port)
             or {

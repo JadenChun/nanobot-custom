@@ -1,0 +1,150 @@
+"""WebUI session read models exposed to interactive clients."""
+
+from __future__ import annotations
+
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Any, Protocol, cast
+
+from loguru import logger as default_logger
+
+from kohaku.providers.base import LLMUsage
+from kohaku.session.goal_state import goal_state_ws_blob
+from kohaku.session.model_selection import (
+    model_preset_from_metadata,
+    reasoning_effort_from_metadata,
+)
+from kohaku.session.recovery import recovery_state_from_metadata
+from kohaku.session.webui_turns import (
+    websocket_turn_id,
+    websocket_turn_stopping,
+    websocket_turn_wall_started_at,
+)
+
+if TYPE_CHECKING:
+    from kohaku.session.source_store import SourceSnapshot
+
+
+class SessionMetadataReader(Protocol):
+    """Narrow persisted-session dependency used by WebUI projections."""
+
+    def read_session_metadata(self, key: str) -> dict[str, Any] | None: ...
+
+
+class WebUISessionProjection:
+    """Project persisted session metadata into stable WebUI protocol fields."""
+
+    def __init__(
+        self,
+        sessions: SessionMetadataReader | None,
+        *,
+        stop_target_for_key: Callable[[str], dict[str, object] | None] | None = None,
+        log: Any = default_logger,
+    ) -> None:
+        self._sessions = sessions
+        self._stop_target_for_key = stop_target_for_key
+        self._log = log
+
+    def attach_fields(
+        self, session_key: str, *, source: SourceSnapshot | None = None,
+    ) -> dict[str, Any]:
+        """Return the session runtime facts sent with an attach handshake."""
+        if source is not None and source.state.session_key == session_key:
+            raw_metadata = source.header["metadata"]
+        else:
+            snapshot = (
+                self._sessions.read_session_metadata(session_key)
+                if self._sessions is not None else None
+            )
+            raw_metadata = snapshot.get("metadata") if snapshot is not None else None
+        metadata = cast(dict[str, object], raw_metadata) if isinstance(raw_metadata, dict) else None
+
+        fields: dict[str, Any] = {}
+        fields["stop_target"] = (
+            self._stop_target_for_key(session_key)
+            if self._stop_target_for_key is not None else None
+        )
+        try:
+            fields["model_preset"] = model_preset_from_metadata(metadata)
+        except ValueError:
+            self._log.warning("ignoring invalid model preset metadata for session_key={}", session_key)
+            fields["model_preset"] = None
+        if metadata is None:
+            return fields
+
+        effort = reasoning_effort_from_metadata(metadata)
+        if effort is not None:
+            fields["reasoning_effort"] = effort
+        read_prefs = getattr(self._sessions, "read_next_turn_preferences", None)
+        if callable(read_prefs):
+            from kohaku.session.next_turn_preferences import NextTurnPreferences
+
+            prefs = read_prefs(session_key)
+            if isinstance(prefs, NextTurnPreferences) and prefs.values:
+                if "model_preset" in prefs.values:
+                    fields["next_model_preset"] = prefs.get("model_preset")
+                if "reasoning_effort" in prefs.values:
+                    fields["next_reasoning_effort"] = prefs.get("reasoning_effort")
+                if "workspace_scope" in prefs.values:
+                    fields["next_workspace_scope"] = prefs.get("workspace_scope")
+                fields["next_turn_revision"] = prefs.revision
+        recovery_state = recovery_state_from_metadata(metadata)
+        if recovery_state is not None:
+            fields["recovery_state"] = recovery_state
+        usage = LLMUsage.from_dict(metadata.get("_last_usage"))
+        if usage is not None:
+            fields["usage"] = usage.to_turn_dict()
+        return fields
+
+    def hydration_events(self, session_key: str, chat_id: str) -> tuple[dict[str, Any], ...]:
+        """Return reconnect events for durable and same-process session state."""
+        events: list[dict[str, Any]] = []
+        goal_state = self.persisted_goal_state(session_key)
+        if goal_state is not None:
+            events.append(
+                {
+                    "event": "goal_state",
+                    "chat_id": chat_id,
+                    "goal_state": goal_state,
+                }
+            )
+        active_turn = self.active_turn_status(chat_id)
+        if active_turn is not None:
+            started_at, turn_id = active_turn
+            event: dict[str, Any] = {
+                "event": "goal_status",
+                "chat_id": chat_id,
+                "status": (
+                    "stopping" if websocket_turn_stopping(chat_id) else "running"
+                ),
+                "started_at": started_at,
+            }
+            if turn_id is not None:
+                event["turn_id"] = turn_id
+            events.append(event)
+        if self._stop_target_for_key is not None:
+            events.append({
+                "event": "stop_target",
+                "chat_id": chat_id,
+                "stop_target": self._stop_target_for_key(session_key),
+            })
+        return tuple(events)
+
+    def persisted_goal_state(self, session_key: str) -> dict[str, Any] | None:
+        """Return an actionable persisted goal state for reconnect hydration."""
+        if self._sessions is None:
+            return None
+        snapshot = self._sessions.read_session_metadata(session_key)
+        raw_metadata = snapshot.get("metadata") if snapshot is not None else None
+        metadata = cast(dict[str, Any], raw_metadata) if isinstance(raw_metadata, dict) else {}
+        goal_state = goal_state_ws_blob(metadata)
+        if not goal_state.get("active") and goal_state.get("status") != "blocked":
+            return None
+        return goal_state
+
+    @staticmethod
+    def active_turn_status(chat_id: str) -> tuple[float, str | None] | None:
+        """Return same-process running-turn state for reconnect hydration."""
+        started_at = websocket_turn_wall_started_at(chat_id)
+        if started_at is None:
+            return None
+        return started_at, websocket_turn_id(chat_id)

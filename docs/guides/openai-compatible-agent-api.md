@@ -1,12 +1,12 @@
-# How to Run an OpenAI-Compatible Agent API with nanobot
+# How to Run an OpenAI-Compatible Agent API with Kohaku
 
-nanobot can expose a local OpenAI-compatible endpoint behind
+Kohaku can expose a local OpenAI-compatible endpoint behind
 `/v1/chat/completions`. This lets existing OpenAI-style clients talk to a
-tool-using nanobot agent instead of a raw model.
+tool-using kohaku agent instead of a raw model.
 
 ## What you will build
 
-- a working nanobot agent
+- a working kohaku agent
 - a local API server on `127.0.0.1:8900`
 - a `/v1/chat/completions` request
 - optional session isolation with `session_id`
@@ -20,10 +20,11 @@ want in-process access to sessions, memory, runtime helpers, and hooks.
 ## Install
 
 ```bash
-python -m pip install nanobot-ai
-nanobot plugins enable api
-nanobot onboard --wizard
-nanobot agent -m "Hello!"
+# Run from the root of a clone of this repository
+python -m pip install -e .
+kohaku plugins enable api
+kohaku onboard --wizard
+kohaku agent -m "Hello!"
 ```
 
 ## Minimal working example
@@ -31,7 +32,7 @@ nanobot agent -m "Hello!"
 Start the API server:
 
 ```bash
-nanobot serve
+kohaku serve
 ```
 
 Call the chat endpoint:
@@ -61,14 +62,14 @@ curl http://127.0.0.1:8900/v1/chat/completions \
 
 ## Troubleshooting
 
-- If `/v1/chat/completions` fails, test `nanobot agent -m "Hello!"` first.
+- If `/v1/chat/completions` fails, test `kohaku agent -m "Hello!"` first.
 - If remote clients cannot connect, check `api.host`, `api.port`, firewall, and
   API key configuration.
 - If sessions mix together, pass unique `session_id` values.
 
-## Related nanobot docs
+## Related Kohaku docs
 
-- [Nanobot OpenAI-Compatible API](../openai-api.md)
+- [Kohaku OpenAI-Compatible API](../openai-api.md)
 - [Python SDK](../python-sdk.md)
 - [Configuration](../configuration.md)
 - [Deployment](../deployment.md)

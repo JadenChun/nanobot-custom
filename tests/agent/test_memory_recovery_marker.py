@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from nanobot.agent.memory_recovery_marker import classify_history_marker_frame
+from kohaku.agent.memory_recovery_marker import classify_history_marker_frame
 
 MARKER_ID = "0123456789abcdef01234567"
 ENTRY = "[2026-09-25T00:00:00Z] Recovered history"

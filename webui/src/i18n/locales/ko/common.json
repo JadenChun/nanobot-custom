@@ -7,7 +7,7 @@
     },
     "error": {
       "title": "nanobot에 연결할 수 없습니다",
-      "gatewayHint": "gateway(`nanobot gateway`)가 실행 중인지, 그리고 이 페이지가 같은 머신에서 열려 있는지 확인하세요."
+      "gatewayHint": "gateway(`kohaku gateway`)가 실행 중인지, 그리고 이 페이지가 같은 머신에서 열려 있는지 확인하세요."
     },
     "auth": {
       "label": "비밀번호",
@@ -317,7 +317,7 @@
       "exporting": "내보내는 중..."
     },
     "byok": {
-      "description": "직접 제공자 키를 사용합니다. Nanobot은 현재 구성에서 값을 읽고, 설정된 제공자만 모델 프리셋에서 사용할 수 있습니다.",
+      "description": "직접 제공자 키를 사용합니다. Kohaku은 현재 구성에서 값을 읽고, 설정된 제공자만 모델 프리셋에서 사용할 수 있습니다.",
       "configured": "설정됨",
       "notConfigured": "설정 안 됨",
       "configuredSection": "설정됨",
@@ -1037,7 +1037,7 @@
     },
     "agentHome": {
       "change": "에이전트 홈 변경",
-      "changeHint": "위에 표시된 설정 파일에서 agents.defaults.workspace를 수정한 뒤 Nanobot을 다시 시작하세요. 기존 에이전트 파일은 자동으로 이동되지 않습니다.",
+      "changeHint": "위에 표시된 설정 파일에서 agents.defaults.workspace를 수정한 뒤 Kohaku을 다시 시작하세요. 기존 에이전트 파일은 자동으로 이동되지 않습니다.",
       "description": "에이전트 지침, 메모리, 스킬 및 기본 출력 파일을 저장합니다.",
       "summary": "지침, 메모리 및 스킬",
       "title": "에이전트 홈"
@@ -1576,7 +1576,7 @@
     "close": "파일 미리보기 닫기",
     "loading": "미리보기 로딩 중...",
     "failed": "이 파일을 미리 볼 수 없습니다.",
-    "routeMissing": "파일 미리보기에는 최신 gateway가 필요합니다. nanobot gateway를 다시 시작한 뒤 다시 시도하세요.",
+    "routeMissing": "파일 미리보기에는 최신 gateway가 필요합니다. Kohaku gateway를 다시 시작한 뒤 다시 시도하세요.",
     "resize": "파일 미리보기 크기 조절",
     "truncated": "파일이 커서 미리보기가 잘렸습니다."
   },
@@ -1611,7 +1611,7 @@
     },
     "sessionRecoveryRequired": {
       "title": "채팅 복구가 필요합니다",
-      "body": "턴이 중단되어 Nanobot이 이 채팅을 일시 중지했습니다. 계속하려면 새 채팅을 시작하세요."
+      "body": "턴이 중단되어 Kohaku이 이 채팅을 일시 중지했습니다. 계속하려면 새 채팅을 시작하세요."
     },
     "modelRequestFailed": {
       "billingTitle": "모델 제공업체 할당량을 사용할 수 없음",
@@ -1652,7 +1652,7 @@
       "permissionRefreshing": "현재 액세스 확인 중…",
       "onceNotActive": "일회성 액세스가 더 이상 활성 상태가 아닙니다. 계속하기 전에 폴더를 검토하세요.",
       "onceRetiringActive": "이전 액세스로 명령이 실행 중입니다. 완료될 때까지 기다리거나 중지한 다음 다시 시도하세요.",
-      "onceRetiringUnknown": "이전 명령이 끝났는지 Nanobot이 아직 확인할 수 없습니다. 액세스 변경이 대기 중입니다.",
+      "onceRetiringUnknown": "이전 명령이 끝났는지 Kohaku이 아직 확인할 수 없습니다. 액세스 변경이 대기 중입니다.",
       "onceRetiringFinished": "이전 작업이 끝났습니다. 일회성 액세스는 아직 종료 중입니다.",
       "onceExpired": "일회성 액세스가 끝났습니다. 계속하기 전에 폴더를 다시 검토하세요.",
       "readyOnce": "이 작업에 대한 액세스가 허용되었습니다. {{path}}에서 계속할 수 있습니다.",
@@ -1662,16 +1662,16 @@
       "allowForTask": "이 작업에 허용",
       "changed": "작업 또는 폴더 권한이 변경되었습니다. 새로고침하여 현재 권한을 확인한 뒤 다시 시도하세요.",
       "chooseAnotherFolder": "다른 폴더 선택",
-      "chooseNarrowerFolder": "이 폴더에는 Nanobot의 비공개 런타임 파일이 포함되어 있습니다. 범위가 더 좁은 프로젝트 폴더를 선택하세요.",
+      "chooseNarrowerFolder": "이 폴더에는 Kohaku의 비공개 런타임 파일이 포함되어 있습니다. 범위가 더 좁은 프로젝트 폴더를 선택하세요.",
       "commandsRequested": "명령 실행 요청됨",
       "directoryTarget": "요청된 폴더: {{path}}",
       "fileTarget": "차단된 파일: {{path}}. 해당 파일이 들어 있는 폴더를 명시적으로 선택하세요.",
       "fileTargetWithFolder": "차단된 파일: {{path}}. 허용할 폴더: {{folder}}",
       "folderMissing": "이 폴더가 없거나 디렉터리가 아닙니다. 기존 폴더를 선택한 뒤 다시 시도하세요.",
       "folderToAuthorizeLabel": "허용할 폴더",
-      "folderUnavailable": "현재 권한으로 Nanobot이 이 폴더를 사용할 수 없습니다. 다른 폴더를 선택하거나 권한을 확인하세요.",
+      "folderUnavailable": "현재 권한으로 Kohaku이 이 폴더를 사용할 수 없습니다. 다른 폴더를 선택하거나 권한을 확인하세요.",
       "insufficientCapabilities": "선택한 권한으로 이 요청을 충족할 수 없습니다. {{required}} 폴더를 허용하기 전에 권한을 조정하세요.",
-      "invalidFolder": "Nanobot이 이 폴더를 확인할 수 없습니다. 기존 폴더를 선택한 뒤 다시 시도하세요.",
+      "invalidFolder": "Kohaku이 이 폴더를 확인할 수 없습니다. 기존 폴더를 선택한 뒤 다시 시도하세요.",
       "purpose": "목적: {{purpose}}",
       "readyInsufficient": "{{path}}에 대해 선택한 권한으로 이 요청을 충족할 수 없습니다. 다른 폴더를 선택하거나 권한을 확인하세요.",
       "requestedFileLabel": "요청된 파일",
@@ -1685,18 +1685,18 @@
       "reviewAccess": "권한 확인",
       "selectedCapabilities": "선택한 권한: {{fileAccess}} · {{commands}}",
       "selectedFolderScope": "선택한 폴더 범위: {{path}}",
-      "unknownTarget": "Nanobot이 아직 정확한 폴더를 식별하지 못했습니다. 폴더를 명시적으로 선택하세요."
+      "unknownTarget": "Kohaku이 아직 정확한 폴더를 식별하지 못했습니다. 폴더를 명시적으로 선택하세요."
     },
     "permissionV2": {
       "actionFailed": "액세스를 업데이트할 수 없습니다. 다시 시도하기 전에 이 채팅을 새로고침하세요.",
       "confirmTitle": "전체 액세스를 사용 설정할까요?",
-      "confirmDescription": "Nanobot은 선택한 폴더 외부에서도 OS 계정 권한에 따라 파일을 읽고 변경하며 명령을 실행할 수 있습니다. Working in의 현재 디렉터리와 컨텍스트는 유지됩니다. 새 채팅은 샌드박스로 시작합니다.",
+      "confirmDescription": "Kohaku은 선택한 폴더 외부에서도 OS 계정 권한에 따라 파일을 읽고 변경하며 명령을 실행할 수 있습니다. Working in의 현재 디렉터리와 컨텍스트는 유지됩니다. 새 채팅은 샌드박스로 시작합니다.",
       "enableFull": "전체 액세스 사용 설정",
       "fullEnding": "전체 액세스 종료 중",
       "fullIndicator": "전체 액세스",
       "fullReach": "OS 계정 권한에 따라 이 기기의 파일과 명령에 액세스합니다.",
       "retiringActive": "이전 액세스로 명령이 실행 중입니다. 완료될 때까지 기다리거나 중지한 다음 다시 시도하세요.",
-      "retiringUnknown": "이전 명령이 끝났는지 Nanobot이 아직 확인할 수 없습니다. 액세스 변경이 대기 중입니다.",
+      "retiringUnknown": "이전 명령이 끝났는지 Kohaku이 아직 확인할 수 없습니다. 액세스 변경이 대기 중입니다.",
       "retiringFinished": "이전 작업이 끝났습니다. 제한 액세스를 확인하려면 다시 시도하세요.",
       "retryRestricted": "샌드박스로 돌아가기 재시도",
       "returnRestricted": "샌드박스로 돌아가기",
@@ -1707,7 +1707,7 @@
         "controls_unavailable": "현재 로컬 제어에서는 전체 액세스를 사용할 수 없습니다.",
         "session_required": "전체 액세스를 사용 설정하기 전에 메시지를 보내 이 채팅을 만드세요.",
         "configured_sandbox": "명령 제한이 설정되어 있어 전체 액세스를 사용할 수 없습니다.",
-        "supervisor_unavailable": "Nanobot이 명령을 안전하게 감독할 수 없어 전체 액세스를 사용할 수 없습니다.",
+        "supervisor_unavailable": "Kohaku이 명령을 안전하게 감독할 수 없어 전체 액세스를 사용할 수 없습니다.",
         "permission_state_unavailable": "현재 액세스 권한을 사용할 수 없습니다. 다시 시도하기 전에 이 채팅을 새로고침하세요.",
         "permission_retiring": "이전 작업이 종료되는 동안에는 전체 액세스를 사용할 수 없습니다."
       }

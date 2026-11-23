@@ -2,17 +2,17 @@ import asyncio
 
 import pytest
 
-from nanobot.agent.loop import AgentLoop
-from nanobot.config.schema import ModelPresetConfig
-from nanobot.nanobot import Nanobot
-from nanobot.providers.base import GenerationSettings, LLMProvider, LLMResponse
-from nanobot.providers.factory import ProviderSnapshot
-from nanobot.sdk.types import SessionSnapshot
-from nanobot.session.model_selection import (
+from kohaku.agent.loop import AgentLoop
+from kohaku.config.schema import ModelPresetConfig
+from kohaku.kohaku import Kohaku
+from kohaku.providers.base import GenerationSettings, LLMProvider, LLMResponse
+from kohaku.providers.factory import ProviderSnapshot
+from kohaku.sdk.types import SessionSnapshot
+from kohaku.session.model_selection import (
     SESSION_MODEL_PRESET_METADATA_KEY,
     model_preset_from_metadata,
 )
-from nanobot.utils.llm_runtime import LLMRuntime
+from kohaku.utils.llm_runtime import LLMRuntime
 from tests.agent.p6_admitted_fixtures import (
     AgentInputs,
 )
@@ -196,7 +196,7 @@ async def test_streamed_sdk_resolves_session_runtime_after_lock_admission(admitt
     try:
         await lock.acquire()
         try:
-            run = await Nanobot(loop).run_streamed("hello", session_key=session_key)
+            run = await Kohaku(loop).run_streamed("hello", session_key=session_key)
             loop.set_session_model_preset(session_key, "deep")
         finally:
             lock.release()
@@ -237,7 +237,7 @@ async def test_sdk_custom_model_preset_metadata_does_not_select_runtime(admitted
 
     loop = await admitted_async(tmp_path, build, borrowed=True)
     loop.schedule_background = lambda coro: coro.close()  # type: ignore[method-assign]
-    bot = Nanobot(loop)
+    bot = Kohaku(loop)
 
     await bot.sessions.ingest(
         "sdk:custom-metadata",
@@ -285,7 +285,7 @@ async def test_sdk_invalid_internal_model_preset_metadata_fails_explicitly(admit
 
     loop = await admitted_async(tmp_path, build, borrowed=True)
     loop.schedule_background = lambda coro: coro.close()  # type: ignore[method-assign]
-    bot = Nanobot(loop)
+    bot = Kohaku(loop)
 
     await bot.sessions.ingest(
         "sdk:invalid-internal-metadata",
@@ -303,9 +303,9 @@ async def test_sdk_invalid_internal_model_preset_metadata_fails_explicitly(admit
 async def test_admitted_fixture_async_body_failure_closes_on_owner_loop(tmp_path) -> None:
     from pathlib import Path
 
-    from nanobot import migration_guard
-    from nanobot.config import loader
-    from nanobot.runtime_composition import RuntimeState
+    from kohaku import migration_guard
+    from kohaku.config import loader
+    from kohaku.runtime_composition import RuntimeState
     from tests.agent.p6_admitted_fixtures import AdmittedGraphs
 
     original_guard = migration_guard.require_runtime_ready
@@ -329,7 +329,7 @@ async def test_admitted_fixture_async_body_failure_closes_on_owner_loop(tmp_path
         with pytest.raises(RuntimeError, match="intentional body failure"):
             try:
                 loop = await graphs.acquire(tmp_path, build, borrowed=True)
-                await Nanobot(loop).sessions.ingest("sdk:caller-owned", [], save=True)
+                await Kohaku(loop).sessions.ingest("sdk:caller-owned", [], save=True)
                 raise RuntimeError("intentional body failure")
             finally:
                 await graphs.close()

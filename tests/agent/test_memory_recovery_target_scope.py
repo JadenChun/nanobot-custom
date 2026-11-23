@@ -18,7 +18,7 @@ from typing import Any
 
 import pytest
 
-from nanobot.agent import memory_recovery_storage as storage
+from kohaku.agent import memory_recovery_storage as storage
 
 
 @pytest.mark.parametrize("fault", [RuntimeError("binder"), KeyboardInterrupt("binder")])
@@ -637,7 +637,7 @@ def test_snapshot_weakref_cleanup_does_not_deadlock_during_cycle_collection(
         import sys
         from pathlib import Path
 
-        from nanobot.agent import memory_recovery_storage as storage
+        from kohaku.agent import memory_recovery_storage as storage
 
         workspace = Path(sys.argv[1])
         memory = workspace / "memory"

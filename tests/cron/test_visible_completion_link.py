@@ -5,18 +5,18 @@ from pathlib import Path
 
 import pytest
 
-from nanobot.cron.action_store import CronActionStore
-from nanobot.cron.completion import (
+from kohaku.cron.action_store import CronActionStore
+from kohaku.cron.completion import (
     CronCompletionConflictError,
     CronCompletionIncompleteError,
     CronCompletionProjector,
 )
-from nanobot.cron.definition_store import CronDefinitionAction, CronDefinitionStore
-from nanobot.cron.occurrence_store import CronOccurrenceStore
-from nanobot.cron.service import CronService, _job_definition
-from nanobot.cron.types import CronDestination, CronSchedule
-from nanobot.cron.visible_link import link_completed_text_result
-from nanobot.session.manager import Session, SessionManager, SessionPolicy, SessionWriteConflict
+from kohaku.cron.definition_store import CronDefinitionAction, CronDefinitionStore
+from kohaku.cron.occurrence_store import CronOccurrenceStore
+from kohaku.cron.service import CronService, _job_definition
+from kohaku.cron.types import CronDestination, CronSchedule
+from kohaku.cron.visible_link import link_completed_text_result
+from kohaku.session.manager import Session, SessionManager, SessionPolicy, SessionWriteConflict
 
 
 def _claim(tmp_path: Path):

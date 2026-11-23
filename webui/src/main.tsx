@@ -61,7 +61,7 @@ if (isMobileRuntimeActive()) {
 
 async function renderWebui(container: HTMLElement) {
   await initializeI18n();
-  /* StrictMode disabled: dev double-invokes state updaters; delta accumulation must stay pure — see useNanobotStream. */
+  /* StrictMode disabled: dev double-invokes state updaters; delta accumulation must stay pure — see useKohakuStream. */
   ReactDOM.createRoot(container).render(
     <ErrorBoundary>
       <App />

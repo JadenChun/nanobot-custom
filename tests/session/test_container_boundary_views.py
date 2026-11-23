@@ -7,10 +7,10 @@ from pathlib import Path
 
 import pytest
 
-import nanobot.cron.occurrence as occurrence
-import nanobot.session.artifact_factory as artifact_factory
-import nanobot.session.source_discovery as discovery
-from nanobot.session.manager import JsonlSessionStore
+import kohaku.cron.occurrence as occurrence
+import kohaku.session.artifact_factory as artifact_factory
+import kohaku.session.source_discovery as discovery
+from kohaku.session.manager import JsonlSessionStore
 from tests.session.test_source_discovery import _source_session
 
 

@@ -299,7 +299,7 @@ export function AppsCatalogSettings({
 
       {requiresRestartPending ? (
         <RestartRequiredNotice
-          message={tx("settings.apps.restartRequired", "Restart nanobot to apply updated apps and MCP tools.")}
+          message={tx("settings.apps.restartRequired", "Restart Kohaku to apply updated apps and MCP tools.")}
           onRestart={onRestart}
           isRestarting={isRestarting}
         />
@@ -1319,7 +1319,7 @@ function mcpOAuthStatusText(
       if (completionInput === "callback_url") {
         return tx(
           "settings.mcp.manualCallbackRequired",
-          "Finish signing in, then paste the callback URL into nanobot.",
+          "Finish signing in, then paste the callback URL into Kohaku.",
         );
       }
       return popupBlocked

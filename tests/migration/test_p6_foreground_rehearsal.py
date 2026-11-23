@@ -15,19 +15,19 @@ from unittest.mock import patch
 import httpx
 import pytest
 
-from nanobot import migration_guard
-from nanobot.agent.loop import AgentLoop
-from nanobot.agent.tools.loader import ToolLoader
-from nanobot.agent.tools.mcp import MCPProvider
-from nanobot.agent.tools.registry import ToolRegistry
-from nanobot.agent.turn import RunStatus, TurnCallbacks, TurnRequest, TurnResult
-from nanobot.bus.queue import MessageBus
-from nanobot.config.errors import ConfigLoadError
-from nanobot.config.loader import get_config_path, load_config, set_config_path
-from nanobot.config.schema import Config
-from nanobot.cron.service import CronService
-from nanobot.providers.base import LLMProvider, LLMResponse, LLMUsage
-from nanobot.runtime_composition import (
+from kohaku import migration_guard
+from kohaku.agent.loop import AgentLoop
+from kohaku.agent.tools.loader import ToolLoader
+from kohaku.agent.tools.mcp import MCPProvider
+from kohaku.agent.tools.registry import ToolRegistry
+from kohaku.agent.turn import RunStatus, TurnCallbacks, TurnRequest, TurnResult
+from kohaku.bus.queue import MessageBus
+from kohaku.config.errors import ConfigLoadError
+from kohaku.config.loader import get_config_path, load_config, set_config_path
+from kohaku.config.schema import Config
+from kohaku.cron.service import CronService
+from kohaku.providers.base import LLMProvider, LLMResponse, LLMUsage
+from kohaku.runtime_composition import (
     RuntimeComposition,
     RuntimeFactories,
     RuntimeState,
@@ -108,14 +108,14 @@ def isolated_effects(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     monkeypatch.setattr(Path, "home", lambda: tmp_path / "synthetic-home")
     # The real CLI binds the active path separately from loading its Config.
     # Restore that global after this test; no default/user config is loaded.
-    monkeypatch.setattr("nanobot.config.loader._current_config_path", None)
+    monkeypatch.setattr("kohaku.config.loader._current_config_path", None)
     for target, label in (
-        ("nanobot.providers.factory.make_provider", "provider.factory"),
-        ("nanobot.channels.manager.ChannelManager.__init__", "channel.construct"),
-        ("nanobot.cron.service.CronService.start", "cron.start"),
-        ("nanobot.agent.loop.AgentLoop.run", "agent.background_loop"),
-        ("nanobot.agent.loop.AgentLoop.schedule_background", "agent.background_task"),
-        ("nanobot.agent.tools.mcp.MCPProvider.connect", "mcp.connect"),
+        ("kohaku.providers.factory.make_provider", "provider.factory"),
+        ("kohaku.channels.manager.ChannelManager.__init__", "channel.construct"),
+        ("kohaku.cron.service.CronService.start", "cron.start"),
+        ("kohaku.agent.loop.AgentLoop.run", "agent.background_loop"),
+        ("kohaku.agent.loop.AgentLoop.schedule_background", "agent.background_task"),
+        ("kohaku.agent.tools.mcp.MCPProvider.connect", "mcp.connect"),
     ):
         monkeypatch.setattr(target, denial(label))
     # Exercise the real Settings/loader with no environment source or expansion.
@@ -293,8 +293,8 @@ def test_prohibited_effects_fail_closed(isolated_effects: _Effects, effect: str)
         "listener": lambda: socket.socket.bind(None, ("127.0.0.1", 0)),
         "http": lambda: httpx.AsyncClient.send(None, None),
         "process": lambda: subprocess.Popen(["never-executed"]),
-        "provider": lambda: __import__("nanobot.providers.factory", fromlist=["make_provider"]).make_provider(None),
-        "channel": lambda: __import__("nanobot.channels.manager", fromlist=["ChannelManager"]).ChannelManager(None, None),
+        "provider": lambda: __import__("kohaku.providers.factory", fromlist=["make_provider"]).make_provider(None),
+        "channel": lambda: __import__("kohaku.channels.manager", fromlist=["ChannelManager"]).ChannelManager(None, None),
         "background": lambda: AgentLoop.schedule_background(None, None),
         "cron": lambda: CronService.start(None),
         "mcp": lambda: MCPProvider.connect(None),

@@ -10,29 +10,29 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
-from nanobot.agent.loop import AgentLoop
-from nanobot.agent.tools.registry import ToolRegistry
-from nanobot.agent.turn import DeliveryTarget, RunStatus, TurnRequest, TurnResult
-from nanobot.config.schema import Config
-from nanobot.cron.action_store import CronActionStore
-from nanobot.cron.canonical_execution import execute_claimed_fresh_text
-from nanobot.cron.completion import CronCompletionProjector
-from nanobot.cron.definition_store import (
+from kohaku.agent.loop import AgentLoop
+from kohaku.agent.tools.registry import ToolRegistry
+from kohaku.agent.turn import DeliveryTarget, RunStatus, TurnRequest, TurnResult
+from kohaku.config.schema import Config
+from kohaku.cron.action_store import CronActionStore
+from kohaku.cron.canonical_execution import execute_claimed_fresh_text
+from kohaku.cron.completion import CronCompletionProjector
+from kohaku.cron.definition_store import (
     CronDefinitionAction,
     CronDefinitionStore,
     DefinitionStoreValidationError,
 )
-from nanobot.cron.delivery_runtime import CronDeliveryRuntime
-from nanobot.cron.delivery_store import CronDeliveryOutboxStore
-from nanobot.cron.occurrence_store import (
+from kohaku.cron.delivery_runtime import CronDeliveryRuntime
+from kohaku.cron.delivery_store import CronDeliveryOutboxStore
+from kohaku.cron.occurrence_store import (
     CronOccurrenceStore,
     OccurrenceExecutionBusyError,
     OccurrenceExecutionStartedError,
     OccurrenceOwnershipError,
 )
-from nanobot.cron.service import CronService, _job_definition
-from nanobot.cron.types import CronDestination, CronSchedule
-from nanobot.providers.base import GenerationSettings, LLMProvider, LLMResponse
+from kohaku.cron.service import CronService, _job_definition
+from kohaku.cron.types import CronDestination, CronSchedule
+from kohaku.providers.base import GenerationSettings, LLMProvider, LLMResponse
 
 
 class ScriptedProvider(LLMProvider):
@@ -53,7 +53,7 @@ class ScriptedProvider(LLMProvider):
 
 @pytest.fixture
 def engine_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setattr("nanobot.migration_guard.require_runtime_ready", lambda: None)
+    monkeypatch.setattr("kohaku.migration_guard.require_runtime_ready", lambda: None)
     monkeypatch.setattr("subprocess.Popen", Mock(side_effect=AssertionError("process execution")))
     for name in ("socket.socket.connect", "socket.socket.connect_ex", "socket.create_connection",
                  "socket.getaddrinfo"):
@@ -108,7 +108,7 @@ def _service_claim(tmp_path: Path, *, legacy: bool = True, primary: bool = True)
 
 
 async def test_owned_claim_request_builder_is_pure_detached_and_does_not_consume_claim(tmp_path):
-    from nanobot.cron import canonical_execution
+    from kohaku.cron import canonical_execution
 
     service, claim = _service_claim(tmp_path)
     before = service.occurrence_store.get(claim.occurrence_id)
@@ -130,7 +130,7 @@ async def test_owned_claim_request_builder_is_pure_detached_and_does_not_consume
 
 
 def test_owned_claim_request_builder_preserves_private_failure_instance_and_single_call(monkeypatch):
-    from nanobot.cron import canonical_execution
+    from kohaku.cron import canonical_execution
 
     claim = object()
     calls = []
@@ -235,8 +235,8 @@ async def test_reconciliation_is_busy_through_settlement_outbox_and_visible_link
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from nanobot.cron import visible_link
-    from nanobot.session.manager import SessionManager
+    from kohaku.cron import visible_link
+    from kohaku.session.manager import SessionManager
 
     service, claim = _service_claim(tmp_path)
     agent = AsyncMock()
@@ -410,8 +410,8 @@ async def test_outbox_failure_recovers_from_completed_ledger_not_model(tmp_path:
 
 
 async def test_visible_link_failure_recovers_without_recomputing(tmp_path: Path, monkeypatch) -> None:
-    from nanobot.cron.visible_link import link_completed_text_result
-    from nanobot.session.manager import SessionManager
+    from kohaku.cron.visible_link import link_completed_text_result
+    from kohaku.session.manager import SessionManager
 
     service, claim = _service_claim(tmp_path)
     sessions = SessionManager(tmp_path / "workspace")

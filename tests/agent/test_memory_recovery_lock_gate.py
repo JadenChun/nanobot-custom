@@ -11,7 +11,7 @@ from typing import Any
 
 import pytest
 
-from nanobot.agent import memory_recovery_storage as storage
+from kohaku.agent import memory_recovery_storage as storage
 
 
 def _storage_capable() -> bool:

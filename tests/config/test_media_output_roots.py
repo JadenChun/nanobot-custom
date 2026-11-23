@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from nanobot.config.schema import ToolsConfig
+from kohaku.config.schema import ToolsConfig
 
 
 def test_media_output_roots_normalize_absolute_paths(tmp_path: Path) -> None:

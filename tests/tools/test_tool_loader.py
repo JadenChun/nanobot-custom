@@ -8,14 +8,14 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from nanobot.agent.loop import AgentLoop
-from nanobot.agent.tools.base import Tool, unsupported_json_schema_constraint
-from nanobot.agent.tools.context import ToolContext
-from nanobot.agent.tools.loader import _SKIP_MODULES, ToolLoader
-from nanobot.agent.tools.registry import ToolRegistry
-from nanobot.agent.tools.runtime_control import AgentRuntimeControl
-from nanobot.config.schema import Config, ToolsConfig
-from nanobot.providers.base import GenerationSettings, LLMResponse
+from kohaku.agent.loop import AgentLoop
+from kohaku.agent.tools.base import Tool, unsupported_json_schema_constraint
+from kohaku.agent.tools.context import ToolContext
+from kohaku.agent.tools.loader import _SKIP_MODULES, ToolLoader
+from kohaku.agent.tools.registry import ToolRegistry
+from kohaku.agent.tools.runtime_control import AgentRuntimeControl
+from kohaku.config.schema import Config, ToolsConfig
+from kohaku.providers.base import GenerationSettings, LLMResponse
 from tests.agent.p6_admitted_fixtures import AgentInputs, SyncAdmittedFactory
 from tests.agent.p6_admitted_fixtures import admitted_sync as admitted_sync
 
@@ -171,8 +171,8 @@ def test_discover_skips_private_classes():
 
 def test_loader_registers_exec_with_real_tools_config(tmp_path, loader_context):
     """Real config objects catch bad ctx.config attribute paths that mocks hide."""
-    from nanobot.agent.tools.registry import ToolRegistry
-    from nanobot.config.schema import ToolsConfig
+    from kohaku.agent.tools.registry import ToolRegistry
+    from kohaku.config.schema import ToolsConfig
 
     ctx = loader_context
     assert isinstance(ctx.config, ToolsConfig)
@@ -184,12 +184,12 @@ def test_loader_registers_exec_with_real_tools_config(tmp_path, loader_context):
 
 
 def test_loader_wires_shared_exec_session_manager(tmp_path, loader_context):
-    from nanobot.agent.tools.exec_session import (
+    from kohaku.agent.tools.exec_session import (
         ExecSessionManager,
         ExecSessionTool,
         ListExecSessionsTool,
     )
-    from nanobot.agent.tools.registry import ToolRegistry
+    from kohaku.agent.tools.registry import ToolRegistry
 
     ctx = loader_context
     manager = ctx.exec_session_manager
@@ -220,7 +220,7 @@ def test_loader_wires_shared_exec_session_manager(tmp_path, loader_context):
 
 
 def test_fs_tool_create_builds_from_context():
-    from nanobot.agent.tools.filesystem import ReadFileTool
+    from kohaku.agent.tools.filesystem import ReadFileTool
     mock_config = MagicMock()
     mock_config.restrict_to_workspace = False
     mock_config.exec.sandbox = ""
@@ -231,7 +231,7 @@ def test_fs_tool_create_builds_from_context():
 
 
 def test_fs_tool_create_respects_restrict_to_workspace():
-    from nanobot.agent.tools.filesystem import ReadFileTool
+    from kohaku.agent.tools.filesystem import ReadFileTool
     mock_config = MagicMock()
     mock_config.restrict_to_workspace = True
     mock_config.exec.sandbox = ""
@@ -241,7 +241,7 @@ def test_fs_tool_create_respects_restrict_to_workspace():
 
 
 def test_fs_tool_create_respects_sandbox():
-    from nanobot.agent.tools.filesystem import ReadFileTool
+    from kohaku.agent.tools.filesystem import ReadFileTool
     mock_config = MagicMock()
     mock_config.restrict_to_workspace = False
     mock_config.exec.sandbox = "bwrap"
@@ -254,7 +254,7 @@ def test_fs_tool_create_respects_sandbox():
 
 
 async def test_message_tool_create():
-    from nanobot.agent.tools.message import MessageTool
+    from kohaku.agent.tools.message import MessageTool
     mock_bus = MagicMock()
     mock_config = MagicMock()
     ctx = ToolContext(config=mock_config, workspace="/tmp", bus=mock_bus)
@@ -263,7 +263,7 @@ async def test_message_tool_create():
 
 
 def test_spawn_tool_create():
-    from nanobot.agent.tools.spawn import SpawnTool
+    from kohaku.agent.tools.spawn import SpawnTool
     mock_mgr = MagicMock()
     mock_config = MagicMock()
     ctx = ToolContext(config=mock_config, workspace="/tmp", subagent_manager=mock_mgr)
@@ -272,14 +272,14 @@ def test_spawn_tool_create():
 
 
 def test_cron_tool_enabled_without_service():
-    from nanobot.agent.tools.cron import CronTool
+    from kohaku.agent.tools.cron import CronTool
     mock_config = MagicMock()
     ctx = ToolContext(config=mock_config, workspace="/tmp", cron_service=None)
     assert CronTool.enabled(ctx) is False
 
 
 def test_cron_tool_enabled_with_service():
-    from nanobot.agent.tools.cron import CronTool
+    from kohaku.agent.tools.cron import CronTool
     mock_service = MagicMock()
     mock_config = MagicMock()
     ctx = ToolContext(config=mock_config, workspace="/tmp", cron_service=mock_service)
@@ -287,7 +287,7 @@ def test_cron_tool_enabled_with_service():
 
 
 def test_cron_tool_create():
-    from nanobot.agent.tools.cron import CronTool
+    from kohaku.agent.tools.cron import CronTool
     mock_service = MagicMock()
     mock_config = MagicMock()
     ctx = ToolContext(
@@ -302,13 +302,13 @@ def test_cron_tool_create():
 
 
 def test_exec_tool_config_cls():
-    from nanobot.agent.tools.shell import ExecTool, ExecToolConfig
+    from kohaku.agent.tools.shell import ExecTool, ExecToolConfig
     assert ExecTool.config_cls() is ExecToolConfig
     assert ExecTool.config_key == "exec"
 
 
 def test_exec_tool_enabled():
-    from nanobot.agent.tools.shell import ExecTool
+    from kohaku.agent.tools.shell import ExecTool
     mock_config = MagicMock()
     mock_config.exec.enable = True
     ctx = ToolContext(config=mock_config, workspace="/tmp")
@@ -318,7 +318,7 @@ def test_exec_tool_enabled():
 
 
 def test_exec_tool_create():
-    from nanobot.agent.tools.shell import ExecTool
+    from kohaku.agent.tools.shell import ExecTool
     mock_config = MagicMock()
     mock_config.exec.enable = True
     mock_config.exec.timeout = 120
@@ -336,7 +336,7 @@ def test_exec_tool_create():
 
 
 def test_web_tools_config_cls():
-    from nanobot.agent.tools.web import WebFetchTool, WebSearchTool, WebToolsConfig
+    from kohaku.agent.tools.web import WebFetchTool, WebSearchTool, WebToolsConfig
     assert WebSearchTool.config_key == "web"
     assert WebSearchTool.config_cls() is WebToolsConfig
     assert WebFetchTool.config_key == "web"
@@ -344,7 +344,7 @@ def test_web_tools_config_cls():
 
 
 def test_web_tools_enabled():
-    from nanobot.agent.tools.web import WebSearchTool
+    from kohaku.agent.tools.web import WebSearchTool
     mock_config = MagicMock()
     mock_config.web.enable = True
     ctx = ToolContext(config=mock_config, workspace="/tmp")
@@ -354,7 +354,7 @@ def test_web_tools_enabled():
 
 
 def test_web_search_tool_create():
-    from nanobot.agent.tools.web import WebSearchTool
+    from kohaku.agent.tools.web import WebSearchTool
     mock_config = MagicMock()
     mock_config.web.enable = True
     mock_config.web.search = MagicMock()
@@ -366,7 +366,7 @@ def test_web_search_tool_create():
 
 
 def test_web_fetch_tool_create():
-    from nanobot.agent.tools.web import WebFetchTool
+    from kohaku.agent.tools.web import WebFetchTool
     mock_config = MagicMock()
     mock_config.web.enable = True
     mock_config.web.fetch = MagicMock()
@@ -378,14 +378,14 @@ def test_web_fetch_tool_create():
 
 
 def test_image_gen_tool_config_cls():
-    from nanobot.agent.tools.image_generation import ImageGenerationTool, ImageGenerationToolConfig
+    from kohaku.agent.tools.image_generation import ImageGenerationTool, ImageGenerationToolConfig
     assert ImageGenerationTool.config_key == "image_generation"
     assert ImageGenerationTool.config_cls() is ImageGenerationToolConfig
 
 
 def test_image_gen_tool_enabled():
-    from nanobot.agent.tools.image_generation import ImageGenerationTool, ImageGenerationToolConfig
-    from nanobot.config.schema import ProviderConfig, ToolsConfig
+    from kohaku.agent.tools.image_generation import ImageGenerationTool, ImageGenerationToolConfig
+    from kohaku.config.schema import ProviderConfig, ToolsConfig
     mock_config = ToolsConfig(image_generation=ImageGenerationToolConfig(
         configuration_source="upstream", enabled=True,
     ))
@@ -399,8 +399,8 @@ def test_image_gen_tool_enabled():
 
 
 def test_image_gen_tool_create():
-    from nanobot.agent.tools.image_generation import ImageGenerationTool, ImageGenerationToolConfig
-    from nanobot.config.schema import ProviderConfig, ToolsConfig
+    from kohaku.agent.tools.image_generation import ImageGenerationTool, ImageGenerationToolConfig
+    from kohaku.config.schema import ProviderConfig, ToolsConfig
     mock_config = ToolsConfig(image_generation=ImageGenerationToolConfig(
         configuration_source="upstream", enabled=True,
     ))
@@ -420,13 +420,13 @@ def test_image_gen_tool_create():
 
 
 def test_my_tool_config_cls():
-    from nanobot.agent.tools.self import MyTool, MyToolConfig
+    from kohaku.agent.tools.self import MyTool, MyToolConfig
     assert MyTool.config_key == "my"
     assert MyTool.config_cls() is MyToolConfig
 
 
 def test_my_tool_enabled():
-    from nanobot.agent.tools.self import MyTool
+    from kohaku.agent.tools.self import MyTool
     mock_config = MagicMock()
     mock_config.my.enable = True
     ctx = ToolContext(
@@ -440,7 +440,7 @@ def test_my_tool_enabled():
 
 
 def test_my_tool_requires_runtime_control():
-    from nanobot.agent.tools.self import MyTool
+    from kohaku.agent.tools.self import MyTool
 
     mock_config = MagicMock()
     mock_config.my.enable = True
@@ -450,7 +450,7 @@ def test_my_tool_requires_runtime_control():
 
 
 def test_mcp_wrappers_not_discoverable():
-    from nanobot.agent.tools.mcp import MCPPromptWrapper, MCPResourceWrapper, MCPToolWrapper
+    from kohaku.agent.tools.mcp import MCPPromptWrapper, MCPResourceWrapper, MCPToolWrapper
     assert MCPToolWrapper._plugin_discoverable is False
     assert MCPResourceWrapper._plugin_discoverable is False
     assert MCPPromptWrapper._plugin_discoverable is False
@@ -462,8 +462,8 @@ def test_mcp_wrappers_not_discoverable():
 @pytest.mark.parametrize("my_enabled", [True, False])
 def test_loader_registers_the_foreground_manifest_with_config_gates(loader_context, my_enabled):
     """Normal construction must honor the runtime-inspection configuration gate."""
-    from nanobot.agent.tools.loader import ToolLoader
-    from nanobot.agent.tools.registry import ToolRegistry
+    from kohaku.agent.tools.loader import ToolLoader
+    from kohaku.agent.tools.registry import ToolRegistry
 
     ctx = loader_context
     ctx.config.my.enable = my_enabled
@@ -490,8 +490,8 @@ def test_loader_registers_the_foreground_manifest_with_config_gates(loader_conte
 
 
 def test_non_core_loader_scope_stays_closed_without_registry_mutation():
-    from nanobot.agent.tools.registry import ToolRegistry
-    from nanobot.config.schema import ToolsConfig
+    from kohaku.agent.tools.registry import ToolRegistry
+    from kohaku.config.schema import ToolsConfig
     registry = ToolRegistry()
     ctx = ToolContext(config=ToolsConfig(), workspace="/tmp")
     with pytest.raises(ValueError, match="scope"):
@@ -557,8 +557,8 @@ def _submit_batch(
 ) -> bool:
     """Return whether the batch was published; OBS-BATCH as observed by the caller."""
     with (
-        patch("nanobot.agent.tools.loader.entry_points", return_value=entry_points),
-        patch("nanobot.agent.tools.fork_factories.construct_core_tools", return_value=[]),
+        patch("kohaku.agent.tools.loader.entry_points", return_value=entry_points),
+        patch("kohaku.agent.tools.fork_factories.construct_core_tools", return_value=[]),
     ):
         try:
             ToolLoader(test_classes=[]).load(

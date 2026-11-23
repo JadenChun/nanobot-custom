@@ -20,7 +20,7 @@ type DesktopState = {
 
 declare global {
   interface Window {
-    __NANOBOT_DESKTOP_STATE__?: (state: DesktopState) => void;
+    __KOHAKU_DESKTOP_STATE__?: (state: DesktopState) => void;
   }
 }
 
@@ -52,12 +52,12 @@ let initialized = false;
 const copy: Record<string, string> = {
   setup_required: "Could not detect an installed Kohaku Python environment automatically. Choose the paths under Connection settings to continue.",
   hello_required: "Validate the selected installation before starting it.",
-  backend_version_unsupported: "This Python installation has an unsupported Nanobot version.",
-  backend_capability_unsupported: "This Nanobot installation lacks the desktop lifecycle capability.",
-  default_config_backend_unsupported: "Select a newer Nanobot Python installation to create a default config.",
-  default_config_write_failed: "Could not create the default config. Check that ~/.nanobot is writable.",
+  backend_version_unsupported: "This Python installation has an unsupported Kohaku version.",
+  backend_capability_unsupported: "This Kohaku installation lacks the desktop lifecycle capability.",
+  default_config_backend_unsupported: "Select a newer Kohaku Python installation to create a default config.",
+  default_config_write_failed: "Could not create the default config. Check that ~/.kohaku is writable.",
   interpreter_mismatch: "The selected Python interpreter did not launch the installed backend.",
-  interpreter_invalid: "Choose the executable bin/python from an installed Nanobot environment.",
+  interpreter_invalid: "Choose the executable bin/python from an installed Kohaku environment.",
   config_invalid: "The selected config file could not be validated.",
   workspace_invalid: "The workspace override must be an absolute path.",
   loopback_required: "Desktop requires loopback addresses (such as 127.0.0.1) for gateway.host and channels.websocket.host.",
@@ -156,7 +156,7 @@ async function refresh(syncSelection = false): Promise<void> {
   }
 }
 
-window.__NANOBOT_DESKTOP_STATE__ = draw;
+window.__KOHAKU_DESKTOP_STATE__ = draw;
 
 toggleAdvanced.addEventListener("click", () => {
   advancedExpanded = !advancedExpanded;

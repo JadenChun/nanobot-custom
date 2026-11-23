@@ -1,4 +1,4 @@
-import type { NanobotClient } from "@/lib/nanobot-client";
+import type { KohakuClient } from "@/lib/kohaku-client";
 import type { SessionPromptSummary, SessionTurnSummary, UIMessage } from "@/lib/types";
 
 /**
@@ -35,9 +35,9 @@ export interface CachedSessionPage {
 
 const MAX_CACHED_SESSIONS = 8;
 
-let cacheByClient = new WeakMap<NanobotClient, Map<string, CachedSessionPage>>();
+let cacheByClient = new WeakMap<KohakuClient, Map<string, CachedSessionPage>>();
 
-export function readCachedSessionPage(client: NanobotClient, key: string): CachedSessionPage | undefined {
+export function readCachedSessionPage(client: KohakuClient, key: string): CachedSessionPage | undefined {
   const pages = cacheByClient.get(client);
   const cached = pages?.get(key);
   if (pages && cached) {
@@ -48,7 +48,7 @@ export function readCachedSessionPage(client: NanobotClient, key: string): Cache
   return cached;
 }
 
-export function writeCachedSessionPage(client: NanobotClient, key: string, page: CachedSessionPage): void {
+export function writeCachedSessionPage(client: KohakuClient, key: string, page: CachedSessionPage): void {
   let pages = cacheByClient.get(client);
   if (!pages) {
     pages = new Map();
@@ -63,7 +63,7 @@ export function writeCachedSessionPage(client: NanobotClient, key: string, page:
   }
 }
 
-export function clearCachedSessionPage(client: NanobotClient, key: string): void {
+export function clearCachedSessionPage(client: KohakuClient, key: string): void {
   cacheByClient.get(client)?.delete(key);
 }
 

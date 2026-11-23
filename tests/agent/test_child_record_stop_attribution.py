@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import pytest
 
-from nanobot.agent.child_sessions import DELEGATION_CHILD_METADATA_KEY
+from kohaku.agent.child_sessions import DELEGATION_CHILD_METADATA_KEY
 from tests.agent.test_delegation_child_sessions import (
     _new_parent,
     _new_tree,

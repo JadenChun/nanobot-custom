@@ -2,7 +2,7 @@
 
 Contract under test (public interface only):
 
-- ``nanobot.config.schema.SourceCompactionConfig`` (Pydantic model)
+- ``kohaku.config.schema.SourceCompactionConfig`` (Pydantic model)
     - ``idle_timeout_seconds: float = 300.0``
     - ``overall_timeout_seconds: float = 900.0``
     - ``pressure_trigger_ratio: float = 0.9``
@@ -11,14 +11,14 @@ Contract under test (public interface only):
 - Accepted JSON aliases: ``idleTimeoutSeconds``, ``overallTimeoutSeconds``,
   ``pressureTriggerRatio``, ``targetRatio``, ``summaryGenerationTokens``.
 - Nested as ``source_compaction`` (alias ``sourceCompaction``) inside
-  ``nanobot.config.schema.AgentDefaults``.
+  ``kohaku.config.schema.AgentDefaults``.
 - Invalid input raises Pydantic ``ValidationError``.
 """
 
 import pytest
 from pydantic import ValidationError
 
-from nanobot.config.schema import AgentDefaults, SourceCompactionConfig
+from kohaku.config.schema import AgentDefaults, SourceCompactionConfig
 
 
 # Requirement: defaults preserve current behavior.

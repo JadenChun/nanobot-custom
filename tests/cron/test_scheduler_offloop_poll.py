@@ -16,16 +16,16 @@ from types import SimpleNamespace
 
 import pytest
 
-from nanobot.agent.turn import TurnResult
-from nanobot.cron.action_store import CronActionStore
-from nanobot.cron.definition_store import (
+from kohaku.agent.turn import TurnResult
+from kohaku.cron.action_store import CronActionStore
+from kohaku.cron.definition_store import (
     CronDefinition,
     CronDefinitionAction,
     CronDefinitionStore,
 )
-from nanobot.cron.runtime import CronRuntime, CronRuntimeInjection
-from nanobot.cron.service import CronService
-from nanobot.session.manager import SessionManager
+from kohaku.cron.runtime import CronRuntime, CronRuntimeInjection
+from kohaku.cron.service import CronService
+from kohaku.session.manager import SessionManager
 from tests.cron.stage3_fixtures import (  # noqa: F401
     FakeChannels,
     FakeClock,

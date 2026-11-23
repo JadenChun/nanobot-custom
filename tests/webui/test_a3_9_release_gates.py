@@ -14,8 +14,8 @@ from pathlib import Path
 import pytest
 import yaml
 
-import nanobot.webui.build as build_module  # noqa: F401 - contract import surface
-from nanobot.webui.build import (
+import kohaku.webui.build as build_module  # noqa: F401 - contract import surface
+from kohaku.webui.build import (
     WebUIBuildError,
     ensure_webui_bundle,
     inspect_webui_bundle,
@@ -31,7 +31,7 @@ def _touch(path: Path, ns: int) -> None:
 
 def test_stale_bundle_is_rejected_for_release(tmp_path: Path) -> None:
     source = tmp_path / "webui"
-    dist = tmp_path / "nanobot/web/dist"
+    dist = tmp_path / "kohaku/web/dist"
     _touch(source / "package.json", 10)
     _touch(source / "src/App.tsx", 30)
     _touch(dist / "index.html", 20)
@@ -44,7 +44,7 @@ def test_stale_bundle_is_rejected_for_release(tmp_path: Path) -> None:
 
 def test_missing_bundle_is_rejected(tmp_path: Path) -> None:
     source = tmp_path / "webui"
-    dist = tmp_path / "nanobot/web/dist"
+    dist = tmp_path / "kohaku/web/dist"
     _touch(source / "package.json", 10)
 
     with pytest.raises(WebUIBuildError, match="built WebUI bundle"):
@@ -55,7 +55,7 @@ def test_missing_bundle_is_rejected(tmp_path: Path) -> None:
 
 def test_fresh_bundle_is_accepted(tmp_path: Path) -> None:
     source = tmp_path / "webui"
-    dist = tmp_path / "nanobot/web/dist"
+    dist = tmp_path / "kohaku/web/dist"
     _touch(source / "package.json", 10)
     _touch(dist / "index.html", 20)
 
@@ -66,7 +66,7 @@ def test_fresh_bundle_is_accepted(tmp_path: Path) -> None:
 
 def test_release_mode_cannot_skip_stale_bundle(tmp_path: Path) -> None:
     source = tmp_path / "webui"
-    dist = tmp_path / "nanobot/web/dist"
+    dist = tmp_path / "kohaku/web/dist"
     _touch(source / "package.json", 10)
     _touch(source / "src/App.tsx", 30)
     _touch(dist / "index.html", 20)
@@ -77,15 +77,15 @@ def test_release_mode_cannot_skip_stale_bundle(tmp_path: Path) -> None:
             source_dir=source,
             dist_dir=dist,
             environ={
-                "NANOBOT_REQUIRE_FRESH_WEBUI": "1",
-                "NANOBOT_SKIP_WEBUI_BUILD": "1",
+                "KOHAKU_REQUIRE_FRESH_WEBUI": "1",
+                "KOHAKU_SKIP_WEBUI_BUILD": "1",
             },
         )
 
 
 def test_zero_exit_stale_build_fails_the_release_switch(tmp_path: Path) -> None:
     source = tmp_path / "webui"
-    dist = tmp_path / "nanobot/web/dist"
+    dist = tmp_path / "kohaku/web/dist"
     _touch(source / "package.json", 10)
     _touch(source / "src/App.tsx", 30)
     _touch(dist / "index.html", 20)
@@ -100,14 +100,14 @@ def test_zero_exit_stale_build_fails_the_release_switch(tmp_path: Path) -> None:
             source_dir=source,
             dist_dir=dist,
             runner="bun",
-            environ={"NANOBOT_REQUIRE_FRESH_WEBUI": "1"},
+            environ={"KOHAKU_REQUIRE_FRESH_WEBUI": "1"},
             subprocess_run=fake_run,
         )
 
 
 def test_fresh_build_passes_the_release_switch(tmp_path: Path) -> None:
     source = tmp_path / "webui"
-    dist = tmp_path / "nanobot/web/dist"
+    dist = tmp_path / "kohaku/web/dist"
     _touch(source / "package.json", 10)
     _touch(source / "src/App.tsx", 20)
 
@@ -121,7 +121,7 @@ def test_fresh_build_passes_the_release_switch(tmp_path: Path) -> None:
         source_dir=source,
         dist_dir=dist,
         runner="bun",
-        environ={"NANOBOT_REQUIRE_FRESH_WEBUI": "1"},
+        environ={"KOHAKU_REQUIRE_FRESH_WEBUI": "1"},
         subprocess_run=fake_run,
     )
 
@@ -145,12 +145,12 @@ def _run_ci_fresh_webui_step(
 ) -> subprocess.CompletedProcess[str]:
     repo = Path(__file__).resolve().parents[2]
     root = tmp_path / variant
-    (root / "nanobot" / "webui").mkdir(parents=True)
-    shutil.copy2(repo / "nanobot" / "webui" / "build.py", root / "nanobot" / "webui" / "build.py")
+    (root / "kohaku" / "webui").mkdir(parents=True)
+    shutil.copy2(repo / "kohaku" / "webui" / "build.py", root / "kohaku" / "webui" / "build.py")
     _touch(root / "webui" / "package.json", 10)
     _touch(root / "webui" / "src" / "App.tsx", 30 if variant == "stale" else 20)
     if variant != "missing":
-        _touch(root / "nanobot" / "web" / "dist" / "index.html", 20 if variant == "stale" else 40)
+        _touch(root / "kohaku" / "web" / "dist" / "index.html", 20 if variant == "stale" else 40)
 
     bin_dir = tmp_path / f"{variant}-bin"
     bin_dir.mkdir()
@@ -173,7 +173,7 @@ def _run_ci_fresh_webui_step(
 @pytest.mark.skipif(os.name == "nt", reason="the workflow step is a POSIX shell heredoc")
 def test_ci_fresh_webui_step_executes_for_fresh_stale_and_missing(tmp_path: Path) -> None:
     body, step_env = _ci_fresh_webui_step()
-    assert step_env.get("NANOBOT_REQUIRE_FRESH_WEBUI") == "1"
+    assert step_env.get("KOHAKU_REQUIRE_FRESH_WEBUI") == "1"
 
     fresh = _run_ci_fresh_webui_step(tmp_path, body, step_env, "fresh")
     assert fresh.returncode == 0, fresh.stdout + fresh.stderr
@@ -240,8 +240,8 @@ def test_update_helper_rejects_identical_artifacts(tmp_path: Path) -> None:
         **os.environ,
         "PATH": str(bin_dir) + os.pathsep + os.environ["PATH"],
         "ANDROID_SERIAL": "fake-1",
-        "NANOBOT_UPDATE_SEED_APK": str(apk),
-        "NANOBOT_UPDATE_CANDIDATE_APK": str(apk),
+        "KOHAKU_MOBILE_UPDATE_SEED_APK": str(apk),
+        "KOHAKU_MOBILE_UPDATE_CANDIDATE_APK": str(apk),
     }
 
     result = subprocess.run(

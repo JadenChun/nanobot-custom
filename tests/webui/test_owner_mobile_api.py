@@ -5,9 +5,9 @@ from types import MethodType, SimpleNamespace
 
 import pytest
 
-from nanobot.remote.edge import AccessIdentity
-from nanobot.webui.inbound_commands import _mobile_mutation_allowed
-from nanobot.webui.ws_http import GatewayHTTPHandler
+from kohaku.remote.edge import AccessIdentity
+from kohaku.webui.inbound_commands import _mobile_mutation_allowed
+from kohaku.webui.ws_http import GatewayHTTPHandler
 from tests.webui.mobile_mutation_helper import mobile_mutation_payload
 
 
@@ -102,7 +102,7 @@ async def test_owner_standard_mutation_writes_actor_audit() -> None:
     from websockets.datastructures import Headers
     from websockets.http11 import Response
 
-    from nanobot.webui.http_utils import http_json_response
+    from kohaku.webui.http_utils import http_json_response
 
     audits: list[dict[str, object]] = []
 
@@ -157,7 +157,7 @@ async def test_owner_standard_mutation_writes_actor_audit() -> None:
 async def test_owner_standard_mutation_fails_closed_when_audit_unavailable() -> None:
     from websockets.datastructures import Headers
 
-    from nanobot.webui.http_utils import http_json_response
+    from kohaku.webui.http_utils import http_json_response
 
     class _Audit:
         def audit_event(self, **_kwargs):
@@ -196,7 +196,7 @@ async def test_owner_standard_mutation_fails_closed_when_audit_unavailable() -> 
 
 
 def test_workspace_owner_actions_have_delegation_receipts() -> None:
-    from nanobot.remote.permissions import ACTION_OPERATIONS
+    from kohaku.remote.permissions import ACTION_OPERATIONS
 
     for action in (
         "workspace.access.add_folder",
@@ -217,7 +217,7 @@ def test_workspace_owner_actions_have_delegation_receipts() -> None:
 async def test_workspace_owner_action_calls_permission_adapter() -> None:
     from websockets.datastructures import Headers
 
-    from nanobot.webui.http_utils import http_json_response
+    from kohaku.webui.http_utils import http_json_response
 
     calls: list[dict[str, object]] = []
 

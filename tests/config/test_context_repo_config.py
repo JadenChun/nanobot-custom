@@ -6,8 +6,8 @@ from types import SimpleNamespace
 import pytest
 from pydantic import ValidationError
 
-from nanobot.config.schema import ContextRepoConfig
-from nanobot.context_repo.manager import ContextRepoRuntimeConfig
+from kohaku.config.schema import ContextRepoConfig
+from kohaku.context_repo.manager import ContextRepoRuntimeConfig
 
 
 def test_allow_exec_defaults_true_and_serializes_camel_case(tmp_path: Path) -> None:

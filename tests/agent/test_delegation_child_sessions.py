@@ -4,7 +4,7 @@ import asyncio
 
 import pytest
 
-from nanobot.agent.child_sessions import (
+from kohaku.agent.child_sessions import (
     CHILD_SESSION_PREFIX,
     DEFAULT_CHILD_PROFILE,
     DELEGATION_CHILD_METADATA_KEY,
@@ -14,7 +14,7 @@ from nanobot.agent.child_sessions import (
     DelegationTree,
     DelegationTreePolicy,
 )
-from nanobot.session.manager import SessionManager
+from kohaku.session.manager import SessionManager
 
 
 def _new_tree(tmp_path, *, policy=None):

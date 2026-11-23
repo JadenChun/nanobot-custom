@@ -11,9 +11,9 @@ mobile_require_toolchain
 unsigned="${MOBILE_ROOT}/android/app/build/outputs/apk/release/app-release-unsigned.apk"
 
 (
-  unset NANOBOT_MOBILE_RELEASE_ENV NANOBOT_MOBILE_KEYSTORE NANOBOT_MOBILE_KEY_ALIAS
-  unset NANOBOT_MOBILE_KEYSTORE_PASSWORD NANOBOT_MOBILE_KEYSTORE_PASSWORD_FILE NANOBOT_MOBILE_KEY_PASSWORD
-  export NANOBOT_MOBILE_WEB_DIR="www-shared"
+  unset KOHAKU_MOBILE_RELEASE_ENV KOHAKU_MOBILE_KEYSTORE KOHAKU_MOBILE_KEY_ALIAS
+  unset KOHAKU_MOBILE_KEYSTORE_PASSWORD KOHAKU_MOBILE_KEYSTORE_PASSWORD_FILE KOHAKU_MOBILE_KEY_PASSWORD
+  export KOHAKU_MOBILE_WEB_DIR="www-shared"
   "${script_dir}/verify-gradle-archive.sh"
   "${script_dir}/build-native-network.sh"
   "${script_dir}/build-shared-webui.sh"
@@ -21,7 +21,7 @@ unsigned="${MOBILE_ROOT}/android/app/build/outputs/apk/release/app-release-unsig
   bunx cap sync android
   cd "${MOBILE_ROOT}/android"
   rm -f -- "${unsigned}"
-  ./gradlew --no-daemon :app:assembleRelease -PnanobotUnsignedRelease=true
+  ./gradlew --no-daemon :app:assembleRelease -PkohakuUnsignedRelease=true
 )
 
 if [[ ! -s "${unsigned}" ]]; then
@@ -29,16 +29,16 @@ if [[ ! -s "${unsigned}" ]]; then
   exit 1
 fi
 
-artifact_dir="${NANOBOT_MOBILE_ARTIFACT_DIR:-${repo_root}/mobile/evidence/$(date +%Y%m%d)-m22-release}"
+artifact_dir="${KOHAKU_MOBILE_ARTIFACT_DIR:-${repo_root}/mobile/evidence/$(date +%Y%m%d)-m22-release}"
 mkdir -p "${artifact_dir}"
 build_tools="${ANDROID_SDK_ROOT}/build-tools/36.0.0"
-apk="${artifact_dir}/nanobot-mobile-release.apk"
+apk="${artifact_dir}/kohaku-mobile-release.apk"
 aligned="$(mktemp "${artifact_dir}/.aligned.XXXXXX.apk")"
 trap 'rm -f -- "${aligned}"' EXIT
 "${build_tools}/zipalign" -f -p 4 "${unsigned}" "${aligned}"
 
 (
-  release_env="${NANOBOT_MOBILE_RELEASE_ENV:-${HOME}/.config/nanobot-mobile/release.env}"
+  release_env="${KOHAKU_MOBILE_RELEASE_ENV:-${HOME}/.config/kohaku-mobile/release.env}"
   if [[ -f "${release_env}" ]]; then
     if [[ "$(stat -c '%a' "${release_env}")" != "600" ]]; then
       echo "release environment file must have mode 600" >&2
@@ -49,33 +49,33 @@ trap 'rm -f -- "${aligned}"' EXIT
     source "${release_env}"
     set +a
   fi
-  keystore="${NANOBOT_MOBILE_KEYSTORE:-${HOME}/.config/nanobot-mobile/release.keystore}"
+  keystore="${KOHAKU_MOBILE_KEYSTORE:-${HOME}/.config/kohaku-mobile/release.keystore}"
   if [[ ! -f "${keystore}" || "$(stat -c '%a' "${keystore}")" != "600" ]]; then
     echo "release keystore is missing or its mode differs from 600" >&2
     exit 1
   fi
-  if [[ -z "${NANOBOT_MOBILE_KEY_ALIAS:-}" ]]; then
-    echo "NANOBOT_MOBILE_KEY_ALIAS is required" >&2
+  if [[ -z "${KOHAKU_MOBILE_KEY_ALIAS:-}" ]]; then
+    echo "KOHAKU_MOBILE_KEY_ALIAS is required" >&2
     exit 1
   fi
-  if [[ -n "${NANOBOT_MOBILE_KEYSTORE_PASSWORD:-}" ]]; then
-    password="env:NANOBOT_MOBILE_KEYSTORE_PASSWORD"
-  elif [[ -n "${NANOBOT_MOBILE_KEYSTORE_PASSWORD_FILE:-}" ]]; then
-    password="file:${NANOBOT_MOBILE_KEYSTORE_PASSWORD_FILE}"
+  if [[ -n "${KOHAKU_MOBILE_KEYSTORE_PASSWORD:-}" ]]; then
+    password="env:KOHAKU_MOBILE_KEYSTORE_PASSWORD"
+  elif [[ -n "${KOHAKU_MOBILE_KEYSTORE_PASSWORD_FILE:-}" ]]; then
+    password="file:${KOHAKU_MOBILE_KEYSTORE_PASSWORD_FILE}"
   else
-    echo "set NANOBOT_MOBILE_KEYSTORE_PASSWORD or NANOBOT_MOBILE_KEYSTORE_PASSWORD_FILE" >&2
+    echo "set KOHAKU_MOBILE_KEYSTORE_PASSWORD or KOHAKU_MOBILE_KEYSTORE_PASSWORD_FILE" >&2
     exit 1
   fi
   key_password=()
-  if [[ -n "${NANOBOT_MOBILE_KEY_PASSWORD:-}" ]]; then
-    key_password=(--key-pass env:NANOBOT_MOBILE_KEY_PASSWORD)
+  if [[ -n "${KOHAKU_MOBILE_KEY_PASSWORD:-}" ]]; then
+    key_password=(--key-pass env:KOHAKU_MOBILE_KEY_PASSWORD)
   fi
-  "${build_tools}/apksigner" sign --ks "${keystore}" --ks-key-alias "${NANOBOT_MOBILE_KEY_ALIAS}" \
+  "${build_tools}/apksigner" sign --ks "${keystore}" --ks-key-alias "${KOHAKU_MOBILE_KEY_ALIAS}" \
     --ks-pass "${password}" "${key_password[@]}" --out "${apk}" "${aligned}"
 )
 
 "${build_tools}/zipalign" -c -v 4 "${apk}" > "${artifact_dir}/zipalign.txt"
 "${build_tools}/apksigner" verify --verbose --print-certs "${apk}" > "${artifact_dir}/apksigner.txt"
 sha256sum "${apk}" | tee "${artifact_dir}/sha256.txt"
-echo "release APK: ${artifact_dir}/nanobot-mobile-release.apk"
+echo "release APK: ${artifact_dir}/kohaku-mobile-release.apk"
 echo "verification: ${artifact_dir}/apksigner.txt"

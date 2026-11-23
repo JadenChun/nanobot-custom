@@ -2,23 +2,23 @@
 
 import asyncio
 
-from nanobot.agent.child_sessions import ChildAdmission, ChildRefusal
-from nanobot.agent.loop import AgentLoop, _TurnExecutionOptions
-from nanobot.agent.tools.registry import ToolRegistry
-from nanobot.agent.turn import (
+from kohaku.agent.child_sessions import ChildAdmission, ChildRefusal
+from kohaku.agent.loop import AgentLoop, _TurnExecutionOptions
+from kohaku.agent.tools.registry import ToolRegistry
+from kohaku.agent.turn import (
     ApprovalDecision,
     DeliveryTarget,
     RunStatus,
     TurnRequest,
     TurnSource,
 )
-from nanobot.bus.events import InboundMessage
-from nanobot.command.builtin import cmd_stop
-from nanobot.command.router import CommandContext
-from nanobot.providers.base import LLMResponse, ToolCallRequest
-from nanobot.security.workspace_access import current_workspace_focus
-from nanobot.session.pending_followups import mint_pending_followup_id
-from nanobot.session.source import validate_execution_links
+from kohaku.bus.events import InboundMessage
+from kohaku.command.builtin import cmd_stop
+from kohaku.command.router import CommandContext
+from kohaku.providers.base import LLMResponse, ToolCallRequest
+from kohaku.security.workspace_access import current_workspace_focus
+from kohaku.session.pending_followups import mint_pending_followup_id
+from kohaku.session.source import validate_execution_links
 from tests.agent.test_migration_engine import ScriptedProvider
 from tests.agent.test_migration_source_engine import upgrade
 

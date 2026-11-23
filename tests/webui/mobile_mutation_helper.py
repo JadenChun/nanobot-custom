@@ -10,8 +10,8 @@ import json
 from types import SimpleNamespace
 from typing import Any, cast
 
-from nanobot.remote.operations import OperationRegistryError, load_registry
-from nanobot.webui.inbound_commands import _mobile_mutation_allowed
+from kohaku.remote.operations import OperationRegistryError, load_registry
+from kohaku.webui.inbound_commands import _mobile_mutation_allowed
 
 
 async def mobile_mutation_payload(

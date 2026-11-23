@@ -3,12 +3,12 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ChannelSetupPanel } from "@/components/settings/channels/ChannelSetupPanel";
 import { configureChannel, validateChannel } from "@/lib/api";
-import type { NanobotClient } from "@/lib/nanobot-client";
+import type { KohakuClient } from "@/lib/kohaku-client";
 import type {
   ChannelConfigurePayload,
   ChannelValidationPayload,
-  NanobotFeatureInfo,
-  NanobotFeaturesPayload,
+  KohakuFeatureInfo,
+  KohakuFeaturesPayload,
 } from "@/lib/types";
 import { ClientProvider } from "@/providers/ClientProvider";
 
@@ -37,11 +37,11 @@ function deferred<T>(): Deferred<T> {
   return { promise, resolve, reject };
 }
 
-const client = {} as NanobotClient;
+const client = {} as KohakuClient;
 const validateDeferreds = new Map<string, Deferred<ChannelValidationPayload>>();
 const configureDeferreds = new Map<string, Deferred<ChannelConfigurePayload>>();
 
-function channelFeature(name: string, displayName: string): NanobotFeatureInfo {
+function channelFeature(name: string, displayName: string): KohakuFeatureInfo {
   return {
     name,
     display_name: displayName,
@@ -76,7 +76,7 @@ function validationPayload(name: string): ChannelValidationPayload {
   };
 }
 
-function panel(feature: NanobotFeatureInfo, onFeaturesUpdate: (payload: NanobotFeaturesPayload) => void) {
+function panel(feature: KohakuFeatureInfo, onFeaturesUpdate: (payload: KohakuFeaturesPayload) => void) {
   return (
     <ClientProvider client={client} token="tok">
       <ChannelSetupPanel
@@ -152,7 +152,7 @@ describe("ChannelSetupPanel async feature fences", () => {
     });
     await waitFor(() => expect(configureDeferreds.has("beta-channel")).toBe(true));
 
-    const featuresPayload: NanobotFeaturesPayload = {
+    const featuresPayload: KohakuFeaturesPayload = {
       features: [{ ...featureB, enabled: true }],
       enabled_count: 1,
     };
@@ -243,7 +243,7 @@ describe("ChannelSetupPanel async feature fences", () => {
     expect(screen.getByRole("button", { name: "Check and enable" })).toBeEnabled();
     expect(screen.queryByText("Checking...")).not.toBeInTheDocument();
 
-    const featuresPayload: NanobotFeaturesPayload = {
+    const featuresPayload: KohakuFeaturesPayload = {
       features: [{ ...featureA, enabled: true }],
       enabled_count: 1,
     };

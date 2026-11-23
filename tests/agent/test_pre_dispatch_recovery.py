@@ -6,18 +6,18 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from nanobot.agent.runner import AgentRunner
-from nanobot.agent.tools.base import (
+from kohaku.agent.runner import AgentRunner
+from kohaku.agent.tools.base import (
     Tool,
     ToolDenialKind,
     ToolDenialResult,
     ToolResult,
 )
-from nanobot.agent.tools.registry import ToolRegistry
-from nanobot.agent.tools.shell import ExecTool
-from nanobot.agent.turn import ToolOutcome
-from nanobot.config.schema import AgentDefaults
-from nanobot.providers.base import LLMProvider, LLMResponse, ToolCallRequest
+from kohaku.agent.tools.registry import ToolRegistry
+from kohaku.agent.tools.shell import ExecTool
+from kohaku.agent.turn import ToolOutcome
+from kohaku.config.schema import AgentDefaults
+from kohaku.providers.base import LLMProvider, LLMResponse, ToolCallRequest
 from tests.agent.runner_helpers import make_run_spec
 
 _MAX_TOOL_RESULT_CHARS = AgentDefaults().max_tool_result_chars

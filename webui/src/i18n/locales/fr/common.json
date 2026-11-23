@@ -7,7 +7,7 @@
     },
     "error": {
       "title": "Impossible de joindre Kohaku",
-      "gatewayHint": "Assurez-vous que la gateway est en cours d’exécution (`nanobot gateway`) et que cette page est ouverte sur la même machine."
+      "gatewayHint": "Assurez-vous que la gateway est en cours d’exécution (`kohaku gateway`) et que cette page est ouverte sur la même machine."
     },
     "auth": {
       "label": "Mot de passe",
@@ -1576,7 +1576,7 @@
     "close": "Fermer l’aperçu du fichier",
     "loading": "Chargement de l’aperçu...",
     "failed": "Impossible de prévisualiser ce fichier.",
-    "routeMissing": "L’aperçu du fichier nécessite le dernier gateway. Redémarrez nanobot gateway puis réessayez.",
+    "routeMissing": "L’aperçu du fichier nécessite le dernier gateway. Redémarrez kohaku gateway puis réessayez.",
     "resize": "Redimensionner l’aperçu du fichier",
     "truncated": "L’aperçu est tronqué car le fichier est volumineux."
   },

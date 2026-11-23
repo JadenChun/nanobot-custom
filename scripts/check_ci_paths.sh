@@ -16,11 +16,11 @@ while IFS= read -r file; do
       tui_required=true
       docker_required=true
       ;;
-    webui/*|nanobot/channels/*/webui/*)
+    webui/*|kohaku/channels/*/webui/*)
       webui_required=true
       docker_required=true
       ;;
-    nanobot/*)
+    kohaku/*)
       python_required=true
       docker_required=true
       ;;

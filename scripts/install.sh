@@ -1,13 +1,10 @@
 #!/bin/sh
 set -eu
 
-package="nanobot-ai"
-install_target="$package"
-install_source="PyPI"
 dry_run="0"
-nanobot_runner=""
-nanobot_python=""
-nanobot_pipx_bin=""
+kohaku_runner=""
+kohaku_python=""
+kohaku_pipx_bin=""
 
 info() {
   printf '%s\n' "$*"
@@ -19,14 +16,14 @@ fail() {
 }
 
 install_failure_hint() {
-  printf '%s\n' "Error: could not install nanobot from $install_source." >&2
+  printf '%s\n' "Error: could not install kohaku from $install_source." >&2
   printf '%s\n' "If pip mentioned externally-managed-environment, use uv, pipx, or a virtual environment instead of system pip." >&2
   printf '%s\n' "You can also run manually:" >&2
   printf '  %s\n' "uv tool install --force --upgrade $install_target" >&2
-  printf '  %s\n' "$python_bin -m venv ~/.nanobot/venv" >&2
-  printf '  %s\n' "~/.nanobot/venv/bin/python -m pip install --upgrade $install_target" >&2
+  printf '  %s\n' "$python_bin -m venv ~/.kohaku/venv" >&2
+  printf '  %s\n' "~/.kohaku/venv/bin/python -m pip install --upgrade $install_target" >&2
   printf '%s\n' "Then start setup with:" >&2
-  printf '  %s\n' "nanobot onboard --wizard" >&2
+  printf '  %s\n' "kohaku onboard --wizard" >&2
   exit 1
 }
 
@@ -34,10 +31,8 @@ usage() {
   cat <<'EOF'
 Usage: install.sh [--dry-run]
 
-By default this installs or upgrades nanobot-ai from PyPI.
+This installs or upgrades Kohaku from this checkout.
 Use --dry-run to print what would happen without installing or starting setup.
-
-For current main, clone the repository and run `python -m pip install -e .`.
 EOF
 }
 
@@ -80,17 +75,17 @@ pipx_bin_dir() {
   fi
 }
 
-resolve_pipx_nanobot() {
+resolve_pipx_kohaku() {
   _pipx_bin_dir="$(pipx_bin_dir)"
   if [ -n "$_pipx_bin_dir" ]; then
-    if [ -x "$_pipx_bin_dir/nanobot" ]; then
-      printf '%s\n' "$_pipx_bin_dir/nanobot"
+    if [ -x "$_pipx_bin_dir/kohaku" ]; then
+      printf '%s\n' "$_pipx_bin_dir/kohaku"
       return 0
     fi
     return 1
   fi
 
-  _candidate="$(command -v nanobot 2>/dev/null || true)"
+  _candidate="$(command -v kohaku 2>/dev/null || true)"
   if [ -n "$_candidate" ] && [ -x "$_candidate" ]; then
     printf '%s\n' "$_candidate"
     return 0
@@ -98,52 +93,52 @@ resolve_pipx_nanobot() {
   return 1
 }
 
-run_nanobot() {
-  case "$nanobot_runner" in
+run_kohaku() {
+  case "$kohaku_runner" in
     uv)
-      uv tool run --from "$install_target" nanobot "$@"
+      uv tool run --from "$install_target" kohaku "$@"
       ;;
     pipx)
-      if [ -z "$nanobot_pipx_bin" ]; then
+      if [ -z "$kohaku_pipx_bin" ]; then
         fail "the installed pipx executable for $install_target was not found. Reinstall it with 'pipx install --force $install_target' and check 'pipx environment --value PIPX_BIN_DIR'."
       fi
-      "$nanobot_pipx_bin" "$@"
+      "$kohaku_pipx_bin" "$@"
       ;;
     python)
-      "$nanobot_python" -m nanobot "$@"
+      "$kohaku_python" -m kohaku "$@"
       ;;
     *)
-      fail "nanobot was installed, but no runner was configured"
+      fail "kohaku was installed, but no runner was configured"
       ;;
   esac
 }
 
-nanobot_try_command() {
-  case "$nanobot_runner" in
+kohaku_try_command() {
+  case "$kohaku_runner" in
     uv)
-      printf '%s\n' "uv tool run --from $install_target nanobot"
+      printf '%s\n' "uv tool run --from $install_target kohaku"
       ;;
     pipx)
-      if [ -n "$nanobot_pipx_bin" ]; then
-        printf '%s\n' "$nanobot_pipx_bin"
+      if [ -n "$kohaku_pipx_bin" ]; then
+        printf '%s\n' "$kohaku_pipx_bin"
       else
         _pipx_bin_dir="$(pipx_bin_dir)"
         if [ -n "$_pipx_bin_dir" ]; then
-          printf '%s\n' "$_pipx_bin_dir/nanobot"
+          printf '%s\n' "$_pipx_bin_dir/kohaku"
         else
-          printf '%s\n' "the installed pipx nanobot executable"
+          printf '%s\n' "the installed pipx kohaku executable"
         fi
       fi
       ;;
     python)
-      printf '%s\n' "$nanobot_python -m nanobot"
+      printf '%s\n' "$kohaku_python -m kohaku"
       ;;
   esac
 }
 
-is_fresh_nanobot_install() {
+is_fresh_kohaku_install() {
   [ -n "${HOME:-}" ] || return 1
-  [ ! -e "$HOME/.nanobot/config.json" ]
+  [ ! -e "$HOME/.kohaku/config.json" ]
 }
 
 has_browser_session() {
@@ -169,50 +164,50 @@ install_with_active_python() {
   info "Detected an active virtual environment. Installing into it..."
   ensure_pip "$python_bin" || return 1
   "$python_bin" -m pip install --upgrade "$install_target" || return 1
-  nanobot_runner="python"
-  nanobot_python="$python_bin"
+  kohaku_runner="python"
+  kohaku_python="$python_bin"
 }
 
 install_with_uv() {
-  info "Installing or upgrading nanobot from $install_source with uv tool..."
+  info "Installing or upgrading kohaku from $install_source with uv tool..."
   uv tool install --python "$python_bin" --force --upgrade "$install_target" || return 1
-  nanobot_runner="uv"
+  kohaku_runner="uv"
 }
 
 install_with_pipx() {
-  info "Installing or upgrading nanobot from $install_source with pipx..."
+  info "Installing or upgrading kohaku from $install_source with pipx..."
   pipx install --python "$python_bin" --force "$install_target" || return 1
-  nanobot_runner="pipx"
-  nanobot_pipx_bin="$(resolve_pipx_nanobot || true)"
+  kohaku_runner="pipx"
+  kohaku_pipx_bin="$(resolve_pipx_kohaku || true)"
 }
 
 write_managed_wrapper() {
-  bin_dir="${NANOBOT_BIN_DIR:-$HOME/.local/bin}"
-  wrapper="$bin_dir/nanobot"
+  bin_dir="${KOHAKU_BIN_DIR:-$HOME/.local/bin}"
+  wrapper="$bin_dir/kohaku"
   mkdir -p "$bin_dir" || return 0
 
-  if [ -e "$wrapper" ] && ! grep -q "Generated by nanobot installer" "$wrapper" 2>/dev/null; then
+  if [ -e "$wrapper" ] && ! grep -q "Generated by Kohaku installer" "$wrapper" 2>/dev/null; then
     info "Not updating $wrapper because it already exists."
     return 0
   fi
 
   cat > "$wrapper" <<EOF
 #!/bin/sh
-# Generated by nanobot installer.
-exec "$nanobot_python" -m nanobot "\$@"
+# Generated by Kohaku installer.
+exec "$kohaku_python" -m kohaku "\$@"
 EOF
   chmod +x "$wrapper" || return 0
 
-  if ! command -v nanobot >/dev/null 2>&1; then
-    info "Installed a nanobot launcher at $wrapper."
-    info "Add $bin_dir to PATH to run nanobot directly."
+  if ! command -v kohaku >/dev/null 2>&1; then
+    info "Installed a kohaku launcher at $wrapper."
+    info "Add $bin_dir to PATH to run kohaku directly."
   fi
 }
 
 install_with_managed_venv() {
   [ -n "${HOME:-}" ] || fail "HOME is not set; cannot create a managed virtual environment"
 
-  venv_dir="${NANOBOT_VENV:-$HOME/.nanobot/venv}"
+  venv_dir="${KOHAKU_VENV:-$HOME/.kohaku/venv}"
   venv_python="$venv_dir/bin/python"
 
   if [ ! -x "$venv_python" ]; then
@@ -221,17 +216,17 @@ install_with_managed_venv() {
     "$python_bin" -m venv "$venv_dir" || return 1
   fi
 
-  "$venv_python" - <<'PY' >/dev/null 2>&1 || fail "The managed venv uses Python older than 3.11. Remove it or set NANOBOT_VENV to a new path."
+  "$venv_python" - <<'PY' >/dev/null 2>&1 || fail "The managed venv uses Python older than 3.11. Remove it or set KOHAKU_VENV to a new path."
 import sys
 raise SystemExit(0 if sys.version_info >= (3, 11) else 1)
 PY
 
-  info "Installing or upgrading nanobot from $install_source in $venv_dir..."
+  info "Installing or upgrading kohaku from $install_source in $venv_dir..."
   ensure_pip "$venv_python" || return 1
   "$venv_python" -m pip install --upgrade "$install_target" || return 1
 
-  nanobot_runner="python"
-  nanobot_python="$venv_python"
+  kohaku_runner="python"
+  kohaku_python="$venv_python"
   write_managed_wrapper
 }
 
@@ -254,11 +249,19 @@ while [ "$#" -gt 0 ]; do
   shift
 done
 
+case "$0" in
+  */*) script_dir=${0%/*} ;;
+  *) script_dir=. ;;
+esac
+install_target="$(CDPATH= cd -- "$script_dir/.." && pwd)"
+[ -f "$install_target/pyproject.toml" ] || fail "Run this script from a Kohaku source checkout."
+install_source="$install_target"
+
 python_bin="${PYTHON:-}"
 
 if [ -n "$python_bin" ]; then
   command -v "$python_bin" >/dev/null 2>&1 || fail "PYTHON=$python_bin was not found"
-  "$python_bin" - <<'PY' >/dev/null 2>&1 || fail "nanobot requires Python 3.11 or newer"
+  "$python_bin" - <<'PY' >/dev/null 2>&1 || fail "kohaku requires Python 3.11 or newer"
 import sys
 raise SystemExit(0 if sys.version_info >= (3, 11) else 1)
 PY
@@ -269,30 +272,30 @@ fi
 info "Using Python: $("$python_bin" --version 2>&1)"
 
 if [ "$dry_run" = "1" ]; then
-  info "Dry run: would install or upgrade nanobot from $install_source."
+  info "Dry run: would install or upgrade kohaku from $install_source."
   if python_is_virtual_env; then
     info "Dry run: active virtual environment detected; would run: $python_bin -m pip install --upgrade $install_target"
-    info "Dry run: would run nanobot as: $python_bin -m nanobot"
+    info "Dry run: would run kohaku as: $python_bin -m kohaku"
   elif command -v uv >/dev/null 2>&1; then
     info "Dry run: would run: uv tool install --python $python_bin --force --upgrade $install_target"
-    info "Dry run: would run nanobot as: uv tool run --from $install_target nanobot"
+    info "Dry run: would run kohaku as: uv tool run --from $install_target kohaku"
   elif command -v pipx >/dev/null 2>&1; then
     info "Dry run: would run: pipx install --python $python_bin --force $install_target"
     pipx_dir="$(pipx_bin_dir)"
     if [ -n "$pipx_dir" ]; then
-      info "Dry run: would run nanobot as: $pipx_dir/nanobot"
+      info "Dry run: would run kohaku as: $pipx_dir/kohaku"
     else
-      info "Dry run: would run nanobot as: the installed pipx nanobot executable"
+      info "Dry run: would run kohaku as: the installed pipx kohaku executable"
     fi
   else
-    venv_dir="${NANOBOT_VENV:-$HOME/.nanobot/venv}"
+    venv_dir="${KOHAKU_VENV:-$HOME/.kohaku/venv}"
     info "Dry run: would create or reuse a dedicated virtual environment: $venv_dir"
     info "Dry run: would run: $venv_dir/bin/python -m pip install --upgrade $install_target"
-    info "Dry run: would run nanobot as: $venv_dir/bin/python -m nanobot"
+    info "Dry run: would run kohaku as: $venv_dir/bin/python -m kohaku"
   fi
-  if [ "${NANOBOT_SKIP_WIZARD:-}" = "1" ]; then
-    info "Dry run: would skip automatic setup because NANOBOT_SKIP_WIZARD=1."
-  elif is_fresh_nanobot_install && has_browser_session; then
+  if [ "${KOHAKU_SKIP_WIZARD:-}" = "1" ]; then
+    info "Dry run: would skip automatic setup because KOHAKU_SKIP_WIZARD=1."
+  elif is_fresh_kohaku_install && has_browser_session; then
     info "Dry run: would start the WebUI for this fresh desktop install."
     info "Dry run: would fall back to the setup wizard for older releases."
   else
@@ -329,39 +332,39 @@ else
   fi
 fi
 
-info "Installed nanobot:"
-if [ "$nanobot_runner" = "pipx" ] && [ -n "$nanobot_pipx_bin" ]; then
-  info "Using installed executable: $nanobot_pipx_bin"
+info "Installed kohaku:"
+if [ "$kohaku_runner" = "pipx" ] && [ -n "$kohaku_pipx_bin" ]; then
+  info "Using installed executable: $kohaku_pipx_bin"
 fi
-run_nanobot --version
+run_kohaku --version
 
-if [ "${NANOBOT_SKIP_WIZARD:-}" = "1" ]; then
-  info "Skipping automatic setup because NANOBOT_SKIP_WIZARD=1."
-  info "Run this later: $(nanobot_try_command) webui"
+if [ "${KOHAKU_SKIP_WIZARD:-}" = "1" ]; then
+  info "Skipping automatic setup because KOHAKU_SKIP_WIZARD=1."
+  info "Run this later: $(kohaku_try_command) webui"
   exit 0
 fi
 
-if is_fresh_nanobot_install && has_browser_session; then
-  if run_nanobot webui --help >/dev/null 2>&1; then
-    info "Starting nanobot WebUI..."
+if is_fresh_kohaku_install && has_browser_session; then
+  if run_kohaku webui --help >/dev/null 2>&1; then
+    info "Starting kohaku WebUI..."
     info "Configure your first provider and model in Settings > Models."
-    info "Run this later: $(nanobot_try_command) webui"
-    run_nanobot webui --yes
+    info "Run this later: $(kohaku_try_command) webui"
+    run_kohaku webui --yes
     exit 0
   fi
-  info "The installed release does not support nanobot webui yet."
+  info "The installed release does not support kohaku webui yet."
   info "Falling back to the setup wizard..."
 fi
 
 if [ -t 0 ]; then
   info "Starting setup wizard..."
-  run_nanobot onboard --wizard
+  run_kohaku onboard --wizard
 elif : 2>/dev/null < /dev/tty; then
   info "Starting setup wizard..."
-  run_nanobot onboard --wizard < /dev/tty
+  run_kohaku onboard --wizard < /dev/tty
 else
   info "Skipping setup wizard because no interactive terminal is available."
-  info "Run this later: $(nanobot_try_command) onboard --wizard"
+  info "Run this later: $(kohaku_try_command) onboard --wizard"
 fi
 
-info "Done. Try: $(nanobot_try_command) agent -m \"Hello!\""
+info "Done. Try: $(kohaku_try_command) agent -m \"Hello!\""

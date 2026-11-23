@@ -8,8 +8,8 @@ from rich.live import Live
 from rich.markdown import Markdown
 from rich.text import Text
 
-from nanobot.cli import stream as stream_mod
-from nanobot.cli import terminal
+from kohaku.cli import stream as stream_mod
+from kohaku.cli import terminal
 
 
 @pytest.fixture(autouse=True)
@@ -24,8 +24,8 @@ def mock_prompt_session():
     """Mock the global prompt session."""
     mock_session = MagicMock()
     mock_session.prompt_async = AsyncMock()
-    with patch("nanobot.cli.terminal._prompt_session", mock_session), \
-         patch("nanobot.cli.terminal.patch_stdout"):
+    with patch("kohaku.cli.terminal._prompt_session", mock_session), \
+         patch("kohaku.cli.terminal.patch_stdout"):
         yield mock_session
 
 
@@ -54,9 +54,9 @@ async def test_read_interactive_input_async_handles_eof(mock_prompt_session):
 def test_init_prompt_session_creates_session(tmp_path):
     """Test that _init_prompt_session initializes the global session."""
     history_file = tmp_path / "history" / "cli_history"
-    with patch("nanobot.cli.terminal.PromptSession") as mock_session, \
-         patch("nanobot.cli.terminal.SafeFileHistory") as mock_history, \
-         patch("nanobot.config.paths.get_cli_history_path", return_value=history_file):
+    with patch("kohaku.cli.terminal.PromptSession") as mock_session, \
+         patch("kohaku.cli.terminal.SafeFileHistory") as mock_history, \
+         patch("kohaku.config.paths.get_cli_history_path", return_value=history_file):
         terminal._init_prompt_session()
 
         assert terminal._prompt_session is not None
@@ -119,7 +119,7 @@ async def test_print_interactive_progress_line_pauses_spinner_before_printing():
     async def fake_print(_text: str) -> None:
         order.append("print")
 
-    with patch("nanobot.cli.terminal._print_interactive_line", side_effect=fake_print):
+    with patch("kohaku.cli.terminal._print_interactive_line", side_effect=fake_print):
         thinking = stream_mod.ThinkingSpinner(console=mock_console)
         with thinking:
             await terminal._print_interactive_progress_line("tool running", thinking)
@@ -129,7 +129,7 @@ async def test_print_interactive_progress_line_pauses_spinner_before_printing():
 
 def test_response_renderable_uses_text_for_explicit_plain_rendering():
     status = (
-        "🐈 nanobot v0.1.4.post5\n"
+        "🐈 Kohaku v0.1.4.post5\n"
         "🧠 Model: MiniMax-M2.7\n"
         "📊 Tokens: 20639 in / 29 out"
     )
@@ -150,7 +150,7 @@ def test_response_renderable_preserves_normal_markdown_rendering():
 
 
 def test_response_renderable_without_metadata_keeps_markdown_path():
-    help_text = "🐈 nanobot commands:\n/status — Show bot status\n/help — Show available commands"
+    help_text = "🐈 Kohaku commands:\n/status — Show bot status\n/help — Show available commands"
 
     renderable = terminal._response_renderable(help_text, render_markdown=True)
 
@@ -203,8 +203,8 @@ async def test_stream_renderer_keeps_live_content_without_reprint():
             return super().flush()
 
     final_output = RecordingOutput()
-    with patch("nanobot.cli.stream._make_console", return_value=console), \
-         patch("nanobot.cli.stream.Live", FakeLive), \
+    with patch("kohaku.cli.stream._make_console", return_value=console), \
+         patch("kohaku.cli.stream.Live", FakeLive), \
          patch("sys.stdout", final_output):
         renderer = stream_mod.StreamRenderer(
             render_markdown=False,
@@ -242,7 +242,7 @@ async def test_native_live_persists_final_render_once(chunks, render_markdown):
     expected_console = Console(file=expected_output, force_terminal=False, width=80)
     content = "".join(chunks)
     expected_console.print(Markdown(content) if render_markdown else Text(content))
-    with patch("nanobot.cli.stream._make_console", return_value=console), \
+    with patch("kohaku.cli.stream._make_console", return_value=console), \
          patch("sys.stdout", final_output):
         renderer = stream_mod.StreamRenderer(render_markdown=render_markdown, show_spinner=False)
         for chunk in chunks:

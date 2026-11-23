@@ -4,9 +4,9 @@ from types import SimpleNamespace
 
 import pytest
 
-from nanobot.agent import memory_recovery_manifest as manifest
-from nanobot.agent import memory_recovery_storage as storage
-from nanobot.agent.memory_recovery_marker import classify_history_marker_frame
+from kohaku.agent import memory_recovery_manifest as manifest
+from kohaku.agent import memory_recovery_storage as storage
+from kohaku.agent.memory_recovery_marker import classify_history_marker_frame
 
 
 @pytest.mark.parametrize("position", range(3))

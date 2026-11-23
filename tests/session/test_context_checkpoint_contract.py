@@ -4,8 +4,8 @@ from copy import deepcopy
 
 import pytest
 
-from nanobot.session.context_checkpoint import validate_context_checkpoint
-from nanobot.session.source import SourceValidationError, new_source_event, prefix_digest
+from kohaku.session.context_checkpoint import validate_context_checkpoint
+from kohaku.session.source import SourceValidationError, new_source_event, prefix_digest
 
 
 def fixture():

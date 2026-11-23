@@ -4,12 +4,12 @@ from collections import deque
 
 import pytest
 
-from nanobot.agent.loop import AgentLoop
-from nanobot.agent.runner import AgentRunner
-from nanobot.agent.tools.registry import ToolRegistry
-from nanobot.agent.turn import TurnRequest
-from nanobot.providers.base import LLMProvider
-from nanobot.providers.openai_compat_provider import OpenAICompatProvider
+from kohaku.agent.loop import AgentLoop
+from kohaku.agent.runner import AgentRunner
+from kohaku.agent.tools.registry import ToolRegistry
+from kohaku.agent.turn import TurnRequest
+from kohaku.providers.base import LLMProvider
+from kohaku.providers.openai_compat_provider import OpenAICompatProvider
 from tests.agent.runner_helpers import make_run_spec
 from tests.agent.test_migration_engine import engine_config as _engine_config_factory
 

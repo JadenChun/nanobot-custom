@@ -9,15 +9,15 @@ from pathlib import Path
 
 import pytest
 
-from nanobot.remote import tailscale
-from nanobot.remote.auth import AuthRejectedError, TokenService
-from nanobot.remote.client import OwnerRequestError, RemoteAccessClient
-from nanobot.remote.owner import RemoteAccessOwner
-from nanobot.remote.pairing import (
+from kohaku.remote import tailscale
+from kohaku.remote.auth import AuthRejectedError, TokenService
+from kohaku.remote.client import OwnerRequestError, RemoteAccessClient
+from kohaku.remote.owner import RemoteAccessOwner
+from kohaku.remote.pairing import (
     PairingService,
     PairingUpgradeRequiredError,
 )
-from nanobot.remote.store import RemoteAccessStore
+from kohaku.remote.store import RemoteAccessStore
 
 ORIGIN = "https://fixture.example:8443"
 

@@ -9,7 +9,7 @@ import pytest
 from websockets.datastructures import Headers
 from websockets.http11 import Request
 
-from nanobot.webui.ws_http import WEBSOCKET_MUTATION_ROUTES, GatewayHTTPHandler
+from kohaku.webui.ws_http import WEBSOCKET_MUTATION_ROUTES, GatewayHTTPHandler
 
 
 @pytest.mark.parametrize(("action", "path"), [
@@ -134,7 +134,7 @@ async def test_recovery_action_commits_before_publishing_and_returns_exact_resul
 
 @pytest.mark.asyncio
 async def test_owner_remote_can_resolve_recovery_action() -> None:
-    from nanobot.remote.edge import AccessIdentity
+    from kohaku.remote.edge import AccessIdentity
 
     result = {
         "workspace_access_request": {"status": "ready"},

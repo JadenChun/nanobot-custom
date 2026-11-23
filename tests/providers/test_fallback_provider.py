@@ -4,9 +4,9 @@ from types import SimpleNamespace
 
 import pytest
 
-from nanobot.providers import legacy_fallback_provider as fallback_module
-from nanobot.providers.base import GenerationSettings, LLMProvider, LLMResponse
-from nanobot.providers.legacy_fallback_provider import LegacyFallbackProvider
+from kohaku.providers import legacy_fallback_provider as fallback_module
+from kohaku.providers.base import GenerationSettings, LLMProvider, LLMResponse
+from kohaku.providers.legacy_fallback_provider import LegacyFallbackProvider
 
 
 class ScriptedProvider(LLMProvider):

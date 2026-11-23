@@ -2,9 +2,9 @@ import json
 
 import pytest
 
-from nanobot.config.errors import ConfigLoadError
-from nanobot.config.loader import load_config
-from nanobot.config.schema import Config
+from kohaku.config.errors import ConfigLoadError
+from kohaku.config.loader import load_config
+from kohaku.config.schema import Config
 
 
 @pytest.mark.parametrize(

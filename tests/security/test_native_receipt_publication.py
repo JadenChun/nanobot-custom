@@ -17,14 +17,14 @@ from threading import Event
 
 import pytest
 
-from nanobot.agent.tools import native_process
-from nanobot.security import native_admission
-from nanobot.security.folder_grants import (
+from kohaku.agent.tools import native_process
+from kohaku.security import native_admission
+from kohaku.security.folder_grants import (
     FolderGrantStore,
     NativeProcessesActiveError,
     NativeProcessesUnknownError,
 )
-from nanobot.security.native_admission import (
+from kohaku.security.native_admission import (
     NativeAdmissionLedger,
     QuiescenceReceipt,
     current_host_identity,
@@ -288,7 +288,7 @@ async def test_interrupted_receipt_write_stays_unknown_and_later_boot_recovers(
     bootstrap.write_text(
         "import os,runpy,sys,time\n"
         "from pathlib import Path\n"
-        "from nanobot.security import native_admission as admission\n"
+        "from kohaku.security import native_admission as admission\n"
         "real_fchmod=admission.os.fchmod\n"
         f"marker=Path({str(marker)!r})\n"
         "def pause_fchmod(fd,mode):\n"
@@ -297,7 +297,7 @@ async def test_interrupted_receipt_write_stays_unknown_and_later_boot_recovers(
         " time.sleep(30)\n"
         "admission.os.fchmod=pause_fchmod\n"
         "sys.argv=[sys.argv[3]]+sys.argv[4:]\n"
-        "runpy.run_module('nanobot.agent.tools.native_process_supervisor',run_name='__main__')\n",
+        "runpy.run_module('kohaku.agent.tools.native_process_supervisor',run_name='__main__')\n",
         encoding="utf-8",
     )
     helper_launcher = tmp_path / "qa-frozen-helper"

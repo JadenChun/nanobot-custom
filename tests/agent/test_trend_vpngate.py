@@ -4,7 +4,7 @@ import base64
 import csv
 import io
 
-from nanobot.agent.tools.trend_vpngate import parse_api_response
+from kohaku.agent.tools.trend_vpngate import parse_api_response
 
 PROFILE = """client
 dev tun

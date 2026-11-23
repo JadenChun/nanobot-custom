@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from nanobot.utils.prompt_templates import render_template
+from kohaku.utils.prompt_templates import render_template
 from tests.agent import p6_admitted_fixtures
 
 admitted_async = p6_admitted_fixtures.admitted_async
@@ -21,8 +21,8 @@ class TestNewCommandArchival:
 
     @staticmethod
     async def _make_loop(tmp_path: Path, admitted_async):
-        from nanobot.agent.loop import AgentLoop
-        from nanobot.providers.base import GenerationSettings, LLMResponse
+        from kohaku.agent.loop import AgentLoop
+        from kohaku.providers.base import GenerationSettings, LLMResponse
 
         provider = MagicMock()
         provider.get_default_model.return_value = "test-model"
@@ -54,7 +54,7 @@ class TestNewCommandArchival:
         admitted_async,
     ) -> None:
         """/new clears session immediately; archive is fire-and-forget."""
-        from nanobot.bus.events import InboundMessage
+        from kohaku.bus.events import InboundMessage
 
         loop = await self._make_loop(tmp_path, admitted_async)
         session = loop.sessions.get_or_create("cli:test")
@@ -96,7 +96,7 @@ class TestNewCommandArchival:
         tmp_path: Path,
         admitted_async,
     ) -> None:
-        from nanobot.bus.events import InboundMessage
+        from kohaku.bus.events import InboundMessage
 
         loop = await self._make_loop(tmp_path, admitted_async)
         loop.set_runtime_context_window(128_000)
@@ -133,7 +133,7 @@ class TestNewCommandArchival:
 
     @pytest.mark.asyncio
     async def test_new_clears_session_and_responds(self, tmp_path: Path, admitted_async) -> None:
-        from nanobot.bus.events import InboundMessage
+        from kohaku.bus.events import InboundMessage
 
         loop = await self._make_loop(tmp_path, admitted_async)
         session = loop.sessions.get_or_create("cli:test")

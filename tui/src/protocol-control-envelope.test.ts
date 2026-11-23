@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test"
-import { NanobotClient, type InboundEvent } from "./protocol"
+import { KohakuClient, type InboundEvent } from "./protocol"
 
 class FakeSocket {
   static instances: FakeSocket[] = []
@@ -61,14 +61,14 @@ async function waitUntil(predicate: () => boolean, timeout = 1_000): Promise<voi
 }
 
 async function connectClient(): Promise<{
-  client: NanobotClient
+  client: KohakuClient
   socket: FakeSocket
   events: InboundEvent[]
 }> {
   const events: InboundEvent[] = []
   // The client builds its first socket from the global constructor.
   globalThis.WebSocket = FakeSocket as unknown as typeof WebSocket
-  const client = new NanobotClient({
+  const client = new KohakuClient({
     url: "ws://test",
     reconnect: false,
     onEvent: (event) => events.push(event),

@@ -11,8 +11,8 @@ from prompt_toolkit.application import create_app_session
 from prompt_toolkit.input import create_pipe_input
 from prompt_toolkit.output import DummyOutput
 
-from nanobot.cli import desktop_target
-from nanobot.cli.desktop_target import (
+from kohaku.cli import desktop_target
+from kohaku.cli.desktop_target import (
     DesktopReply,
     DesktopTarget,
     DesktopTargetError,
@@ -52,7 +52,7 @@ def test_macos_discovery_uses_private_versioned_descriptor(monkeypatch, tmp_path
         address=address,
     )
     monkeypatch.setattr(desktop_target.sys, "platform", "darwin")
-    monkeypatch.setenv("NANOBOT_DESKTOP_ROOT", str(tmp_path))
+    monkeypatch.setenv("KOHAKU_DESKTOP_ROOT", str(tmp_path))
 
     assert discover_desktop_target() == DesktopTarget(instance_id, "unix", address)
 
@@ -64,7 +64,7 @@ def test_relative_desktop_root_matches_absolute_advertised_address(monkeypatch, 
     _write_descriptor(terminal, instance_id=instance_id, transport="unix", address=address)
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(desktop_target.sys, "platform", "darwin")
-    monkeypatch.setenv("NANOBOT_DESKTOP_ROOT", ".")
+    monkeypatch.setenv("KOHAKU_DESKTOP_ROOT", ".")
     assert discover_desktop_target() == DesktopTarget(instance_id, "unix", address)
 
 
@@ -80,7 +80,7 @@ def test_discovery_rejects_non_private_directory(monkeypatch, tmp_path: Path) ->
     )
     terminal.chmod(0o755)
     monkeypatch.setattr(desktop_target.sys, "platform", "darwin")
-    monkeypatch.setenv("NANOBOT_DESKTOP_ROOT", str(tmp_path))
+    monkeypatch.setenv("KOHAKU_DESKTOP_ROOT", str(tmp_path))
 
     with pytest.raises(DesktopTargetError, match="private"):
         discover_desktop_target()
@@ -242,11 +242,11 @@ def test_target_picker_cancellation_exits_without_attachment(monkeypatch, capsys
     monkeypatch.setattr(desktop_target, "_interactive_shell", lambda: True)
     monkeypatch.setattr(desktop_target, "discover_desktop_target", Target)
     monkeypatch.setattr(
-        "nanobot.cli.desktop_tui.launch_desktop_tui",
+        "kohaku.cli.desktop_tui.launch_desktop_tui",
         lambda *_: pytest.fail("cancellation started the TUI"),
     )
     monkeypatch.setattr(
-        "nanobot.cli.webui_support._launch_browser",
+        "kohaku.cli.webui_support._launch_browser",
         lambda *_: pytest.fail("cancellation opened a browser"),
     )
 
@@ -298,7 +298,7 @@ def test_desktop_webui_selection_revalidates_and_opens_browser(monkeypatch, caps
     monkeypatch.setattr(desktop_target, "discover_desktop_target", Target)
     monkeypatch.setattr(desktop_target, "_choose_target", lambda _status: "desktop")
     monkeypatch.setattr(
-        "nanobot.cli.webui_support._launch_browser",
+        "kohaku.cli.webui_support._launch_browser",
         lambda value: browser_urls.append(value) or True,
     )
 
@@ -312,7 +312,7 @@ def test_desktop_webui_selection_revalidates_and_opens_browser(monkeypatch, caps
 
 @pytest.mark.parametrize("admitted", [False, True])
 def test_desktop_tui_selection_fails_without_fallback(monkeypatch, capsys, admitted) -> None:
-    from nanobot.migration_guard import MigrationIncompleteError
+    from kohaku.migration_guard import MigrationIncompleteError
 
     calls: list[str] = []
     effects: list[str] = []
@@ -329,7 +329,7 @@ def test_desktop_tui_selection_fails_without_fallback(monkeypatch, capsys, admit
     monkeypatch.setattr(desktop_target, "_interactive_shell", lambda: True)
     monkeypatch.setattr(desktop_target, "discover_desktop_target", Target)
     monkeypatch.setattr(desktop_target, "_choose_target", lambda _status: "desktop")
-    monkeypatch.setattr("nanobot.cli.tui_launcher.resolve_tui_command", forbidden)
+    monkeypatch.setattr("kohaku.cli.tui_launcher.resolve_tui_command", forbidden)
     monkeypatch.setattr("subprocess.Popen.__init__", forbidden)
     monkeypatch.setattr("socket.socket.connect", forbidden)
     monkeypatch.setattr("socket.socket.bind", forbidden)
@@ -342,7 +342,7 @@ def test_desktop_tui_selection_fails_without_fallback(monkeypatch, capsys, admit
         return
 
     # Protocol-only coverage behind the separately asserted production guard.
-    monkeypatch.setattr("nanobot.migration_guard.require_runtime_ready", lambda: None)
+    monkeypatch.setattr("kohaku.migration_guard.require_runtime_ready", lambda: None)
 
     assert dispatch_bare_desktop_target([]) == 3
     assert calls == ["status", "tui"]
@@ -432,7 +432,7 @@ def test_browser_failure_does_not_leak_bootstrap_or_fall_back(monkeypatch, capsy
     monkeypatch.setattr(desktop_target, "_interactive_shell", lambda: True)
     monkeypatch.setattr(desktop_target, "discover_desktop_target", Target)
     monkeypatch.setattr(desktop_target, "_choose_target", lambda _: "desktop")
-    monkeypatch.setattr("nanobot.cli.webui_support._launch_browser", fail_browser)
+    monkeypatch.setattr("kohaku.cli.webui_support._launch_browser", fail_browser)
     assert dispatch_bare_desktop_target(["webui"]) == 3
     output = capsys.readouterr()
     assert "bootstrapSecret" not in output.out + output.err
@@ -452,7 +452,7 @@ def test_discovery_rejects_special_files_without_blocking(monkeypatch, tmp_path,
         other.write_text("{}")
         descriptor.symlink_to(other)
     monkeypatch.setattr(desktop_target.sys, "platform", "darwin")
-    monkeypatch.setenv("NANOBOT_DESKTOP_ROOT", str(tmp_path))
+    monkeypatch.setenv("KOHAKU_DESKTOP_ROOT", str(tmp_path))
     with pytest.raises(DesktopTargetError):
         discover_desktop_target()
 
@@ -478,7 +478,7 @@ def test_socket_rejects_truncated_or_oversized_reply(monkeypatch, reply):
 
 @pytest.mark.parametrize("args", [[], ["webui"]])
 def test_completion_never_discovers_desktop(monkeypatch, args):
-    monkeypatch.setenv("_NANOBOT_COMPLETE", "complete_bash")
+    monkeypatch.setenv("_KOHAKU_COMPLETE", "complete_bash")
     monkeypatch.setattr(desktop_target, "_interactive_shell", lambda: True)
     monkeypatch.setattr(
         desktop_target, "discover_desktop_target", lambda: pytest.fail("completion must bypass")

@@ -14,17 +14,17 @@ from urllib.parse import quote
 
 import pytest
 
-from nanobot.agent.turn import DeliveryTarget, RunStatus, TurnRequest, TurnResult, TurnSource
-from nanobot.bus.events import InboundMessage
-from nanobot.config.schema import Config
-from nanobot.providers.base import LLMProvider, LLMResponse, ToolCallRequest
-from nanobot.runtime_composition import RuntimeComposition, RuntimeHandle
-from nanobot.security.folder_grants import FolderGrantStore
-from nanobot.session.workspace_access_recovery import (
+from kohaku.agent.turn import DeliveryTarget, RunStatus, TurnRequest, TurnResult, TurnSource
+from kohaku.bus.events import InboundMessage
+from kohaku.config.schema import Config
+from kohaku.providers.base import LLMProvider, LLMResponse, ToolCallRequest
+from kohaku.runtime_composition import RuntimeComposition, RuntimeHandle
+from kohaku.security.folder_grants import FolderGrantStore
+from kohaku.session.workspace_access_recovery import (
     WorkspaceAccessActionError,
     WorkspaceAccessRecoveryOwner,
 )
-from nanobot.webui.workspaces import WebUIWorkspaceController
+from kohaku.webui.workspaces import WebUIWorkspaceController
 
 
 class _RecordingProvider(LLMProvider):
@@ -149,7 +149,7 @@ async def test_canonical_turn_finalizes_terminal_configured_write_without_recove
     )
     config.agents.defaults.context_repos = [str(repo)]
     provider = _ProtectedWriteProvider(target)
-    monkeypatch.setattr("nanobot.providers.factory.make_provider", lambda _config: provider)
+    monkeypatch.setattr("kohaku.providers.factory.make_provider", lambda _config: provider)
     sessions_root = tmp_path / "sessions"
     grants = FolderGrantStore.for_workspace(
         config.workspace_path,
@@ -217,8 +217,8 @@ def _track_continuation_owner_cleanup(
     chat_id: str,
 ) -> None:
     """Release only queued owners whose messages this test publishes."""
-    from nanobot.session.webui_turns import clear_websocket_turn_if_current
-    from nanobot.webui.metadata import WEBSOCKET_TURN_OWNER_METADATA_KEY
+    from kohaku.session.webui_turns import clear_websocket_turn_if_current
+    from kohaku.webui.metadata import WEBSOCKET_TURN_OWNER_METADATA_KEY
 
     owners: set[str] = set()
     publish_inbound = bus.publish_inbound
@@ -245,7 +245,7 @@ async def _prepare_continuation(
     request: pytest.FixtureRequest,
 ) -> _PreparedContinuation:
     provider = _RecordingProvider()
-    monkeypatch.setattr("nanobot.providers.factory.make_provider", lambda _config: provider)
+    monkeypatch.setattr("kohaku.providers.factory.make_provider", lambda _config: provider)
     config = _config(tmp_path)
     selected_project = tmp_path / "selected-project"
     selected_project.mkdir()
@@ -371,7 +371,7 @@ async def test_continue_survives_cache_invalidation_and_runs_once_on_real_bus(
     tmp_path: Path,
 ) -> None:
     provider = _RecordingProvider()
-    monkeypatch.setattr("nanobot.providers.factory.make_provider", lambda _config: provider)
+    monkeypatch.setattr("kohaku.providers.factory.make_provider", lambda _config: provider)
     config = _config(tmp_path)
     selected_project = tmp_path / "selected-project"
     selected_project.mkdir()
@@ -591,7 +591,7 @@ async def test_repeated_folder_recovery_continues_original_task_on_real_bus(
     (project_a / "README.md").write_text("first project marker", encoding="utf-8")
     (project_b / "README.md").write_text("second project marker", encoding="utf-8")
     provider = _RepeatedRecoveryProvider(project_a, project_b)
-    monkeypatch.setattr("nanobot.providers.factory.make_provider", lambda _config: provider)
+    monkeypatch.setattr("kohaku.providers.factory.make_provider", lambda _config: provider)
     config = _config(tmp_path)
     composition = RuntimeComposition.define(
         config,
@@ -614,8 +614,8 @@ async def test_repeated_folder_recovery_continues_original_task_on_real_bus(
     )
     workspaces.persist_scope(chat_id, workspaces.default_scope())
     recovery = WorkspaceAccessRecoveryOwner(handle.sessions, workspaces, handle.bus)
-    from nanobot.channels.websocket.runtime import WebSocketChannel
-    from nanobot.webui.gateway_services import GatewayServices
+    from kohaku.channels.websocket.runtime import WebSocketChannel
+    from kohaku.webui.gateway_services import GatewayServices
 
     run_task: asyncio.Task[None] | None = None
     outbound_task: asyncio.Task[None] | None = None
@@ -712,8 +712,8 @@ async def test_repeated_folder_recovery_continues_original_task_on_real_bus(
         return await asyncio.wait_for(poll(), timeout=5)
 
     async def wait_for_lifecycle_idle(turn_id: str) -> None:
-        from nanobot.bus.outbound_events import GoalStatusEvent
-        from nanobot.webui.metadata import WEBUI_TURN_METADATA_KEY
+        from kohaku.bus.outbound_events import GoalStatusEvent
+        from kohaku.webui.metadata import WEBUI_TURN_METADATA_KEY
 
         async def poll() -> None:
             while not any(
@@ -728,7 +728,7 @@ async def test_repeated_folder_recovery_continues_original_task_on_real_bus(
 
     async def deliver_outbound() -> None:
         assert channel is not None
-        from nanobot.webui.metadata import WEBSOCKET_TURN_OWNER_METADATA_KEY
+        from kohaku.webui.metadata import WEBSOCKET_TURN_OWNER_METADATA_KEY
 
         while True:
             outbound = await handle.bus.consume_outbound()
@@ -741,11 +741,11 @@ async def test_repeated_folder_recovery_continues_original_task_on_real_bus(
     try:
         from dataclasses import replace
 
-        from nanobot.channels.websocket.runtime import WebSocketChannel, WebSocketConfig
-        from nanobot.config.loader import get_config_path, set_config_path
-        from nanobot.session.webui_turns import WebuiTurnCoordinator
-        from nanobot.webui.gateway_services import build_gateway_services
-        from nanobot.webui.metadata import (
+        from kohaku.channels.websocket.runtime import WebSocketChannel, WebSocketConfig
+        from kohaku.config.loader import get_config_path, set_config_path
+        from kohaku.session.webui_turns import WebuiTurnCoordinator
+        from kohaku.webui.gateway_services import build_gateway_services
+        from kohaku.webui.metadata import (
             WEBSOCKET_TURN_OWNER_METADATA_KEY,
             WEBUI_TURN_METADATA_KEY,
         )
@@ -778,8 +778,8 @@ async def test_repeated_folder_recovery_continues_original_task_on_real_bus(
         disconnect_webui = coordinator.subscribe()
         outbound_task = asyncio.create_task(deliver_outbound())
 
-        from nanobot.session.webui_turns import register_queued_websocket_turn_if_idle
-        from nanobot.session.workspace_access_continuation import (
+        from kohaku.session.webui_turns import register_queued_websocket_turn_if_idle
+        from kohaku.session.workspace_access_continuation import (
             copy_workspace_access_continuation,
             workspace_access_continuation,
         )
@@ -978,7 +978,7 @@ async def test_repeated_folder_recovery_continues_original_task_on_real_bus(
         assert second_turn_id in final_thread["completed_turn_ids"]
         assert final_thread["active_turn_id"] is None
 
-        from nanobot.bus.outbound_events import GoalStatusEvent, TurnEndEvent
+        from kohaku.bus.outbound_events import GoalStatusEvent, TurnEndEvent
 
         for turn_id in (first_turn_id, second_turn_id):
             lifecycle = [
@@ -1049,8 +1049,8 @@ async def test_repeated_folder_recovery_continues_original_task_on_real_bus(
         if run_task is not None and not run_task.done():
             run_task.cancel()
             await asyncio.wait_for(asyncio.gather(run_task, return_exceptions=True), timeout=5)
-        from nanobot.config.loader import set_config_path
-        from nanobot.session.webui_turns import clear_websocket_turn_if_current
+        from kohaku.config.loader import set_config_path
+        from kohaku.session.webui_turns import clear_websocket_turn_if_current
 
         for owner in owned_turn_owners:
             clear_websocket_turn_if_current(chat_id, owner)
@@ -1117,7 +1117,7 @@ async def test_queued_continue_rejects_changed_canonical_source_without_recreati
         await asyncio.wait_for(dispatch_done.wait(), timeout=5)
 
         assert len(prepared.provider.requests) == 1
-        from nanobot.session.webui_turns import (
+        from kohaku.session.webui_turns import (
             websocket_turn_id,
             websocket_turn_wall_started_at,
         )
@@ -1151,11 +1151,11 @@ async def test_rejected_queued_continue_releases_only_unadmitted_gateway_owner(
     tmp_path: Path,
     request: pytest.FixtureRequest,
 ) -> None:
-    from nanobot.channels.websocket.runtime import WebSocketChannel, WebSocketConfig
-    from nanobot.config.loader import get_config_path, set_config_path
-    from nanobot.session import webui_turns
-    from nanobot.session.webui_turns import WebuiTurnCoordinator
-    from nanobot.webui.gateway_services import build_gateway_services
+    from kohaku.channels.websocket.runtime import WebSocketChannel, WebSocketConfig
+    from kohaku.config.loader import get_config_path, set_config_path
+    from kohaku.session import webui_turns
+    from kohaku.session.webui_turns import WebuiTurnCoordinator
+    from kohaku.webui.gateway_services import build_gateway_services
 
     prepared = await _prepare_continuation(monkeypatch, tmp_path, request)
     handle = prepared.handle
@@ -1275,14 +1275,14 @@ async def test_rejected_continuation_does_not_clear_foreign_superseding_owner(
 ) -> None:
     from dataclasses import replace
 
-    from nanobot.session.webui_turns import (
+    from kohaku.session.webui_turns import (
         publish_turn_run_status,
         websocket_turn_owner_is_registered,
     )
-    from nanobot.session.workspace_access_continuation import (
+    from kohaku.session.workspace_access_continuation import (
         copy_workspace_access_continuation,
     )
-    from nanobot.webui.metadata import (
+    from kohaku.webui.metadata import (
         WEBSOCKET_TURN_OWNER_METADATA_KEY,
         WEBUI_TURN_METADATA_KEY,
     )
@@ -1333,7 +1333,7 @@ async def test_rejected_continuation_does_not_clear_foreign_superseding_owner(
             foreign_turn_id,
         )
     finally:
-        from nanobot.session.webui_turns import clear_websocket_turn_if_current
+        from kohaku.session.webui_turns import clear_websocket_turn_if_current
 
         clear_websocket_turn_if_current(prepared.chat_id, foreign_owner)
         await prepared.composition.aclose()
@@ -1345,8 +1345,8 @@ async def test_continue_binding_is_rechecked_after_existing_source_preflight(
     tmp_path: Path,
     request: pytest.FixtureRequest,
 ) -> None:
-    from nanobot.agent import loop as loop_module
-    from nanobot.session.execution_owner import acquire_execution as original_acquire
+    from kohaku.agent import loop as loop_module
+    from kohaku.session.execution_owner import acquire_execution as original_acquire
 
     prepared = await _prepare_continuation(monkeypatch, tmp_path, request)
     handle = prepared.handle
@@ -1408,7 +1408,7 @@ async def test_continue_binding_is_rechecked_after_existing_source_preflight(
             for event in snapshot.events
             if event.get("role") == "user"
         )
-        from nanobot.session.webui_turns import (
+        from kohaku.session.webui_turns import (
             websocket_turn_id,
             websocket_turn_wall_started_at,
         )
@@ -1431,7 +1431,7 @@ async def test_accepted_new_input_invalidates_queued_continue_without_busy_injec
     tmp_path: Path,
     request: pytest.FixtureRequest,
 ) -> None:
-    from nanobot.session.execution_owner import acquire_execution
+    from kohaku.session.execution_owner import acquire_execution
 
     prepared = await _prepare_continuation(monkeypatch, tmp_path, request)
     handle = prepared.handle
@@ -1528,7 +1528,7 @@ async def test_duplicate_private_continue_dispatch_runs_provider_once(
 ) -> None:
     from dataclasses import replace
 
-    from nanobot.session.workspace_access_continuation import copy_workspace_access_continuation
+    from kohaku.session.workspace_access_continuation import copy_workspace_access_continuation
 
     prepared = await _prepare_continuation(monkeypatch, tmp_path, request)
     handle = prepared.handle
@@ -1566,7 +1566,7 @@ async def test_duplicate_private_continue_dispatch_runs_provider_once(
         assert dispatch_count == 1
         owner = original_message.metadata["_websocket_turn_owner"]
         turn_id = result["workspace_access_request"]["continuation_turn_id"]
-        from nanobot.session.webui_turns import (
+        from kohaku.session.webui_turns import (
             websocket_turn_id,
             websocket_turn_owner_is_registered,
             websocket_turn_wall_started_at,
@@ -1626,16 +1626,16 @@ async def test_duplicate_rejection_preserves_owner_during_terminal_channel_deliv
 ) -> None:
     from dataclasses import replace
 
-    from nanobot.bus.outbound_events import TurnEndEvent
-    from nanobot.channels.websocket.runtime import WebSocketChannel, WebSocketConfig
-    from nanobot.config.loader import get_config_path, set_config_path
-    from nanobot.session import webui_turns
-    from nanobot.session.webui_turns import WebuiTurnCoordinator
-    from nanobot.session.workspace_access_continuation import (
+    from kohaku.bus.outbound_events import TurnEndEvent
+    from kohaku.channels.websocket.runtime import WebSocketChannel, WebSocketConfig
+    from kohaku.config.loader import get_config_path, set_config_path
+    from kohaku.session import webui_turns
+    from kohaku.session.webui_turns import WebuiTurnCoordinator
+    from kohaku.session.workspace_access_continuation import (
         copy_workspace_access_continuation,
     )
-    from nanobot.webui.gateway_services import build_gateway_services
-    from nanobot.webui.metadata import WEBSOCKET_TURN_OWNER_METADATA_KEY, WEBUI_TURN_METADATA_KEY
+    from kohaku.webui.gateway_services import build_gateway_services
+    from kohaku.webui.metadata import WEBSOCKET_TURN_OWNER_METADATA_KEY, WEBUI_TURN_METADATA_KEY
 
     prepared = await _prepare_continuation(monkeypatch, tmp_path, request)
     handle = prepared.handle

@@ -9,10 +9,10 @@ from threading import Barrier, Event, get_ident
 
 import pytest
 
-import nanobot.utils.gitstore as gitstore_module
-from nanobot.agent.memory import _HISTORY_ENTRY_HARD_CAP, MemoryStore
-from nanobot.agent.tools.filesystem_effect import FilesystemEffectAttempt
-from nanobot.utils.gitstore import GitStore, GitStoreError
+import kohaku.utils.gitstore as gitstore_module
+from kohaku.agent.memory import _HISTORY_ENTRY_HARD_CAP, MemoryStore
+from kohaku.agent.tools.filesystem_effect import FilesystemEffectAttempt
+from kohaku.utils.gitstore import GitStore, GitStoreError
 
 
 @pytest.fixture
@@ -270,7 +270,7 @@ class TestAppendHistoryHardCap:
         """Repeated oversized writes should warn only on the first occurrence."""
         records: list[str] = []
         monkeypatch.setattr(
-            "nanobot.agent.memory.logger.warning",
+            "kohaku.agent.memory.logger.warning",
             lambda message, *args: records.append(message.format(*args)),
         )
         huge = "x" * (_HISTORY_ENTRY_HARD_CAP + 1)

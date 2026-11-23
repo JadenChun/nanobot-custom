@@ -11,15 +11,15 @@ import pytest
 from websockets.datastructures import Headers
 from websockets.http11 import Request
 
-from nanobot.bus.queue import MessageBus
-from nanobot.channels.websocket.runtime import WebSocketConfig
-from nanobot.config.loader import get_config_path, set_config_path
-from nanobot.config.schema import RemoteAccessConfig
-from nanobot.remote.owner import RemoteAccessOwner
-from nanobot.remote.protocol import OWNER_PAIRING_SCOPES
-from nanobot.session.manager import SessionManager
-from nanobot.webui.gateway_services import GatewayServices, build_gateway_services
-from nanobot.webui.transcript import append_transcript_object
+from kohaku.bus.queue import MessageBus
+from kohaku.channels.websocket.runtime import WebSocketConfig
+from kohaku.config.loader import get_config_path, set_config_path
+from kohaku.config.schema import RemoteAccessConfig
+from kohaku.remote.owner import RemoteAccessOwner
+from kohaku.remote.protocol import OWNER_PAIRING_SCOPES
+from kohaku.session.manager import SessionManager
+from kohaku.webui.gateway_services import GatewayServices, build_gateway_services
+from kohaku.webui.transcript import append_transcript_object
 
 ORIGIN = "https://127.0.0.1:29999"
 ORIGIN_HOST = "127.0.0.1:29999"

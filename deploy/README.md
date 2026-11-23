@@ -1,22 +1,22 @@
-# Nanobot Gateway Deployment
+# Kohaku Gateway Deployment
 
-This deploys the marketing-agent Nanobot gateway on the Lightsail instance.
+This deploys the marketing-agent Kohaku gateway on the Lightsail instance.
 
 Expected paths:
 
 ```text
-/opt/marketing-agent/nanobot-custom
+/opt/marketing-agent/kohaku
 /opt/marketing-agent/client-marketing-assistance
-/opt/marketing-agent/.nanobot/config.json
-/opt/marketing-agent/secrets/nanobot.env
+/opt/marketing-agent/.kohaku/config.json
+/opt/marketing-agent/secrets/kohaku.env
 ```
 
-`nanobot.env` should be owned by `root:marketing-agent` with mode `0640` so
-systemd and the `marketing-agent` service user can read it. The Nanobot config
-lives under `.nanobot` because Nanobot derives runtime directories from the
+`kohaku.env` should be owned by `root:marketing-agent` with mode `0640` so
+systemd and the `marketing-agent` service user can read it. The Kohaku config
+lives under `.kohaku` because Kohaku derives runtime directories from the
 config file parent and needs to write cron, media, and credential state there.
 
-`nanobot-config.json` attaches the context repo through:
+`kohaku-config.json` attaches the context repo through:
 
 ```json
 "contextRepos": [
@@ -35,28 +35,28 @@ when this runtime flag is false. The deploy script now migrates the existing
 marketing context entry to `autoSync: true`; it does not overwrite tokens or
 other runtime configuration.
 
-`nanobot.env` provides runtime environment for the context repo scripts,
+`kohaku.env` provides runtime environment for the context repo scripts,
 including `OAUTH_BROKER_INTERNAL_URL` and `OAUTH_BROKER_INTERNAL_API_KEY`.
 
 ## First Install
 
-Clone the Nanobot repo into `/opt/marketing-agent/nanobot-custom`, then run:
+Clone the Kohaku repo into `/opt/marketing-agent/kohaku`, then run:
 
 ```bash
-sudo bash /opt/marketing-agent/nanobot-custom/deploy/scripts/update_nanobot_gateway.sh
-sudoedit /opt/marketing-agent/.nanobot/config.json
-sudoedit /opt/marketing-agent/secrets/nanobot.env
-sudo systemctl enable --now nanobot-gateway
+sudo bash /opt/marketing-agent/kohaku/deploy/scripts/update_kohaku_gateway.sh
+sudoedit /opt/marketing-agent/.kohaku/config.json
+sudoedit /opt/marketing-agent/secrets/kohaku.env
+sudo systemctl enable --now kohaku-gateway
 ```
 
 Required values:
 
-- Telegram bot token in `/opt/marketing-agent/.nanobot/config.json`.
-- Telegram `allowFrom` in `/opt/marketing-agent/.nanobot/config.json` authorizes senders.
+- Telegram bot token in `/opt/marketing-agent/.kohaku/config.json`.
+- Telegram `allowFrom` in `/opt/marketing-agent/.kohaku/config.json` authorizes senders.
   Optional `allowChats` further restricts groups; it never grants sender access.
   An empty `allowFrom` denies all senders, even when `allowChats` is configured.
-- Provider API key in `/opt/marketing-agent/.nanobot/config.json`, or through `NANOBOT_*` env vars.
-- `OAUTH_BROKER_INTERNAL_API_KEY` in `nanobot.env`; it must match the OAuth
+- Provider API key in `/opt/marketing-agent/.kohaku/config.json`, or through `KOHAKU_*` env vars.
+- `OAUTH_BROKER_INTERNAL_API_KEY` in `kohaku.env`; it must match the OAuth
   broker's internal API key.
 
 ## Multiple Cron Destinations
@@ -64,7 +64,7 @@ Required values:
 Cron jobs keep `payload.channel` and `payload.to` as their primary execution
 and delivery context. To deliver the same completed result to other chats
 without running the workflow again, add `additionalDestinations` to the job in
-`/opt/marketing-agent/.nanobot/workspace/cron/jobs.json`:
+`/opt/marketing-agent/.kohaku/workspace/cron/jobs.json`:
 
 ```json
 {
@@ -151,18 +151,18 @@ the normal agent loop.
 Use:
 
 ```bash
-sudo bash /opt/marketing-agent/nanobot-custom/deploy/scripts/update_nanobot_gateway.sh
+sudo bash /opt/marketing-agent/kohaku/deploy/scripts/update_kohaku_gateway.sh
 ```
 
 The update script pulls the configured branch and only redeploys/restarts the
-gateway when Nanobot code changed, or when the service is not active.
+gateway when Kohaku code changed, or when the service is not active.
 
 ## Operations
 
 ```bash
-sudo systemctl status nanobot-gateway --no-pager
-sudo journalctl -u nanobot-gateway -n 100 --no-pager
-sudo tail -n 100 /opt/marketing-agent/logs/nanobot-gateway.log
+sudo systemctl status kohaku-gateway --no-pager
+sudo journalctl -u kohaku-gateway -n 100 --no-pager
+sudo tail -n 100 /opt/marketing-agent/logs/kohaku-gateway.log
 ```
 
 To verify context-memory delivery after a scheduled run:
@@ -170,7 +170,7 @@ To verify context-memory delivery after a scheduled run:
 ```bash
 sudo -u marketing-agent git -C /opt/marketing-agent/client-marketing-assistance status --short --branch
 sudo -u marketing-agent git -C /opt/marketing-agent/client-marketing-assistance rev-parse --abbrev-ref --symbolic-full-name '@{upstream}'
-sudo grep -E 'Context repo (synced successfully|sync did not complete|sync failed)' /opt/marketing-agent/logs/nanobot-gateway.log | tail -n 20
+sudo grep -E 'Context repo (synced successfully|sync did not complete|sync failed)' /opt/marketing-agent/logs/kohaku-gateway.log | tail -n 20
 ```
 
 A successful scheduled run waits for its context sync attempt before completing.
@@ -183,7 +183,7 @@ configured upstream; `autoSync` cannot compensate for missing GitHub credentials
 The Crawl4AI integration keeps browser execution outside the main agent process:
 
 ```text
-Nanobot orchestrator -> lower-cost foreground crawler role -> social_crawl -> Unix socket -> Crawl4AI/Chromium
+Kohaku orchestrator -> lower-cost foreground crawler role -> social_crawl -> Unix socket -> Crawl4AI/Chromium
 ```
 
 The foreground crawler role receives rendered, cleaned HTML with links and DOM attributes intact.
@@ -194,7 +194,7 @@ an LLM key and does not perform reasoning itself.
 Install the isolated worker only after the normal gateway is healthy:
 
 ```bash
-sudo bash /opt/marketing-agent/nanobot-custom/deploy/scripts/deploy_crawl4ai_worker.sh
+sudo bash /opt/marketing-agent/kohaku/deploy/scripts/deploy_crawl4ai_worker.sh
 sudo journalctl -u crawl4ai-worker -n 100 --no-pager
 ```
 
@@ -212,18 +212,18 @@ print(json.loads(client.makefile().readline()))
 PY
 ```
 
-Then set both controls before restarting Nanobot:
+Then set both controls before restarting Kohaku:
 
 1. Set `agents.crawler.enabled` to `true` in
-   `/opt/marketing-agent/.nanobot/config.json`, then choose its provider and lower-cost model.
+   `/opt/marketing-agent/.kohaku/config.json`, then choose its provider and lower-cost model.
    If this differs from the main agent provider, configure that provider's API key too.
 2. Set `CRAWL4AI_WORKER_ENABLED=true` in
-   `/opt/marketing-agent/secrets/nanobot.env`.
+   `/opt/marketing-agent/secrets/kohaku.env`.
 
 Finally restart the gateway:
 
 ```bash
-sudo systemctl restart nanobot-gateway
+sudo systemctl restart kohaku-gateway
 ```
 
 The first rollout should keep the worker headless, logged out, and limited to the domains in
@@ -237,9 +237,9 @@ settings from the agent.
 
 For a local, headed Edge worker, use PowerShell 7 or later from a checkout whose Python
 environment already has the Crawl4AI worker dependency. These scripts do not install
-dependencies or rewrite the Nanobot configuration.
+dependencies or rewrite the Kohaku configuration.
 
-First set `agents.crawler.enabled` to `true` in your existing Nanobot config, then prepare the
+First set `agents.crawler.enabled` to `true` in your existing Kohaku config, then prepare the
 dedicated profile:
 
 ```powershell
@@ -249,7 +249,7 @@ pwsh -File .\deploy\scripts\setup_local_crawl4ai_profile.ps1
 The setup script uses only
 `%LOCALAPPDATA%\nanobot\egocat-marketing\crawl4ai-edge-profile`; it never copies or opens a
 personal Edge profile. Log in manually to the opened Facebook and TikTok windows, close every
-window using that profile, then type `READY`. The resulting `.nanobot-profile-ready` marker
+window using that profile, then type `READY`. The resulting `.kohaku-profile-ready` marker
 means the operator completed this preparation step; it is not proof that either site remains
 logged in.
 
@@ -258,7 +258,7 @@ Run the foreground agent with the existing Python and config paths:
 ```powershell
 pwsh -File .\deploy\scripts\start_local_marketing_agent.ps1 `
   -PythonExecutable .\.venv\Scripts\python.exe `
-  -ConfigPath $env:USERPROFILE\.nanobot\config.json
+  -ConfigPath $env:USERPROFILE\.kohaku\config.json
 ```
 
 The launcher defaults to TCP port `18791` and the explicit `facebook.com` and `tiktok.com`

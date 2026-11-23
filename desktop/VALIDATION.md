@@ -131,12 +131,12 @@ associates a window with its launcher by the GTK app id / window class
 the default WebKit window icon.
 
 RPM 0.3.0-4 ships an additional `NoDisplay` entry named
-`nanobot-desktop.desktop` (same `Exec`/`Icon`) via `bundle.linux.rpm.files`, and
+`kohaku-desktop.desktop` (same `Exec`/`Icon`) via `bundle.linux.rpm.files`, and
 uses the lowercase `StartupWMClass=nanobot-desktop` in the visible template. The
 alias associates the Wayland window without adding a duplicate menu entry.
 
 The same alias can be installed immediately for 0.3.0-3 at
-`~/.local/share/applications/nanobot-desktop.desktop`; refresh with
+`~/.local/share/applications/kohaku-desktop.desktop`; refresh with
 `update-desktop-database ~/.local/share/applications` and
 `kbuildsycoca6 --noincremental`, then restart Nanobot Desktop.
 

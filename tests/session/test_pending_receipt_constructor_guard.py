@@ -9,12 +9,12 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-import nanobot.session.manager as session_manager_module
-from nanobot.agent.memory_recovery import (
+import kohaku.session.manager as session_manager_module
+from kohaku.agent.memory_recovery import (
     MemoryReceiptRecoveryRequiredError,
     require_memory_receipt_recovery,
 )
-from nanobot.session.manager import JsonlSessionStore, SessionManager, SessionStore
+from kohaku.session.manager import JsonlSessionStore, SessionManager, SessionStore
 
 _RECEIPT_NAME = ".consolidation.pending.json"
 _SECRET = "constructor-guard-memory-secret"

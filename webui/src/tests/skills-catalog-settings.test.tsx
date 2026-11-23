@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { SkillsCatalogSettings } from "@/components/settings/SkillsCatalogSettings";
 import { deleteSkill, fetchSkillDetail, updateSkillEnabled } from "@/lib/api";
-import type { NanobotClient } from "@/lib/nanobot-client";
+import type { KohakuClient } from "@/lib/kohaku-client";
 import { notifySkillsChanged } from "@/lib/skill-events";
 import type { SkillActionPayload, SkillDetail, SkillSummary } from "@/lib/types";
 import { ClientProvider } from "@/providers/ClientProvider";
@@ -42,7 +42,7 @@ function deferred<T>(): Deferred<T> {
   return { promise, resolve, reject };
 }
 
-const client = {} as NanobotClient;
+const client = {} as KohakuClient;
 
 function skill(name: string, overrides: Partial<SkillSummary> = {}): SkillSummary {
   return {

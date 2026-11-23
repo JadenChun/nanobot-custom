@@ -5,13 +5,13 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from nanobot.agent.loop import AgentLoop
-from nanobot.agent.tools.context import RequestContext
-from nanobot.agent.tools.exec_session import ExecCompletion
-from nanobot.agent.turn import DeliveryTarget, TurnRequest
-from nanobot.process_completion import ProcessCompletionRuntime
-from nanobot.providers.base import GenerationSettings, LLMResponse
-from nanobot.security.workspace_access import build_workspace_scope
+from kohaku.agent.loop import AgentLoop
+from kohaku.agent.tools.context import RequestContext
+from kohaku.agent.tools.exec_session import ExecCompletion
+from kohaku.agent.turn import DeliveryTarget, TurnRequest
+from kohaku.process_completion import ProcessCompletionRuntime
+from kohaku.providers.base import GenerationSettings, LLMResponse
+from kohaku.security.workspace_access import build_workspace_scope
 from tests.agent import p6_admitted_fixtures
 
 admitted_async = p6_admitted_fixtures.admitted_async

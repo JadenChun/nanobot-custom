@@ -10,11 +10,11 @@ from unittest.mock import patch
 import httpx
 import pytest
 
-from nanobot.agent.tools import web as web_module
-from nanobot.agent.tools.web import WebFetchTool, _get_with_safe_redirects
-from nanobot.config.schema import WebFetchConfig
-from nanobot.security.network import PinnedDNSAsyncTransport
-from nanobot.security.workspace_access import (
+from kohaku.agent.tools import web as web_module
+from kohaku.agent.tools.web import WebFetchTool, _get_with_safe_redirects
+from kohaku.config.schema import WebFetchConfig
+from kohaku.security.network import PinnedDNSAsyncTransport
+from kohaku.security.workspace_access import (
     bind_workspace_scope,
     build_workspace_scope,
     reset_workspace_scope,
@@ -100,7 +100,7 @@ def _patch_web_fetch_fake_client(monkeypatch: pytest.MonkeyPatch) -> list[dict]:
     monkeypatch.setattr(web_module.httpx, "AsyncClient", FakeClient)
     monkeypatch.setattr(web_module, "_pinned_dns_transport", lambda: object())
     monkeypatch.setattr(
-        "nanobot.security.network.httpx.AsyncHTTPTransport",
+        "kohaku.security.network.httpx.AsyncHTTPTransport",
         lambda **_kwargs: object(),
     )
     return client_kwargs
@@ -109,7 +109,7 @@ def _patch_web_fetch_fake_client(monkeypatch: pytest.MonkeyPatch) -> list[dict]:
 @pytest.mark.asyncio
 async def test_web_fetch_blocks_private_ip():
     tool = WebFetchTool()
-    with patch("nanobot.security.network.socket.getaddrinfo", _fake_resolve_private):
+    with patch("kohaku.security.network.socket.getaddrinfo", _fake_resolve_private):
         result = await tool.execute(url="http://169.254.169.254/computeMetadata/v1/")
     data = json.loads(result)
     assert "error" in data
@@ -121,7 +121,7 @@ async def test_web_fetch_blocks_localhost():
     tool = WebFetchTool()
     def _resolve_localhost(hostname, port, family=0, type_=0):
         return [(socket.AF_INET, socket.SOCK_STREAM, 0, "", ("127.0.0.1", 0))]
-    with patch("nanobot.security.network.socket.getaddrinfo", _resolve_localhost):
+    with patch("kohaku.security.network.socket.getaddrinfo", _resolve_localhost):
         result = await tool.execute(url="http://localhost/admin")
     data = json.loads(result)
     assert "error" in data
@@ -137,7 +137,7 @@ async def test_web_fetch_blocks_localhost_even_in_full_workspace_scope(tmp_path)
 
     token = bind_workspace_scope(scope)
     try:
-        with patch("nanobot.security.network.socket.getaddrinfo", _resolve_localhost):
+        with patch("kohaku.security.network.socket.getaddrinfo", _resolve_localhost):
             result = await tool.execute(url="http://localhost/admin")
     finally:
         reset_workspace_scope(token)
@@ -151,7 +151,7 @@ async def test_web_fetch_result_contains_untrusted_flag(monkeypatch: pytest.Monk
     tool = WebFetchTool()
     _patch_web_fetch_fake_client(monkeypatch)
 
-    with patch("nanobot.security.network.socket.getaddrinfo", _fake_resolve_public):
+    with patch("kohaku.security.network.socket.getaddrinfo", _fake_resolve_public):
         result = await tool.execute(url="https://example.com/page")
 
     data = json.loads(result)
@@ -192,7 +192,7 @@ async def test_safe_redirect_requests_use_independent_pinned_dns_concurrently(mo
         ) as client:
             return await _get_with_safe_redirects(client, url)
 
-    monkeypatch.setattr("nanobot.security.network.socket.getaddrinfo", _rebinding_resolver)
+    monkeypatch.setattr("kohaku.security.network.socket.getaddrinfo", _rebinding_resolver)
 
     results = await asyncio.gather(
         _fetch("https://a.example/"),
@@ -215,7 +215,7 @@ async def test_web_fetch_proxy_remains_supported(monkeypatch):
     monkeypatch.setenv("HTTPS_PROXY", "http://env-proxy.example:8080")
     monkeypatch.setenv("NO_PROXY", "example.com")
 
-    with patch("nanobot.security.network.socket.getaddrinfo", _fake_resolve_public):
+    with patch("kohaku.security.network.socket.getaddrinfo", _fake_resolve_public):
         result = await tool.execute(url="https://example.com/page")
 
     data = json.loads(result)
@@ -233,7 +233,7 @@ async def test_web_fetch_env_proxy_adds_proxy_mounts_and_keeps_pinned_transport(
     monkeypatch.setenv("HTTPS_PROXY", "http://proxy.example:8080")
     monkeypatch.setenv("NO_PROXY", "localhost,127.0.0.1,::1")
 
-    with patch("nanobot.security.network.socket.getaddrinfo", _fake_resolve_public):
+    with patch("kohaku.security.network.socket.getaddrinfo", _fake_resolve_public):
         result = await tool.execute(url="https://example.com/page")
 
     data = json.loads(result)
@@ -249,7 +249,7 @@ def test_web_fetch_no_proxy_env_keeps_pinned_direct_route(monkeypatch):
     monkeypatch.setenv("NO_PROXY", "example.com")
     monkeypatch.setattr(web_module, "_pinned_dns_transport", lambda: object())
     monkeypatch.setattr(
-        "nanobot.security.network.httpx.AsyncHTTPTransport",
+        "kohaku.security.network.httpx.AsyncHTTPTransport",
         lambda **_kwargs: object(),
     )
 
@@ -290,7 +290,7 @@ async def test_web_fetch_does_not_fallback_after_pinned_dns_rebind_rejection(mon
         lambda: PinnedDNSAsyncTransport(inner=FailTransport()),
     )
 
-    with patch("nanobot.security.network.socket.getaddrinfo", _rebinding_resolver):
+    with patch("kohaku.security.network.socket.getaddrinfo", _rebinding_resolver):
         result = await tool.execute(url="http://evil.example/page")
 
     data = json.loads(result)
@@ -361,10 +361,10 @@ async def test_web_fetch_can_skip_jina_and_use_custom_user_agent(monkeypatch):
 
     monkeypatch.setattr(tool, "_fetch_jina", _fail_jina)
     monkeypatch.setattr(tool, "_extract_readable_html", lambda html, mode: "Hello world")
-    monkeypatch.setattr("nanobot.agent.tools.web.httpx.AsyncClient", FakeClient)
+    monkeypatch.setattr("kohaku.agent.tools.web.httpx.AsyncClient", FakeClient)
     monkeypatch.setattr(web_module, "_pinned_dns_transport", lambda: object())
 
-    with patch("nanobot.security.network.socket.getaddrinfo", _fake_resolve_public):
+    with patch("kohaku.security.network.socket.getaddrinfo", _fake_resolve_public):
         result = await tool.execute(url="https://example.com/page")
 
     data = json.loads(result)
@@ -426,10 +426,10 @@ async def test_web_fetch_falls_back_when_readability_dependency_is_missing(monke
         raise ModuleNotFoundError("No module named 'lxml_html_clean'")
 
     monkeypatch.setattr(tool, "_extract_readable_html", _missing_readability)
-    monkeypatch.setattr("nanobot.agent.tools.web.httpx.AsyncClient", FakeClient)
+    monkeypatch.setattr("kohaku.agent.tools.web.httpx.AsyncClient", FakeClient)
     monkeypatch.setattr(web_module, "_pinned_dns_transport", lambda: object())
 
-    with patch("nanobot.security.network.socket.getaddrinfo", _fake_resolve_public):
+    with patch("kohaku.security.network.socket.getaddrinfo", _fake_resolve_public):
         result = await tool._fetch_readability("https://example.com/page", "markdown", 5000)
 
     data = json.loads(result)
@@ -509,7 +509,7 @@ async def test_web_fetch_blocks_private_redirect_before_readability_request(monk
             return _fake_resolve_public(hostname, port, family, type_)
         return _REAL_GETADDRINFO(hostname, port, family, type_)
 
-    with patch("nanobot.security.network.socket.getaddrinfo", resolve_public_start_only):
+    with patch("kohaku.security.network.socket.getaddrinfo", resolve_public_start_only):
         result = await tool.execute(url="https://attacker.example/start")
 
     data = json.loads(result)
@@ -548,7 +548,7 @@ async def test_web_fetch_blocks_private_redirect_before_returning_image(monkeypa
             kwargs.pop("transport", None)
             super().__init__(*args, transport=transport, **kwargs)
 
-    monkeypatch.setattr("nanobot.agent.tools.web.httpx.AsyncClient", TransportAsyncClient)
+    monkeypatch.setattr("kohaku.agent.tools.web.httpx.AsyncClient", TransportAsyncClient)
     monkeypatch.setattr(web_module, "_pinned_dns_transport", lambda: object())
 
     def resolve_public_start_only(hostname, port, family=0, type_=0):
@@ -556,7 +556,7 @@ async def test_web_fetch_blocks_private_redirect_before_returning_image(monkeypa
             return _fake_resolve_public(hostname, port, family, type_)
         return _REAL_GETADDRINFO(hostname, port, family, type_)
 
-    with patch("nanobot.security.network.socket.getaddrinfo", resolve_public_start_only):
+    with patch("kohaku.security.network.socket.getaddrinfo", resolve_public_start_only):
         result = await tool.execute(url="https://example.com/image.png")
 
     data = json.loads(result)
@@ -597,7 +597,7 @@ async def test_web_fetch_does_not_request_private_redirect_target(monkeypatch):
             return _fake_resolve_public(hostname, port, family, type_)
         return _REAL_GETADDRINFO(hostname, port, family, type_)
 
-    with patch("nanobot.security.network.socket.getaddrinfo", resolve_public_start_only):
+    with patch("kohaku.security.network.socket.getaddrinfo", resolve_public_start_only):
         result = await tool.execute(url="https://attacker.example/start")
 
     data = json.loads(result)

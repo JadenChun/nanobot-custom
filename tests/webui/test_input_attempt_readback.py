@@ -11,20 +11,20 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
-from nanobot.agent.loop import AgentLoop
-from nanobot.agent.tools.registry import ToolRegistry
-from nanobot.channels.websocket.tests.test_websocket_channel import _sent_ws_payloads
-from nanobot.remote.edge import AccessIdentity
-from nanobot.session.execution_owner import acquire_execution
-from nanobot.session.input_attempt import (
+from kohaku.agent.loop import AgentLoop
+from kohaku.agent.tools.registry import ToolRegistry
+from kohaku.channels.websocket.tests.test_websocket_channel import _sent_ws_payloads
+from kohaku.remote.edge import AccessIdentity
+from kohaku.session.execution_owner import acquire_execution
+from kohaku.session.input_attempt import (
     InputAttempt,
     InputAttemptSource,
     fingerprint,
     principal_tag,
 )
-from nanobot.session.manager import JsonlSessionStore, Session
-from nanobot.session.model_selection import SESSION_MODEL_PRESET_METADATA_KEY
-from nanobot.session.turn_writer import SourceTurnWriter
+from kohaku.session.manager import JsonlSessionStore, Session
+from kohaku.session.model_selection import SESSION_MODEL_PRESET_METADATA_KEY
+from kohaku.session.turn_writer import SourceTurnWriter
 from tests.agent import test_migration_engine as engine_fixtures
 from tests.agent.test_input_attempt_reconciliation import (
     channel_for,
@@ -105,8 +105,8 @@ async def test_actual_attach_is_pure_and_supplies_exact_canonical_proof(engine_c
             spy = Mock(side_effect=AssertionError('lookup attempted mutation'))
             monkeypatch.setattr(owner, name, spy)
             spies.append(spy)
-        import nanobot.agent.loop as loop_module
-        import nanobot.session.execution_owner as owner_module
+        import kohaku.agent.loop as loop_module
+        import kohaku.session.execution_owner as owner_module
         for owner in (owner_module, loop_module):
             spy = Mock(side_effect=AssertionError('lookup acquired execution'))
             monkeypatch.setattr(owner, 'acquire_execution', spy)
@@ -131,7 +131,7 @@ async def test_actual_attach_is_pure_and_supplies_exact_canonical_proof(engine_c
         for spy in spies:
             spy.assert_not_called()
         inbound.assert_not_awaited()
-        bridge = os.environ.get('NANOBOT_INPUT_ATTEMPT_PURE_BRIDGE')
+        bridge = os.environ.get('KOHAKU_INPUT_ATTEMPT_PURE_BRIDGE')
         if bridge:
             Path(bridge).write_text(json.dumps({'capability': capability, 'query': {
                 'type': 'attach', 'chat_id': 'attempt-chat', 'input_attempt_query': query,

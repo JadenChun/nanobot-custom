@@ -4,8 +4,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from nanobot.agent.tools.base import ToolResult
-from nanobot.agent.tools.shell import ExecTool
+from kohaku.agent.tools.base import ToolResult
+from kohaku.agent.tools.shell import ExecTool
 
 REVALIDATION_ERROR = "input_files permission changed before command launch"
 

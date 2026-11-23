@@ -8,40 +8,40 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from nanobot.agent.context import TranscriptInput
-from nanobot.agent.goal_permission import goal_mutation_allowed, goal_mutation_permission
-from nanobot.agent.loop import AgentLoop, _TurnExecutionOptions
-from nanobot.agent.tools.base import Tool
-from nanobot.agent.tools.context import RequestContext
-from nanobot.agent.turn import (
+from kohaku.agent.context import TranscriptInput
+from kohaku.agent.goal_permission import goal_mutation_allowed, goal_mutation_permission
+from kohaku.agent.loop import AgentLoop, _TurnExecutionOptions
+from kohaku.agent.tools.base import Tool
+from kohaku.agent.tools.context import RequestContext
+from kohaku.agent.turn import (
     DeliveryTarget,
     RunPolicyContext,
     TurnCallbacks,
     TurnRequest,
 )
-from nanobot.agent.turn import TurnContext as RunContext
-from nanobot.bus.events import InboundMessage
-from nanobot.bus.outbound_events import StreamedResponseEvent
-from nanobot.config.schema import AgentDefaults
-from nanobot.events import RetryStatusEvent
-from nanobot.providers.base import (
+from kohaku.agent.turn import TurnContext as RunContext
+from kohaku.bus.events import InboundMessage
+from kohaku.bus.outbound_events import StreamedResponseEvent
+from kohaku.config.schema import AgentDefaults
+from kohaku.events import RetryStatusEvent
+from kohaku.providers.base import (
     GenerationSettings,
     LLMProvider,
     LLMResponse,
     ToolCallRequest,
 )
-from nanobot.runtime_context import (
+from kohaku.runtime_context import (
     RUNTIME_CONTEXT_INPUT_META,
     WEBUI_QUOTE_METADATA,
     RuntimeContextBlock,
     public_history_message,
     webui_quote_runtime_context,
 )
-from nanobot.security.folder_grants import FolderGrantStore
-from nanobot.security.workspace_access import WORKSPACE_SCOPE_METADATA_KEY
-from nanobot.session.goal_state import GOAL_STATE_KEY
-from nanobot.utils.llm_runtime import LLMRuntime
-from nanobot.utils.progress_events import output_events
+from kohaku.security.folder_grants import FolderGrantStore
+from kohaku.security.workspace_access import WORKSPACE_SCOPE_METADATA_KEY
+from kohaku.session.goal_state import GOAL_STATE_KEY
+from kohaku.utils.llm_runtime import LLMRuntime
+from kohaku.utils.progress_events import output_events
 from tests.agent.p6_admitted_fixtures import AgentInputs
 from tests.agent.p6_admitted_fixtures import admitted_async as admitted_async
 
@@ -163,7 +163,7 @@ async def test_ephemeral_runner_enters_and_restores_turn_scopes(tmp_path, admitt
 
 @pytest.mark.asyncio
 async def test_goal_command_can_implement_plan_from_prior_discussion(tmp_path, admitted_async):
-    from nanobot.bus.events import InboundMessage
+    from kohaku.bus.events import InboundMessage
 
     provider = MagicMock()
     provider.get_default_model.return_value = "test-model"
@@ -242,7 +242,7 @@ async def test_goal_command_can_implement_plan_from_prior_discussion(tmp_path, a
 
 @pytest.mark.asyncio
 async def test_runtime_context_is_persisted_as_next_turn_prompt_prefix(tmp_path, admitted_async):
-    from nanobot.bus.events import InboundMessage
+    from kohaku.bus.events import InboundMessage
     provider = MagicMock()
     provider.get_default_model.return_value = "test-model"
     provider.generation = GenerationSettings()
@@ -305,7 +305,7 @@ async def test_runtime_context_is_persisted_as_next_turn_prompt_prefix(tmp_path,
 
 @pytest.mark.asyncio
 async def test_webui_quote_reaches_model_without_leaking_into_public_history(tmp_path, admitted_async):
-    from nanobot.bus.events import InboundMessage
+    from kohaku.bus.events import InboundMessage
 
     provider = MagicMock()
     provider.get_default_model.return_value = "test-model"
@@ -335,7 +335,7 @@ async def test_webui_quote_reaches_model_without_leaking_into_public_history(tmp
 
 @pytest.mark.asyncio
 async def test_runtime_context_provider_runs_once_across_tool_iterations(tmp_path, admitted_async):
-    from nanobot.bus.events import InboundMessage
+    from kohaku.bus.events import InboundMessage
     provider = MagicMock()
     provider.get_default_model.return_value = "test-model"
     provider.generation = GenerationSettings()
@@ -379,7 +379,7 @@ async def test_runtime_context_provider_runs_once_across_tool_iterations(tmp_pat
 async def test_real_loader_selects_granted_project_before_relative_read_in_same_runner_turn(
     tmp_path, admitted_async,
 ):
-    from nanobot.security.folder_grants import FolderGrantStore
+    from kohaku.security.folder_grants import FolderGrantStore
 
     home_provider = MagicMock()
     home_provider.get_default_model.return_value = "test-model"
@@ -685,7 +685,7 @@ async def test_loop_retries_think_only_final_response(tmp_path, admitted_async):
 async def test_streamed_flag_not_set_on_llm_error(tmp_path, admitted_async):
     """When LLM errors during a streaming-capable channel interaction,
     _streamed must NOT be set so ChannelManager delivers the error."""
-    from nanobot.bus.events import InboundMessage
+    from kohaku.bus.events import InboundMessage
     provider = MagicMock()
     provider.get_default_model.return_value = "test-model"
     loop = await _make_loop(tmp_path, admitted_async, provider, keys=("feishu:c1",))
@@ -714,7 +714,7 @@ async def test_streamed_flag_not_set_on_llm_error(tmp_path, admitted_async):
 
 @pytest.mark.asyncio
 async def test_ssrf_soft_block_can_finalize_after_streamed_tool_call(tmp_path, admitted_async):
-    from nanobot.bus.events import InboundMessage
+    from kohaku.bus.events import InboundMessage
 
     provider = MagicMock()
     provider.get_default_model.return_value = "test-model"
@@ -766,7 +766,7 @@ async def test_ssrf_soft_block_can_finalize_after_streamed_tool_call(tmp_path, a
 async def test_foreground_turn_recovers_from_typed_private_url_denial(
     tmp_path, admitted_async, monkeypatch,
 ):
-    from nanobot.agent.tools.shell import ExecTool
+    from kohaku.agent.tools.shell import ExecTool
 
     provider = MagicMock()
     provider.get_default_model.return_value = "test-model"
@@ -793,7 +793,7 @@ async def test_foreground_turn_recovers_from_typed_private_url_denial(
     spawn = AsyncMock(side_effect=AssertionError("denied command reached process launch"))
     monkeypatch.setattr(exec_tool, "_spawn", spawn)
     monkeypatch.setattr(
-        "nanobot.security.network.contains_internal_url",
+        "kohaku.security.network.contains_internal_url",
         lambda _command: True,
     )
 
@@ -816,7 +816,7 @@ async def test_foreground_turn_recovers_from_typed_private_url_denial(
 async def test_direct_cli_turn_recovers_from_typed_private_url_denial(
     tmp_path, admitted_async, monkeypatch,
 ):
-    from nanobot.agent.tools.shell import ExecTool
+    from kohaku.agent.tools.shell import ExecTool
 
     provider = MagicMock()
     provider.get_default_model.return_value = "test-model"
@@ -839,7 +839,7 @@ async def test_direct_cli_turn_recovers_from_typed_private_url_denial(
     spawn = AsyncMock(side_effect=AssertionError("denied command reached process launch"))
     monkeypatch.setattr(exec_tool, "_spawn", spawn)
     monkeypatch.setattr(
-        "nanobot.security.network.contains_internal_url",
+        "kohaku.security.network.contains_internal_url",
         lambda _command: True,
     )
 
@@ -860,8 +860,8 @@ async def test_direct_cli_turn_recovers_from_typed_private_url_denial(
 async def test_api_direct_turn_does_not_enable_pre_dispatch_recovery(
     tmp_path, admitted_async, monkeypatch,
 ):
-    from nanobot.agent.tools.shell import ExecTool
-    from nanobot.agent.turn import TurnSource
+    from kohaku.agent.tools.shell import ExecTool
+    from kohaku.agent.turn import TurnSource
 
     provider = MagicMock()
     provider.get_default_model.return_value = "test-model"
@@ -884,7 +884,7 @@ async def test_api_direct_turn_does_not_enable_pre_dispatch_recovery(
     spawn = AsyncMock(side_effect=AssertionError("denied command reached process launch"))
     monkeypatch.setattr(exec_tool, "_spawn", spawn)
     monkeypatch.setattr(
-        "nanobot.security.network.contains_internal_url",
+        "kohaku.security.network.contains_internal_url",
         lambda _command: True,
     )
 
@@ -906,7 +906,7 @@ async def test_api_direct_turn_does_not_enable_pre_dispatch_recovery(
 async def test_managed_chat_runs_configured_mcp_tool(tmp_path, admitted_async):
     from types import SimpleNamespace
 
-    from nanobot.agent.tools.mcp import MCPToolWrapper
+    from kohaku.agent.tools.mcp import MCPToolWrapper
 
     provider = MagicMock()
     provider.get_default_model.return_value = "test-model"
@@ -967,8 +967,8 @@ async def test_managed_chat_runs_configured_mcp_tool(tmp_path, admitted_async):
 
 @pytest.mark.asyncio
 async def test_next_turn_after_llm_error_keeps_turn_boundary(tmp_path, admitted_async):
-    from nanobot.agent.runner import _PERSISTED_MODEL_ERROR_PLACEHOLDER
-    from nanobot.bus.events import InboundMessage
+    from kohaku.agent.runner import _PERSISTED_MODEL_ERROR_PLACEHOLDER
+    from kohaku.bus.events import InboundMessage
 
     provider = MagicMock()
     provider.get_default_model.return_value = "test-model"
@@ -1016,7 +1016,7 @@ async def test_next_turn_after_llm_error_keeps_turn_boundary(tmp_path, admitted_
 async def test_admitted_runner_reads_owned_workspace_and_restores_context(
     tmp_path, admitted_async, legacy,
 ):
-    from nanobot.agent.tools.context import current_request_context
+    from kohaku.agent.tools.context import current_request_context
 
     provider = MagicMock()
     provider.get_default_model.return_value = "test-model"
@@ -1076,7 +1076,7 @@ async def test_admitted_runner_still_requires_policy_context(tmp_path, admitted_
 
 @pytest.mark.asyncio
 async def test_admitted_legacy_subagent_scope_is_still_refused(tmp_path, admitted_async):
-    from nanobot.agent.subagent import RetiredSubagentAuthority
+    from kohaku.agent.subagent import RetiredSubagentAuthority
 
     loop = await _make_loop(tmp_path, admitted_async)
     assert isinstance(loop.subagents, RetiredSubagentAuthority)
@@ -1088,10 +1088,10 @@ async def test_admitted_legacy_subagent_scope_is_still_refused(tmp_path, admitte
 @pytest.mark.asyncio
 async def test_legacy_subagent_adapter_announces_max_iteration_fallback(tmp_path, monkeypatch):
     """Adapter-only compatibility; this does not activate the retired background runner."""
-    from nanobot.agent.runner import AgentRunResult
-    from nanobot.agent.subagent import SubagentManager, SubagentStatus
-    from nanobot.agent.tools.registry import ToolRegistry
-    from nanobot.bus.queue import MessageBus
+    from kohaku.agent.runner import AgentRunResult
+    from kohaku.agent.subagent import SubagentManager, SubagentStatus
+    from kohaku.agent.tools.registry import ToolRegistry
+    from kohaku.bus.queue import MessageBus
 
     bus = MessageBus()
     provider = MagicMock()

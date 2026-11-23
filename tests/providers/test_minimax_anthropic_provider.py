@@ -1,7 +1,7 @@
 """Tests for the MiniMax Anthropic provider registration."""
 
-from nanobot.config.schema import ProvidersConfig
-from nanobot.providers.registry import PROVIDERS
+from kohaku.config.schema import ProvidersConfig
+from kohaku.providers.registry import PROVIDERS
 
 
 def test_minimax_anthropic_config_field_exists():

@@ -5,10 +5,10 @@ from unittest.mock import Mock
 
 import pytest
 
-from nanobot.agent.loop import AgentLoop
-from nanobot.agent.tools.message import MessageTool
-from nanobot.agent.tools.registry import ToolRegistry
-from nanobot.agent.turn import (
+from kohaku.agent.loop import AgentLoop
+from kohaku.agent.tools.message import MessageTool
+from kohaku.agent.tools.registry import ToolRegistry
+from kohaku.agent.turn import (
     ApprovalDecision,
     DeliveryTarget,
     HistoryMode,
@@ -16,9 +16,9 @@ from nanobot.agent.turn import (
     TurnRequest,
     TurnSource,
 )
-from nanobot.providers.base import LLMResponse, ToolCallRequest
-from nanobot.session.execution_owner import acquire_execution
-from nanobot.session.source import new_source_event, validate_execution_links
+from kohaku.providers.base import LLMResponse, ToolCallRequest
+from kohaku.session.execution_owner import acquire_execution
+from kohaku.session.source import new_source_event, validate_execution_links
 from tests.agent import test_migration_engine as engine_fixtures
 from tests.agent.test_migration_engine import ScriptedProvider
 from tests.session.test_execution_auto_recovery import fence
@@ -66,7 +66,7 @@ async def test_canonical_source_turn_persists_each_event_once(engine_config, mon
         assert [e['role'] for e in events] == ['user', 'assistant', 'tool', 'assistant']
         assert not validate_execution_links(events)
         assert len({e['_event_id'] for e in events}) == 4
-        from nanobot.agent.tools.read_provenance import parse_read_receipt, root_binding
+        from kohaku.agent.tools.read_provenance import parse_read_receipt, root_binding
         receipt = parse_read_receipt(events[2]['_source_origin'])
         assert receipt.matches(events[2]['content'])
         assert receipt.source_access.relative_path == 'sample.txt'
@@ -250,7 +250,7 @@ async def test_source_reload_ignores_archive_cursor_and_fresh_excludes_old_input
 
 
 async def test_source_nested_planner_stream_does_not_leak_into_root_history(engine_config, monkeypatch):
-    from nanobot.session.execution_owner import ExecutionOwner
+    from kohaku.session.execution_owner import ExecutionOwner
 
     provider = ScriptedProvider([
         LLMResponse(content=None, tool_calls=[ToolCallRequest(id='plan', name='plan_task', arguments={'objective': 'fixture plan'})]),
@@ -349,7 +349,7 @@ async def test_source_write_failure_stops_before_next_effect(engine_config, monk
 
 
 async def test_source_large_result_is_retained_without_legacy_offload(engine_config, monkeypatch):
-    from nanobot.agent.tools.base import Tool
+    from kohaku.agent.tools.base import Tool
     class Large(Tool):
         name = 'large_fixture'
         description = 'fixture'
@@ -363,7 +363,7 @@ async def test_source_large_result_is_retained_without_legacy_offload(engine_con
     loop = AgentLoop.from_config(engine_config, tool_registry=ToolRegistry(), provider=provider)
     loop.tools.register(Large())
     backend = upgrade(loop)
-    monkeypatch.setattr('nanobot.agent.context_governance.maybe_persist_tool_result', Mock(side_effect=AssertionError('legacy offload')))
+    monkeypatch.setattr('kohaku.agent.context_governance.maybe_persist_tool_result', Mock(side_effect=AssertionError('legacy offload')))
     try:
         result = await loop.execute_turn(TurnRequest(content='get fixture', session_key='cli:source'))
         assert result.error is None, result.error
@@ -479,7 +479,7 @@ async def test_source_waiter_does_not_consume_approval_before_owner_releases(eng
     import asyncio
     from unittest.mock import AsyncMock
 
-    from nanobot.session.execution_owner import acquire_execution
+    from kohaku.session.execution_owner import acquire_execution
 
     provider = ScriptedProvider([LLMResponse(content='done')])
     loop = AgentLoop.from_config(engine_config, tool_registry=ToolRegistry(), provider=provider)
@@ -534,7 +534,7 @@ async def test_source_metadata_finalization_preserves_concurrent_title(engine_co
 
 
 async def test_source_initial_transcript_binds_actual_events_and_fresh_scope(engine_config, monkeypatch):
-    from nanobot.session.source_projection import RuntimeNode, SourceNode
+    from kohaku.session.source_projection import RuntimeNode, SourceNode
 
     provider = ScriptedProvider([LLMResponse(content='first'), LLMResponse(content='second'),
                                  LLMResponse(content='fresh')])
@@ -594,7 +594,7 @@ async def test_malformed_retry_chain_returns_final_recorded_identity(engine_conf
 
 
 async def test_repeated_provider_call_ids_keep_exact_tool_replay_bindings(engine_config, monkeypatch):
-    from nanobot.session.source_projection import SourceNode
+    from kohaku.session.source_projection import SourceNode
 
     (engine_config.workspace_path / 'same.txt').write_text('same result')
     provider = ScriptedProvider([
@@ -630,7 +630,7 @@ async def test_repeated_provider_call_ids_keep_exact_tool_replay_bindings(engine
 
 @pytest.mark.parametrize('mode', ['length', 'continuation'])
 async def test_source_runtime_continuations_preserve_replay_provenance(engine_config, monkeypatch, mode):
-    from nanobot.session.source_projection import RuntimeNode, SourceNode
+    from kohaku.session.source_projection import RuntimeNode, SourceNode
 
     provider = ScriptedProvider([LLMResponse(content='segment', finish_reason='length' if mode == 'length' else 'stop'),
                                  LLMResponse(content='complete')])
@@ -668,7 +668,7 @@ async def test_source_runtime_continuations_preserve_replay_provenance(engine_co
 
 @pytest.mark.parametrize('mode', ['error', 'max_iterations'])
 async def test_legacy_terminal_replay_keeps_existing_replacement_behavior(mode):
-    from nanobot.agent.runner import AgentRunner
+    from kohaku.agent.runner import AgentRunner
     from tests.agent.runner_helpers import make_run_spec
 
     provider = ScriptedProvider([LLMResponse(content='failure', finish_reason='error')])
@@ -714,7 +714,7 @@ async def test_only_validated_source_request_input_is_acknowledged(engine_config
 
 
 async def test_unbound_source_hook_mutation_stops_before_transport(engine_config, monkeypatch):
-    from nanobot.agent.hook import AgentHook
+    from kohaku.agent.hook import AgentHook
 
     class MutatingHook(AgentHook):
         async def before_iteration(self, context):
@@ -767,7 +767,7 @@ async def test_cancelled_source_request_discards_ticket(engine_config, monkeypat
 async def test_real_source_turn_reuses_scoped_checkpoint_after_restart(engine_config, scope):
     from datetime import datetime, timezone
 
-    from nanobot.session.source import prefix_digest
+    from kohaku.session.source import prefix_digest
 
     first_provider = ScriptedProvider([LLMResponse(content='old evidence')])
     first = AgentLoop.from_config(engine_config, tool_registry=ToolRegistry(), provider=first_provider)
@@ -817,8 +817,8 @@ async def test_real_source_turn_reuses_scoped_checkpoint_after_restart(engine_co
 
 @pytest.mark.parametrize('replace_at', [0, 1, 2])
 async def test_source_tickets_follow_governor_resulting_view(engine_config, monkeypatch, replace_at):
-    from nanobot.session.source_projection import CheckpointNode, RuntimeNode, SourceNode
-    from nanobot.session.source_request import SourceRequestLedger, SourceTranscript
+    from kohaku.session.source_projection import CheckpointNode, RuntimeNode, SourceNode
+    from kohaku.session.source_request import SourceRequestLedger, SourceTranscript
 
     def malformed(text):
         return LLMResponse(content=text, finish_reason='tool_calls',
@@ -913,7 +913,7 @@ async def test_source_compaction_scope_and_live_transcript_follow_admission(engi
 
 
 async def test_real_pressure_compaction_publishes_checkpoint_and_reuses_after_restart(engine_config, monkeypatch):
-    from nanobot.providers.base import LLMUsage
+    from kohaku.providers.base import LLMUsage
 
     class PressureProvider(ScriptedProvider):
         def estimate_prompt_tokens(self, messages, tools, model):
@@ -976,8 +976,8 @@ async def test_real_pressure_compaction_publishes_checkpoint_and_reuses_after_re
 async def test_real_local_pressure_compaction_preserves_root_and_continues_length_recovery(engine_config, monkeypatch, mode):
     from copy import deepcopy
 
-    from nanobot.agent.context_governance import ContextGovernor
-    from nanobot.utils.runtime import build_length_recovery_message
+    from kohaku.agent.context_governance import ContextGovernor
+    from kohaku.utils.runtime import build_length_recovery_message
 
     class LocalPressureProvider(ScriptedProvider):
         async def chat(self, messages, **kwargs):
@@ -1092,7 +1092,7 @@ async def test_real_local_pressure_compaction_preserves_root_and_continues_lengt
 
 
 async def test_read_receipts_distinguish_repeated_provider_call_ids(engine_config, monkeypatch):
-    from nanobot.agent.tools.read_provenance import parse_read_receipt
+    from kohaku.agent.tools.read_provenance import parse_read_receipt
 
     for name in ('first', 'second'):
         (engine_config.workspace_path / name).write_text(name)
@@ -1122,11 +1122,11 @@ async def test_read_receipts_distinguish_repeated_provider_call_ids(engine_confi
 async def test_engine_reads_attested_artifact_after_restart_only_with_history_access(engine_config, tmp_path, fresh, disabled):
     import hashlib
 
-    from nanobot.agent.runner import AgentRunner
-    from nanobot.session.artifact import parse_artifact_descriptor
-    from nanobot.session.artifact_reader import ArtifactReader
-    from nanobot.session.artifact_store import PrivateArtifactStore
-    from nanobot.session.source_store import SourceSessionStore
+    from kohaku.agent.runner import AgentRunner
+    from kohaku.session.artifact import parse_artifact_descriptor
+    from kohaku.session.artifact_reader import ArtifactReader
+    from kohaku.session.artifact_store import PrivateArtifactStore
+    from kohaku.session.source_store import SourceSessionStore
     from tests.session.test_artifact import fixture
 
     (engine_config.workspace_path / 'file').write_text('historical artifact evidence')
@@ -1194,11 +1194,11 @@ async def test_engine_offloads_large_reads_and_retrieves_without_recursive_publi
     import re
     from copy import deepcopy
 
-    from nanobot.agent.runner import AgentRunner
-    from nanobot.session.artifact import published_artifacts
-    from nanobot.session.artifact_reader import ArtifactReader
-    from nanobot.session.artifact_store import PrivateArtifactStore
-    from nanobot.session.source import prefix_digest
+    from kohaku.agent.runner import AgentRunner
+    from kohaku.session.artifact import published_artifacts
+    from kohaku.session.artifact_reader import ArtifactReader
+    from kohaku.session.artifact_store import PrivateArtifactStore
+    from kohaku.session.source import prefix_digest
 
     for name in ('one', 'two'):
         (engine_config.workspace_path / name).write_text(name + 'x' * 50000)
@@ -1246,7 +1246,7 @@ async def test_engine_offloads_large_reads_and_retrieves_without_recursive_publi
     finally:
         await loop.aclose()
 
-    from nanobot.session.source_store import SourceSessionStore
+    from kohaku.session.source_store import SourceSessionStore
 
     restarted_provider = ScriptedProvider([LLMResponse(content='continued')])
     restarted = AgentLoop.from_config(engine_config, tool_registry=ToolRegistry(), provider=restarted_provider)
@@ -1274,10 +1274,10 @@ async def test_engine_offloads_attested_single_file_grep_with_configured_store(e
     import re
     from copy import deepcopy
 
-    from nanobot.agent.tools.read_provenance import parse_read_receipt
-    from nanobot.agent.tools.search import GrepTool
-    from nanobot.session.artifact import published_artifacts
-    from nanobot.session.source import prefix_digest
+    from kohaku.agent.tools.read_provenance import parse_read_receipt
+    from kohaku.agent.tools.search import GrepTool
+    from kohaku.session.artifact import published_artifacts
+    from kohaku.session.source import prefix_digest
 
     engine_config.artifacts.enabled = True
     grep_source = ''.join(f'needle {index:03d} ' + 'x' * 900 + '\n' for index in range(30))
@@ -1427,11 +1427,11 @@ async def test_engine_retrieval_pressure_checkpoint_restarts_with_admission(engi
     """A real retrieval receipt survives pressure compaction into the next invocation."""
     import hashlib
 
-    from nanobot.agent.runner import AgentRunner
-    from nanobot.session.artifact import parse_artifact_descriptor
-    from nanobot.session.artifact_reader import ArtifactReader
-    from nanobot.session.artifact_store import PrivateArtifactStore
-    from nanobot.session.source_store import SourceSessionStore
+    from kohaku.agent.runner import AgentRunner
+    from kohaku.session.artifact import parse_artifact_descriptor
+    from kohaku.session.artifact_reader import ArtifactReader
+    from kohaku.session.artifact_store import PrivateArtifactStore
+    from kohaku.session.source_store import SourceSessionStore
     from tests.session.test_artifact import fixture
 
     covered_result = 'covered retrieval result content for engine restart ' * 800

@@ -7,7 +7,7 @@ import math
 import pytest
 from pydantic import ValidationError
 
-from nanobot.config.schema import AgentDefaults, Config
+from kohaku.config.schema import AgentDefaults, Config
 
 
 def test_source_compaction_defaults_and_config_aliases() -> None:

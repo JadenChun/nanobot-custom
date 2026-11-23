@@ -4,12 +4,12 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
-from nanobot.agent.loop import AgentLoop
-from nanobot.agent.tools.registry import ToolRegistry
-from nanobot.agent.turn import TraceMode, TurnRequest
-from nanobot.bus.events import InboundMessage
-from nanobot.config.schema import Config
-from nanobot.providers.base import GenerationSettings, LLMProvider, LLMResponse, ToolCallRequest
+from kohaku.agent.loop import AgentLoop
+from kohaku.agent.tools.registry import ToolRegistry
+from kohaku.agent.turn import TraceMode, TurnRequest
+from kohaku.bus.events import InboundMessage
+from kohaku.config.schema import Config
+from kohaku.providers.base import GenerationSettings, LLMProvider, LLMResponse, ToolCallRequest
 
 
 class ScriptedProvider(LLMProvider):
@@ -48,9 +48,9 @@ async def test_representative_adapters_delegate_exactly_one_execute_turn(
             response = await loop.process_direct("one", session_key="cli:one")
             assert response is not None and response.content == "classic result"
         elif adapter == "sdk":
-            from nanobot.nanobot import Nanobot
+            from kohaku.kohaku import Kohaku
 
-            result = await Nanobot(loop).run("one", session_key="sdk:one")
+            result = await Kohaku(loop).run("one", session_key="sdk:one")
             assert result.content == "sdk result"
         else:
             await loop._dispatch(InboundMessage(
@@ -68,7 +68,7 @@ async def test_representative_adapters_delegate_exactly_one_execute_turn(
 def engine_config(tmp_path, monkeypatch):
     # This fixture alone opens guarded construction with a deterministic provider.
     # Production guard code and all activation gates remain unchanged.
-    monkeypatch.setattr('nanobot.migration_guard.require_runtime_ready', lambda: None)
+    monkeypatch.setattr('kohaku.migration_guard.require_runtime_ready', lambda: None)
     monkeypatch.setattr('subprocess.Popen', Mock(side_effect=AssertionError('process execution')))
     for target in ('socket.socket.connect', 'socket.socket.connect_ex', 'socket.create_connection', 'socket.getaddrinfo'):
         monkeypatch.setattr(target, Mock(side_effect=AssertionError('outbound network access')))
@@ -177,7 +177,7 @@ async def test_concurrent_real_delegation_keeps_admitted_runtime(engine_config):
     import asyncio
     from dataclasses import replace
 
-    from nanobot.utils.llm_runtime import LLMRuntime
+    from kohaku.utils.llm_runtime import LLMRuntime
 
     class MutatingProvider(ScriptedProvider):
         def __init__(self, name, limit):

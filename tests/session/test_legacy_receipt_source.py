@@ -7,8 +7,8 @@ import json
 
 import pytest
 
-from nanobot.agent.memory_recovery import MemoryReceipt
-from nanobot.session.legacy_receipt_source import (
+from kohaku.agent.memory_recovery import MemoryReceipt
+from kohaku.session.legacy_receipt_source import (
     LegacyReceiptSourceError,
     patch_legacy_receipt_source,
 )
@@ -367,7 +367,7 @@ def test_receipt_offsets_must_be_exact_integers_and_nonempty() -> None:
 
 
 def test_input_and_output_limits_are_checked(monkeypatch: pytest.MonkeyPatch) -> None:
-    import nanobot.session.legacy_receipt_source as source_module
+    import kohaku.session.legacy_receipt_source as source_module
 
     message = {"role": "user", "content": "hello"}
     raw = _document({"_type": "metadata"}, [message])
@@ -380,7 +380,7 @@ def test_input_and_output_limits_are_checked(monkeypatch: pytest.MonkeyPatch) ->
 
 
 def test_record_and_nesting_budgets_are_checked(monkeypatch: pytest.MonkeyPatch) -> None:
-    import nanobot.session.legacy_receipt_source as source_module
+    import kohaku.session.legacy_receipt_source as source_module
 
     messages = [{"role": "user", "content": "one"}, {"role": "assistant", "content": "two"}]
     raw = _document({"_type": "metadata"}, messages)
@@ -397,7 +397,7 @@ def test_record_and_nesting_budgets_are_checked(monkeypatch: pytest.MonkeyPatch)
 def test_decoded_node_budget_is_cumulative_across_records(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    import nanobot.session.legacy_receipt_source as source_module
+    import kohaku.session.legacy_receipt_source as source_module
 
     messages = [
         {"role": "user", "content": "one"},
@@ -411,7 +411,7 @@ def test_decoded_node_budget_is_cumulative_across_records(
 def test_decoded_node_budget_rejects_wide_shallow_arrays_before_expansion(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    import nanobot.session.legacy_receipt_source as source_module
+    import kohaku.session.legacy_receipt_source as source_module
 
     message = {"role": "user", "content": list(range(100))}
     raw = _document({"_type": "metadata"}, [message])

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from nanobot.remote import tailscale
+from kohaku.remote import tailscale
 
 
 def test_missing_tailscale_cli_is_reported(monkeypatch: pytest.MonkeyPatch) -> None:

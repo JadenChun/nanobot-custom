@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "nanobot-desktop-setup-ui",
+      "name": "kohaku-desktop-setup-ui",
       "dependencies": {
         "@tauri-apps/api": "2.12.4",
       },

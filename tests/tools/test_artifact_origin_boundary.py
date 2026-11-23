@@ -6,8 +6,8 @@ from collections.abc import Callable
 
 import pytest
 
-from nanobot.agent.tools import read_provenance
-from nanobot.session import artifact
+from kohaku.agent.tools import read_provenance
+from kohaku.session import artifact
 
 
 def _origin_record(**changes: object) -> dict[str, object]:

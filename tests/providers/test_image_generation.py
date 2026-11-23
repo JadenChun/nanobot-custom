@@ -7,7 +7,7 @@ from typing import Any
 import httpx
 import pytest
 
-from nanobot.providers.image_generation import (
+from kohaku.providers.image_generation import (
     AIHubMixImageGenerationClient,
     CodexImageGenerationClient,
     CustomImageGenerationClient,
@@ -112,7 +112,7 @@ def generated_image_downloads(monkeypatch) -> list[tuple[str, str | None]]:
         return PNG_DATA_URL
 
     monkeypatch.setattr(
-        "nanobot.providers.image_generation._download_image_data_url",
+        "kohaku.providers.image_generation._download_image_data_url",
         download,
     )
     return downloads
@@ -1058,7 +1058,7 @@ async def test_openai_reference_image_above_limit_is_refused_before_upload(
     ref = tmp_path / "ref.png"
     ref.write_bytes(PNG_BYTES)
     monkeypatch.setattr(
-        "nanobot.providers.image_generation.MAX_REFERENCE_IMAGE_BYTES",
+        "kohaku.providers.image_generation.MAX_REFERENCE_IMAGE_BYTES",
         len(PNG_BYTES) - 1,
     )
     fake = FakeClient(FakeResponse({"data": [{"b64_json": RAW_B64}]}))
@@ -1325,7 +1325,7 @@ async def test_codex_payload_and_response(monkeypatch) -> None:
         return fn(*args, **kwargs)
 
     monkeypatch.setattr("asyncio.to_thread", fake_to_thread)
-    monkeypatch.setattr("nanobot.providers.codex_auth.get_token", lambda: FakeToken())
+    monkeypatch.setattr("kohaku.providers.codex_auth.get_token", lambda: FakeToken())
 
     sse_lines = [
         'data: {"type":"response.output_item.added","item":{"id":"ig_1","type":"image_generation_call","status":"in_progress"}}',
@@ -1381,7 +1381,7 @@ async def test_codex_proxy_applies_to_oauth_and_http(monkeypatch) -> None:
         return SimpleNamespace(account_id="acct-123", access="oauth-token")
 
     monkeypatch.setattr("asyncio.to_thread", fake_to_thread)
-    monkeypatch.setattr("nanobot.providers.codex_auth.get_token", fake_get_token)
+    monkeypatch.setattr("kohaku.providers.codex_auth.get_token", fake_get_token)
 
     class FakeAsyncClient:
         def __init__(self, **kwargs: Any) -> None:
@@ -1406,7 +1406,7 @@ async def test_codex_proxy_applies_to_oauth_and_http(monkeypatch) -> None:
             )
 
     monkeypatch.setattr(
-        "nanobot.providers.image_generation.httpx.AsyncClient",
+        "kohaku.providers.image_generation.httpx.AsyncClient",
         FakeAsyncClient,
     )
     client = CodexImageGenerationClient(api_key=None, proxy=proxy)
@@ -1432,7 +1432,7 @@ async def test_codex_stops_reading_after_completed_event(monkeypatch) -> None:
         return fn(*args, **kwargs)
 
     monkeypatch.setattr("asyncio.to_thread", fake_to_thread)
-    monkeypatch.setattr("nanobot.providers.codex_auth.get_token", lambda: FakeToken())
+    monkeypatch.setattr("kohaku.providers.codex_auth.get_token", lambda: FakeToken())
 
     fake = FakeClient(CodexStreamingCompleteThenErrorResponse({}, sse_lines=[]))
     client = CodexImageGenerationClient(
@@ -1458,7 +1458,7 @@ async def test_codex_strips_model_prefix(monkeypatch) -> None:
         return fn(*args, **kwargs)
 
     monkeypatch.setattr("asyncio.to_thread", fake_to_thread)
-    monkeypatch.setattr("nanobot.providers.codex_auth.get_token", lambda: FakeToken())
+    monkeypatch.setattr("kohaku.providers.codex_auth.get_token", lambda: FakeToken())
 
     fake = FakeClient(FakeResponse({}, sse_lines=[
         f'data: {{"type":"response.output_item.done","item":{{"type":"image_generation_call","result":"{PNG_DATA_URL}"}}}}',
@@ -1501,7 +1501,7 @@ async def test_codex_no_images_raises(monkeypatch) -> None:
         return fn(*args, **kwargs)
 
     monkeypatch.setattr("asyncio.to_thread", fake_to_thread)
-    monkeypatch.setattr("nanobot.providers.codex_auth.get_token", lambda: FakeToken())
+    monkeypatch.setattr("kohaku.providers.codex_auth.get_token", lambda: FakeToken())
 
     fake = FakeClient(FakeResponse({}, sse_lines=[
         'data: {"type":"response.completed","response":{"status":"completed"}}',
@@ -1530,7 +1530,7 @@ async def test_codex_extracts_text_content(monkeypatch) -> None:
         return fn(*args, **kwargs)
 
     monkeypatch.setattr("asyncio.to_thread", fake_to_thread)
-    monkeypatch.setattr("nanobot.providers.codex_auth.get_token", lambda: FakeToken())
+    monkeypatch.setattr("kohaku.providers.codex_auth.get_token", lambda: FakeToken())
 
     fake = FakeClient(FakeResponse({}, sse_lines=[
         'data: {"type":"response.output_text.delta","delta":"Here "}',
@@ -1566,7 +1566,7 @@ async def test_codex_json_result_format(monkeypatch) -> None:
         return fn(*args, **kwargs)
 
     monkeypatch.setattr("asyncio.to_thread", fake_to_thread)
-    monkeypatch.setattr("nanobot.providers.codex_auth.get_token", lambda: FakeToken())
+    monkeypatch.setattr("kohaku.providers.codex_auth.get_token", lambda: FakeToken())
 
     fake = FakeClient(FakeResponse({}, sse_lines=[
         f'data: {{"type":"response.output_item.done","item":{{"type":"image_generation_call","result":{{"image_url":"{PNG_DATA_URL}"}}}}}}',
@@ -1741,7 +1741,7 @@ class ModelScopeFakeClient:
 def _modelscope_fast_poll(monkeypatch) -> None:
     """Skip the real asyncio.sleep between ModelScope poll attempts."""
     monkeypatch.setattr(
-        "nanobot.providers.image_generation._MODELSCOPE_POLL_INTERVAL_S", 0.0
+        "kohaku.providers.image_generation._MODELSCOPE_POLL_INTERVAL_S", 0.0
     )
 
 
@@ -1926,7 +1926,7 @@ async def test_modelscope_image_generation_extra_body_passthrough() -> None:
 async def test_modelscope_image_generation_poll_timeout(monkeypatch) -> None:
     """Polling that never reaches SUCCEED/FAILED raises a timeout error."""
     monkeypatch.setattr(
-        "nanobot.providers.image_generation._MODELSCOPE_POLL_MAX_ATTEMPTS", 3
+        "kohaku.providers.image_generation._MODELSCOPE_POLL_MAX_ATTEMPTS", 3
     )
     submit = FakeResponse({"task_id": "t1"})
     # Always PENDING — never resolves.

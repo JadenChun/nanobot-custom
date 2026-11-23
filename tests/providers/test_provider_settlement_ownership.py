@@ -10,14 +10,14 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from nanobot.providers import conversation_state as state_module
-from nanobot.providers.base import (
+from kohaku.providers import conversation_state as state_module
+from kohaku.providers.base import (
     LLMProvider,
     LLMResponse,
     ProviderConversationState,
     ProviderConversationTransportReceipt,
 )
-from nanobot.providers.conversation_state import (
+from kohaku.providers.conversation_state import (
     ConversationRequestBinding,
     ProviderConversationStateController,
     ProviderStateSettlement,

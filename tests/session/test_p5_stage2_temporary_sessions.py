@@ -9,19 +9,19 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from websockets.datastructures import Headers
 
-from nanobot.bus.events import (
+from kohaku.bus.events import (
     INBOUND_META_RUNTIME_CONTROL,
     RUNTIME_CONTROL_SESSION_DISCARD,
     OutboundMessage,
 )
-from nanobot.bus.queue import MessageBus
-from nanobot.channels.websocket.runtime import WebSocketChannel, WebSocketConfig
-from nanobot.channels.websocket.tests.ws_test_client import WsTestClient
-from nanobot.session import webui_turns as wth
-from nanobot.session.manager import Session, SessionManager
-from nanobot.session.runtime_authority import DurableSessionAuthority, OfflineSessionOperator
-from nanobot.webui.gateway_services import build_gateway_services
-from nanobot.webui.transcript import read_transcript_lines
+from kohaku.bus.queue import MessageBus
+from kohaku.channels.websocket.runtime import WebSocketChannel, WebSocketConfig
+from kohaku.channels.websocket.tests.ws_test_client import WsTestClient
+from kohaku.session import webui_turns as wth
+from kohaku.session.manager import Session, SessionManager
+from kohaku.session.runtime_authority import DurableSessionAuthority, OfflineSessionOperator
+from kohaku.webui.gateway_services import build_gateway_services
+from kohaku.webui.transcript import read_transcript_lines
 from tests.session.test_p5_stage2_consumers import state
 
 
@@ -161,7 +161,7 @@ def test_cancellation_insertion_holds_privacy_mutex_until_complete(tmp_path):
     def publish():
         nonlocal publication_thread
         publication_thread = get_ident()
-        from nanobot.session.manager import SessionPolicy
+        from kohaku.session.manager import SessionPolicy
         manager._remember(Session(key=key, policy=SessionPolicy(persist=False)))
         manager.invalidate(key)
         published.set()
@@ -182,9 +182,9 @@ def test_cancellation_insertion_holds_privacy_mutex_until_complete(tmp_path):
 
 @pytest.fixture(autouse=True)
 def isolated_webui(tmp_path, monkeypatch):
-    monkeypatch.setattr("nanobot.config.loader._current_config_path", tmp_path / "config.json")
-    monkeypatch.setattr("nanobot.config.paths.get_data_dir", lambda: tmp_path)
-    monkeypatch.setattr("nanobot.webui.workspaces.get_webui_dir", lambda: tmp_path / "webui")
+    monkeypatch.setattr("kohaku.config.loader._current_config_path", tmp_path / "config.json")
+    monkeypatch.setattr("kohaku.config.paths.get_data_dir", lambda: tmp_path)
+    monkeypatch.setattr("kohaku.webui.workspaces.get_webui_dir", lambda: tmp_path / "webui")
 
 
 @pytest.mark.parametrize("disposal", ["discard", "disconnect"])
@@ -329,7 +329,7 @@ def test_unmanaged_activation_rejects_durable_collision_even_with_live_transient
 async def test_temporary_mode_controls_own_scope_after_full_is_enabled(tmp_path, monkeypatch):
     # Exercise transient permission admission without launching a native process.
     monkeypatch.setattr(
-        "nanobot.agent.tools.native_process.native_supervisor_available",
+        "kohaku.agent.tools.native_process.native_supervisor_available",
         lambda: True,
     )
     workspace = tmp_path / "workspace"

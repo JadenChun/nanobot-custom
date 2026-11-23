@@ -19,17 +19,17 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from nanobot.agent.loop import AgentLoop
-from nanobot.agent.tools.file_state import FileStateStore
-from nanobot.agent.turn import TurnRequest, TurnResult
-from nanobot.bus.events import InboundMessage
-from nanobot.command.builtin import cmd_new, register_builtin_commands
-from nanobot.command.router import CommandContext, CommandRouter
-from nanobot.config.schema import AgentDefaults, Config
-from nanobot.providers.base import GenerationSettings
-from nanobot.session.keys import UNIFIED_SESSION_KEY
-from nanobot.session.manager import SessionManager
-from nanobot.utils.llm_runtime import LLMRuntime
+from kohaku.agent.loop import AgentLoop
+from kohaku.agent.tools.file_state import FileStateStore
+from kohaku.agent.turn import TurnRequest, TurnResult
+from kohaku.bus.events import InboundMessage
+from kohaku.command.builtin import cmd_new, register_builtin_commands
+from kohaku.command.router import CommandContext, CommandRouter
+from kohaku.config.schema import AgentDefaults, Config
+from kohaku.providers.base import GenerationSettings
+from kohaku.session.keys import UNIFIED_SESSION_KEY
+from kohaku.session.manager import SessionManager
+from kohaku.utils.llm_runtime import LLMRuntime
 from tests.agent.p6_admitted_fixtures import (
     AgentInputs,
 )
@@ -204,8 +204,8 @@ class TestUnifiedSessionConfig:
         assert config.agents.defaults.unified_session is True
 
     def test_onboard_generated_config_contains_unified_session(self, tmp_path: Path):
-        """save_config() writes 'unifiedSession' into config.json (simulates nanobot onboard)."""
-        from nanobot.config.loader import save_config
+        """save_config() writes 'unifiedSession' into config.json (simulates kohaku onboard)."""
+        from kohaku.config.loader import save_config
 
         config = Config()
         config_path = tmp_path / "config.json"
@@ -378,7 +378,7 @@ class TestStopCommandWithUnifiedSession:
     @pytest.mark.asyncio
     async def test_stop_command_finds_task_in_unified_mode(self, admitted_async, tmp_path: Path):
         """cmd_stop can cancel tasks when unified_session=True."""
-        from nanobot.command.builtin import cmd_stop
+        from kohaku.command.builtin import cmd_stop
 
         loop = await admitted_async(tmp_path, _build_loop(True))
 
@@ -410,7 +410,7 @@ class TestStopCommandWithUnifiedSession:
     @pytest.mark.asyncio
     async def test_stop_command_uses_effective_key_without_session_override(self, admitted_async, tmp_path: Path):
         """Priority /stop must cancel the unified session even before dispatch rewrites the message."""
-        from nanobot.command.builtin import cmd_stop
+        from kohaku.command.builtin import cmd_stop
 
         loop = await admitted_async(tmp_path, _build_loop(True))
 
@@ -435,7 +435,7 @@ class TestStopCommandWithUnifiedSession:
     @pytest.mark.asyncio
     async def test_stop_command_cross_channel_in_unified_mode(self, admitted_async, tmp_path: Path):
         """In unified mode, /stop from one channel cancels tasks from another channel."""
-        from nanobot.command.builtin import cmd_stop
+        from kohaku.command.builtin import cmd_stop
 
         loop = await admitted_async(tmp_path, _build_loop(True))
 

@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test"
 
 import {
-  NanobotClient,
+  KohakuClient,
   fetchDelegatedChildHistory,
   fetchDelegatedChildren,
   fetchHistory,
@@ -139,7 +139,7 @@ function stopTarget(): StopExpectation {
 }
 
 async function connectClient(): Promise<{
-  client: NanobotClient
+  client: KohakuClient
   socket: FakeSocket
   events: InboundEvent[]
   statuses: string[]
@@ -150,7 +150,7 @@ async function connectClient(): Promise<{
     configurable: true,
     value: class extends FakeSocket {},
   })
-  const client = new NanobotClient({
+  const client = new KohakuClient({
     url: "ws://tui.test",
     chatId: "chat",
     reconnect: false,

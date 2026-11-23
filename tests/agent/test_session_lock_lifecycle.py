@@ -7,7 +7,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from nanobot.agent.loop import AgentLoop
+from kohaku.agent.loop import AgentLoop
 from tests.agent.p6_admitted_fixtures import AgentInputs
 from tests.agent.p6_admitted_fixtures import admitted_async as admitted_async
 from tests.agent.p6_admitted_fixtures import admitted_sync as admitted_sync

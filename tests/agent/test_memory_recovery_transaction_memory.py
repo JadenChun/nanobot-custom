@@ -11,16 +11,16 @@ from typing import Any
 
 import pytest
 
-from nanobot.agent import memory_recovery_conversion_apply as conversion_apply
-from nanobot.agent import memory_recovery_conversion_finalize as conversion_finalize
-from nanobot.agent import memory_recovery_conversion_runtime as conversion_prepare
-from nanobot.agent import memory_recovery_manifest as transaction_manifest
-from nanobot.agent import memory_recovery_storage as storage
-from nanobot.agent import memory_recovery_target_mutation as mutation
-from nanobot.agent import memory_recovery_transaction as transaction
-from nanobot.agent import memory_recovery_transaction_history as history
-from nanobot.agent import memory_recovery_transaction_memory as memory_stage
-from nanobot.session.manager import JsonlSessionStore
+from kohaku.agent import memory_recovery_conversion_apply as conversion_apply
+from kohaku.agent import memory_recovery_conversion_finalize as conversion_finalize
+from kohaku.agent import memory_recovery_conversion_runtime as conversion_prepare
+from kohaku.agent import memory_recovery_manifest as transaction_manifest
+from kohaku.agent import memory_recovery_storage as storage
+from kohaku.agent import memory_recovery_target_mutation as mutation
+from kohaku.agent import memory_recovery_transaction as transaction
+from kohaku.agent import memory_recovery_transaction_history as history
+from kohaku.agent import memory_recovery_transaction_memory as memory_stage
+from kohaku.session.manager import JsonlSessionStore
 from tests.agent.test_memory_recovery_transaction_prepare import (
     _SESSION_KEY,
     _WORKSPACE_ID,

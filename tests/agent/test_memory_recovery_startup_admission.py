@@ -11,20 +11,20 @@ from types import SimpleNamespace
 
 import pytest
 
-from nanobot.agent import memory_recovery as receipt_codec
-from nanobot.agent import memory_recovery_coordinator as coordinator
-from nanobot.agent import memory_recovery_quarantine_storage as quarantine
-from nanobot.agent import memory_recovery_receipt_finalizer as finalizer
-from nanobot.agent import memory_recovery_startup_admission as admission
-from nanobot.agent import memory_recovery_storage as storage
-from nanobot.agent.memory_recovery import MemoryReceiptRecoveryRequiredError
-from nanobot.agent.memory_recovery_historical_seal import validate_historical_seals_under_gate
-from nanobot.agent.memory_recovery_startup_admission import (
+from kohaku.agent import memory_recovery as receipt_codec
+from kohaku.agent import memory_recovery_coordinator as coordinator
+from kohaku.agent import memory_recovery_quarantine_storage as quarantine
+from kohaku.agent import memory_recovery_receipt_finalizer as finalizer
+from kohaku.agent import memory_recovery_startup_admission as admission
+from kohaku.agent import memory_recovery_storage as storage
+from kohaku.agent.memory_recovery import MemoryReceiptRecoveryRequiredError
+from kohaku.agent.memory_recovery_historical_seal import validate_historical_seals_under_gate
+from kohaku.agent.memory_recovery_startup_admission import (
     StartupReceiptAdmissionError,
     admitted_startup_mutation,
     require_startup_receipt_admission,
 )
-from nanobot.session.manager import JsonlSessionStore
+from kohaku.session.manager import JsonlSessionStore
 from tests.agent.test_memory_recovery_quarantine_storage import (
     _layout,
     _publish_v1_committed,

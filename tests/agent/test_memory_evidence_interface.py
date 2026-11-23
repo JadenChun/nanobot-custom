@@ -10,18 +10,18 @@ from types import SimpleNamespace
 
 import pytest
 
-from nanobot.agent import memory_recovery as receipt_codec
-from nanobot.agent import memory_recovery_conversion as conversion
-from nanobot.agent import memory_recovery_conversion_apply as application
-from nanobot.agent import memory_recovery_conversion_finalize as finalization
-from nanobot.agent import memory_recovery_conversion_runtime as conversion_runtime
-from nanobot.agent import memory_recovery_storage as storage
-from nanobot.agent import memory_recovery_transaction as transaction
-from nanobot.agent import memory_recovery_transaction_history as history
-from nanobot.agent import memory_recovery_transaction_memory as memory_stage
-from nanobot.agent import memory_recovery_transaction_prepare as preparation
-from nanobot.agent.memory_recovery_manifest import MemoryRecoveryManifest
-from nanobot.session.manager import JsonlSessionStore
+from kohaku.agent import memory_recovery as receipt_codec
+from kohaku.agent import memory_recovery_conversion as conversion
+from kohaku.agent import memory_recovery_conversion_apply as application
+from kohaku.agent import memory_recovery_conversion_finalize as finalization
+from kohaku.agent import memory_recovery_conversion_runtime as conversion_runtime
+from kohaku.agent import memory_recovery_storage as storage
+from kohaku.agent import memory_recovery_transaction as transaction
+from kohaku.agent import memory_recovery_transaction_history as history
+from kohaku.agent import memory_recovery_transaction_memory as memory_stage
+from kohaku.agent import memory_recovery_transaction_prepare as preparation
+from kohaku.agent.memory_recovery_manifest import MemoryRecoveryManifest
+from kohaku.session.manager import JsonlSessionStore
 from tests.agent.test_memory_recovery_transaction_prepare import (
     _SESSION_KEY,
     _WORKSPACE_ID,

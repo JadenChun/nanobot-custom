@@ -1,6 +1,6 @@
-# How to Configure Model Fallback in nanobot
+# How to Configure Model Fallback in Kohaku
 
-Model fallback lets nanobot try a primary model first, then fall back to one or
+Model fallback lets Kohaku try a primary model first, then fall back to one or
 more named presets when the primary provider fails or rate-limits.
 
 ## What you will build
@@ -17,16 +17,17 @@ outages, local model downtime, or cost-sensitive routing.
 ## Install
 
 ```bash
-python -m pip install nanobot-ai
-nanobot onboard --wizard
-nanobot agent -m "Hello!"
+# Run from the root of a clone of this repository
+python -m pip install -e .
+kohaku onboard --wizard
+kohaku agent -m "Hello!"
 ```
 
 Verify each provider works before adding it as a fallback.
 
 ## Minimal working example
 
-Merge this shape into `~/.nanobot/config.json` and replace provider/model names
+Merge this shape into `~/.kohaku/config.json` and replace provider/model names
 with ones you control:
 
 ```json
@@ -85,7 +86,7 @@ for common providers.
 - If output is truncated after fallback, review `maxTokens` and
   `contextWindowTokens`.
 
-## Related nanobot docs
+## Related Kohaku docs
 
 - [Providers and Models](../providers.md)
 - [Provider Cookbook: Fallback Presets](../provider-cookbook.md#recipe-fallback-presets)

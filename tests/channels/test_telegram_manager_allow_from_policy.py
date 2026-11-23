@@ -8,12 +8,12 @@ from typing import Any
 
 import pytest
 
-from nanobot.bus.events import OutboundMessage
-from nanobot.bus.queue import MessageBus
-from nanobot.channels.base import BaseChannel
-from nanobot.channels.manager import ChannelManager
-from nanobot.channels.plugin import load_channel_package
-from nanobot.config.schema import Config
+from kohaku.bus.events import OutboundMessage
+from kohaku.bus.queue import MessageBus
+from kohaku.channels.base import BaseChannel
+from kohaku.channels.manager import ChannelManager
+from kohaku.channels.plugin import load_channel_package
+from kohaku.config.schema import Config
 
 
 class _ConfigBackedChannel(BaseChannel):
@@ -46,11 +46,11 @@ async def _telegram_manager(
     plugin = load_channel_package("telegram")
     assert plugin is not None
     monkeypatch.setattr(
-        "nanobot.channels.registry.discover_plugins",
+        "kohaku.channels.registry.discover_plugins",
         lambda enabled_names=None: {"telegram": plugin},
     )
     monkeypatch.setattr(
-        "nanobot.optional_features.check_enabled_channel_dependencies",
+        "kohaku.optional_features.check_enabled_channel_dependencies",
         lambda _enabled, _plugins: {},
     )
     config = Config.model_validate({"channels": {"telegram": section}})
@@ -94,11 +94,11 @@ async def test_initial_authorization_error_precedes_dependency_check(
         return {"telegram": "missing dependency"}
 
     monkeypatch.setattr(
-        "nanobot.channels.registry.discover_plugins",
+        "kohaku.channels.registry.discover_plugins",
         lambda enabled_names=None: {"telegram": plugin},
     )
     monkeypatch.setattr(
-        "nanobot.optional_features.check_enabled_channel_dependencies",
+        "kohaku.optional_features.check_enabled_channel_dependencies",
         fail_dependency_check,
     )
 
@@ -124,11 +124,11 @@ async def test_initial_authorization_error_precedes_runtime_load(
         raise RuntimeError("runtime load should not be reached")
 
     monkeypatch.setattr(
-        "nanobot.channels.registry.discover_plugins",
+        "kohaku.channels.registry.discover_plugins",
         lambda enabled_names=None: {"telegram": plugin},
     )
     monkeypatch.setattr(
-        "nanobot.optional_features.check_enabled_channel_dependencies",
+        "kohaku.optional_features.check_enabled_channel_dependencies",
         lambda _enabled, _plugins: {},
     )
     monkeypatch.setattr(type(plugin), "load_channel_class", fail_runtime_load)
@@ -180,7 +180,7 @@ async def test_hot_enable_rejects_empty_effective_allow_from_before_mutation(
     if allow_key is not None:
         proposed[allow_key] = []
     monkeypatch.setattr(
-        "nanobot.config.loader.load_config",
+        "kohaku.config.loader.load_config",
         lambda: _config_with_telegram(proposed),
     )
 
@@ -205,7 +205,7 @@ async def test_invalid_hot_update_preserves_valid_running_telegram(
     original_channel._running = True
     original_specs = dict(manager._channel_runtime_specs)
     monkeypatch.setattr(
-        "nanobot.config.loader.load_config",
+        "kohaku.config.loader.load_config",
         lambda: _config_with_telegram(
             {"enabled": True, "token": "replacement-token", "allowFrom": []}
         ),
@@ -231,7 +231,7 @@ async def test_valid_hot_enable_succeeds(
         {"enabled": False, "token": "test-token", "allowFrom": []},
     )
     monkeypatch.setattr(
-        "nanobot.config.loader.load_config",
+        "kohaku.config.loader.load_config",
         lambda: _config_with_telegram(
             {"enabled": True, "token": "test-token", "allowFrom": ["42"]}
         ),
@@ -282,7 +282,7 @@ def test_disabled_dict_backed_telegram_empty_allow_from_passes() -> None:
 
 def test_all_telegram_locale_help_requires_authorization_before_pairing() -> None:
     locale_dir = (
-        Path(__file__).parents[2] / "nanobot/channels/telegram/webui/locales"
+        Path(__file__).parents[2] / "kohaku/channels/telegram/webui/locales"
     )
     expected_help = (
         'Required: add at least one Telegram sender ID/username or "*". '

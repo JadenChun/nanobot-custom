@@ -6,15 +6,15 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from nanobot.agent.tools.context import RequestContext, request_context
-from nanobot.agent.tools.cron import CronTool
-from nanobot.agent.tools.message import MessageTool
-from nanobot.agent.tools.spawn import SpawnTool
-from nanobot.cron.service import CronService
-from nanobot.providers.base import GenerationSettings, LLMProvider
-from nanobot.runtime_context import RUNTIME_CONTEXT_INPUT_META, RuntimeContextBlock
-from nanobot.session.keys import UNIFIED_SESSION_KEY
-from nanobot.utils.llm_runtime import LLMRuntime
+from kohaku.agent.tools.context import RequestContext, request_context
+from kohaku.agent.tools.cron import CronTool
+from kohaku.agent.tools.message import MessageTool
+from kohaku.agent.tools.spawn import SpawnTool
+from kohaku.cron.service import CronService
+from kohaku.providers.base import GenerationSettings, LLMProvider
+from kohaku.runtime_context import RUNTIME_CONTEXT_INPUT_META, RuntimeContextBlock
+from kohaku.session.keys import UNIFIED_SESSION_KEY
+from kohaku.utils.llm_runtime import LLMRuntime
 
 
 def _runtime(model: str = "test-model") -> LLMRuntime:
@@ -381,7 +381,7 @@ async def test_cron_tool_no_context_returns_error(tmp_path) -> None:
 @pytest.mark.asyncio
 @pytest.mark.parametrize("entry", ["request", "turn"])
 async def test_cron_metadata_snapshot_detaches_and_drops_invalid_fields(tmp_path, entry) -> None:
-    from nanobot.agent.turn import DeliveryTarget, TurnContext, TurnRequest
+    from kohaku.agent.turn import DeliveryTarget, TurnContext, TurnRequest
 
     class Opaque:
         def __deepcopy__(self, memo):
@@ -468,7 +468,7 @@ async def test_cron_metadata_snapshot_detaches_and_drops_invalid_fields(tmp_path
 
 
 def test_cron_metadata_snapshot_without_turn_route() -> None:
-    from nanobot.agent.turn import TurnContext, TurnRequest
+    from kohaku.agent.turn import TurnContext, TurnRequest
 
     nested = {"items": ["retained"]}
     metadata = {"valid": nested, RUNTIME_CONTEXT_INPUT_META: "runtime", "opaque": object()}
@@ -482,8 +482,8 @@ def test_cron_metadata_snapshot_without_turn_route() -> None:
 
 @pytest.mark.parametrize("invalid_kind", ["opaque", "nonfinite", "cyclic"])
 def test_cron_metadata_snapshot_does_not_weaken_durable_validation(tmp_path, invalid_kind) -> None:
-    from nanobot.cron.definition_store import DefinitionStoreValidationError
-    from nanobot.cron.types import CronSchedule
+    from kohaku.cron.definition_store import DefinitionStoreValidationError
+    from kohaku.cron.types import CronSchedule
 
     cyclic = []
     cyclic.append(cyclic)
@@ -499,7 +499,7 @@ def test_cron_metadata_snapshot_does_not_weaken_durable_validation(tmp_path, inv
 
 @pytest.mark.asyncio
 async def test_cron_metadata_snapshot_retains_contextual_admission_fences(tmp_path) -> None:
-    from nanobot.agent.turn import DeliveryTarget, TurnContext, TurnRequest, TurnSource
+    from kohaku.agent.turn import DeliveryTarget, TurnContext, TurnRequest, TurnSource
 
     service = CronService(tmp_path / "jobs.json")
     tool = CronTool(service)

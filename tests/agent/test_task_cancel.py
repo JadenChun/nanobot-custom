@@ -7,8 +7,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from nanobot.bus.outbound_events import StreamDeltaEvent, StreamEndEvent
-from nanobot.providers.base import LLMResponse, ToolCallRequest
+from kohaku.bus.outbound_events import StreamDeltaEvent, StreamEndEvent
+from kohaku.providers.base import LLMResponse, ToolCallRequest
 from tests.agent import test_migration_engine as engine_fixtures
 from tests.agent.test_migration_engine import ScriptedProvider
 from tests.agent.test_migration_source_engine import upgrade
@@ -18,9 +18,9 @@ engine_config = engine_fixtures.engine_config
 
 def _make_loop(tmp_path, *, tools_config=None, provider=None):
     """Create an AgentLoop with the real canonical dependency graph."""
-    from nanobot.agent.loop import AgentLoop
-    from nanobot.bus.queue import MessageBus
-    from nanobot.config.schema import ToolsConfig
+    from kohaku.agent.loop import AgentLoop
+    from kohaku.bus.queue import MessageBus
+    from kohaku.config.schema import ToolsConfig
 
     bus = MessageBus()
     provider = provider or MagicMock()
@@ -30,7 +30,7 @@ def _make_loop(tmp_path, *, tools_config=None, provider=None):
 
     # Post-guard tests open only the constructor seam; turn execution runs
     # with the real context/session/subagent implementations below.
-    with patch("nanobot.migration_guard.require_runtime_ready"):
+    with patch("kohaku.migration_guard.require_runtime_ready"):
         loop = AgentLoop(
             bus=bus,
             provider=provider,
@@ -103,9 +103,9 @@ class TestActiveTaskTracking:
 class TestHandleStop:
     @pytest.mark.asyncio
     async def test_stop_no_active_task(self, tmp_path):
-        from nanobot.bus.events import InboundMessage
-        from nanobot.command.builtin import cmd_stop
-        from nanobot.command.router import CommandContext
+        from kohaku.bus.events import InboundMessage
+        from kohaku.command.builtin import cmd_stop
+        from kohaku.command.router import CommandContext
 
         loop, bus = _make_loop(tmp_path)
         msg = InboundMessage(channel="test", sender_id="u1", chat_id="c1", content="/stop")
@@ -169,9 +169,9 @@ class TestHandleStop:
 
     @pytest.mark.asyncio
     async def test_stop_cancels_active_task(self, tmp_path):
-        from nanobot.bus.events import InboundMessage
-        from nanobot.command.builtin import cmd_stop
-        from nanobot.command.router import CommandContext
+        from kohaku.bus.events import InboundMessage
+        from kohaku.command.builtin import cmd_stop
+        from kohaku.command.router import CommandContext
 
         loop, _bus = _make_loop(tmp_path)
         started = asyncio.Event()
@@ -203,9 +203,9 @@ class TestHandleStop:
 
     @pytest.mark.asyncio
     async def test_stop_cancels_multiple_tasks(self, tmp_path):
-        from nanobot.bus.events import InboundMessage
-        from nanobot.command.builtin import cmd_stop
-        from nanobot.command.router import CommandContext
+        from kohaku.bus.events import InboundMessage
+        from kohaku.command.builtin import cmd_stop
+        from kohaku.command.router import CommandContext
 
         loop, bus = _make_loop(tmp_path)
         events = [asyncio.Event(), asyncio.Event()]
@@ -248,7 +248,7 @@ class TestDispatch:
 
         monkeypatch.setattr(bus, "consume_inbound", consume_once_then_stop)
         monkeypatch.setattr(
-            "nanobot.agent.loop.logger.warning",
+            "kohaku.agent.loop.logger.warning",
             lambda message, *args, **kwargs: warnings.append(message),
         )
 
@@ -258,8 +258,8 @@ class TestDispatch:
         assert any("Ignoring leaked CancelledError" in warning for warning in warnings)
 
     def test_exec_tool_not_registered_when_disabled(self, tmp_path):
-        from nanobot.agent.tools.shell import ExecToolConfig
-        from nanobot.config.schema import ToolsConfig
+        from kohaku.agent.tools.shell import ExecToolConfig
+        from kohaku.config.schema import ToolsConfig
 
         loop, _bus = _make_loop(tmp_path, tools_config=ToolsConfig(exec=ExecToolConfig(enable=False)))
 
@@ -267,8 +267,8 @@ class TestDispatch:
 
     @pytest.mark.asyncio
     async def test_dispatch_processes_and_publishes(self, tmp_path):
-        from nanobot.agent.turn import TurnResult
-        from nanobot.bus.events import InboundMessage, OutboundMessage
+        from kohaku.agent.turn import TurnResult
+        from kohaku.bus.events import InboundMessage, OutboundMessage
 
         loop, bus = _make_loop(tmp_path)
         msg = InboundMessage(channel="test", sender_id="u1", chat_id="c1", content="hello")
@@ -289,8 +289,8 @@ class TestDispatch:
 
     @pytest.mark.asyncio
     async def test_dispatch_streaming_preserves_message_metadata(self, tmp_path):
-        from nanobot.agent.turn import TurnResult
-        from nanobot.bus.events import InboundMessage
+        from kohaku.agent.turn import TurnResult
+        from kohaku.bus.events import InboundMessage
 
         loop, bus = _make_loop(tmp_path)
         msg = InboundMessage(
@@ -329,8 +329,8 @@ class TestDispatch:
 
     @pytest.mark.asyncio
     async def test_same_session_dispatches_serialize(self, tmp_path):
-        from nanobot.agent.turn import TurnResult
-        from nanobot.bus.events import InboundMessage, OutboundMessage
+        from kohaku.agent.turn import TurnResult
+        from kohaku.bus.events import InboundMessage, OutboundMessage
 
         loop, bus = _make_loop(tmp_path)
         order = []
@@ -379,17 +379,17 @@ class TestRetiredBackgroundRoutes:
         assert loop.tools.get("delegate_task") is not None
 
     def test_subagent_scope_is_rejected_before_tool_construction(self):
-        from nanobot.agent.tools.loader import ToolLoader
-        from nanobot.agent.tools.registry import ToolRegistry
+        from kohaku.agent.tools.loader import ToolLoader
+        from kohaku.agent.tools.registry import ToolRegistry
 
         registry = ToolRegistry()
-        with patch("nanobot.migration_guard.require_runtime_ready"):
+        with patch("kohaku.migration_guard.require_runtime_ready"):
             with pytest.raises(ValueError, match="Unsupported runtime tool scope"):
                 ToolLoader().load(object(), registry, scope="subagent")
         assert registry.tool_names == []
 
     def test_foreground_worker_has_no_shell_or_nested_delegation(self, tmp_path):
-        from nanobot.agent.delegation import ForegroundAgentManager
+        from kohaku.agent.delegation import ForegroundAgentManager
 
         provider = MagicMock()
         provider.get_default_model.return_value = "test-model"
@@ -402,8 +402,8 @@ class TestRetiredBackgroundRoutes:
         assert tools.get("spawn") is None
 
     def test_disabled_exec_does_not_reopen_background_routes(self, tmp_path):
-        from nanobot.agent.tools.shell import ExecToolConfig
-        from nanobot.config.schema import ToolsConfig
+        from kohaku.agent.tools.shell import ExecToolConfig
+        from kohaku.config.schema import ToolsConfig
 
         loop, _bus = _make_loop(tmp_path, tools_config=ToolsConfig(exec=ExecToolConfig(enable=False)))
 
@@ -435,9 +435,9 @@ class TestForegroundResultRouting:
 
     @pytest.mark.asyncio
     async def test_foreground_plan_uses_parent_result(self, engine_config):
-        from nanobot.agent.loop import AgentLoop
-        from nanobot.agent.tools.registry import ToolRegistry
-        from nanobot.agent.turn import TurnRequest
+        from kohaku.agent.loop import AgentLoop
+        from kohaku.agent.tools.registry import ToolRegistry
+        from kohaku.agent.turn import TurnRequest
 
         provider = ScriptedProvider([
             LLMResponse(content=None, tool_calls=[ToolCallRequest(
@@ -464,7 +464,7 @@ class TestForegroundResultRouting:
             await loop.aclose()
 
     def test_read_only_foreground_roles_have_no_background_tools(self, tmp_path):
-        from nanobot.agent.delegation import ForegroundAgentManager
+        from kohaku.agent.delegation import ForegroundAgentManager
 
         provider = MagicMock()
         provider.get_default_model.return_value = "test-model"
@@ -477,20 +477,20 @@ class TestForegroundResultRouting:
             assert tools.get("delegate_task") is None
 
     def test_loader_does_not_register_background_tools_from_imports(self):
-        from nanobot.agent.tools.loader import ToolLoader
-        from nanobot.agent.tools.registry import ToolRegistry
+        from kohaku.agent.tools.loader import ToolLoader
+        from kohaku.agent.tools.registry import ToolRegistry
 
         registry = ToolRegistry()
-        with patch("nanobot.migration_guard.require_runtime_ready"):
+        with patch("kohaku.migration_guard.require_runtime_ready"):
             with pytest.raises(ValueError, match="Unsupported runtime tool scope"):
                 ToolLoader().load(object(), registry, scope="subagent")
         assert registry.tool_names == []
 
     @pytest.mark.asyncio
     async def test_foreground_worker_result_stays_in_parent_turn(self, engine_config):
-        from nanobot.agent.loop import AgentLoop
-        from nanobot.agent.tools.registry import ToolRegistry
-        from nanobot.agent.turn import TurnRequest
+        from kohaku.agent.loop import AgentLoop
+        from kohaku.agent.tools.registry import ToolRegistry
+        from kohaku.agent.turn import TurnRequest
 
         provider = ScriptedProvider([
             LLMResponse(content=None, tool_calls=[ToolCallRequest(

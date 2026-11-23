@@ -16,21 +16,21 @@ from types import SimpleNamespace
 
 import pytest
 
-from nanobot.agent.tools.execution import KnownToolResult
-from nanobot.agent.tools.filesystem import ReadFileTool
-from nanobot.agent.tools.registry import ToolRegistry
-from nanobot.session.artifact import (
+from kohaku.agent.tools.execution import KnownToolResult
+from kohaku.agent.tools.filesystem import ReadFileTool
+from kohaku.agent.tools.registry import ToolRegistry
+from kohaku.session.artifact import (
     ArtifactDescriptor,
     ArtifactValidationError,
     parse_artifact_descriptor,
 )
-from nanobot.session.artifact_store import ArtifactStorageError, PrivateArtifactStore
-from nanobot.session.execution_owner import (
+from kohaku.session.artifact_store import ArtifactStorageError, PrivateArtifactStore
+from kohaku.session.execution_owner import (
     ExecutionBusyError,
     ExecutionOwnershipError,
     acquire_execution,
 )
-from nanobot.session.idle_checkpoint import (
+from kohaku.session.idle_checkpoint import (
     IdleCheckpointCapture,
     IdleCheckpointConflictError,
     IdleCheckpointError,
@@ -38,13 +38,13 @@ from nanobot.session.idle_checkpoint import (
     IdlePolicyBinding,
     project_idle_root_nodes,
 )
-from nanobot.session.manager import JsonlSessionStore, Session
-from nanobot.session.source import prefix_digest
-from nanobot.session.source_compaction import SourceCompactionCandidate
-from nanobot.session.source_projection import CheckpointNode, source_nodes
-from nanobot.session.source_request import SourceTranscript
-from nanobot.session.source_store import SourceSessionStore
-from nanobot.session.turn_writer import SourceTurnWriter
+from kohaku.session.manager import JsonlSessionStore, Session
+from kohaku.session.source import prefix_digest
+from kohaku.session.source_compaction import SourceCompactionCandidate
+from kohaku.session.source_projection import CheckpointNode, source_nodes
+from kohaku.session.source_request import SourceTranscript
+from kohaku.session.source_store import SourceSessionStore
+from kohaku.session.turn_writer import SourceTurnWriter
 
 
 def _seed(backend: JsonlSessionStore, key: str = "test:idle"):
@@ -92,7 +92,7 @@ def _proposal(snapshot, *, references=(), identity="idle-checkpoint"):
 
 def _dependency_proof(capture: IdleCheckpointCapture, summary: str, descriptor):
     nodes = source_nodes(capture.snapshot.events)
-    from nanobot.session.artifact_projection import render_artifact_projection
+    from kohaku.session.artifact_projection import render_artifact_projection
 
     projected = tuple(
         render_artifact_projection(node, descriptor)
@@ -106,7 +106,7 @@ def _dependency_proof(capture: IdleCheckpointCapture, summary: str, descriptor):
         eligible_ids=frozenset(node.event_id for node in projected),
     )
     evidence = candidate.summary_evidence(candidate.boundaries[-1])
-    from nanobot.session.checkpoint_dependencies import ConsumedSummaryChunk, SummaryDependencyProof
+    from kohaku.session.checkpoint_dependencies import ConsumedSummaryChunk, SummaryDependencyProof
 
     return SummaryDependencyProof(candidate, (ConsumedSummaryChunk(evidence, None, summary),))
 
@@ -547,7 +547,7 @@ async def test_publicly_forged_prior_checkpoint_cannot_authorize_idle_proof(tmp_
     )
     forged_capture = replace(capture, snapshot=forged_snapshot)
     nodes = source_nodes(forged_snapshot.events)
-    from nanobot.session.artifact_projection import render_artifact_projection
+    from kohaku.session.artifact_projection import render_artifact_projection
 
     projected = tuple(
         render_artifact_projection(node, descriptor)
@@ -564,7 +564,7 @@ async def test_publicly_forged_prior_checkpoint_cannot_authorize_idle_proof(tmp_
     )
     assert proof_candidate.boundaries[-1] == candidate["boundary"]
     evidence = proof_candidate.summary_evidence(proof_candidate.boundaries[-1])
-    from nanobot.session.checkpoint_dependencies import (
+    from kohaku.session.checkpoint_dependencies import (
         ConsumedSummaryChunk,
         SummaryDependencyProof,
     )
@@ -633,7 +633,7 @@ async def test_dependency_lock_precedes_execution_lock_and_restart_retains_evide
     proof = _dependency_proof(capture, candidate["summary"], descriptor)
     order = []
     original_transaction = store.transaction
-    original_execution = __import__("nanobot.session.idle_checkpoint", fromlist=["execution_transaction"]).execution_transaction
+    original_execution = __import__("kohaku.session.idle_checkpoint", fromlist=["execution_transaction"]).execution_transaction
 
     @contextmanager
     def marked_artifacts(*, blocking=True):
@@ -649,7 +649,7 @@ async def test_dependency_lock_precedes_execution_lock_and_restart_retains_evide
 
     monkeypatch.setattr(store, "transaction", marked_artifacts)
     monkeypatch.setattr(
-        "nanobot.session.idle_checkpoint.execution_transaction", marked_execution
+        "kohaku.session.idle_checkpoint.execution_transaction", marked_execution
     )
     source.publish_idle_checkpoint(
         admitted.state.session_key,

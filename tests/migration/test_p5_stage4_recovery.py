@@ -5,10 +5,10 @@ from copy import deepcopy
 
 import pytest
 
-from nanobot.providers.base import LLMResponse, ToolCallRequest
-from nanobot.session.runtime_authority import OfflineSessionOperator
-from nanobot.session.session_export import export_canonical_session
-from nanobot.session.session_mode import SessionExportTransaction
+from kohaku.providers.base import LLMResponse, ToolCallRequest
+from kohaku.session.runtime_authority import OfflineSessionOperator
+from kohaku.session.session_export import export_canonical_session
+from kohaku.session.session_mode import SessionExportTransaction
 from tests.cron.stage3_fixtures import definitions
 from tests.migration.p5_stage4_fixtures import (
     Effects,
@@ -88,10 +88,10 @@ async def test_tool_turn_close_convert_export_crash_fresh_operator_runtime_no_re
 
 
 async def test_joined_scheduler_missing_observation_bridge_fences_startup_before_effects(tmp_path, monkeypatch):
-    from nanobot.cron.action_store import CronActionStore
-    from nanobot.cron.definition_store import CronDefinitionStore
-    from nanobot.cron.runtime_inspection import reconcile_occurrence
-    from nanobot.cron.scheduler_store import SchedulerConflictError, SchedulerStore
+    from kohaku.cron.action_store import CronActionStore
+    from kohaku.cron.definition_store import CronDefinitionStore
+    from kohaku.cron.runtime_inspection import reconcile_occurrence
+    from kohaku.cron.scheduler_store import SchedulerConflictError, SchedulerStore
 
     config = config_at(tmp_path)
     store, item, clock = definitions(tmp_path)
@@ -135,13 +135,13 @@ async def test_joined_scheduler_missing_observation_bridge_fences_startup_before
 
 
 async def test_real_runner_resistant_effect_keeps_resources_until_join_and_explicit_retry(tmp_path, monkeypatch):
-    from nanobot.runtime_errors import RuntimeOwnedWorkError
-    from nanobot.session.mode_storage import LifetimeWriterLease
+    from kohaku.runtime_errors import RuntimeOwnedWorkError
+    from kohaku.session.mode_storage import LifetimeWriterLease
 
     # This drill exercises shutdown cancellation, not the LLM wall-clock timeout.
     # Disable the provider wait_for wrapper so cancellation reaches the resistant
     # effect directly.
-    monkeypatch.setenv("NANOBOT_LLM_TIMEOUT_S", "0")
+    monkeypatch.setenv("KOHAKU_LLM_TIMEOUT_S", "0")
     config = config_at(tmp_path)
     store, item, clock = definitions(tmp_path)
     effects = Effects()
@@ -191,10 +191,10 @@ async def test_real_runner_resistant_effect_keeps_resources_until_join_and_expli
 async def test_whole_cron_runtime_rebuild_preserves_old_claim_outbox_and_effects(
     tmp_path, monkeypatch, boundary,
 ):
-    from nanobot.cron.action_store import CronActionStore
-    from nanobot.cron.callback_store import CronCallbackStore
-    from nanobot.cron.composition import compose_claimed_text_occurrence
-    from nanobot.cron.definition_store import CronDefinitionStore
+    from kohaku.cron.action_store import CronActionStore
+    from kohaku.cron.callback_store import CronCallbackStore
+    from kohaku.cron.composition import compose_claimed_text_occurrence
+    from kohaku.cron.definition_store import CronDefinitionStore
 
     config = config_at(tmp_path)
     store, item, clock = definitions(tmp_path)
@@ -215,7 +215,7 @@ async def test_whole_cron_runtime_rebuild_preserves_old_claim_outbox_and_effects
 
     clock.now = 1100
     with monkeypatch.context() as fault:
-        fault.setattr("nanobot.cron.runtime.compose_claimed_text_occurrence", callback_composition)
+        fault.setattr("kohaku.cron.runtime.compose_claimed_text_occurrence", callback_composition)
         if boundary == "prebegin":
             async def prebegin(*_args):
                 raise OSError("injected before begin")

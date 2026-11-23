@@ -1,10 +1,10 @@
 import sys
 
-from nanobot.agent.tools.apply_patch import ApplyPatchTool
-from nanobot.agent.tools.exec_session import ExecSessionTool, ListExecSessionsTool
-from nanobot.agent.tools.filesystem import EditFileTool, ReadFileTool, WriteFileTool
-from nanobot.agent.tools.search import FindFilesTool, GrepTool
-from nanobot.agent.tools.shell import ExecTool
+from kohaku.agent.tools.apply_patch import ApplyPatchTool
+from kohaku.agent.tools.exec_session import ExecSessionTool, ListExecSessionsTool
+from kohaku.agent.tools.filesystem import EditFileTool, ReadFileTool, WriteFileTool
+from kohaku.agent.tools.search import FindFilesTool, GrepTool
+from kohaku.agent.tools.shell import ExecTool
 
 
 def test_coding_tool_descriptions_steer_editing_priority() -> None:

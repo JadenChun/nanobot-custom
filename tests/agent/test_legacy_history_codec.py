@@ -4,12 +4,12 @@ from dataclasses import FrozenInstanceError
 
 import pytest
 
-from nanobot.agent.legacy_history_codec import (
+from kohaku.agent.legacy_history_codec import (
     MAX_LEGACY_HISTORY_BYTES,
     LegacyHistoryEntry,
     parse_legacy_history,
 )
-from nanobot.agent.memory import MemoryStore
+from kohaku.agent.memory import MemoryStore
 
 FALLBACK_TIMESTAMP = "2030-01-02 03:04"
 MAX_CURSOR = (1 << 63) - 1

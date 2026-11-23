@@ -10,11 +10,11 @@ from __future__ import annotations
 import pytest
 from typer.testing import CliRunner
 
-from nanobot.agent.tools.mcp import MCPProvider
-from nanobot.cli.commands import app
-from nanobot.config.schema import Config
-from nanobot.runtime_composition import RuntimeComposition
-from nanobot.session.runtime_authority import SessionAuthorityLease
+from kohaku.agent.tools.mcp import MCPProvider
+from kohaku.cli.commands import app
+from kohaku.config.schema import Config
+from kohaku.runtime_composition import RuntimeComposition
+from kohaku.session.runtime_authority import SessionAuthorityLease
 
 started: list[str] = []
 closes: list[str] = []
@@ -64,29 +64,29 @@ def _patch_common(monkeypatch, config):
 
     monkeypatch.setattr(RuntimeComposition, "define", staticmethod(define))
     for target in (
-        "nanobot.cli.agent.AgentLoop",
-        "nanobot.agent.loop.AgentLoop",
-        "nanobot.cli.commands.AgentLoop",
+        "kohaku.cli.agent.AgentLoop",
+        "kohaku.agent.loop.AgentLoop",
+        "kohaku.cli.commands.AgentLoop",
     ):
         monkeypatch.setattr(target, _FakeAgentLoop, raising=False)
-    monkeypatch.setattr("nanobot.cli.agent._load_runtime_config", lambda *a, **k: config)
-    monkeypatch.setattr("nanobot.cli.agent.sync_workspace_templates", lambda *a, **k: None)
-    monkeypatch.setattr("nanobot.cli.agent.is_default_workspace", lambda *a, **k: False)
-    monkeypatch.setattr("nanobot.cli.agent.configure_agent_runtime_logs", lambda *a, **k: None)
-    monkeypatch.setattr("nanobot.migration_guard.require_runtime_ready", lambda *a, **k: None)
-    monkeypatch.setattr("nanobot.cli.commands.set_cli_process_identity", lambda *a, **k: None)
-    monkeypatch.setattr("nanobot.cli.agent._model_display", lambda *a, **k: ("test-model", ""))
+    monkeypatch.setattr("kohaku.cli.agent._load_runtime_config", lambda *a, **k: config)
+    monkeypatch.setattr("kohaku.cli.agent.sync_workspace_templates", lambda *a, **k: None)
+    monkeypatch.setattr("kohaku.cli.agent.is_default_workspace", lambda *a, **k: False)
+    monkeypatch.setattr("kohaku.cli.agent.configure_agent_runtime_logs", lambda *a, **k: None)
+    monkeypatch.setattr("kohaku.migration_guard.require_runtime_ready", lambda *a, **k: None)
+    monkeypatch.setattr("kohaku.cli.commands.set_cli_process_identity", lambda *a, **k: None)
+    monkeypatch.setattr("kohaku.cli.agent._model_display", lambda *a, **k: ("test-model", ""))
     monkeypatch.setattr(
-        "nanobot.cli.agent.consume_restart_notice_from_env", lambda *a, **k: None
+        "kohaku.cli.agent.consume_restart_notice_from_env", lambda *a, **k: None
     )
-    monkeypatch.setattr("nanobot.providers.factory.make_provider", lambda *a, **k: object())
+    monkeypatch.setattr("kohaku.providers.factory.make_provider", lambda *a, **k: object())
     monkeypatch.setattr(
-        "nanobot.providers.image_generation.image_gen_provider_configs", lambda *a, **k: []
+        "kohaku.providers.image_generation.image_gen_provider_configs", lambda *a, **k: []
     )
-    monkeypatch.setattr("nanobot.cron.service.CronService", lambda *a, **k: object())
-    monkeypatch.setattr("nanobot.cli.agent.signal.signal", lambda *a, **k: None)
-    monkeypatch.setattr("nanobot.cli.terminal._flush_pending_tty_input", lambda *a, **k: None)
-    monkeypatch.setattr("nanobot.cli.terminal._restore_terminal", lambda *a, **k: None)
+    monkeypatch.setattr("kohaku.cron.service.CronService", lambda *a, **k: object())
+    monkeypatch.setattr("kohaku.cli.agent.signal.signal", lambda *a, **k: None)
+    monkeypatch.setattr("kohaku.cli.terminal._flush_pending_tty_input", lambda *a, **k: None)
+    monkeypatch.setattr("kohaku.cli.terminal._restore_terminal", lambda *a, **k: None)
 
 
 @pytest.mark.parametrize("failure", ["mcp_connect", "prompt_init"])
@@ -115,10 +115,10 @@ def test_classic_setup_failure_releases_graph_once(monkeypatch, tmp_path, failur
         MCPProvider, "connect", connect_fail if failure == "mcp_connect" else connect_ok
     )
     monkeypatch.setattr(
-        "nanobot.cli.terminal._init_prompt_session",
+        "kohaku.cli.terminal._init_prompt_session",
         prompt_fail if failure == "prompt_init" else prompt_ok,
     )
-    monkeypatch.setattr("nanobot.cli.terminal._read_interactive_input_async", no_prompt)
+    monkeypatch.setattr("kohaku.cli.terminal._read_interactive_input_async", no_prompt)
 
     result = CliRunner().invoke(app, ["agent", "--classic", "--session", "cli:probe"])
 

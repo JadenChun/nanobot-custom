@@ -5,29 +5,29 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from nanobot.agent.loop import AgentLoop
-from nanobot.agent.memory import (
+from kohaku.agent.loop import AgentLoop
+from kohaku.agent.memory import (
     _HISTORY_ENTRY_HARD_CAP,
     Consolidator,
     MemoryStore,
 )
-from nanobot.events import AgentEvent, ContextCompactionEvent, EventSink
-from nanobot.providers.base import (
+from kohaku.events import AgentEvent, ContextCompactionEvent, EventSink
+from kohaku.providers.base import (
     GenerationSettings,
     LLMResponse,
     ProviderConversationState,
     ToolCallRequest,
 )
-from nanobot.runtime_context import (
+from kohaku.runtime_context import (
     RUNTIME_CONTEXT_HISTORY_META,
     RuntimeContextBlock,
     append_runtime_context,
 )
-from nanobot.session.keys import UNIFIED_SESSION_KEY, remember_last_channel
-from nanobot.session.manager import Session
-from nanobot.session.summary import SUMMARY_CONTINUATION_TEXT, is_summary_checkpoint
-from nanobot.utils.llm_runtime import LLMRuntime
-from nanobot.utils.prompt_templates import render_template
+from kohaku.session.keys import UNIFIED_SESSION_KEY, remember_last_channel
+from kohaku.session.manager import Session
+from kohaku.session.summary import SUMMARY_CONTINUATION_TEXT, is_summary_checkpoint
+from kohaku.utils.llm_runtime import LLMRuntime
+from kohaku.utils.prompt_templates import render_template
 from tests.agent import p6_admitted_fixtures
 
 admitted_async = p6_admitted_fixtures.admitted_async
@@ -492,7 +492,7 @@ class TestConsolidatorArchiveErrorHandling:
         runtime = replace(runtime, context_window_tokens=128_000)
         consolidator.store.raw_archive = MagicMock()
         monkeypatch.setattr(
-            "nanobot.agent.memory.render_template",
+            "kohaku.agent.memory.render_template",
             MagicMock(side_effect=RuntimeError("template failed")),
         )
         session = Session(key="test:template")
@@ -562,7 +562,7 @@ class TestCompactIdleSession:
     @pytest.fixture
     def real_consolidator(self, store, mock_provider):
         """Create a Consolidator with a real SessionManager (not a mock)."""
-        from nanobot.session.manager import SessionManager
+        from kohaku.session.manager import SessionManager
 
         sessions = SessionManager(store.workspace)
         return Consolidator(

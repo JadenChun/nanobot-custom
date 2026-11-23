@@ -2,15 +2,15 @@ import json
 
 import pytest
 
-from nanobot.config.errors import ConfigLoadError
-from nanobot.config.loader import (
+from kohaku.config.errors import ConfigLoadError
+from kohaku.config.loader import (
     _resolve_env_vars,
     load_config,
     resolve_config_env_vars,
     resolve_env_refs,
     save_config,
 )
-from nanobot.config.schema import Config
+from kohaku.config.schema import Config
 
 
 class TestResolveEnvVars:
@@ -75,7 +75,7 @@ class TestResolveConfig:
         assert resolved.providers.groq.api_key == "resolved-key"
 
     def test_missing_env_var_reports_config_field(self, tmp_path, monkeypatch):
-        name = "NANOBOT_TEST_MISSING_PROVIDER_KEY"
+        name = "KOHAKU_TEST_MISSING_PROVIDER_KEY"
         monkeypatch.delenv(name, raising=False)
         config_path = tmp_path / "config.json"
         config = Config.model_validate(

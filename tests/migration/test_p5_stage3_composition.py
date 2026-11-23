@@ -2,11 +2,11 @@ from types import SimpleNamespace
 
 import pytest
 
-from nanobot.agent.turn import TurnResult
-from nanobot.bus.queue import MessageBus
-from nanobot.config.schema import Config
-from nanobot.cron.service import CronService
-from nanobot.runtime_composition import ChannelBuildOptions, RuntimeComposition, RuntimeFactories
+from kohaku.agent.turn import TurnResult
+from kohaku.bus.queue import MessageBus
+from kohaku.config.schema import Config
+from kohaku.cron.service import CronService
+from kohaku.runtime_composition import ChannelBuildOptions, RuntimeComposition, RuntimeFactories
 from tests.cron.stage3_fixtures import (
     FakeChannels,
     FakeClock,
@@ -16,7 +16,7 @@ from tests.cron.stage3_fixtures import (
 
 
 def composition(tmp_path, *, injection=None, events=None, compute=None):
-    from nanobot.cron.runtime import CronRuntimeInjection
+    from kohaku.cron.runtime import CronRuntimeInjection
 
     events = events if events is not None else []
     workspace = tmp_path / "workspace"
@@ -92,14 +92,14 @@ async def test_injected_graph_exact_shared_identities_managed_absent_visible_rou
 
 
 async def test_managed_existing_visible_link_preserves_transcript_and_merges_ring(tmp_path, monkeypatch):
-    from nanobot.cron.visible_link import link_completed_text_result
-    from nanobot.session.manager import Session
+    from kohaku.cron.visible_link import link_completed_text_result
+    from kohaku.session.manager import Session
 
     value, item, clock, events, channels = composition(tmp_path, injection=True)
     handle = await value.acquire()
     manager = handle.sessions
     manager.upsert_session_metadata("telegram:A", {"marker": "unchanged"}, create_if_absent=True, fsync=True)
-    from nanobot.session.source import new_source_event
+    from kohaku.session.source import new_source_event
 
     source = manager.source_backend("telegram:A").source
     captured = source.load_source_snapshot("telegram:A")
@@ -133,12 +133,12 @@ async def test_real_agent_runner_provider_once_in_shared_managed_graph(tmp_path,
     from dataclasses import replace
     from unittest.mock import AsyncMock
 
-    from nanobot.agent.loop import AgentLoop
-    from nanobot.agent.tools.registry import ToolRegistry
-    from nanobot.providers.base import LLMResponse
+    from kohaku.agent.loop import AgentLoop
+    from kohaku.agent.tools.registry import ToolRegistry
+    from kohaku.providers.base import LLMResponse
     from tests.cron.test_canonical_execution import ScriptedProvider
 
-    monkeypatch.setattr("nanobot.migration_guard.require_runtime_ready", lambda: None)
+    monkeypatch.setattr("kohaku.migration_guard.require_runtime_ready", lambda: None)
     value, item, clock, events, channels = composition(tmp_path, injection=True)
     provider = ScriptedProvider([LLMResponse(content="exact report")])
     value.config.agents.defaults.model = "synthetic-model"

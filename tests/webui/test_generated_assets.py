@@ -10,23 +10,23 @@ import pytest
 from websockets.datastructures import Headers
 from websockets.http11 import Request
 
-from nanobot.bus.queue import MessageBus
-from nanobot.channels.websocket.runtime import WebSocketConfig
-from nanobot.config.loader import get_config_path, set_config_path
-from nanobot.config.paths import get_media_dir
-from nanobot.session.manager import SessionManager
-from nanobot.webui.gateway_services import build_gateway_services
-from nanobot.webui.generated_asset_index import (
+from kohaku.bus.queue import MessageBus
+from kohaku.channels.websocket.runtime import WebSocketConfig
+from kohaku.config.loader import get_config_path, set_config_path
+from kohaku.config.paths import get_media_dir
+from kohaku.session.manager import SessionManager
+from kohaku.webui.gateway_services import build_gateway_services
+from kohaku.webui.generated_asset_index import (
     delete_generated_asset_index,
     generated_asset_index_path,
     load_or_build_generated_asset_index,
 )
-from nanobot.webui.generated_assets import (
+from kohaku.webui.generated_assets import (
     build_generated_assets_payload,
     build_generated_assets_payload_from_groups,
     collect_generated_asset_groups,
 )
-from nanobot.webui.transcript import (
+from kohaku.webui.transcript import (
     append_transcript_object,
     delete_webui_transcript,
     fork_transcript_before_user_index,
@@ -824,9 +824,9 @@ def test_forked_session_keeps_generated_asset_references(assets_client) -> None:
 
 
 async def test_repeated_library_gets_do_not_pin_published_media(assets_client) -> None:
-    from nanobot.attachments.store import AttachmentStore
-    from nanobot.utils.artifacts import store_generated_image_artifact
-    from nanobot.webui.media_maintenance import garbage_collect_generated_media
+    from kohaku.attachments.store import AttachmentStore
+    from kohaku.utils.artifacts import store_generated_image_artifact
+    from kohaku.webui.media_maintenance import garbage_collect_generated_media
     from tests.attachments.test_media_publication_retention import PNG
 
     _project, instance, services, token = assets_client

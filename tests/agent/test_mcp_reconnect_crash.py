@@ -19,11 +19,11 @@ import time
 import httpx
 import pytest
 
-from nanobot.agent.tools import mcp as mcp_module
-from nanobot.agent.tools.mcp import MCPProvider, MCPToolWrapper
-from nanobot.agent.tools.registry import ToolRegistry
-from nanobot.config.schema import MCPServerConfig
-from nanobot.security import network as security_network
+from kohaku.agent.tools import mcp as mcp_module
+from kohaku.agent.tools.mcp import MCPProvider, MCPToolWrapper
+from kohaku.agent.tools.registry import ToolRegistry
+from kohaku.config.schema import MCPServerConfig
+from kohaku.security import network as security_network
 
 # Leave enough headroom for reconnect handshakes on slower CI hosts; each test
 # still waits beyond this deadline explicitly before exercising recovery.

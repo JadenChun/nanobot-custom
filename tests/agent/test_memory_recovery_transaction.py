@@ -9,14 +9,14 @@ from typing import Any
 
 import pytest
 
-from nanobot.agent import memory_recovery_storage as storage
-from nanobot.agent.memory_recovery import MemoryReceipt
-from nanobot.agent.memory_recovery_manifest import (
+from kohaku.agent import memory_recovery_storage as storage
+from kohaku.agent.memory_recovery import MemoryReceipt
+from kohaku.agent.memory_recovery_manifest import (
     MAX_INT,
     MemoryRecoveryManifest,
     derive_manifest_identity,
 )
-from nanobot.agent.memory_recovery_transaction import (
+from kohaku.agent.memory_recovery_transaction import (
     CapturedTransactionPayload,
     MemoryRecoveryTransactionError,
     capture_transaction_payload,

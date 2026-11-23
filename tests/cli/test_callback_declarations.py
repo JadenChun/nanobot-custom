@@ -10,9 +10,9 @@ import sys
 import pytest
 from rich.console import Console
 
-from nanobot.cli import gateway, log_control
-from nanobot.cli.migration_preflight import _Parser, main
-from nanobot.config.schema import Config
+from kohaku.cli import gateway, log_control
+from kohaku.cli.migration_preflight import _Parser, main
+from kohaku.config.schema import Config
 
 
 @pytest.fixture
@@ -143,7 +143,7 @@ def console_sink(monkeypatch: pytest.MonkeyPatch):
     assert callable(callback)
     assert callback.__name__ == "<lambda>"
     assert options == {"format": log_control._COMPATIBILITY_LOG_FORMAT}
-    assert enabled == ["nanobot"]
+    assert enabled == ["kohaku"]
     assert cleared == [True]
     return callback
 

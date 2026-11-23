@@ -6,8 +6,8 @@ from copy import deepcopy
 
 import pytest
 
-from nanobot.agent.memory import Consolidator, MemoryStore
-from nanobot.providers.base import GenerationSettings, LLMResponse, ToolCallRequest
+from kohaku.agent.memory import Consolidator, MemoryStore
+from kohaku.providers.base import GenerationSettings, LLMResponse, ToolCallRequest
 from tests.agent.p6_memory_contract_fixtures import SummaryProvider, file_snapshot, summary_runtime
 
 
@@ -189,7 +189,7 @@ async def test_transient_source_summary_failure_is_single_attempt(tmp_path, monk
     async def sleep(delay):
         delays.append(delay)
 
-    monkeypatch.setattr("nanobot.providers.base.asyncio.sleep", sleep)
+    monkeypatch.setattr("kohaku.providers.base.asyncio.sleep", sleep)
     text = "[2026-01-01] User discussed testing."
     _, provider, results = await _checked(tmp_path, [
         LLMResponse(content="503 server error", finish_reason="error"), LLMResponse(content=text),

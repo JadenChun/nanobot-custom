@@ -17,14 +17,14 @@ from pydantic_core import ValidationError
 from websockets.datastructures import Headers
 from websockets.http11 import Request as WsRequest
 
-from nanobot.bus.queue import MessageBus
-from nanobot.channels.websocket.runtime import WebSocketConfig
-from nanobot.config.loader import save_config
-from nanobot.config.schema import Config
-from nanobot.webui.gateway_endpoint import WebUIGatewayEndpoint
-from nanobot.webui.gateway_services import build_gateway_services
-from nanobot.webui.gateway_tokens import GatewayTokenStore
-from nanobot.webui.ws_http import GatewayHTTPHandler
+from kohaku.bus.queue import MessageBus
+from kohaku.channels.websocket.runtime import WebSocketConfig
+from kohaku.config.loader import save_config
+from kohaku.config.schema import Config
+from kohaku.webui.gateway_endpoint import WebUIGatewayEndpoint
+from kohaku.webui.gateway_services import build_gateway_services
+from kohaku.webui.gateway_tokens import GatewayTokenStore
+from kohaku.webui.ws_http import GatewayHTTPHandler
 
 
 class _Connection:

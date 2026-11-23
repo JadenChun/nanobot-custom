@@ -5,9 +5,9 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from nanobot.providers.base import LLMProvider, LLMResponse, ProviderCallContext
-from nanobot.providers.legacy_fallback_provider import LegacyFallbackProvider
-from nanobot.providers.pooled_provider import PooledProvider
+from kohaku.providers.base import LLMProvider, LLMResponse, ProviderCallContext
+from kohaku.providers.legacy_fallback_provider import LegacyFallbackProvider
+from kohaku.providers.pooled_provider import PooledProvider
 
 
 class RecordingLeaf(LLMProvider):
@@ -167,7 +167,7 @@ async def test_legacy_duplicate_messages_fail_before_leaf_call(stream):
 
 @pytest.mark.parametrize("raises", [False, True])
 async def test_base_delivery_tracker_preserves_variadic_captures_before_await(raises):
-    from nanobot.providers.base import track_stream_delivery
+    from kohaku.providers.base import track_stream_delivery
 
     delivered = [False]
     seen = []

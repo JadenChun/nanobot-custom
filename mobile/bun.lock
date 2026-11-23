@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "nanobot-mobile",
+      "name": "kohaku-mobile",
       "dependencies": {
         "@capacitor/android": "8.6.0",
         "@capacitor/core": "8.6.0",

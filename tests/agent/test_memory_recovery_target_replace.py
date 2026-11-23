@@ -12,8 +12,8 @@ from typing import Any
 
 import pytest
 
-from nanobot.agent import memory_recovery_storage as storage
-from nanobot.agent import memory_recovery_target_mutation as mutation
+from kohaku.agent import memory_recovery_storage as storage
+from kohaku.agent import memory_recovery_target_mutation as mutation
 
 
 def _replace_capable() -> bool:

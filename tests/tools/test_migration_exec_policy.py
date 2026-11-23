@@ -4,8 +4,8 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from nanobot.agent.tools.shell import ExecTool
-from nanobot.context_repo import ContextRepoManager, ResourceAccessPolicy
+from kohaku.agent.tools.shell import ExecTool
+from kohaku.context_repo import ContextRepoManager, ResourceAccessPolicy
 
 
 @pytest.mark.parametrize('command', ['rm -rf data', 'curl http://127.0.0.1/private', 'osascript -e beep'])

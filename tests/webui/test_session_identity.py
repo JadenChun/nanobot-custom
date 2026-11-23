@@ -1,4 +1,4 @@
-from nanobot.webui.session_identity import (
+from kohaku.webui.session_identity import (
     WEBUI_SESSION_STORAGE_PREFIX,
     is_valid_webui_chat_id,
     is_webui_session_key,

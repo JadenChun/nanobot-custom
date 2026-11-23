@@ -10,8 +10,8 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from nanobot.cron.runtime import RuntimeOwnedWorkError as OldError
-from nanobot.runtime_composition import _close_reverse
+from kohaku.cron.runtime import RuntimeOwnedWorkError as OldError
+from kohaku.runtime_composition import _close_reverse
 from tests.migration.p5_stage4_fixtures import (
     Effects,
     Provider,
@@ -35,11 +35,11 @@ class ApiRequest:
 
 @pytest.mark.parametrize("mode", ["legacy", "canonical"])
 async def test_four_surfaces_two_modes_share_one_acquired_real_runner(tmp_path, monkeypatch, mode):
-    from nanobot.agent.loop import AgentLoop
-    from nanobot.agent.runner import AgentRunner
-    from nanobot.api.server import handle_chat_completions
-    from nanobot.config.loader import load_config, set_config_path
-    from nanobot.nanobot import Nanobot
+    from kohaku.agent.loop import AgentLoop
+    from kohaku.agent.runner import AgentRunner
+    from kohaku.api.server import handle_chat_completions
+    from kohaku.config.loader import load_config, set_config_path
+    from kohaku.kohaku import Kohaku
     from tests.channels.test_telegram_headless_composition import _telegram_update
 
     config = config_at(tmp_path)
@@ -48,7 +48,7 @@ async def test_four_surfaces_two_modes_share_one_acquired_real_runner(tmp_path, 
     config_path = config.runtime_data_dir / "config.json"
     config_path.parent.mkdir(parents=True, exist_ok=True)
     config_path.write_text(config.model_dump_json(by_alias=True))
-    monkeypatch.setattr("nanobot.config.loader._current_config_path", None)
+    monkeypatch.setattr("kohaku.config.loader._current_config_path", None)
     set_config_path(config_path)
     config = load_config(config_path)
     keys = ("cli:direct", "api:joined", "sdk:joined", "telegram:123")
@@ -69,7 +69,7 @@ async def test_four_surfaces_two_modes_share_one_acquired_real_runner(tmp_path, 
         await joined(handle.agent.process_direct("direct request", session_key=keys[0]))
         response = await joined(handle_chat_completions(ApiRequest(handle)))
         assert response.status == 200 and json.loads(response.body)["choices"][0]["message"]["content"] == "fake answer"
-        bot = Nanobot(handle.agent)
+        bot = Kohaku(handle.agent)
         result = await joined(bot.run("sdk request", session_key=keys[2]))
         assert result.content == "fake answer" and bot._loop is handle.agent
         update = _telegram_update()
@@ -103,7 +103,7 @@ class ObservedLock(asyncio.Lock):
 @pytest.mark.parametrize("modes", [("legacy", "legacy"), ("canonical", "canonical"),
                                    ("legacy", "canonical"), ("canonical", "legacy")])
 async def test_real_lock_serialization_and_cross_key_progress_with_barriers(tmp_path, modes):
-    from nanobot.agent.turn import TurnRequest
+    from kohaku.agent.turn import TurnRequest
 
     config = config_at(tmp_path)
     await seed_modes(config, dict(zip(("cli:a", "cli:b"), modes)))
@@ -139,7 +139,7 @@ async def test_failure_cleanup_does_not_import_optional_cron(monkeypatch):
     real_import = builtins.__import__
 
     def no_optional(name, *args, **kwargs):
-        if name in {"nanobot.cron.runtime", "croniter"}:
+        if name in {"kohaku.cron.runtime", "croniter"}:
             raise AssertionError("optional cleanup import")
         return real_import(name, *args, **kwargs)
 
@@ -160,7 +160,7 @@ async def test_default_foreground_and_clean_close_do_not_import_optional_cron(tm
     real_import = builtins.__import__
 
     def no_optional(name, *args, **kwargs):
-        if name in {"nanobot.cron.runtime", "croniter"}:
+        if name in {"kohaku.cron.runtime", "croniter"}:
             raise AssertionError("optional runtime imported in default graph")
         return real_import(name, *args, **kwargs)
 
@@ -179,17 +179,17 @@ async def test_default_foreground_and_clean_close_do_not_import_optional_cron(tm
 
 
 def test_shared_error_alias_and_old_pickle_lookup_are_preserved():
-    from nanobot.runtime_errors import RuntimeOwnedWorkError
+    from kohaku.runtime_errors import RuntimeOwnedWorkError
 
     assert OldError is RuntimeOwnedWorkError
-    assert RuntimeOwnedWorkError.__module__ == "nanobot.runtime_errors"
+    assert RuntimeOwnedWorkError.__module__ == "kohaku.runtime_errors"
     assert type(pickle.loads(pickle.dumps(OldError("fixed")))) is RuntimeOwnedWorkError
-    assert pickle.loads(b"cnanobot.cron.runtime\nRuntimeOwnedWorkError\n.") is RuntimeOwnedWorkError
+    assert pickle.loads(b"ckohaku.cron.runtime\nRuntimeOwnedWorkError\n.") is RuntimeOwnedWorkError
 
 
 async def test_default_owned_failure_classification_and_explicit_retry_without_optional_imports(tmp_path, monkeypatch):
-    from nanobot.runtime_composition import RuntimeState
-    from nanobot.runtime_errors import RuntimeOwnedWorkError
+    from kohaku.runtime_composition import RuntimeState
+    from kohaku.runtime_errors import RuntimeOwnedWorkError
 
     config = config_at(tmp_path)
     effects = Effects()
@@ -208,7 +208,7 @@ async def test_default_owned_failure_classification_and_explicit_retry_without_o
     real_import = builtins.__import__
 
     def no_optional(name, *args, **kwargs):
-        if name in {"nanobot.cron.runtime", "croniter"}:
+        if name in {"kohaku.cron.runtime", "croniter"}:
             raise AssertionError("optional runtime imported during failure retry")
         return real_import(name, *args, **kwargs)
 
@@ -224,7 +224,7 @@ async def test_default_owned_failure_classification_and_explicit_retry_without_o
 
 @pytest.mark.parametrize("unsafe", ["witness", "journal", "sidecar", "ttl", "idle", "recovery", "quarantine"])
 async def test_assembled_startup_unsafe_state_denies_before_dependency_factories(tmp_path, unsafe):
-    from nanobot.session.manager import JsonlSessionStore
+    from kohaku.session.manager import JsonlSessionStore
 
     config = config_at(tmp_path)
     effects = Effects()
@@ -263,7 +263,7 @@ async def test_assembled_startup_unsafe_state_denies_before_dependency_factories
     if value is not None:
         await joined(value.aclose())
         # Lifetime ownership was rolled back; no leaked lease on failed admission.
-        from nanobot.session.runtime_authority import OfflineSessionOperator
+        from kohaku.session.runtime_authority import OfflineSessionOperator
 
         lease = await OfflineSessionOperator(config.workspace_path,
             copied_sessions_root=config.runtime_data_dir / "sessions").acquire()
@@ -274,9 +274,9 @@ async def test_assembled_startup_unsafe_state_denies_before_dependency_factories
 
 @pytest.mark.parametrize("unsafe", ["telegram", "plugin-conflict"])
 async def test_channel_admission_conflicts_unwind_real_assembled_resources(tmp_path, monkeypatch, unsafe):
-    from nanobot.channels.manager import ChannelManager
-    from nanobot.runtime_composition import ChannelBuildOptions
-    from nanobot.session.runtime_authority import OfflineSessionOperator
+    from kohaku.channels.manager import ChannelManager
+    from kohaku.runtime_composition import ChannelBuildOptions
+    from kohaku.session.runtime_authority import OfflineSessionOperator
 
     config = config_at(tmp_path)
     if unsafe == "telegram":
@@ -284,10 +284,10 @@ async def test_channel_admission_conflicts_unwind_real_assembled_resources(tmp_p
     else:
         config.channels.telegram["enabled"] = False
         config.channels.broken = {"enabled": True}
-        monkeypatch.setattr("nanobot.channels.registry._channel_package_names", lambda: ["broken"])
-        monkeypatch.setattr("nanobot.channels.registry.load_channel_package",
+        monkeypatch.setattr("kohaku.channels.registry._channel_package_names", lambda: ["broken"])
+        monkeypatch.setattr("kohaku.channels.registry.load_channel_package",
             lambda _: (_ for _ in ()).throw(TypeError("malformed built-in manifest")))
-        monkeypatch.setattr("nanobot.channels.registry.metadata.entry_points", lambda **_: [
+        monkeypatch.setattr("kohaku.channels.registry.metadata.entry_points", lambda **_: [
             SimpleNamespace(name="broken", value="fake:Channel",
                             load=lambda: pytest.fail("conflicting plugin loaded"))])
     effects = Effects()

@@ -4,15 +4,15 @@ from __future__ import annotations
 
 import pytest
 
-from nanobot.agent.memory import MemoryArchiver, MemoryStore
-from nanobot.providers.base import (
+from kohaku.agent.memory import MemoryArchiver, MemoryStore
+from kohaku.providers.base import (
     GenerationSettings,
     LLMProvider,
     LLMResponse,
     ProviderConversationState,
 )
-from nanobot.providers.request_budget import FinalizedRequestBudgetExceeded
-from nanobot.utils.llm_runtime import LLMRuntime
+from kohaku.providers.request_budget import FinalizedRequestBudgetExceeded
+from kohaku.utils.llm_runtime import LLMRuntime
 
 
 class _ArchiveProvider(LLMProvider):

@@ -9,10 +9,10 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from nanobot.agent.hook import AgentHook
-from nanobot.agent.loop import AgentLoop
-from nanobot.agent.turn import TraceMode, TurnResult, TurnSource
-from nanobot.sdk.runtime import build_process_direct_kwargs
+from kohaku.agent.hook import AgentHook
+from kohaku.agent.loop import AgentLoop
+from kohaku.agent.turn import TraceMode, TurnResult, TurnSource
+from kohaku.sdk.runtime import build_process_direct_kwargs
 from tests.migration import p5_sdk_compat_fixtures as compat
 
 offline_sdk_positive = compat.offline_sdk_positive
@@ -34,7 +34,7 @@ async def bot(tmp_path, sdk_bot_factory):
 
 
 def test_optional_schema_matches_existing_direct_implementation():
-    from nanobot.agent.direct_execution import DirectExecutionOptions, DirectRequestOptions
+    from kohaku.agent.direct_execution import DirectExecutionOptions, DirectRequestOptions
 
     implementation_keys = set(inspect.signature(AgentLoop._execute_direct).parameters) - {
         "self", "content",

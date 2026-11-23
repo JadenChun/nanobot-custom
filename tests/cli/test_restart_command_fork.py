@@ -10,10 +10,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from nanobot.agent.context import TranscriptInput
-from nanobot.agent.loop import AgentLoop
-from nanobot.bus.events import InboundMessage
-from nanobot.providers.base import GenerationSettings, LLMResponse, LLMUsage
+from kohaku.agent.context import TranscriptInput
+from kohaku.agent.loop import AgentLoop
+from kohaku.bus.events import InboundMessage
+from kohaku.providers.base import GenerationSettings, LLMResponse, LLMUsage
 from tests.agent import p6_admitted_fixtures
 from tests.agent.test_loop_runner_integration import _execute_inbound, _run_context
 
@@ -61,7 +61,7 @@ def restart_tasks():
         scheduled.append(task)
         return task
 
-    with patch("nanobot.command.builtin.asyncio", SimpleNamespace(
+    with patch("kohaku.command.builtin.asyncio", SimpleNamespace(
         sleep=fast_sleep, create_task=capture,
     )):
         yield scheduled
@@ -72,15 +72,15 @@ class TestRestartCommand:
 
     @pytest.mark.asyncio
     async def test_restart_sends_message_and_calls_execv(self, tmp_path, admitted_async, restart_tasks):
-        from nanobot.command.builtin import cmd_restart
-        from nanobot.command.router import CommandContext
+        from kohaku.command.builtin import cmd_restart
+        from kohaku.command.router import CommandContext
 
         loop, bus = await _make_loop(tmp_path, admitted_async)
         msg = InboundMessage(channel="cli", sender_id="user", chat_id="direct", content="/restart")
         loop.restart_mode = "exec"
         ctx = CommandContext(msg=msg, session=None, key=msg.session_key, raw="/restart", loop=loop)
 
-        with patch("nanobot.command.builtin.os.execv") as mock_execv:
+        with patch("kohaku.command.builtin.os.execv") as mock_execv:
             out = await cmd_restart(ctx)
             assert "Restarting" in out.content
             assert restart_tasks
@@ -95,7 +95,7 @@ class TestRestartCommand:
 
         loop.restart_mode = "exec"
         with patch.object(loop, "_dispatch", new_callable=AsyncMock) as mock_dispatch, \
-             patch("nanobot.command.builtin.os.execv"):
+             patch("kohaku.command.builtin.os.execv"):
             await bus.publish_inbound(msg)
 
             loop._running = True
@@ -189,10 +189,10 @@ class TestRestartCommand:
         # Missing usage is estimated per result, never stale global usage or fabricated zero.
         loop, _bus = await _make_loop(tmp_path, admitted_async)
         monkeypatch.setattr(
-            "nanobot.agent.runner.estimate_prompt_tokens_chain",
+            "kohaku.agent.runner.estimate_prompt_tokens_chain",
             lambda *_args, **_kwargs: (123, "test"),
         )
-        monkeypatch.setattr("nanobot.agent.runner.estimate_message_tokens", lambda _message: 7)
+        monkeypatch.setattr("kohaku.agent.runner.estimate_message_tokens", lambda _message: 7)
         loop.provider.chat_with_retry = AsyncMock(side_effect=[
             LLMResponse(content="first", usage=LLMUsage.reported(input_tokens=9, output_tokens=4)),
             LLMResponse(content="second", usage=None),

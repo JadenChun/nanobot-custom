@@ -7,11 +7,11 @@ from copy import deepcopy
 
 import pytest
 
-from nanobot.providers.base import LLMUsage
-from nanobot.providers.openai_compat_provider import OpenAICompatProvider
-from nanobot.providers.openai_responses.converters import convert_messages, convert_tools
-from nanobot.providers.openai_responses.parsing import parse_response_output
-from nanobot.providers.registry import find_by_name
+from kohaku.providers.base import LLMUsage
+from kohaku.providers.openai_compat_provider import OpenAICompatProvider
+from kohaku.providers.openai_responses.converters import convert_messages, convert_tools
+from kohaku.providers.openai_responses.parsing import parse_response_output
+from kohaku.providers.registry import find_by_name
 
 # ---------------------------------------------------------------------------
 # Static decision: when should we route through /v1/responses?

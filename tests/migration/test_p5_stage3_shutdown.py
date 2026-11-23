@@ -2,8 +2,8 @@ import asyncio
 
 import pytest
 
-from nanobot.agent.turn import TurnResult
-from nanobot.cron.runtime import RuntimeOwnedWorkError
+from kohaku.agent.turn import TurnResult
+from kohaku.cron.runtime import RuntimeOwnedWorkError
 from tests.cron.stage3_fixtures import offline_denial  # noqa: F401
 from tests.migration.test_p5_stage3_composition import composition
 
@@ -70,7 +70,7 @@ async def test_resistant_effect_retains_resources_and_explicit_close_retry(tmp_p
 
 
 async def test_prebegin_lease_loss_fences_compute_and_manual_allocation(tmp_path, monkeypatch):
-    from nanobot.cron.scheduler_store import SchedulerConflictError
+    from kohaku.cron.scheduler_store import SchedulerConflictError
 
     value, item, clock, events, channels = composition(tmp_path, injection=True)
     handle = await value.acquire()
@@ -96,7 +96,7 @@ async def test_prebegin_lease_loss_fences_compute_and_manual_allocation(tmp_path
 
 
 async def test_partial_graph_acquisition_unwinds_lease_before_channels(tmp_path, monkeypatch):
-    from nanobot.cron.runtime import CronRuntime
+    from kohaku.cron.runtime import CronRuntime
 
     value, item, clock, events, channels = composition(tmp_path, injection=True)
     original = CronRuntime.acquire

@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 
 import pytest
 
-from nanobot.agent.turn import DeliveryTarget, RunRecord, ScheduledTurnLink
+from kohaku.agent.turn import DeliveryTarget, RunRecord, ScheduledTurnLink
 
 
 class ObservedMapping(Mapping[object, object]):

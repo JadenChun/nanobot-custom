@@ -27,30 +27,30 @@ import pytest
 from websockets.datastructures import Headers
 from websockets.http11 import Request
 
-from nanobot.bus.events import CommittedUserInput
-from nanobot.channels.manager import ChannelManager
-from nanobot.session.canonical_event_index import (
+from kohaku.bus.events import CommittedUserInput
+from kohaku.channels.manager import ChannelManager
+from kohaku.session.canonical_event_index import (
     delete_event_index,
     event_index_path,
 )
-from nanobot.session.execution_owner import acquire_execution
-from nanobot.session.runtime_authority import DurableSessionAuthority
-from nanobot.session.source_store import SourceSessionStore, SourceState
-from nanobot.session.turn_writer import SourceTurnWriter
-from nanobot.webui import transcript as tr
-from nanobot.webui.metadata import (
+from kohaku.session.execution_owner import acquire_execution
+from kohaku.session.runtime_authority import DurableSessionAuthority
+from kohaku.session.source_store import SourceSessionStore, SourceState
+from kohaku.session.turn_writer import SourceTurnWriter
+from kohaku.webui import transcript as tr
+from kohaku.webui.metadata import (
     WEBUI_DISPLAY_ANSWER_EVENT_ID_KEY,
     WEBUI_DISPLAY_SOURCE_KEY,
     WEBUI_TURN_METADATA_KEY,
 )
-from nanobot.webui.transcript import (
+from kohaku.webui.transcript import (
     TRANSCRIPT_PROMPT_SOURCE_EVENT_KEY,
     TRANSCRIPT_TEXT_SOURCE_REF_KEY,
     WebUITranscriptRecorder,
     build_webui_thread_response,
     read_transcript_lines,
 )
-from nanobot.webui.transcript_index import (
+from kohaku.webui.transcript_index import (
     delete_transcript_index,
     rebuild_transcript_index,
 )
@@ -66,7 +66,7 @@ CHAT_ID = "pkg5-consolidated"
 def isolated_webui(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     webui_dir = tmp_path / "webui"
     webui_dir.mkdir(parents=True, exist_ok=True)
-    monkeypatch.setattr("nanobot.webui.transcript.get_webui_dir", lambda: webui_dir)
+    monkeypatch.setattr("kohaku.webui.transcript.get_webui_dir", lambda: webui_dir)
     return webui_dir
 
 

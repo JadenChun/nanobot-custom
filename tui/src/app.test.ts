@@ -15,7 +15,7 @@ import {
 } from "@opentui/core/testing"
 
 import {
-  NanobotTui,
+  KohakuTui,
   sessionExitMessage,
   terminalModelFailureLine,
   type AppOptions,
@@ -62,7 +62,7 @@ function occurrences(frame: string, value: string): number {
 
 test("formats a reusable session ID after exit", () => {
   expect(sessionExitMessage("resume-chat")).toBe(
-    "Resume with: nanobot agent --session websocket:resume-chat\n",
+    "Resume with: kohaku agent --session websocket:resume-chat\n",
   )
 })
 
@@ -133,7 +133,7 @@ function client(
   }
 }
 
-const mount = (setup: TestRendererSetup, sent: string[] = []) => NanobotTui.mount(
+const mount = (setup: TestRendererSetup, sent: string[] = []) => KohakuTui.mount(
   setup.renderer,
   options,
   client(sent),
@@ -179,7 +179,7 @@ function delegatedChild(overrides: Partial<DelegatedChildActivity> = {}): Delega
   }
 }
 
-describe("NanobotTui layout", () => {
+describe("KohakuTui layout", () => {
   let setup: TestRendererSetup | undefined
 
   afterEach(() => {
@@ -244,7 +244,7 @@ describe("NanobotTui layout", () => {
 
       expect(setup.renderer.width).toBe(width)
       expect(setup.renderer.height).toBe(height)
-      expect(occurrences(frame, "Ask nanobot anything")).toBe(1)
+      expect(occurrences(frame, "Ask Kohaku anything")).toBe(1)
       expect(occurrences(frame, "Ready")).toBe(0)
       expect(occurrences(frame, "Getting ready…")).toBe(1)
       expect(occurrences(frame, "default ▾")).toBe(1)
@@ -345,7 +345,7 @@ describe("NanobotTui layout", () => {
     const app = mount(setup)
     const composer = (app as unknown as { composer: TextareaRenderable }).composer
     await setup.renderOnce()
-    expect(setup.captureCharFrame()).toContain("Ask nanobot anything")
+    expect(setup.captureCharFrame()).toContain("Ask Kohaku anything")
 
     setup.mockInput.typeText("bu")
     await setup.flush()
@@ -354,14 +354,14 @@ describe("NanobotTui layout", () => {
     expect(composer.plainText).toBe("bu")
     expect(composer.placeholder).toBeNull()
     expect(frame).toContain("bu")
-    expect(frame).not.toContain("Ask nanobot anything")
-    expect(frame).not.toContain("buAsk nanobot anything")
+    expect(frame).not.toContain("Ask Kohaku anything")
+    expect(frame).not.toContain("buAsk Kohaku anything")
 
     setup.mockInput.pressBackspace()
     setup.mockInput.pressBackspace()
     await setup.flush()
-    expect(composer.placeholder).toBe("Ask nanobot anything")
-    expect(setup.captureCharFrame()).toContain("Ask nanobot anything")
+    expect(composer.placeholder).toBe("Ask Kohaku anything")
+    expect(setup.captureCharFrame()).toContain("Ask Kohaku anything")
   })
 
   test("compacts large pastes in the composer without changing the sent text", async () => {
@@ -405,7 +405,7 @@ describe("NanobotTui layout", () => {
       recordSend(content, messageOptions)
       return `image-turn-${sent.length}`
     }
-    const app = NanobotTui.mount(
+    const app = KohakuTui.mount(
       setup.renderer,
       options,
       transport,
@@ -485,7 +485,7 @@ describe("NanobotTui layout", () => {
       dispose: async () => undefined,
     }
     setup = await createRenderer({ width: 72, height: 20, screenMode: "alternate-screen" })
-    const app = NanobotTui.mount(
+    const app = KohakuTui.mount(
       setup.renderer,
       options,
       client(),
@@ -562,7 +562,7 @@ describe("NanobotTui layout", () => {
       dispose: async () => undefined,
     }
     setup = await createRenderer({ width: 72, height: 20, screenMode: "alternate-screen" })
-    const app = NanobotTui.mount(
+    const app = KohakuTui.mount(
       setup.renderer,
       options,
       client(sent),
@@ -591,7 +591,7 @@ describe("NanobotTui layout", () => {
       dispose: async () => undefined,
     }
     setup = await createRenderer({ width: 72, height: 20, screenMode: "alternate-screen" })
-    const app = NanobotTui.mount(
+    const app = KohakuTui.mount(
       setup.renderer,
       options,
       client(sent),
@@ -636,7 +636,7 @@ describe("NanobotTui layout", () => {
       dispose: async () => { disposed = true },
     }
     setup = await createRenderer({ width: 72, height: 20, screenMode: "alternate-screen" })
-    const app = NanobotTui.mount(
+    const app = KohakuTui.mount(
       setup.renderer,
       options,
       client(),
@@ -659,7 +659,7 @@ describe("NanobotTui layout", () => {
     const sent: string[] = []
     const sentOptions: MessageOptions[] = []
     setup = await createRenderer({ width: 88, height: 24, screenMode: "alternate-screen" })
-    const app = NanobotTui.mount(
+    const app = KohakuTui.mount(
       setup.renderer,
       options,
       client(sent, [], [], sentOptions),
@@ -987,7 +987,7 @@ describe("NanobotTui layout", () => {
     setup = await createRenderer({ width: 80, height: 24, screenMode: "alternate-screen" })
     const sent: string[] = []
     const sentOptions: MessageOptions[] = []
-    const app = NanobotTui.mount(
+    const app = KohakuTui.mount(
       setup.renderer,
       options,
       client(sent, [], [], sentOptions),
@@ -1035,7 +1035,7 @@ describe("NanobotTui layout", () => {
     const attached: string[] = []
     const newChats: string[] = []
     const transport = client([], attached, newChats)
-    const app = NanobotTui.mount(
+    const app = KohakuTui.mount(
       setup.renderer,
       { ...options, apiUrl: "http://nanobot.test", apiToken: "secret" },
       transport,
@@ -1107,7 +1107,7 @@ describe("NanobotTui layout", () => {
         activeChatId = chatId
       },
     }
-    const app = NanobotTui.mount(
+    const app = KohakuTui.mount(
       setup.renderer,
       { ...options, apiUrl: "http://nanobot.test", apiToken: "secret" },
       transport,
@@ -1192,7 +1192,7 @@ describe("NanobotTui layout", () => {
       }
       return new Response("{}")
     }) as typeof fetch
-    const app = NanobotTui.mount(
+    const app = KohakuTui.mount(
       setup.renderer,
       {
         ...options,
@@ -1255,7 +1255,7 @@ describe("NanobotTui layout", () => {
 
   test("returns a default-following chat to the canonical default preset", async () => {
     setup = await createRenderer({ width: 96, height: 20, screenMode: "alternate-screen" })
-    const app = NanobotTui.mount(
+    const app = KohakuTui.mount(
       setup.renderer,
       { ...options, model: "openai/gpt-5.6", modelPreset: "Codex" },
       client(),
@@ -1287,7 +1287,7 @@ describe("NanobotTui layout", () => {
       })))
     }) as typeof fetch
     const sent: string[] = []
-    const app = NanobotTui.mount(
+    const app = KohakuTui.mount(
       setup.renderer,
       { ...options, apiUrl: "http://nanobot.test", apiToken: "secret" },
       client(sent),
@@ -1352,7 +1352,7 @@ describe("NanobotTui layout", () => {
       return new Response(JSON.stringify({ sessions: [] }))
     }) as typeof fetch
     setup = await createRenderer({ width: 96, height: 24, screenMode: "alternate-screen" })
-    const app = NanobotTui.mount(
+    const app = KohakuTui.mount(
       setup.renderer,
       { ...options, apiUrl: "http://nanobot.test", apiToken: "secret" },
       client(sent, [], [], [], [], scopes),
@@ -1467,7 +1467,7 @@ describe("NanobotTui layout", () => {
     }) as typeof fetch
     const attached: string[] = []
     setup = await createRenderer({ width: 96, height: 24, screenMode: "alternate-screen" })
-    const app = NanobotTui.mount(
+    const app = KohakuTui.mount(
       setup.renderer,
       { ...options, apiUrl: "http://nanobot.test", apiToken: "secret" },
       client([], attached),
@@ -1484,7 +1484,7 @@ describe("NanobotTui layout", () => {
       await waitUntil(() => (app as unknown as { ready: boolean }).ready)
       await setup.renderOnce()
       const titleItems = ui.title.getChildren() as TextRenderable[]
-      expect(titleItems.some((item) => item.id === "nanobot-tui-title-text")).toBe(false)
+      expect(titleItems.some((item) => item.id === "kohaku-tui-title-text")).toBe(false)
       expect(ui.sessionMenu.visible).toBe(false)
 
       ui.composer.setText("/sessions")
@@ -1522,7 +1522,7 @@ describe("NanobotTui layout", () => {
       }
       return new Promise((resolve) => { deferredResolve = resolve })
     }
-    const app = NanobotTui.mount(
+    const app = KohakuTui.mount(
       setup.renderer,
       options,
       recoveryClient,
@@ -1703,7 +1703,7 @@ describe("NanobotTui layout", () => {
       })
     }) as typeof fetch
     const sent: string[] = []
-    const app = NanobotTui.mount(
+    const app = KohakuTui.mount(
       setup.renderer,
       { ...options, apiUrl: "http://nanobot.test", apiToken: "secret" },
       client(sent),
@@ -1759,7 +1759,7 @@ describe("NanobotTui layout", () => {
         resolveFetch = resolve
       })
     }) as typeof fetch
-    const app = NanobotTui.mount(
+    const app = KohakuTui.mount(
       setup.renderer,
       { ...options, apiUrl: "http://nanobot.test", apiToken: "secret" },
       client(),
@@ -1809,7 +1809,7 @@ describe("NanobotTui layout", () => {
         archived_summary_at: "2026-08-13T10:00:00Z",
       })))
     }) as typeof fetch
-    const app = NanobotTui.mount(
+    const app = KohakuTui.mount(
       setup.renderer,
       { ...options, apiUrl: "http://nanobot.test", apiToken: "secret" },
       client(),
@@ -1840,7 +1840,7 @@ describe("NanobotTui layout", () => {
       await setup.renderOnce()
       const compact = setup.captureCharFrame()
       expect(occurrences(compact, "Agent context")).toBe(0)
-      expect(occurrences(compact, "Ask nanobot anything")).toBe(1)
+    expect(occurrences(compact, "Ask Kohaku anything")).toBe(1)
 
       setup.mockInput.pressEscape()
       await waitUntil(() => !ui.contextPanel.visible)
@@ -1878,7 +1878,7 @@ describe("NanobotTui layout", () => {
       return Promise.resolve(Response.json({ messages: [] }))
     }) as typeof fetch
     const transport = client()
-    const app = NanobotTui.mount(
+    const app = KohakuTui.mount(
       setup.renderer,
       { ...options, apiUrl: "http://nanobot.test", apiToken: "secret" },
       transport,
@@ -1992,7 +1992,7 @@ describe("NanobotTui layout", () => {
     expect(frame).toContain("1/2 · src/first.ts · +2 -1")
     expect(frame).toContain("const newValue = 2")
     expect(frame).toContain("Diff truncated by the gateway")
-    expect(frame).not.toContain("Ask nanobot anything")
+    expect(frame).not.toContain("Ask Kohaku anything")
 
     setup.mockInput.pressArrow("right")
     await setup.flush()
@@ -2012,7 +2012,7 @@ describe("NanobotTui layout", () => {
     setup.mockInput.pressEscape()
     await waitUntil(() => !ui.diffViewer.visible)
     await setup.flush()
-    expect(setup.captureCharFrame()).toContain("Ask nanobot anything")
+    expect(setup.captureCharFrame()).toContain("Ask Kohaku anything")
   })
 
   test("loads earlier transcript pages in place when PageUp reaches the top", async () => {
@@ -2047,7 +2047,7 @@ describe("NanobotTui layout", () => {
           : { has_more_before: true, before_cursor: "older-page" },
       })))
     }) as typeof fetch
-    const app = NanobotTui.mount(
+    const app = KohakuTui.mount(
       setup.renderer,
       { ...options, apiUrl: "http://nanobot.test", apiToken: "secret", chatId: "chat" },
       client(),
@@ -2244,7 +2244,7 @@ describe("NanobotTui layout", () => {
 
   test("renders fenced plain text from light-theme history", async () => {
     setup = await createRenderer({ width: 100, height: 30, screenMode: "alternate-screen" })
-    const app = NanobotTui.mount(
+    const app = KohakuTui.mount(
       setup.renderer,
       { ...options, theme: "light" },
       client(),
@@ -2379,7 +2379,7 @@ describe("NanobotTui layout", () => {
 
   test("distinguishes the composer with a quiet focus edge", async () => {
     setup = await createRenderer({ width: 72, height: 20, screenMode: "alternate-screen" })
-    const app = NanobotTui.mount(
+    const app = KohakuTui.mount(
       setup.renderer,
       { ...options, theme: "light" },
       client(),
@@ -2409,7 +2409,7 @@ describe("NanobotTui layout", () => {
     await setup.renderOnce()
 
     const composerLine = setup.captureCharFrame().split("\n")
-      .find((line) => line.includes("Ask nanobot anything")) || ""
+      .find((line) => line.includes("Ask Kohaku anything")) || ""
     expect(composerLine).toContain("│")
     expect(composerLine).not.toContain("┌")
     expect(composerLine).not.toContain("┐")
@@ -2417,7 +2417,7 @@ describe("NanobotTui layout", () => {
 
   test("uses asymmetric roles instead of chat bubbles", async () => {
     setup = await createRenderer({ width: 72, height: 24, screenMode: "alternate-screen" })
-    const app = NanobotTui.mount(
+    const app = KohakuTui.mount(
       setup.renderer,
       { ...options, theme: "dark" },
       client(),
@@ -2433,7 +2433,7 @@ describe("NanobotTui layout", () => {
     const frame = setup.captureCharFrame()
     const userLine = frame.split("\n").find((line) => line.includes("User question")) || ""
     const agentLine = frame.split("\n").find((line) => line.includes("Agent **answer**")) || ""
-    const headerLine = frame.split("\n").find((line) => line.includes(">_  nanobot")) || ""
+    const headerLine = frame.split("\n").find((line) => line.includes(">_  Kohaku")) || ""
     const headerBorder = frame.split("\n").find((line) => line.includes("╭")) || ""
 
     expect(userLine).toContain("› User question")
@@ -2485,7 +2485,7 @@ describe("NanobotTui layout", () => {
 
   test("keeps an explicit theme stable when the terminal reports another mode", async () => {
     setup = await createRenderer({ width: 72, height: 20, screenMode: "alternate-screen" })
-    const app = NanobotTui.mount(
+    const app = KohakuTui.mount(
       setup.renderer,
       { ...options, theme: "light" },
       client(),
@@ -2514,7 +2514,7 @@ describe("NanobotTui layout", () => {
     Object.defineProperty(setup.renderer, "themeMode", { configurable: true, value: "light" })
     const transport = client()
     transport.connect = () => { connected = true }
-    const app = NanobotTui.mount(
+    const app = KohakuTui.mount(
       setup.renderer,
       options,
       transport,
@@ -2538,7 +2538,7 @@ describe("NanobotTui layout", () => {
     Object.defineProperty(setup.renderer, "themeMode", { configurable: true, value: null })
     const transport = client()
     transport.connect = () => { connected = true }
-    const app = NanobotTui.mount(
+    const app = KohakuTui.mount(
       setup.renderer,
       options,
       transport,
@@ -2752,7 +2752,7 @@ describe("NanobotTui layout", () => {
     expect(status.plainText).not.toContain("pwd")
     app.accept({ event: "turn_end", chat_id: "chat" })
     await setup.flush()
-    expect(ui.composer.placeholder).toBe("Ask nanobot anything")
+    expect(ui.composer.placeholder).toBe("Ask Kohaku anything")
   })
 
   test("updates retry state in place and ends failed turns explicitly", async () => {
@@ -2980,7 +2980,7 @@ describe("NanobotTui layout", () => {
     expect(state()).toBe(false)
     const restored = setup.captureCharFrame()
     expect(restored).not.toContain("stale partial response")
-    expect(occurrences(restored, ">_  nanobot")).toBe(1)
+    expect(occurrences(restored, ">_  Kohaku")).toBe(1)
     app.accept({
       event: "goal_status",
       chat_id: "chat",
@@ -3056,7 +3056,7 @@ describe("NanobotTui layout", () => {
       elapsedMs: 3_500,
       health: "unreachable",
     })
-    expect(ui.status.plainText).toBe("Nanobot is taking longer to respond…")
+    expect(ui.status.plainText).toBe("Kohaku is taking longer to respond…")
     expect(ui.status.plainText).not.toContain("Unable")
 
     ui.handleStatus("error", "gateway bootstrap failed: HTTP 401", {
@@ -3064,7 +3064,7 @@ describe("NanobotTui layout", () => {
       attempt: 9,
       elapsedMs: 3_800,
     })
-    expect(ui.status.plainText).toBe("Nanobot unavailable · restart nanobot")
+    expect(ui.status.plainText).toBe("Kohaku unavailable · restart Kohaku")
     expect(ui.status.plainText).not.toContain("gateway")
     expect(ui.status.plainText).not.toContain("127.0.0.1")
     expect(ui.status.plainText).not.toContain("HTTP")
@@ -3173,7 +3173,7 @@ describe("NanobotTui layout", () => {
     globalThis.fetch = (() => new Promise<Response>((resolve) => {
       resolveFetch = resolve
     })) as unknown as typeof fetch
-    const app = NanobotTui.mount(
+    const app = KohakuTui.mount(
       setup.renderer,
       { ...options, apiUrl: "http://nanobot.test", apiToken: "token", chatId: "chat" },
       client(),
@@ -3208,7 +3208,7 @@ describe("NanobotTui layout", () => {
     globalThis.fetch = (() => new Promise<Response>((resolve) => {
       resolveFetch = resolve
     })) as unknown as typeof fetch
-    const app = NanobotTui.mount(
+    const app = KohakuTui.mount(
       setup.renderer,
       { ...options, apiUrl: "http://nanobot.test", apiToken: "token", chatId: "chat" },
       client(),
@@ -3255,7 +3255,7 @@ describe("NanobotTui layout", () => {
         resolveReconnect = resolve
       })
     }) as unknown as typeof fetch
-    const app = NanobotTui.mount(
+    const app = KohakuTui.mount(
       setup.renderer,
       { ...options, apiUrl: "http://nanobot.test", apiToken: "token", chatId: "chat" },
       client(sent),
@@ -3348,7 +3348,7 @@ describe("NanobotTui layout", () => {
     const exited: string[] = []
     const transport = client()
     transport.close = () => { closed = true }
-    const app = NanobotTui.mount(
+    const app = KohakuTui.mount(
       setup.renderer,
       {
         ...options,
@@ -3375,7 +3375,7 @@ describe("NanobotTui layout", () => {
     let closed = false
     const transport = client()
     transport.close = () => { closed = true }
-    NanobotTui.mount(
+    KohakuTui.mount(
       setup.renderer,
       options,
       transport,
@@ -3395,7 +3395,7 @@ describe("NanobotTui layout", () => {
     let closed = false
     const transport = client()
     transport.close = () => { closed = true }
-    const app = NanobotTui.mount(
+    const app = KohakuTui.mount(
       setup.renderer,
       options,
       transport,
@@ -3416,7 +3416,7 @@ describe("NanobotTui layout", () => {
     let closed = false
     const transport = client(sent)
     transport.close = () => { closed = true }
-    const app = NanobotTui.mount(
+    const app = KohakuTui.mount(
       setup.renderer,
       options,
       transport,
@@ -3448,7 +3448,7 @@ describe("NanobotTui layout", () => {
     let closed = false
     const transport = client(sent)
     transport.close = () => { closed = true }
-    const app = NanobotTui.mount(
+    const app = KohakuTui.mount(
       setup.renderer,
       {
         ...options,
@@ -3481,7 +3481,7 @@ describe("NanobotTui layout", () => {
     setup = await createRenderer({ width: 72, height: 20, screenMode: "alternate-screen" })
     let detached = false
     const transport = { ...client(), activeChatId: "" }
-    const app = NanobotTui.mount(
+    const app = KohakuTui.mount(
       setup.renderer,
       { ...options, onDetach: (chatId) => {
         expect(chatId).toBeUndefined()
@@ -3507,7 +3507,7 @@ describe("NanobotTui layout", () => {
       consoleMode: "disabled",
     })
     const sent: string[] = []
-    const app = NanobotTui.mount(
+    const app = KohakuTui.mount(
       setup.renderer,
       options,
       client(sent),
@@ -3539,7 +3539,7 @@ describe("NanobotTui layout", () => {
   })
 })
 
-describe("NanobotTui with a Herdr pane title reporter", () => {
+describe("KohakuTui with a Herdr pane title reporter", () => {
   test("keeps the full terminal experience while reporting task titles", async () => {
     const setup = await createTestRenderer({ width: 80, height: 22, screenMode: "alternate-screen" })
     const titles: string[] = []
@@ -3548,7 +3548,7 @@ describe("NanobotTui with a Herdr pane title reporter", () => {
       reportTitle(title) { titles.push(title) },
       release() { released = true },
     }
-    const app = NanobotTui.mount(
+    const app = KohakuTui.mount(
       setup.renderer,
       options,
       client(),
@@ -3586,7 +3586,7 @@ describe("NanobotTui with a Herdr pane title reporter", () => {
     })
     await setup.flush()
     const activeFrame = setup.captureCharFrame()
-    expect(activeFrame).toContain(">_  nanobot")
+    expect(activeFrame).toContain(">_  Kohaku")
     expect(activeFrame).toContain("default ▾")
     expect(occurrences(activeFrame, "› Ship the Herdr integration")).toBe(1)
     expect(occurrences(activeFrame, "app.ts")).toBe(1)
@@ -3625,15 +3625,15 @@ if (process.platform !== "win32") {
       cwd: import.meta.dir.replace(/\/src$/u, ""),
       env: {
         ...process.env,
-        NANOBOT_TUI_WS_URL: "ws://127.0.0.1:9/ws",
-        NANOBOT_TUI_API_URL: "",
-        NANOBOT_TUI_API_TOKEN: "",
-        NANOBOT_TUI_CHAT_ID: "resume-chat",
-        NANOBOT_TUI_MODEL: "test/model",
-        NANOBOT_TUI_WORKSPACE: "/tmp/nanobot-test",
-        NANOBOT_TUI_VERSION: "test",
-        NANOBOT_TUI_ACCESS: "workspace access",
-        NANOBOT_TUI_THEME: "dark",
+        KOHAKU_TUI_WS_URL: "ws://127.0.0.1:9/ws",
+        KOHAKU_TUI_API_URL: "",
+        KOHAKU_TUI_API_TOKEN: "",
+        KOHAKU_TUI_CHAT_ID: "resume-chat",
+        KOHAKU_TUI_MODEL: "test/model",
+        KOHAKU_TUI_WORKSPACE: "/tmp/nanobot-test",
+        KOHAKU_TUI_VERSION: "test",
+        KOHAKU_TUI_ACCESS: "workspace access",
+        KOHAKU_TUI_THEME: "dark",
       },
       stdout: "pipe",
       stderr: "pipe",
@@ -3665,7 +3665,7 @@ if (process.platform !== "win32") {
     expect(output).toContain("\x1b[?1049l")
     expect(output.indexOf("\x1b[?1049l")).toBeLessThan(output.indexOf("Resume with:"))
     expect(output).toContain(
-      "Resume with: nanobot agent --session websocket:resume-chat\n",
+      "Resume with: kohaku agent --session websocket:resume-chat\n",
     )
   })
 }

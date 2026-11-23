@@ -6,13 +6,13 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from nanobot.providers.base import LLMResponse
-from nanobot.session.legacy_h1 import (
+from kohaku.providers.base import LLMResponse
+from kohaku.session.legacy_h1 import (
     LegacyH1RecoveryRequiredError,
     LegacyH1StateError,
     require_legacy_h1_disposition,
 )
-from nanobot.session.manager import SessionManager
+from kohaku.session.manager import SessionManager
 from tests.agent.conftest import make_loop
 
 KEY = "telegram:42"

@@ -1,267 +1,120 @@
 # Install and Quick Start
 
-This guide has one goal: get a normal nanobot reply in your browser. Do not add chat apps, MCP servers, fallback models, or deployment until this path works.
+Use this guide to install Kohaku from a clone of this repository and get one reply. Do not add other integrations until this path works.
 
-If terminals, Python, or API keys are unfamiliar, use the [beginner walkthrough](./start-without-technical-background.md), which explains each term and screen.
-
-These repository docs describe `main`, which can be newer than the released package. The installer below installs the latest stable release. Check `nanobot --version` and use the [matching stable guide](https://nanobot.wiki/docs/latest/getting-started/quick-start) if its setup screens differ from this page.
+If you are new to terminals or Python, use the [beginner walkthrough](./start-without-technical-background.md).
 
 ## What You Need
 
 - Python 3.11 or newer.
-- Access to one supported AI provider, company endpoint, or local model server.
-- The credential, endpoint URL, and model ID required by that service. Local providers such as Ollama may not require a key.
+- Git to clone this repository.
+- Access to an AI provider, company endpoint, or local model server.
+- The credential, endpoint URL, and model ID required by that service.
 
-Git and [Bun](https://bun.sh/) are only needed for a source install. The published package already contains the WebUI and fetches a checksummed, version-matched TUI archive with its licenses, notices, corresponding application source, source offer, and relinking instructions on first use.
+Kohaku stores new default config and workspace data under `~/.kohaku/`. A first install does not adopt an existing Nanobot profile. If you already use Nanobot, follow [Upgrade to Kohaku](./upgrade-to-kohaku.md).
 
-## 1. Install nanobot
+## 1. Install from This Repository
 
-The recommended installer keeps nanobot out of the system Python environment. On a fresh local desktop, it starts the WebUI when installation finishes.
-
-**macOS / Linux**
+Clone the repository and create a virtual environment:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/HKUDS/nanobot/main/scripts/install.sh | sh
+git clone https://github.com/JadenChun/nanobot-custom.git kohaku
+cd kohaku
+python -m venv .venv
 ```
 
-**Windows PowerShell**
+Activate the environment on macOS or Linux:
+
+```bash
+source .venv/bin/activate
+```
+
+Activate the environment in Windows PowerShell:
 
 ```powershell
-irm https://raw.githubusercontent.com/HKUDS/nanobot/main/scripts/install.ps1 | iex
+.\.venv\Scripts\Activate.ps1
 ```
 
-The installer chooses an active virtual environment, `uv`, `pipx`, or a managed environment under `~/.nanobot/venv`. It installs the stable PyPI release. At the end it prints the exact command it used to run nanobot; if `nanobot` is not on `PATH`, reuse that full command in the examples below.
+Install Kohaku in editable mode:
 
-If you prefer to inspect the scripts first, open [`install.sh`](../scripts/install.sh) or [`install.ps1`](../scripts/install.ps1).
+```bash
+python -m pip install -e .
+```
 
-## 2. Configure Your Model
+Editable mode points Python to this checkout. For development dependencies, run `python -m pip install -e ".[dev]"` from the repository root.
 
-Keep the installer terminal open. The browser opens the local WebUI; go to **Settings → Models** and:
+## 2. Configure a Model
 
-1. Choose the provider or endpoint that owns your credential.
-2. Enter its API key or base URL when required.
-3. Create or select a model preset using a model ID that provider can run.
-4. Save the configuration.
+Run the setup wizard:
 
-The WebUI launcher creates or updates:
+```bash
+kohaku onboard --wizard
+```
+
+Select a provider and model. Enter the API key, endpoint, or local model details that the provider requires. Keep credentials private.
+
+The default profile uses these paths:
 
 | Path | Purpose |
 |---|---|
-| `~/.nanobot/config.json` | Provider, model, WebUI, channel, tool, and runtime settings |
-| `~/.nanobot/workspace/` | Memory, skills, automations, and generated files |
-| `~/.nanobot/sessions/<workspace-id>/` | Recent session history stored outside the workspace; the ID remains stable across workspace moves |
+| `~/.kohaku/config.json` | Provider, model, channel, tool, and runtime settings |
+| `~/.kohaku/workspace/` | Memory, skills, automations, and generated files |
+| `~/.kohaku/sessions/<workspace-id>/` | Session history stored outside the workspace |
 
-If the installer did not open the browser, run:
-
-```bash
-nanobot webui
-```
-
-SSH, headless, existing-config, and older-release installs retain the terminal setup path:
-
-```bash
-nanobot onboard --wizard
-```
+Read [Configuration](./configuration.md) for advanced settings and exact environment variables.
 
 ## 3. Check the Setup
 
 ```bash
-nanobot status
+kohaku status
 ```
 
-You want:
-
-- a check mark for **Config** and **Workspace**;
-- the model or preset you selected;
-- a configured state for the provider used by that model.
-
-Most other providers can say `not set`. This command validates local setup but does not call the model.
+Check that the config, workspace, provider, and model match your choices. This command checks local setup but does not call the model.
 
 ## 4. Get the First Reply
 
-If the installer-started WebUI is no longer running, run `nanobot webui` again. Leave that launcher open; the first-run WebUI is bound to localhost, so other devices on your network cannot reach it.
-
-Send:
-
-```text
-Hello!
-```
-
-Any normal assistant answer is success. It proves that nanobot can load the config, reach the selected model, use the workspace, and serve the browser UI.
-
-Interactive WebUI and TUI launchers share one on-demand gateway. Closing one launcher leaves it running for the others; closing the last launcher stops it. If you prefer a persistent background process, press `Ctrl+C`, then run:
+Send one message:
 
 ```bash
-nanobot gateway --background
-nanobot gateway status
+kohaku -m "Hello!"
 ```
 
-Use `nanobot gateway logs`, `restart`, and `stop` to manage that background gateway.
+A normal reply proves that Kohaku can load the config, reach the model, and use the workspace.
 
-## Terminal-Only Check
+## 5. Open the WebUI
 
-If you do not want the browser or need to isolate a WebUI problem, send one message directly:
+An editable install skips the packaged WebUI build. Install Bun, then build the WebUI from the repository root:
 
 ```bash
-nanobot -m "Hello!"
+cd webui
+bun install
+bun run build
+cd ..
+kohaku webui
 ```
 
-Then start an interactive terminal chat with:
-
-```bash
-nanobot
-```
-
-In interactive mode, `Enter` sends and `Shift+Enter` inserts a newline (`Ctrl+J` is the
-universal fallback). While nanobot is working, `Enter` sends immediately, `Tab` waits until the
-current response is finished, and `Option+Up` on macOS (`Alt+Up` on Windows/Linux) edits the
-latest waiting message. Exit
-with `exit`, `/exit`, `:q`, or `Ctrl+D`.
+The browser opens the local workbench. Read the [WebUI guide](./webui.md) for browser access, workspaces, Apps, and settings. Read the [WebUI source guide](../webui/README.md) to develop or package the frontend.
 
 ## Choose One Next Step
 
-After the first reply works, add one capability and test again:
-
-| Goal | Recommended path |
+| Goal | Guide |
 |---|---|
-| Learn sessions, workspaces, tools, and access modes | [WebUI guide](./webui.md) |
-| Connect a chat platform | Open **Settings → Channels**, then use [Chat Apps](./chat-apps.md) for platform prerequisites |
-| Change or add a model | Open **Settings → Models**; use the [Provider Cookbook](./provider-cookbook.md) for a recipe |
-| Add web search, voice, or image generation | Use the matching WebUI Settings page, then consult [Configuration](./configuration.md) for advanced fields |
-| Add an App or MCP integration | Open **Apps** or follow [Configure MCP Tools](./guides/configure-mcp-tools.md) |
-| Schedule agent work | Read [Automations](./automations.md) |
-| Run continuously or remotely | Read [Deployment](./deployment.md) |
-| Integrate from code | Use the [Python SDK](./python-sdk.md) or [OpenAI-Compatible API](./openai-api.md) |
+| Understand workspaces and sessions | [Concepts](./concepts.md) |
+| Connect a chat platform | [Chat Apps](./chat-apps.md) |
+| Choose a hosted, company, or local model | [Provider Cookbook](./provider-cookbook.md) |
+| Configure web search or an MCP server | [Tool setup guides](./guides/README.md) |
+| Schedule work | [Automations](./automations.md) |
+| Run Kohaku continuously | [Deployment](./deployment.md) |
+| Use Kohaku from Python | [Python SDK](./python-sdk.md) |
+| Expose an OpenAI-compatible API | [API guide](./openai-api.md) |
 
-## Other Install Methods
+## Update a Source Checkout
 
-Use one method, then continue at [Configure Your Model](#2-configure-your-model).
-
-**uv**
-
-```bash
-uv tool install nanobot-ai
-nanobot webui
-```
-
-**pip in a virtual environment**
-
-```bash
-python -m pip install nanobot-ai
-nanobot webui
-```
-
-If pip reports `externally-managed-environment`, use the recommended installer, `uv tool install nanobot-ai`, `pipx install nanobot-ai`, or create a virtual environment. Do not force a system-wide install.
-
-**Current source**
-
-Clone the repository and install it in editable mode. Bun is required so the checkout can run
-its matching native TUI instead of mixing current Python with an older release binary.
-
-```bash
-git clone https://github.com/HKUDS/nanobot.git
-cd nanobot
-python -m venv .venv
-```
-
-Activate it with `source .venv/bin/activate` on macOS/Linux or
-`.venv\Scripts\Activate.ps1` in Windows PowerShell, then run:
-
-```bash
-python -m pip install -e .
-nanobot webui
-```
-
-The source path follows current `main` and can be newer than the published package. The editable
-install keeps Python pointed at the checkout; `nanobot` runs `tui/` with Bun, and
-`nanobot webui` automatically rebuilds `webui/` when its bundled assets are stale. All normal
-commands remain the same as a stable install. For development details, follow
-[`../CONTRIBUTING.md`](../CONTRIBUTING.md).
-
-If the package is installed but the shell cannot find `nanobot`, use the runner that owns the installation. The recommended installer prints the exact command to reuse. Common forms are:
-
-```bash
-uv tool run --from nanobot-ai nanobot --version
-pipx run --spec nanobot-ai nanobot --version
-~/.nanobot/venv/bin/python -m nanobot --version
-```
-
-On Windows, the managed-environment form is `& "$HOME\.nanobot\venv\Scripts\python.exe" -m nanobot --version`. Replace `--version` with `webui`, `onboard --wizard`, or any other arguments you need. Use plain `python -m nanobot` only when that Python executable belongs to the environment where nanobot was installed.
-
-## Manual Configuration Fallback
-
-Use this only when the wizard is unavailable or you intentionally manage JSON. First run `nanobot onboard`, then merge a provider and a named model preset into `~/.nanobot/config.json`.
-
-A generic OpenAI-compatible setup has this shape:
-
-```json
-{
-  "providers": {
-    "custom": {
-      "apiKey": "${PROVIDER_API_KEY}",
-      "apiBase": "https://api.example.com/v1"
-    }
-  },
-  "modelPresets": {
-    "primary": {
-      "provider": "custom",
-      "model": "model-id-from-your-provider"
-    }
-  },
-  "agents": {
-    "defaults": {
-      "modelPreset": "primary"
-    }
-  }
-}
-```
-
-Replace the provider, endpoint, and model together. Do not pair a credential from one service with a model ID from another. See [Provider Cookbook](./provider-cookbook.md) for hosted, OAuth, company, and local examples, and [Configuration](./configuration.md) for exact fields.
-
-## Updating
-
-Upgrade with the same method you used to install:
-
-```bash
-# Recommended installer
-curl -fsSL https://raw.githubusercontent.com/HKUDS/nanobot/main/scripts/install.sh | sh
-
-# Or one of these
-uv tool upgrade nanobot-ai
-pipx upgrade nanobot-ai
-python -m pip install -U nanobot-ai
-```
-
-For a source checkout:
+From the repository root, update the checkout and reinstall it in the same environment:
 
 ```bash
 git pull --ff-only
 python -m pip install -e .
 ```
 
-Because the install is editable, normal source changes are visible immediately. Re-running the
-install synchronizes any changed Python dependencies; the TUI and WebUI refresh their own
-dependencies/assets when launched. Then check `nanobot --version`. Run
-`nanobot onboard --refresh` when you want to add newly introduced default fields while preserving
-existing settings.
-
-## If the First Reply Fails
-
-Do not change several settings at once. Start with:
-
-```bash
-nanobot --version
-nanobot status
-nanobot agent -m "Hello!"
-```
-
-| Symptom | First check |
-|---|---|
-| `nanobot: command not found` | Reuse the installer command or method-specific runner described under [Other Install Methods](#other-install-methods) |
-| JSON parse error | Check commas and braces; remember that docs examples are usually snippets |
-| `401` or invalid API key | Verify the selected provider owns that key and remove accidental spaces |
-| Model not found | Use a model ID available from the provider selected in the active preset |
-| CLI works but WebUI does not open | Use port `8765`, not gateway health port `18790` |
-| WebUI works but a chat app does not | Check **Settings → Channels**, then run `nanobot channels status` |
-
-Continue with the ordered [Troubleshooting guide](./troubleshooting.md) if the cause is still unclear.
+If you are moving from Nanobot to Kohaku, follow [Upgrade to Kohaku](./upgrade-to-kohaku.md). Do not use this source update path to migrate an existing profile.

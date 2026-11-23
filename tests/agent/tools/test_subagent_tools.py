@@ -10,15 +10,15 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from nanobot.agent.context import TranscriptInput
-from nanobot.agent.loop import AgentLoop
-from nanobot.agent.runner import AgentRunResult
-from nanobot.agent.tools.context import RequestContext
-from nanobot.agent.tools.registry import ToolRegistry
-from nanobot.agent.turn import RunPolicyContext, TurnContext
-from nanobot.config.schema import AgentDefaults
-from nanobot.providers.base import GenerationSettings
-from nanobot.utils.llm_runtime import LLMRuntime
+from kohaku.agent.context import TranscriptInput
+from kohaku.agent.loop import AgentLoop
+from kohaku.agent.runner import AgentRunResult
+from kohaku.agent.tools.context import RequestContext
+from kohaku.agent.tools.registry import ToolRegistry
+from kohaku.agent.turn import RunPolicyContext, TurnContext
+from kohaku.config.schema import AgentDefaults
+from kohaku.providers.base import GenerationSettings
+from kohaku.utils.llm_runtime import LLMRuntime
 from tests.agent import p6_admitted_fixtures
 
 admitted_async = p6_admitted_fixtures.admitted_async
@@ -68,8 +68,8 @@ def _runtime(provider: MagicMock, model: str = "test-model") -> LLMRuntime:
 @pytest.mark.asyncio
 async def test_run_inline_returns_result_without_announcement(tmp_path):
     """Inline subagents return directly instead of injecting a follow-up."""
-    from nanobot.agent.subagent import SubagentManager
-    from nanobot.bus.queue import MessageBus
+    from kohaku.agent.subagent import SubagentManager
+    from kohaku.bus.queue import MessageBus
 
     provider = MagicMock()
     manager = SubagentManager(
@@ -102,9 +102,9 @@ async def test_run_inline_returns_result_without_announcement(tmp_path):
 @pytest.mark.asyncio
 async def test_run_inline_returns_structured_error(tmp_path):
     """Inline subagent failures remain tool errors for the parent runner."""
-    from nanobot.agent.subagent import SubagentManager
-    from nanobot.agent.tools.registry import is_tool_error_result
-    from nanobot.bus.queue import MessageBus
+    from kohaku.agent.subagent import SubagentManager
+    from kohaku.agent.tools.registry import is_tool_error_result
+    from kohaku.bus.queue import MessageBus
 
     manager = SubagentManager(
         workspace=tmp_path,
@@ -134,10 +134,10 @@ async def test_run_inline_returns_structured_error(tmp_path):
 @pytest.mark.asyncio
 async def test_retired_subagent_exec_config_does_not_enable_tool_scope(tmp_path):
     """Keep configuration compatibility without granting retired shell access."""
-    from nanobot.agent.subagent import SubagentManager
-    from nanobot.agent.tools.shell import ExecToolConfig
-    from nanobot.bus.queue import MessageBus
-    from nanobot.config.schema import ToolsConfig
+    from kohaku.agent.subagent import SubagentManager
+    from kohaku.agent.tools.shell import ExecToolConfig
+    from kohaku.bus.queue import MessageBus
+    from kohaku.config.schema import ToolsConfig
 
     bus = MessageBus()
     provider = MagicMock()
@@ -157,8 +157,8 @@ async def test_retired_subagent_exec_config_does_not_enable_tool_scope(tmp_path)
 @pytest.mark.asyncio
 async def test_subagent_uses_configured_max_iterations(tmp_path):
     """Subagents should honor the configured tool-iteration limit."""
-    from nanobot.agent.subagent import SubagentManager, SubagentStatus
-    from nanobot.bus.queue import MessageBus
+    from kohaku.agent.subagent import SubagentManager, SubagentStatus
+    from kohaku.bus.queue import MessageBus
 
     bus = MessageBus()
     provider = MagicMock()
@@ -206,8 +206,8 @@ async def test_subagent_uses_configured_max_iterations(tmp_path):
 @pytest.mark.asyncio
 async def test_spawn_forwards_temperature_to_run_spec(tmp_path):
     """A temperature passed to spawn() should reach the AgentRunSpec."""
-    from nanobot.agent.subagent import SubagentManager
-    from nanobot.bus.queue import MessageBus
+    from kohaku.agent.subagent import SubagentManager
+    from kohaku.bus.queue import MessageBus
 
     bus = MessageBus()
     provider = MagicMock()
@@ -243,9 +243,9 @@ async def test_spawn_forwards_temperature_to_run_spec(tmp_path):
 @pytest.mark.asyncio
 async def test_background_spawn_waits_for_concurrency_capacity(tmp_path):
     """Background tasks should be accepted and start when capacity becomes available."""
-    from nanobot.agent.subagent import SubagentManager
-    from nanobot.agent.tools.spawn import SpawnTool
-    from nanobot.bus.queue import MessageBus
+    from kohaku.agent.subagent import SubagentManager
+    from kohaku.agent.tools.spawn import SpawnTool
+    from kohaku.bus.queue import MessageBus
 
     bus = MessageBus()
     provider = MagicMock()
@@ -281,7 +281,7 @@ async def test_background_spawn_waits_for_concurrency_capacity(tmp_path):
 
     mgr.runner.run = AsyncMock(side_effect=fake_run)
 
-    from nanobot.agent.tools.context import RequestContext, request_context
+    from kohaku.agent.tools.context import RequestContext, request_context
 
     tool = SpawnTool(mgr)
     with request_context(RequestContext(
@@ -312,8 +312,8 @@ async def test_background_spawn_waits_for_concurrency_capacity(tmp_path):
 
 @pytest.mark.asyncio
 async def test_spawn_tool_waits_for_inline_result():
-    from nanobot.agent.tools.context import RequestContext, request_context
-    from nanobot.agent.tools.spawn import SpawnTool
+    from kohaku.agent.tools.context import RequestContext, request_context
+    from kohaku.agent.tools.spawn import SpawnTool
 
     class Manager:
         max_concurrent_subagents = 1
@@ -346,10 +346,10 @@ async def test_spawn_tool_waits_for_inline_result():
 
 @pytest.mark.asyncio
 async def test_inline_spawn_waits_for_concurrency_capacity(tmp_path):
-    from nanobot.agent.subagent import SubagentManager
-    from nanobot.agent.tools.context import RequestContext, request_context
-    from nanobot.agent.tools.spawn import SpawnTool
-    from nanobot.bus.queue import MessageBus
+    from kohaku.agent.subagent import SubagentManager
+    from kohaku.agent.tools.context import RequestContext, request_context
+    from kohaku.agent.tools.spawn import SpawnTool
+    from kohaku.bus.queue import MessageBus
 
     manager = SubagentManager(
         workspace=tmp_path,
@@ -408,14 +408,14 @@ async def test_inline_spawn_waits_for_concurrency_capacity(tmp_path):
 @pytest.mark.asyncio
 async def test_runner_executes_inline_spawn_batch_concurrently(tmp_path):
     """Adjacent blocking consultations should share one concurrent tool batch."""
-    from nanobot.agent.hook import AgentHook, AgentHookContext
-    from nanobot.agent.subagent import SubagentManager
-    from nanobot.agent.tools.context import RequestContext, request_context
-    from nanobot.agent.tools.execution import execute_tool_calls
-    from nanobot.agent.tools.registry import ToolRegistry
-    from nanobot.agent.tools.spawn import SpawnTool
-    from nanobot.bus.queue import MessageBus
-    from nanobot.providers.base import ToolCallRequest
+    from kohaku.agent.hook import AgentHook, AgentHookContext
+    from kohaku.agent.subagent import SubagentManager
+    from kohaku.agent.tools.context import RequestContext, request_context
+    from kohaku.agent.tools.execution import execute_tool_calls
+    from kohaku.agent.tools.registry import ToolRegistry
+    from kohaku.agent.tools.spawn import SpawnTool
+    from kohaku.bus.queue import MessageBus
+    from kohaku.providers.base import ToolCallRequest
 
     manager = SubagentManager(
         workspace=tmp_path,
@@ -484,8 +484,8 @@ async def test_runner_executes_inline_spawn_batch_concurrently(tmp_path):
 
 @pytest.mark.asyncio
 async def test_cancel_by_session_cancels_inline_subagent(tmp_path):
-    from nanobot.agent.subagent import SubagentManager
-    from nanobot.bus.queue import MessageBus
+    from kohaku.agent.subagent import SubagentManager
+    from kohaku.bus.queue import MessageBus
 
     manager = SubagentManager(
         workspace=tmp_path,
@@ -517,8 +517,8 @@ async def test_cancel_by_session_cancels_inline_subagent(tmp_path):
 
 def test_subagent_default_max_concurrent_matches_agent_defaults(tmp_path):
     """Direct SubagentManager construction should use the agent default concurrency limit."""
-    from nanobot.agent.subagent import SubagentManager
-    from nanobot.bus.queue import MessageBus
+    from kohaku.agent.subagent import SubagentManager
+    from kohaku.bus.queue import MessageBus
 
     bus = MessageBus()
     mgr = SubagentManager(
@@ -533,8 +533,8 @@ def test_subagent_default_max_concurrent_matches_agent_defaults(tmp_path):
 
 def test_subagent_default_max_iterations_matches_agent_defaults(tmp_path):
     """Direct SubagentManager construction should use the agent default limit."""
-    from nanobot.agent.subagent import SubagentManager
-    from nanobot.bus.queue import MessageBus
+    from kohaku.agent.subagent import SubagentManager
+    from kohaku.bus.queue import MessageBus
 
     bus = MessageBus()
     mgr = SubagentManager(
@@ -694,7 +694,7 @@ async def test_terminal_drain_timeout(tmp_path, admitted_async):
         awaitable.close()
         raise asyncio.TimeoutError
 
-    with patch("nanobot.agent.loop.asyncio.wait_for", side_effect=_timeout):
+    with patch("kohaku.agent.loop.asyncio.wait_for", side_effect=_timeout):
         results = await terminal_injection_callback()
         assert results == []
 
@@ -709,7 +709,7 @@ async def test_terminal_drain_timeout(tmp_path, admitted_async):
 @pytest.mark.asyncio
 async def test_terminal_drain_reuses_one_timeout_budget(tmp_path, admitted_async):
     """Repeated terminal rendezvous calls share one 300-second deadline."""
-    from nanobot.bus.events import InboundMessage
+    from kohaku.bus.events import InboundMessage
 
     loop = await _make_loop(tmp_path, admitted_async, keys=("test:shared-deadline",))
     pending_queue: asyncio.Queue[InboundMessage] = asyncio.Queue()
@@ -769,8 +769,8 @@ async def test_terminal_drain_reuses_one_timeout_budget(tmp_path, admitted_async
 
     fake_loop = SimpleNamespace(time=clock)
     with (
-        patch("nanobot.agent.loop.asyncio.get_running_loop", return_value=fake_loop),
-        patch("nanobot.agent.loop.asyncio.wait_for", side_effect=_deliver),
+        patch("kohaku.agent.loop.asyncio.get_running_loop", return_value=fake_loop),
+        patch("kohaku.agent.loop.asyncio.wait_for", side_effect=_deliver),
     ):
         assert await terminal_injection_callback()
         assert await terminal_injection_callback()

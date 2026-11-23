@@ -7,7 +7,7 @@
     },
     "error": {
       "title": "No se pudo conectar con Kohaku",
-      "gatewayHint": "Asegúrate de que la gateway esté en ejecución (`nanobot gateway`) y de que esta página esté abierta en la misma máquina."
+      "gatewayHint": "Asegúrate de que la gateway esté en ejecución (`kohaku gateway`) y de que esta página esté abierta en la misma máquina."
     },
     "auth": {
       "label": "Contraseña",
@@ -1576,7 +1576,7 @@
     "close": "Cerrar vista previa de archivo",
     "loading": "Cargando vista previa...",
     "failed": "No se pudo previsualizar este archivo.",
-    "routeMissing": "La vista previa necesita el gateway más reciente. Reinicia nanobot gateway e inténtalo de nuevo.",
+    "routeMissing": "La vista previa necesita el gateway más reciente. Reinicia kohaku gateway e inténtalo de nuevo.",
     "resize": "Cambiar el tamaño de la vista previa",
     "truncated": "La vista previa está truncada porque el archivo es grande."
   },

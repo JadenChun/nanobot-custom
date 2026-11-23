@@ -4,8 +4,8 @@ from pathlib import Path
 
 import pytest
 
-from nanobot.agent import memory_recovery_quarantine_storage as quarantine
-from nanobot.agent import memory_recovery_storage as storage
+from kohaku.agent import memory_recovery_quarantine_storage as quarantine
+from kohaku.agent import memory_recovery_storage as storage
 from tests.agent.test_memory_recovery_quarantine_storage import _layout
 
 

@@ -4,11 +4,11 @@ from dataclasses import asdict, replace
 
 import pytest
 
-import nanobot.cron.occurrence as occurrence
-import nanobot.cron.runtime as runtime_module
-import nanobot.cron.service as service
-from nanobot.cron.action_store import CronActionStore
-from nanobot.cron.definition_store import (
+import kohaku.cron.occurrence as occurrence
+import kohaku.cron.runtime as runtime_module
+import kohaku.cron.service as service
+from kohaku.cron.action_store import CronActionStore
+from kohaku.cron.definition_store import (
     CronDefinition,
     CronDefinitionAction,
     CronDefinitionCandidate,
@@ -16,9 +16,9 @@ from nanobot.cron.definition_store import (
     DefinitionStoreConflictError,
     DefinitionStoreValidationError,
 )
-from nanobot.cron.occurrence import CronOccurrenceDefinitionConflictError
-from nanobot.cron.scheduler_store import SchedulerConflictError, SchedulerStore
-from nanobot.cron.types import CronJob, CronSchedule
+from kohaku.cron.occurrence import CronOccurrenceDefinitionConflictError
+from kohaku.cron.scheduler_store import SchedulerConflictError, SchedulerStore
+from kohaku.cron.types import CronJob, CronSchedule
 from tests.cron.stage3_fixtures import definition, runtime
 
 

@@ -6,17 +6,17 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from nanobot.agent.loop import AgentLoop
-from nanobot.agent.tools.registry import ToolRegistry
-from nanobot.channels.websocket.runtime import WebSocketChannel
-from nanobot.channels.websocket.tests.test_websocket_channel import (
+from kohaku.agent.loop import AgentLoop
+from kohaku.agent.tools.registry import ToolRegistry
+from kohaku.channels.websocket.runtime import WebSocketChannel
+from kohaku.channels.websocket.tests.test_websocket_channel import (
     _authenticate_local_webui_connection,
     _basic_handler,
     _sent_ws_payloads,
 )
-from nanobot.providers.base import LLMResponse
-from nanobot.security.desktop_permissions import permission_source_token
-from nanobot.session import webui_turns as wth
+from kohaku.providers.base import LLMResponse
+from kohaku.security.desktop_permissions import permission_source_token
+from kohaku.session import webui_turns as wth
 from tests.agent import test_migration_engine as engine_fixtures
 from tests.agent.test_migration_engine import ScriptedProvider
 from tests.agent.test_migration_source_engine import upgrade
@@ -27,7 +27,7 @@ engine_config = engine_fixtures.engine_config
 
 @pytest.fixture(autouse=True)
 def isolate_projection(tmp_path, monkeypatch):
-    monkeypatch.setattr('nanobot.config.paths.get_data_dir', lambda: tmp_path)
+    monkeypatch.setattr('kohaku.config.paths.get_data_dir', lambda: tmp_path)
     names = ('_WEBSOCKET_ACTIVE_TURNS', '_WEBSOCKET_TURN_WALL_STARTED_AT',
              '_WEBSOCKET_TURN_IDS', '_WEBSOCKET_TURN_OWNERS', '_WEBSOCKET_TURN_STOPPING')
     for name in names:
@@ -108,8 +108,8 @@ async def test_negotiated_exact_duplicate_joins_original_after_completion(engine
 async def test_original_owner_blocks_precommit_duplicate_and_readback_crosses_receipt_and_completion(engine_config):
     import asyncio
 
-    from nanobot.bus.runtime_events import UserInputCommitted
-    from nanobot.session.input_attempt import principal_tag
+    from kohaku.bus.runtime_events import UserInputCommitted
+    from kohaku.session.input_attempt import principal_tag
 
     entered_receipt, release_receipt = asyncio.Event(), asyncio.Event()
     entered_model, release_model = asyncio.Event(), asyncio.Event()
@@ -195,7 +195,7 @@ async def test_original_owner_blocks_precommit_duplicate_and_readback_crosses_re
         import json
         import os
         from pathlib import Path
-        bridge = os.environ.get('NANOBOT_INPUT_ATTEMPT_BRIDGE')
+        bridge = os.environ.get('KOHAKU_INPUT_ATTEMPT_BRIDGE')
         if bridge:
             Path(bridge).write_text(json.dumps({'capability': capability, 'query': {
                 'type': 'attach', 'chat_id': 'attempt-chat', 'input_attempt_query': query,
@@ -216,8 +216,8 @@ async def test_original_owner_blocks_precommit_duplicate_and_readback_crosses_re
 async def test_recreated_router_and_loop_join_before_any_new_run_or_lifecycle(engine_config, monkeypatch):
     from unittest.mock import Mock
 
-    from nanobot.bus.runtime_events import SessionTurnStarted, TurnRunStatusChanged
-    from nanobot.session.input_attempt import fingerprint
+    from kohaku.bus.runtime_events import SessionTurnStarted, TurnRunStatusChanged
+    from kohaku.session.input_attempt import fingerprint
 
     first_provider = ScriptedProvider([LLMResponse(content='one')])
     loop = AgentLoop.from_config(engine_config, tool_registry=ToolRegistry(), provider=first_provider)
@@ -277,8 +277,8 @@ async def test_recreated_router_and_loop_join_before_any_new_run_or_lifecycle(en
 async def test_mandatory_append_failure_never_receipts_or_executes_and_committed_proof_is_readable(
     engine_config, monkeypatch, after_replace,
 ):
-    from nanobot.session.input_attempt import principal_tag
-    from nanobot.session.source_store import SourceSessionStore
+    from kohaku.session.input_attempt import principal_tag
+    from kohaku.session.source_store import SourceSessionStore
 
     provider = ScriptedProvider([])
     loop = AgentLoop.from_config(engine_config, tool_registry=ToolRegistry(), provider=provider)
@@ -333,10 +333,10 @@ async def test_one_scripted_tool_effect_and_private_evidence_never_reaches_proje
 
     from loguru import logger
 
-    from nanobot.agent.tools.base import Tool
-    from nanobot.channels.notification_routes import notification_metadata
-    from nanobot.providers.base import ToolCallRequest
-    from nanobot.runtime_context import public_history_message
+    from kohaku.agent.tools.base import Tool
+    from kohaku.channels.notification_routes import notification_metadata
+    from kohaku.providers.base import ToolCallRequest
+    from kohaku.runtime_context import public_history_message
 
     effects = []
     class OnceTool(Tool):
@@ -412,7 +412,7 @@ async def test_explicit_negotiation_rejects_unsupported_forms_without_publicatio
 async def test_another_authorized_installation_cannot_execute_same_source_turn_identity(engine_config, monkeypatch):
     import time
 
-    from nanobot.remote.edge import AccessIdentity
+    from kohaku.remote.edge import AccessIdentity
 
     provider = ScriptedProvider([LLMResponse(content='one')])
     loop = AgentLoop.from_config(engine_config, tool_registry=ToolRegistry(), provider=provider)

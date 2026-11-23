@@ -5,12 +5,12 @@ from types import SimpleNamespace
 
 import pytest
 
-from nanobot.config.schema import GatewayCronConfig
-from nanobot.cron.gateway import GatewayCron
-from nanobot.cron.import_copy import import_legacy_cron_copy
-from nanobot.cron.scheduler_store import SchedulerConflictError
-from nanobot.cron.service import CronService
-from nanobot.session.manager import SessionManager
+from kohaku.config.schema import GatewayCronConfig
+from kohaku.cron.gateway import GatewayCron
+from kohaku.cron.import_copy import import_legacy_cron_copy
+from kohaku.cron.scheduler_store import SchedulerConflictError
+from kohaku.cron.service import CronService
+from kohaku.session.manager import SessionManager
 from tests.cron.stage3_fixtures import FakeChannels, FakeClock
 from tests.cron.test_action_store_conversion import _job
 from tests.cron.test_marketing_contracts import _contract

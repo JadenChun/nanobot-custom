@@ -10,8 +10,8 @@ from unittest.mock import patch
 
 import pytest
 
-from nanobot.providers.base import ToolCallRequest
-from nanobot.providers.openai_compat_provider import OpenAICompatProvider
+from kohaku.providers.base import ToolCallRequest
+from kohaku.providers.openai_compat_provider import OpenAICompatProvider
 
 GEMINI_EXTRA = {"google": {"thought_signature": "sig-abc-123"}}
 
@@ -79,7 +79,7 @@ def _make_sdk_response_with_extra_content():
 
 
 def test_parse_sdk_object_preserves_extra_content() -> None:
-    with patch("nanobot.providers.openai_compat_provider.AsyncOpenAI"):
+    with patch("kohaku.providers.openai_compat_provider.AsyncOpenAI"):
         provider = OpenAICompatProvider()
 
     result = provider._parse(_make_sdk_response_with_extra_content())
@@ -96,7 +96,7 @@ def test_parse_sdk_object_preserves_extra_content() -> None:
 # ── _parse: dict/mapping branch ───────────────────────────────────────
 
 def test_parse_dict_preserves_extra_content() -> None:
-    with patch("nanobot.providers.openai_compat_provider.AsyncOpenAI"):
+    with patch("kohaku.providers.openai_compat_provider.AsyncOpenAI"):
         provider = OpenAICompatProvider()
 
     response_dict = {
@@ -216,7 +216,7 @@ def test_stale_extra_content_in_tool_calls_survives_sanitize(has_result) -> None
     """When switching from Gemini to OpenAI, extra_content inside tool_calls
     should survive message sanitization (it lives inside the tool_call dict,
     not at message level, so it bypasses _ALLOWED_MSG_KEYS filtering)."""
-    with patch("nanobot.providers.openai_compat_provider.AsyncOpenAI"):
+    with patch("kohaku.providers.openai_compat_provider.AsyncOpenAI"):
         provider = OpenAICompatProvider()
 
     messages = [{

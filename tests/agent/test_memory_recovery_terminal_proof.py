@@ -10,20 +10,20 @@ from pathlib import Path
 
 import pytest
 
-from nanobot.agent import memory_recovery as receipt_codec
-from nanobot.agent import memory_recovery_conversion as conversion
-from nanobot.agent import memory_recovery_legacy_archive as archive
-from nanobot.agent import memory_recovery_quarantine_storage as quarantine
-from nanobot.agent import memory_recovery_storage as storage
-from nanobot.agent import memory_recovery_transaction as transaction
-from nanobot.agent import memory_recovery_transaction_prepare as preparation
-from nanobot.agent import memory_recovery_transaction_terminal as terminal
-from nanobot.agent.memory_recovery_manifest import MemoryRecoveryManifest
-from nanobot.session.checked_source import (
+from kohaku.agent import memory_recovery as receipt_codec
+from kohaku.agent import memory_recovery_conversion as conversion
+from kohaku.agent import memory_recovery_legacy_archive as archive
+from kohaku.agent import memory_recovery_quarantine_storage as quarantine
+from kohaku.agent import memory_recovery_storage as storage
+from kohaku.agent import memory_recovery_transaction as transaction
+from kohaku.agent import memory_recovery_transaction_prepare as preparation
+from kohaku.agent import memory_recovery_transaction_terminal as terminal
+from kohaku.agent.memory_recovery_manifest import MemoryRecoveryManifest
+from kohaku.session.checked_source import (
     CheckedSessionAuthorityError,
     open_checked_recovery_session,
 )
-from nanobot.session.recovery_locator import locate_recovery_candidate
+from kohaku.session.recovery_locator import locate_recovery_candidate
 from tests.agent.test_memory_recovery_transaction_prepare import _SESSION_KEY, _WORKSPACE_ID
 from tests.agent.test_memory_recovery_transaction_terminal import (
     _reconcile,

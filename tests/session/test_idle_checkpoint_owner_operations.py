@@ -6,8 +6,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from nanobot.session import idle_checkpoint as idle
-from nanobot.session.source_store import SourceSessionStore
+from kohaku.session import idle_checkpoint as idle
+from kohaku.session.source_store import SourceSessionStore
 
 
 def _forbid(*args, **kwargs):

@@ -5,22 +5,22 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from nanobot.agent.context import TranscriptInput
-from nanobot.agent.loop import AgentLoop
-from nanobot.agent.tools.base import Tool
-from nanobot.agent.tools.context import (
+from kohaku.agent.context import TranscriptInput
+from kohaku.agent.loop import AgentLoop
+from kohaku.agent.tools.base import Tool
+from kohaku.agent.tools.context import (
     RequestContext,
     bind_request_context,
     current_request_context,
     reset_request_context,
 )
-from nanobot.agent.tools.registry import ToolRegistry
-from nanobot.agent.turn import RunPolicyContext
-from nanobot.agent.turn import TurnContext as RunContext
-from nanobot.bus.events import InboundMessage
-from nanobot.config.schema import Config
-from nanobot.providers.base import LLMProvider, LLMResponse, ToolCallRequest
-from nanobot.session.turn_continuation import INTERNAL_CONTINUATION_META
+from kohaku.agent.tools.registry import ToolRegistry
+from kohaku.agent.turn import RunPolicyContext
+from kohaku.agent.turn import TurnContext as RunContext
+from kohaku.bus.events import InboundMessage
+from kohaku.config.schema import Config
+from kohaku.providers.base import LLMProvider, LLMResponse, ToolCallRequest
+from kohaku.session.turn_continuation import INTERNAL_CONTINUATION_META
 from tests.agent.p6_admitted_fixtures import (
     AgentInputs,
     AsyncAdmittedFactory,
@@ -144,8 +144,8 @@ async def test_loop_binds_request_context_for_tool_execution(
 
     metadata = {"slack": {"thread_ts": "111.222", "channel_type": "channel"}}
     runtime = loop.llm_runtime()
-    from nanobot.agent.policy import RiskyActionPolicy
-    from nanobot.agent.turn import ApprovalDecision
+    from kohaku.agent.policy import RiskyActionPolicy
+    from kohaku.agent.turn import ApprovalDecision
 
     run_context = _run_context(loop)
     run_context.run_id = "approved-context-run"
@@ -322,8 +322,8 @@ async def test_process_message_captures_original_text_before_restore(
 
 
 def test_tool_context_construction_rejects_pending_startup_receipt(tmp_path: Path) -> None:
-    from nanobot.agent.memory_recovery_startup_admission import StartupReceiptAdmissionError
-    from nanobot.bus.queue import MessageBus
+    from kohaku.agent.memory_recovery_startup_admission import StartupReceiptAdmissionError
+    from kohaku.bus.queue import MessageBus
 
     workspace = tmp_path / "workspace"
     pending = workspace / "memory" / ".consolidation.pending.json"

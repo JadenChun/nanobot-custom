@@ -12,11 +12,11 @@ from urllib.parse import parse_qs, urlsplit
 import pytest
 from websockets.datastructures import Headers
 
-from nanobot.config.loader import get_config_path
-from nanobot.webui.http_utils import http_json_response
-from nanobot.webui.mcp_presets_api import custom_mcp_action
-from nanobot.webui.settings_routes import WebUISettingsRouter
-from nanobot.webui.settings_services import WebUISettingsServices
+from kohaku.config.loader import get_config_path
+from kohaku.webui.http_utils import http_json_response
+from kohaku.webui.mcp_presets_api import custom_mcp_action
+from kohaku.webui.settings_routes import WebUISettingsRouter
+from kohaku.webui.settings_services import WebUISettingsServices
 
 
 def _router(
@@ -108,7 +108,7 @@ async def test_usage_query_runs_off_the_event_loop(monkeypatch) -> None:
         worker_threads.append(threading.get_ident())
         return {"days": []}
 
-    monkeypatch.setattr("nanobot.webui.settings_routes.settings_usage_payload", usage_payload)
+    monkeypatch.setattr("kohaku.webui.settings_routes.settings_usage_payload", usage_payload)
     request = SimpleNamespace(path="/api/settings/usage", headers=Headers())
 
     response = await _router().dispatch(None, request, request.path)
@@ -150,7 +150,7 @@ async def test_mcp_reload_callback_is_bounded(
         return {"ok": True}
 
     monkeypatch.setattr(
-        "nanobot.webui.settings_routes._MCP_RELOAD_TIMEOUT_SECONDS",
+        "kohaku.webui.settings_routes._MCP_RELOAD_TIMEOUT_SECONDS",
         0.01,
     )
     router = _router(mcp_reload=reload_mcp)
@@ -160,7 +160,7 @@ async def test_mcp_reload_callback_is_bounded(
     assert started.is_set()
     assert result == {
         "ok": False,
-        "message": "MCP hot reload timed out. Restart nanobot to pick up changes.",
+        "message": "MCP hot reload timed out. Restart Kohaku to pick up changes.",
         "requires_restart": True,
     }
 
@@ -173,7 +173,7 @@ async def test_mcp_oauth_start_uses_gateway_callback_and_requires_api_auth(monke
         url="https://app.xmind.com/api/mcp",
     )
     monkeypatch.setattr(
-        "nanobot.webui.settings_routes.ensure_mcp_oauth_server",
+        "kohaku.webui.settings_routes.ensure_mcp_oauth_server",
         lambda _query, *, config_path=None: ("xmind", config),
     )
     router = _router()
@@ -312,7 +312,7 @@ async def test_oauth_completion_reads_websocket_payload(
             "flow_id": "flow-123",
         }
 
-    monkeypatch.setattr("nanobot.webui.settings_routes.complete_oauth_provider", complete)
+    monkeypatch.setattr("kohaku.webui.settings_routes.complete_oauth_provider", complete)
     router = _router()
     request = _mutation_request(
         "/api/settings/provider/oauth-login/complete",
@@ -406,7 +406,7 @@ async def test_runtime_config_mutation_routes_refresh_live_runtime(
         captured["query"] = query
         return {"routed": function_name}
 
-    monkeypatch.setattr(f"nanobot.webui.settings_routes.{function_name}", mutate)
+    monkeypatch.setattr(f"kohaku.webui.settings_routes.{function_name}", mutate)
     request = _mutation_request(route_path, payload)
 
     response = await _router(
@@ -430,7 +430,7 @@ async def test_model_update_route_forwards_session_rename_dependency(monkeypatch
         captured.update(query=query, rename_model_preset=rename_model_preset)
         return {"updated": True}
 
-    monkeypatch.setattr("nanobot.webui.settings_routes.update_model_configuration", update)
+    monkeypatch.setattr("kohaku.webui.settings_routes.update_model_configuration", update)
     path = "/api/settings/model-configurations/update"
     request = _mutation_request(path, {"name": "openai", "new_name": "Codex"})
 
@@ -477,13 +477,13 @@ async def test_settings_get_mutation_route_is_method_not_allowed() -> None:
             {
                 "currentVersion": "1.2.0",
                 "latestVersion": "1.3.0",
-                "pypiUrl": "https://pypi.org/project/nanobot-ai/",
+                "releaseUrl": "https://github.com/JadenChun/nanobot-custom/releases",
             },
             {
                 "updateAvailable": {
                     "currentVersion": "1.2.0",
                     "latestVersion": "1.3.0",
-                    "pypiUrl": "https://pypi.org/project/nanobot-ai/",
+                    "releaseUrl": "https://github.com/JadenChun/nanobot-custom/releases",
                 }
             },
         ),
@@ -496,7 +496,7 @@ async def test_version_check_route_returns_stable_payload(
     expected: dict[str, object],
 ) -> None:
     monkeypatch.setattr(
-        "nanobot.webui.settings_routes.check_for_update",
+        "kohaku.webui.settings_routes.check_for_update",
         lambda: update_info,
     )
     request = SimpleNamespace(path="/api/settings/version-check", headers=Headers())
@@ -513,7 +513,7 @@ async def test_version_check_route_enforces_auth_and_bounds_failures(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     check = MagicMock(side_effect=RuntimeError("upstream secret body"))
-    monkeypatch.setattr("nanobot.webui.settings_routes.check_for_update", check)
+    monkeypatch.setattr("kohaku.webui.settings_routes.check_for_update", check)
     request = SimpleNamespace(path="/api/settings/version-check", headers=Headers())
 
     unauthorized = await _router(authorized=False).dispatch(None, request, request.path)
@@ -536,10 +536,10 @@ async def test_version_check_route_enforces_auth_and_bounds_failures(
 async def test_gateway_refresh_notification_preserves_model_route_order_and_errors(
     monkeypatch, tmp_path: Path, case: str,
 ) -> None:
-    from nanobot.cli.gateway_runtime import _webui_refresh_notification
-    from nanobot.providers.unconfigured_provider import UnconfiguredProvider
-    from nanobot.utils.llm_runtime import LLMRuntime
-    from nanobot.webui.settings_contracts import WebUISettingsError
+    from kohaku.cli.gateway_runtime import _webui_refresh_notification
+    from kohaku.providers.unconfigured_provider import UnconfiguredProvider
+    from kohaku.utils.llm_runtime import LLMRuntime
+    from kohaku.webui.settings_contracts import WebUISettingsError
 
     runtime = LLMRuntime.capture(
         UnconfiguredProvider("test/model"), "test/model", context_window_tokens=4096,
@@ -566,7 +566,7 @@ async def test_gateway_refresh_notification_preserves_model_route_order_and_erro
             raise error
         return runtime
 
-    monkeypatch.setattr("nanobot.webui.settings_routes.update_model_configuration", mutate)
+    monkeypatch.setattr("kohaku.webui.settings_routes.update_model_configuration", mutate)
     notify = _webui_refresh_notification(refresh)
     path = "/api/settings/model-configurations/update"
     router = _router(

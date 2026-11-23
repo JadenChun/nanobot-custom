@@ -4,13 +4,13 @@ from types import SimpleNamespace
 
 import pytest
 
-from nanobot.agent.turn import TurnResult
-from nanobot.cron.callback_store import CronCallbackStore
-from nanobot.cron.canonical_execution import execute_claimed_fresh_text
-from nanobot.cron.canonical_result import complete_text_cron_result
-from nanobot.cron.definition_store import CronDefinitionStore
-from nanobot.cron.occurrence import CronOccurrenceRuntime
-from nanobot.cron.occurrence_store import OccurrenceClaim
+from kohaku.agent.turn import TurnResult
+from kohaku.cron.callback_store import CronCallbackStore
+from kohaku.cron.canonical_execution import execute_claimed_fresh_text
+from kohaku.cron.canonical_result import complete_text_cron_result
+from kohaku.cron.definition_store import CronDefinitionStore
+from kohaku.cron.occurrence import CronOccurrenceRuntime
+from kohaku.cron.occurrence_store import OccurrenceClaim
 
 
 @pytest.mark.parametrize("value", [None, object(), "opaque", SimpleNamespace()])

@@ -8,8 +8,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from nanobot.session import idle_checkpoint as idle
-from nanobot.session.source_store import SourceSessionStore
+from kohaku.session import idle_checkpoint as idle
+from kohaku.session.source_store import SourceSessionStore
 from tests.session.test_idle_checkpoint import _admit, _proposal, _seed
 
 
@@ -150,7 +150,7 @@ def test_token_absent_factory_does_not_read_source(monkeypatch):
 
 
 def test_factory_repeated_store_reads_detachment_and_late_helpers(tmp_path, monkeypatch):
-    from nanobot.session.manager import JsonlSessionStore
+    from kohaku.session.manager import JsonlSessionStore
 
     backend = JsonlSessionStore(tmp_path / "workspace", sessions_root=tmp_path / "private")
     source = backend.source
@@ -384,7 +384,7 @@ def test_outer_root_cleanup_busy_is_translated_only_for_dependent_path(monkeypat
 
 
 def test_real_write_then_raise_has_one_attempt_and_detached_durable_output(tmp_path, monkeypatch):
-    from nanobot.session.manager import JsonlSessionStore
+    from kohaku.session.manager import JsonlSessionStore
 
     backend = JsonlSessionStore(tmp_path / "workspace", sessions_root=tmp_path / "private")
     source = backend.source
@@ -414,7 +414,7 @@ def test_real_write_then_raise_has_one_attempt_and_detached_durable_output(tmp_p
 
 
 def test_compatibility_wildcard_exports_are_exact_and_inert(monkeypatch):
-    from nanobot.session.artifact_store import PrivateArtifactStore
+    from kohaku.session.artifact_store import PrivateArtifactStore
 
     monkeypatch.setattr(idle, "capture_idle_token", _forbid)
     monkeypatch.setattr(SourceSessionStore, "_read_unlocked", _forbid)
@@ -422,7 +422,7 @@ def test_compatibility_wildcard_exports_are_exact_and_inert(monkeypatch):
     monkeypatch.setattr(SourceSessionStore, "_write", _forbid)
     monkeypatch.setattr(PrivateArtifactStore, "transaction", _forbid)
     namespace = {}
-    exec("from nanobot.session.idle_checkpoint import *", namespace)
+    exec("from kohaku.session.idle_checkpoint import *", namespace)
     expected = [
         "IdleCheckpointCapture",
         "IdleCheckpointConflict",

@@ -2,7 +2,7 @@
 
 import os
 
-from nanobot.utils.path import abbreviate_path
+from kohaku.utils.path import abbreviate_path
 
 
 class TestAbbreviatePathShort:

@@ -5,10 +5,10 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from nanobot.agent.context_budget import ContextBudget, ContextBudgetManager
-from nanobot.agent.memory import MemoryStore
-from nanobot.agent.tools.registry import ToolRegistry
-from nanobot.providers.base import LLMProvider
+from kohaku.agent.context_budget import ContextBudget, ContextBudgetManager
+from kohaku.agent.memory import MemoryStore
+from kohaku.agent.tools.registry import ToolRegistry
+from kohaku.providers.base import LLMProvider
 
 
 def test_message_only_consolidation_hook_is_retired() -> None:

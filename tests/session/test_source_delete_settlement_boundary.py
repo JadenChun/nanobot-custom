@@ -8,14 +8,14 @@ from pathlib import Path
 
 import pytest
 
-from nanobot.session.execution_owner import (
+from kohaku.session.execution_owner import (
     ExecutionBusyError,
     ExecutionOwner,
     acquire_execution,
     execution_lock_guard,
 )
-from nanobot.session.manager import JsonlSessionStore, SessionWriteConflict
-from nanobot.session.source_store import SourceSessionStore
+from kohaku.session.manager import JsonlSessionStore, SessionWriteConflict
+from kohaku.session.source_store import SourceSessionStore
 from tests.session.test_execution_owner import seed
 
 

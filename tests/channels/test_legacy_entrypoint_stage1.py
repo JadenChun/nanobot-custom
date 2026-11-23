@@ -4,12 +4,12 @@ from types import SimpleNamespace
 
 import pytest
 
-from nanobot.bus.events import OutboundMessage
-from nanobot.bus.queue import MessageBus
-from nanobot.channels.base import BaseChannel
-from nanobot.channels.manager import ChannelManager
-from nanobot.channels.registry import discover_legacy_plugins
-from nanobot.config.schema import Config
+from kohaku.bus.events import OutboundMessage
+from kohaku.bus.queue import MessageBus
+from kohaku.channels.base import BaseChannel
+from kohaku.channels.manager import ChannelManager
+from kohaku.channels.registry import discover_legacy_plugins
+from kohaku.config.schema import Config
 
 
 class ExternalChannel(BaseChannel):
@@ -36,10 +36,10 @@ def _entry_point(load):
 
 async def test_disabled_external_channel_is_never_enumerated_or_loaded(monkeypatch):
     monkeypatch.setattr(
-        "nanobot.channels.registry.discover_plugins", lambda: {},
+        "kohaku.channels.registry.discover_plugins", lambda: {},
     )
     monkeypatch.setattr(
-        "nanobot.channels.registry.metadata.entry_points",
+        "kohaku.channels.registry.metadata.entry_points",
         lambda **_kwargs: pytest.fail("disabled plugin metadata must not be queried"),
     )
 
@@ -55,13 +55,13 @@ async def test_disabled_external_channel_is_never_enumerated_or_loaded(monkeypat
 async def test_enabled_external_channel_is_loaded_lazily_after_metadata_preflight(monkeypatch):
     loads: list[str] = []
     entry_point = _entry_point(lambda: loads.append("load") or ExternalChannel)
-    monkeypatch.setattr("nanobot.channels.registry.discover_plugins", lambda: {})
+    monkeypatch.setattr("kohaku.channels.registry.discover_plugins", lambda: {})
     monkeypatch.setattr(
-        "nanobot.channels.registry.metadata.entry_points",
+        "kohaku.channels.registry.metadata.entry_points",
         lambda **_kwargs: [entry_point],
     )
     monkeypatch.setattr(
-        "nanobot.optional_features.check_enabled_channel_dependencies",
+        "kohaku.optional_features.check_enabled_channel_dependencies",
         lambda _names, _plugins: {},
     )
 
@@ -79,7 +79,7 @@ async def test_enabled_external_channel_is_loaded_lazily_after_metadata_prefligh
 def test_legacy_entrypoint_duplicate_reserved_and_malformed_metadata_fail(monkeypatch):
     entry_point = _entry_point(lambda: ExternalChannel)
     monkeypatch.setattr(
-        "nanobot.channels.registry.metadata.entry_points",
+        "kohaku.channels.registry.metadata.entry_points",
         lambda **_kwargs: [entry_point, entry_point],
     )
     with pytest.raises(ValueError, match="Duplicate"):
@@ -90,7 +90,7 @@ def test_legacy_entrypoint_duplicate_reserved_and_malformed_metadata_fail(monkey
 
     malformed = SimpleNamespace(name="external", value="not-a-target", load=lambda: None)
     monkeypatch.setattr(
-        "nanobot.channels.registry.metadata.entry_points",
+        "kohaku.channels.registry.metadata.entry_points",
         lambda **_kwargs: [malformed],
     )
     with pytest.raises(ValueError, match="module:attribute"):
@@ -105,15 +105,15 @@ async def test_malformed_packaged_channel_name_stays_reserved(monkeypatch):
         load=lambda: loads.append("load") or ExternalChannel,
     )
     monkeypatch.setattr(
-        "nanobot.channels.registry._channel_package_names",
+        "kohaku.channels.registry._channel_package_names",
         lambda: ["broken"],
     )
     monkeypatch.setattr(
-        "nanobot.channels.registry.load_channel_package",
+        "kohaku.channels.registry.load_channel_package",
         lambda _name: (_ for _ in ()).throw(TypeError("malformed built-in manifest")),
     )
     monkeypatch.setattr(
-        "nanobot.channels.registry.metadata.entry_points",
+        "kohaku.channels.registry.metadata.entry_points",
         lambda **_kwargs: [entry_point],
     )
 

@@ -8,13 +8,13 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from nanobot.agent.context import ContextBuilder, TranscriptInput
-from nanobot.agent.context_budget import ContextBudget, ContextBudgetManager
-from nanobot.agent.context_governance import ContextWindowExceededError
-from nanobot.agent.memory import MemoryStore
-from nanobot.agent.runner import AgentRunner
-from nanobot.providers.base import LLMProvider, LLMResponse
-from nanobot.utils.prompt_budget import PromptBudget, reduce_messages_to_budget
+from kohaku.agent.context import ContextBuilder, TranscriptInput
+from kohaku.agent.context_budget import ContextBudget, ContextBudgetManager
+from kohaku.agent.context_governance import ContextWindowExceededError
+from kohaku.agent.memory import MemoryStore
+from kohaku.agent.runner import AgentRunner
+from kohaku.providers.base import LLMProvider, LLMResponse
+from kohaku.utils.prompt_budget import PromptBudget, reduce_messages_to_budget
 from tests.agent.runner_helpers import make_run_spec
 
 
@@ -339,7 +339,7 @@ class TestMemoryPressure:
         tools = MagicMock()
         tools.get_definitions.return_value = []
         monkeypatch.setattr(
-            "nanobot.agent.context_governance.estimate_prompt_tokens_chain",
+            "kohaku.agent.context_governance.estimate_prompt_tokens_chain",
             lambda _provider, _model, request, _tools: (
                 sum(len(str(message.get("content") or "")) for message in request) // 4,
                 "fixture",

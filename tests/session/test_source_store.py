@@ -6,14 +6,14 @@ from datetime import datetime, timezone
 
 import pytest
 
-from nanobot.session.manager import (
+from kohaku.session.manager import (
     JsonlSessionStore,
     Session,
     SessionStorageError,
     SessionWriteConflict,
 )
-from nanobot.session.persistence_metadata import DURABLE_METADATA_KEYS
-from nanobot.session.source import SourceValidationError, new_source_event, prefix_digest
+from kohaku.session.persistence_metadata import DURABLE_METADATA_KEYS
+from kohaku.session.source import SourceValidationError, new_source_event, prefix_digest
 
 
 @pytest.fixture
@@ -429,7 +429,7 @@ def test_legacy_single_cursor_upgrade_preserves_both_reader_aliases(backend, fie
 
 
 def test_manager_cache_uses_same_source_metadata_filter(tmp_path):
-    from nanobot.session.manager import SessionManager
+    from kohaku.session.manager import SessionManager
     manager = SessionManager(tmp_path / "workspace", sessions_root=tmp_path / "private")
     original = manager.get_or_create("test:cache")
     manager.save(original)
@@ -524,7 +524,7 @@ def test_before_replace_failure_leaves_source_and_candidate_unchanged(backend, m
     before_candidate = deepcopy(proposal)
     before = backend.get_session_path(snapshot.state.session_key).read_bytes()
     with monkeypatch.context() as patch:
-        patch.setattr("nanobot.session.manager.os.replace", lambda *_: (_ for _ in ()).throw(OSError("replace")))
+        patch.setattr("kohaku.session.manager.os.replace", lambda *_: (_ for _ in ()).throw(OSError("replace")))
         with pytest.raises(OSError):
             backend.source.commit_context_checkpoint(snapshot.state.session_key, snapshot.state, proposal)
     assert backend.get_session_path(snapshot.state.session_key).read_bytes() == before
@@ -583,7 +583,7 @@ def test_invalid_source_input_raises_typed_validation_error(backend, payload):
 
 
 def test_dependent_checkpoint_load_is_structural_but_generic_publication_is_disabled(backend):
-    from nanobot.session.source_projection import project_source
+    from kohaku.session.source_projection import project_source
 
     snapshot = upgrade(backend, seed(backend))
     proposal = {**candidate(snapshot), 'schema_version': 2,
@@ -610,7 +610,7 @@ def test_dependent_checkpoint_load_is_structural_but_generic_publication_is_disa
 def _source_transaction_api(backend, via_source):
     from functools import partial
 
-    from nanobot.session.execution_owner import execution_transaction
+    from kohaku.session.execution_owner import execution_transaction
 
     return (backend.source.execution_transaction if via_source
             else partial(execution_transaction, backend))
@@ -623,7 +623,7 @@ def test_source_transaction_returns_lazy_context_and_preserves_all_arguments(
 ):
     from contextlib import contextmanager
 
-    import nanobot.session.execution_owner as execution_module
+    import kohaku.session.execution_owner as execution_module
 
     owner, root = object(), object()
     calls = []
@@ -664,7 +664,7 @@ def test_source_transaction_returns_lazy_context_and_preserves_all_arguments(
 async def test_source_transaction_retains_owner_lock_draining_and_release_fences(
     backend, tmp_path, via_source,
 ):
-    from nanobot.session.execution_owner import (
+    from kohaku.session.execution_owner import (
         ExecutionBusyError,
         ExecutionOwnershipError,
         acquire_execution,
@@ -703,8 +703,8 @@ async def test_source_transaction_retains_owner_lock_draining_and_release_fences
 def test_source_transaction_preserves_root_authority_and_incompatible_mode_rejection(
     backend, tmp_path, via_source,
 ):
-    from nanobot.session.execution_owner import ExecutionBusyError, ExecutionOwnershipError
-    from nanobot.session.source_root import SourceRootAuthorityError
+    from kohaku.session.execution_owner import ExecutionBusyError, ExecutionOwnershipError
+    from kohaku.session.source_root import SourceRootAuthorityError
 
     snapshot = upgrade(backend, seed(backend))
     key = snapshot.state.session_key
@@ -737,7 +737,7 @@ def test_source_transaction_preserves_root_authority_and_incompatible_mode_rejec
 def test_source_transaction_preserves_legacy_recovery_and_missing_source_guards(
     backend, via_source, state,
 ):
-    from nanobot.session.execution_owner import ExecutionOwnershipError
+    from kohaku.session.execution_owner import ExecutionOwnershipError
 
     api = _source_transaction_api(backend, via_source)
     key = 'test:source'
@@ -780,7 +780,7 @@ def test_source_artifact_binding_retains_constructor_validation_without_source_w
 ):
     from types import SimpleNamespace
 
-    from nanobot.session.source_store import SourceSessionStore
+    from kohaku.session.source_store import SourceSessionStore
 
     snapshot = upgrade(backend, seed(backend))
     path = backend.get_session_path(snapshot.state.session_key)
@@ -804,8 +804,8 @@ def test_source_artifact_binding_retains_constructor_validation_without_source_w
 async def test_source_artifact_binding_is_fresh_preserves_identity_and_prior_publication_store(
     tmp_path, via_source,
 ):
-    from nanobot.session.artifact_store import ArtifactStorageError, PrivateArtifactStore
-    from nanobot.session.source_store import SourceSessionStore
+    from kohaku.session.artifact_store import ArtifactStorageError, PrivateArtifactStore
+    from kohaku.session.source_store import SourceSessionStore
     from tests.session.test_artifact_publication import publication
 
     async with publication(tmp_path) as (backend, original, store, owner, descriptor):
@@ -847,12 +847,12 @@ def test_append_rejects_serialized_source_over_readable_limit(backend, monkeypat
     snapshot = upgrade(backend, seed(backend))
     path = backend.get_session_path(snapshot.state.session_key)
     before = path.read_bytes()
-    monkeypatch.setattr("nanobot.session.source_store.MAX_SOURCE_SERIALIZED_BYTES", 600)
+    monkeypatch.setattr("kohaku.session.source_store.MAX_SOURCE_SERIALIZED_BYTES", 600)
     event = new_source_event({"role": "user", "content": "x" * 2000}, run_id="run")
     with pytest.raises(SourceValidationError):
         backend.source.append_source_events(snapshot.state.session_key, snapshot.state, [event])
     assert path.read_bytes() == before
-    monkeypatch.setattr("nanobot.session.source_store.MAX_SOURCE_SERIALIZED_BYTES", 10_000_000)
+    monkeypatch.setattr("kohaku.session.source_store.MAX_SOURCE_SERIALIZED_BYTES", 10_000_000)
     committed = backend.source.append_source_events(snapshot.state.session_key, snapshot.state, [event])
     assert committed.events[-1]["content"] == "x" * 2000
     assert backend.source.load_source_snapshot(snapshot.state.session_key).events == committed.events

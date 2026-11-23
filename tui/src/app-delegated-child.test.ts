@@ -6,7 +6,7 @@ import {
   type TestRendererSetup,
 } from "@opentui/core/testing"
 
-import { NanobotTui, type AppOptions } from "./app"
+import { KohakuTui, type AppOptions } from "./app"
 import { ComposerDraft } from "./composer-draft"
 import type {
   DelegatedChildActivity,
@@ -14,7 +14,7 @@ import type {
   DelegatedChildSummary,
   StopExpectation,
 } from "./delegated-children"
-import { NanobotClient, type ConnectionStatus, type ConnectionStatusInfo } from "./protocol"
+import { KohakuClient, type ConnectionStatus, type ConnectionStatusInfo } from "./protocol"
 import type { Transcript } from "./transcript"
 
 class FakeSocket {
@@ -77,7 +77,7 @@ interface AppState {
 }
 
 interface GatewayApp {
-  app: NanobotTui
+  app: KohakuTui
   state: AppState
   socket: FakeSocket
   setup: TestRendererSetup
@@ -120,7 +120,7 @@ function jsonResponse(value: unknown): Response {
   return new Response(JSON.stringify(value))
 }
 
-function state(app: NanobotTui): AppState {
+function state(app: KohakuTui): AppState {
   return app as unknown as AppState
 }
 
@@ -314,15 +314,15 @@ async function mountGateway(
     value: class extends FakeSocket {},
   })
 
-  let app: NanobotTui
-  const client = new NanobotClient({
+  let app: KohakuTui
+  const client = new KohakuClient({
     url: appOptions.wsUrl,
     chatId: "chat",
     reconnect: false,
     onEvent: (event) => app.accept(event),
     onStatus: (status, detail, info) => state(app).handleStatus(status, detail, info),
   })
-  app = NanobotTui.mount(
+  app = KohakuTui.mount(
     setup.renderer,
     { ...appOptions, ...options },
     client,

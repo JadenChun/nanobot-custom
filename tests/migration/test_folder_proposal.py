@@ -5,17 +5,17 @@ from uuid import uuid4
 
 import pytest
 
-from nanobot.agent.turn import DeliveryTarget, TurnRequest, TurnSource
-from nanobot.context_repo.catalog import RepositoryEntry
-from nanobot.providers.base import LLMResponse, ToolCallRequest
-from nanobot.runtime_composition import RuntimeComposition
-from nanobot.security.folder_grants import FolderGrantStore
-from nanobot.security.folder_locations import FolderLocationEdit, apply_folder_edit
-from nanobot.session.workspace_access_recovery import (
+from kohaku.agent.turn import DeliveryTarget, TurnRequest, TurnSource
+from kohaku.context_repo.catalog import RepositoryEntry
+from kohaku.providers.base import LLMResponse, ToolCallRequest
+from kohaku.runtime_composition import RuntimeComposition
+from kohaku.security.folder_grants import FolderGrantStore
+from kohaku.security.folder_locations import FolderLocationEdit, apply_folder_edit
+from kohaku.session.workspace_access_recovery import (
     WorkspaceAccessActionError,
     WorkspaceAccessRecoveryOwner,
 )
-from nanobot.webui.workspaces import WebUIWorkspaceController
+from kohaku.webui.workspaces import WebUIWorkspaceController
 from tests.migration.test_workspace_access_continue_ingress import _config, _RecordingProvider
 
 
@@ -47,7 +47,7 @@ async def test_folder_proposal_fresh_confirmation_recovers_after_unrelated_grant
     project.mkdir()
     unrelated.mkdir()
     provider = _ProposeFolder(project)
-    monkeypatch.setattr("nanobot.providers.factory.make_provider", lambda _config: provider)
+    monkeypatch.setattr("kohaku.providers.factory.make_provider", lambda _config: provider)
     composition = RuntimeComposition.define(config, sessions_root=tmp_path / "sessions", startup_receipt_admitted=True)
     handle = await composition.acquire()
     try:
@@ -128,7 +128,7 @@ async def test_folder_proposal_rejects_stale_catalog_revision_during_renewal(
     for directory in (project, unrelated, other):
         directory.mkdir()
     provider = _ProposeFolder(project)
-    monkeypatch.setattr("nanobot.providers.factory.make_provider", lambda _config: provider)
+    monkeypatch.setattr("kohaku.providers.factory.make_provider", lambda _config: provider)
     composition = RuntimeComposition.define(config, sessions_root=tmp_path / "sessions", startup_receipt_admitted=True)
     handle = await composition.acquire()
     try:
@@ -204,7 +204,7 @@ async def test_folder_proposal_rejects_stale_original_and_renewed_catalog_approv
     for directory in (project, unrelated, second_unrelated):
         directory.mkdir()
     provider = _ProposeFolder(project)
-    monkeypatch.setattr("nanobot.providers.factory.make_provider", lambda _config: provider)
+    monkeypatch.setattr("kohaku.providers.factory.make_provider", lambda _config: provider)
     composition = RuntimeComposition.define(config, sessions_root=tmp_path / "sessions", startup_receipt_admitted=True)
     handle = await composition.acquire()
     try:
@@ -288,7 +288,7 @@ async def test_folder_proposal_conflicts_when_catalog_changes_during_grant_write
     for directory in (project, unrelated, other):
         directory.mkdir()
     provider = _ProposeFolder(project)
-    monkeypatch.setattr("nanobot.providers.factory.make_provider", lambda _config: provider)
+    monkeypatch.setattr("kohaku.providers.factory.make_provider", lambda _config: provider)
     composition = RuntimeComposition.define(config, sessions_root=tmp_path / "sessions", startup_receipt_admitted=True)
     handle = await composition.acquire()
     try:
@@ -390,7 +390,7 @@ async def test_folder_proposal_changed_metadata_blocks_renewed_confirmation(
     project.mkdir()
     unrelated.mkdir()
     provider = _ProposeFolder(project)
-    monkeypatch.setattr("nanobot.providers.factory.make_provider", lambda _config: provider)
+    monkeypatch.setattr("kohaku.providers.factory.make_provider", lambda _config: provider)
     composition = RuntimeComposition.define(config, sessions_root=tmp_path / "sessions", startup_receipt_admitted=True)
     handle = await composition.acquire()
     try:
@@ -445,7 +445,7 @@ async def test_folder_proposal_requires_current_user_approval(tmp_path: Path, mo
     project = tmp_path / "plain-folder"
     project.mkdir()
     provider = _ProposeFolder(project)
-    monkeypatch.setattr("nanobot.providers.factory.make_provider", lambda _config: provider)
+    monkeypatch.setattr("kohaku.providers.factory.make_provider", lambda _config: provider)
     composition = RuntimeComposition.define(config, sessions_root=tmp_path / "sessions", startup_receipt_admitted=True)
     handle = await composition.acquire()
     try:

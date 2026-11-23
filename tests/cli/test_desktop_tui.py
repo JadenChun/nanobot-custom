@@ -8,8 +8,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from nanobot.cli import desktop_target, desktop_tui, tui_launcher
-from nanobot.cli.desktop_target import DesktopReply, DesktopTargetError
+from kohaku.cli import desktop_target, desktop_tui, tui_launcher
+from kohaku.cli.desktop_target import DesktopReply, DesktopTargetError
 
 DESKTOP_ID = "d4f6cc96-a3a2-4a68-9a45-cec04b79ab53"
 GATEWAY_ID = "d4f6cc96-a3a2-4a68-9a45-cec04b79ab54"
@@ -18,7 +18,7 @@ GATEWAY_ID = "d4f6cc96-a3a2-4a68-9a45-cec04b79ab54"
 @pytest.fixture
 def admitted_desktop(monkeypatch, tmp_path):
     """Explicit positive-test admission; never enable the installed candidate."""
-    monkeypatch.setattr("nanobot.migration_guard.require_runtime_ready", lambda: None)
+    monkeypatch.setattr("kohaku.migration_guard.require_runtime_ready", lambda: None)
     monkeypatch.setattr(Path, "home", classmethod(lambda _cls: tmp_path / "absent-home"))
 
 
@@ -30,7 +30,7 @@ def _admitted_resolver_command():
 import pathlib, runpy, sys
 script = pathlib.Path(sys.argv[1])
 sys.path.insert(0, str(script.parents[2]))
-from nanobot import migration_guard
+from kohaku import migration_guard
 migration_guard.require_runtime_ready = lambda: None
 sys.argv = sys.argv[1:]
 runpy.run_path(str(script), run_name='__main__')
@@ -86,10 +86,10 @@ def test_launcher_has_no_gateway_ownership_and_no_credentials_in_child_env(monke
     chosen = target()
     monkeypatch.setattr(tui_launcher, "resolve_tui_command", lambda: ["terminal-client"])
     monkeypatch.setattr(tui_launcher, "_ensure_gateway", lambda *a, **k: pytest.fail("must not own gateway"))
-    monkeypatch.setenv("NANOBOT_TUI_GATEWAY_STOP_COMMAND", "forbidden stop")
-    monkeypatch.setenv("NANOBOT_TUI_BOOTSTRAP_SECRET", "unrelated-bootstrap")
-    monkeypatch.setenv("NANOBOT_TUI_WS_URL", "ws://unrelated")
-    monkeypatch.delenv("NANOBOT_DESKTOP_CLIENT_CACHE", raising=False)
+    monkeypatch.setenv("KOHAKU_TUI_GATEWAY_STOP_COMMAND", "forbidden stop")
+    monkeypatch.setenv("KOHAKU_TUI_BOOTSTRAP_SECRET", "unrelated-bootstrap")
+    monkeypatch.setenv("KOHAKU_TUI_WS_URL", "ws://unrelated")
+    monkeypatch.delenv("KOHAKU_DESKTOP_CLIENT_CACHE", raising=False)
     calls = []
     process = MagicMock()
     process.wait.return_value = 90
@@ -97,7 +97,7 @@ def test_launcher_has_no_gateway_ownership_and_no_credentials_in_child_env(monke
     def probe(args, **kw):
         assert args == ["terminal-client", "--desktop-protocol"]
         assert kw["stdin"] == subprocess.DEVNULL
-        assert not any(key.startswith("NANOBOT_TUI_") for key in kw["env"])
+        assert not any(key.startswith("KOHAKU_TUI_") for key in kw["env"])
         assert "unrelated-bootstrap" not in json.dumps((args, kw))
         return subprocess.CompletedProcess(args, 0, b"1\n", b"")
     monkeypatch.setattr(desktop_tui.subprocess, "run", probe)
@@ -109,13 +109,13 @@ def test_launcher_has_no_gateway_ownership_and_no_credentials_in_child_env(monke
     args, options = calls[0]
     assert args == ["terminal-client"]
     env = options["env"]
-    assert set(key for key in env if key.startswith("NANOBOT_TUI_")) == {
-        "NANOBOT_TUI_DESKTOP_TARGET", "NANOBOT_TUI_DESKTOP_RESOLVER",
+    assert set(key for key in env if key.startswith("KOHAKU_TUI_")) == {
+        "KOHAKU_TUI_DESKTOP_TARGET", "KOHAKU_TUI_DESKTOP_RESOLVER",
     }
     assert "synthetic" not in json.dumps((args, options))
     assert "unrelated-bootstrap" not in json.dumps((args, options))
-    assert json.loads(env["NANOBOT_TUI_DESKTOP_TARGET"])["gatewayId"] == GATEWAY_ID
-    resolver = json.loads(env["NANOBOT_TUI_DESKTOP_RESOLVER"])
+    assert json.loads(env["KOHAKU_TUI_DESKTOP_TARGET"])["gatewayId"] == GATEWAY_ID
+    resolver = json.loads(env["KOHAKU_TUI_DESKTOP_RESOLVER"])
     assert resolver[:3] == [sys.executable, "-I", "-S"]
     assert resolver[-1] == "--resolve"
     process.terminate.assert_not_called()
@@ -126,7 +126,7 @@ def test_protocol_probe_is_isolated_in_a_real_child(monkeypatch, admitted_deskto
     # Probe them without credentials or terminal input, before allowing launch.
     command = [sys.executable, "-I", "-S", "-c", """
 import os, sys
-keys = {key for key in os.environ if key.startswith('NANOBOT_TUI_')}
+keys = {key for key in os.environ if key.startswith('KOHAKU_TUI_')}
 if sys.argv[-1] == '--desktop-protocol':
     if keys:
         sys.exit(7)
@@ -134,14 +134,14 @@ if sys.argv[-1] == '--desktop-protocol':
         sys.exit(8)
     print(1)
 else:
-    assert keys == {'NANOBOT_TUI_DESKTOP_TARGET', 'NANOBOT_TUI_DESKTOP_RESOLVER'}
+    assert keys == {'KOHAKU_TUI_DESKTOP_TARGET', 'KOHAKU_TUI_DESKTOP_RESOLVER'}
     sys.exit(90)
 """]
     monkeypatch.setattr(tui_launcher, "resolve_tui_command", lambda: command)
-    monkeypatch.delenv("NANOBOT_DESKTOP_CLIENT_CACHE", raising=False)
-    monkeypatch.setenv("NANOBOT_TUI_BOOTSTRAP_URL", "http://127.0.0.1:1/webui/bootstrap")
-    monkeypatch.setenv("NANOBOT_TUI_BOOTSTRAP_SECRET", "unrelated-bootstrap")
-    monkeypatch.setenv("NANOBOT_TUI_DESKTOP_RESOLVER", "unrelated-resolver")
+    monkeypatch.delenv("KOHAKU_DESKTOP_CLIENT_CACHE", raising=False)
+    monkeypatch.setenv("KOHAKU_TUI_BOOTSTRAP_URL", "http://127.0.0.1:1/webui/bootstrap")
+    monkeypatch.setenv("KOHAKU_TUI_BOOTSTRAP_SECRET", "unrelated-bootstrap")
+    monkeypatch.setenv("KOHAKU_TUI_DESKTOP_RESOLVER", "unrelated-resolver")
     assert desktop_tui.launch_desktop_tui(target()) == 0
 
 
@@ -215,7 +215,7 @@ def test_desktop_only_entry_never_forwards_unknown_commands(args, monkeypatch, a
 
 
 def test_desktop_cache_avoids_default_python_data_root(monkeypatch, tmp_path, admitted_desktop):
-    monkeypatch.setenv("NANOBOT_DESKTOP_CLIENT_CACHE", str(tmp_path))
+    monkeypatch.setenv("KOHAKU_DESKTOP_CLIENT_CACHE", str(tmp_path))
     observed = []
     def resolve(**kwargs):
         observed.append(kwargs)
@@ -228,7 +228,7 @@ def test_desktop_cache_avoids_default_python_data_root(monkeypatch, tmp_path, ad
 
 @pytest.mark.parametrize("entry", ["resolve", "launch", "main"])
 def test_desktop_entries_require_migration_admission(entry, monkeypatch):
-    from nanobot.migration_guard import MigrationIncompleteError
+    from kohaku.migration_guard import MigrationIncompleteError
 
     def forbidden(*_args, **_kwargs):
         pytest.fail("migration guard must run before discovery, connection or launch")

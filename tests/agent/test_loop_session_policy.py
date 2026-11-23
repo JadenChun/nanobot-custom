@@ -3,16 +3,16 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from nanobot.agent.loop import AgentLoop, _TurnExecutionOptions
-from nanobot.agent.tools.sessions import ReadSessionTool
-from nanobot.agent.turn import TurnRequest
-from nanobot.bus.events import (
+from kohaku.agent.loop import AgentLoop, _TurnExecutionOptions
+from kohaku.agent.tools.sessions import ReadSessionTool
+from kohaku.agent.turn import TurnRequest
+from kohaku.bus.events import (
     INBOUND_META_RUNTIME_CONTROL,
     RUNTIME_CONTROL_SESSION_DISCARD,
     InboundMessage,
 )
-from nanobot.providers.base import GenerationSettings, LLMResponse
-from nanobot.session.keys import UNIFIED_SESSION_KEY
+from kohaku.providers.base import GenerationSettings, LLMResponse
+from kohaku.session.keys import UNIFIED_SESSION_KEY
 from tests.agent import p6_admitted_fixtures
 
 admitted_async = p6_admitted_fixtures.admitted_async

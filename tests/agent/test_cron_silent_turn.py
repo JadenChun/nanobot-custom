@@ -6,9 +6,9 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from nanobot.agent.loop import AgentLoop, _TurnExecutionOptions
-from nanobot.agent.tools.registry import ToolRegistry
-from nanobot.agent.turn import (
+from kohaku.agent.loop import AgentLoop, _TurnExecutionOptions
+from kohaku.agent.tools.registry import ToolRegistry
+from kohaku.agent.turn import (
     ApprovalGrant,
     DeliveryTarget,
     HistoryMode,
@@ -17,9 +17,9 @@ from nanobot.agent.turn import (
     TurnRequest,
     TurnSource,
 )
-from nanobot.bus.events import InboundMessage
-from nanobot.bus.outbound_events import StreamDeltaEvent
-from nanobot.providers.base import LLMResponse, ToolCallRequest
+from kohaku.bus.events import InboundMessage
+from kohaku.bus.outbound_events import StreamDeltaEvent
+from kohaku.providers.base import LLMResponse, ToolCallRequest
 from tests.agent import test_migration_engine as engine_fixtures
 from tests.agent.test_migration_engine import ScriptedProvider
 

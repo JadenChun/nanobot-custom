@@ -16,34 +16,34 @@ from types import SimpleNamespace
 
 import pytest
 
-from nanobot.agent.turn import TurnResult
-from nanobot.cron.action_store import (
+from kohaku.agent.turn import TurnResult
+from kohaku.cron.action_store import (
     ActionStoreCorruptError,
     ActionStoreLegacyConversionError,
     ActionStorePersistenceError,
     ActionStoreStaleGenerationError,
     CronActionStore,
 )
-from nanobot.cron.completion import CronCompletionProjector
-from nanobot.cron.definition_store import (
+from kohaku.cron.completion import CronCompletionProjector
+from kohaku.cron.definition_store import (
     CronDefinition,
     CronDefinitionAction,
     DefinitionStoreConflictError,
 )
-from nanobot.cron.occurrence_store import OccurrenceExecutionStartedError
-from nanobot.cron.runtime import CronWorkFailedError
-from nanobot.cron.schedule import next_fire
-from nanobot.cron.scheduler_store import SchedulerConflictError
-from nanobot.cron.service import (
+from kohaku.cron.occurrence_store import OccurrenceExecutionStartedError
+from kohaku.cron.runtime import CronWorkFailedError
+from kohaku.cron.schedule import next_fire
+from kohaku.cron.scheduler_store import SchedulerConflictError
+from kohaku.cron.service import (
     CronDefinitionServiceError as CronDefinitionServiceError,
  )
-from nanobot.cron.service import (
+from kohaku.cron.service import (
     CronDefinitionTokenRequiredError,
     CronJobSkippedError,
     CronService,
 )
-from nanobot.cron.types import CronDestination, CronSchedule
-from nanobot.session.manager import SessionManager
+from kohaku.cron.types import CronDestination, CronSchedule
+from kohaku.session.manager import SessionManager
 from tests.cron.stage3_fixtures import definition, runtime
 from tests.cron.test_action_store_conversion import _job, _legacy_root
 
@@ -630,7 +630,7 @@ def definition_display(tool, *, field):
 async def unsupported_execution(tmp_path):
     from unittest.mock import AsyncMock
 
-    from nanobot.cron.canonical_execution import execute_claimed_fresh_text
+    from kohaku.cron.canonical_execution import execute_claimed_fresh_text
     from tests.cron.test_canonical_execution import _service_claim
     service, claim = _service_claim(tmp_path, legacy=False)
     agent = AsyncMock()
@@ -728,7 +728,7 @@ async def projection_retry(tmp_path, monkeypatch):
         projection = graph.service.project_occurrence_completion(record.occurrence_id)
         assert projection.run_id == record_run_id(record)
         graph.service.prepare_completed_delivery(record.occurrence_id)
-        from nanobot.cron.occurrence_store import OccurrenceAlreadyCompletedError
+        from kohaku.cron.occurrence_store import OccurrenceAlreadyCompletedError
         with pytest.raises(OccurrenceAlreadyCompletedError):
             await asyncio.wait_for(graph.execute_now(capability), 2)
         assert len(calls) == 1

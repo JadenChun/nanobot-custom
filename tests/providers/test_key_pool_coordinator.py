@@ -1,6 +1,6 @@
 import asyncio
 
-from nanobot.providers.key_pool import KeyPoolCoordinator
+from kohaku.providers.key_pool import KeyPoolCoordinator
 
 
 def test_order_snapshot_prefers_winner_and_keeps_cooling_candidates():

@@ -21,9 +21,9 @@ from typing import Any
 
 import pytest
 
-from nanobot.agent.tools.context import request_context
-from nanobot.agent.tools.exec_session import ExecCompletion
-from nanobot.process_completion import ProcessCompletionRuntime
+from kohaku.agent.tools.context import request_context
+from kohaku.agent.tools.exec_session import ExecCompletion
+from kohaku.process_completion import ProcessCompletionRuntime
 from tests.tools.test_exec_session_tools import _python_command
 from tests.tools.test_process_completion import settled, setup
 

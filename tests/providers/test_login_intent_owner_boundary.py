@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from nanobot.providers import oauth_credentials as credentials
+from kohaku.providers import oauth_credentials as credentials
 
 
 @pytest.fixture(autouse=True)

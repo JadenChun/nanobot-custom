@@ -8,22 +8,22 @@ from pathlib import Path
 
 import pytest
 
-import nanobot.cron.completion as completion_module
-import nanobot.cron.occurrence_store as occurrence_store_module
-from nanobot.cron.action_store import CronActionStore
-from nanobot.cron.completion import (
+import kohaku.cron.completion as completion_module
+import kohaku.cron.occurrence_store as occurrence_store_module
+from kohaku.cron.action_store import CronActionStore
+from kohaku.cron.completion import (
     CronCompletionConflictError,
     CronCompletionPersistenceError,
     CronCompletionProjector,
 )
-from nanobot.cron.definition_store import CronDefinitionStore
-from nanobot.cron.occurrence_store import (
+from kohaku.cron.definition_store import CronDefinitionStore
+from kohaku.cron.occurrence_store import (
     CronOccurrenceStore,
     OccurrenceCorruptError,
     OccurrenceReconciliationRequiredError,
 )
-from nanobot.cron.service import CronService
-from nanobot.cron.types import CronSchedule
+from kohaku.cron.service import CronService
+from kohaku.cron.types import CronSchedule
 
 NAMESPACE = "cron:package-e1-tests"
 

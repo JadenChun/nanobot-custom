@@ -6,9 +6,9 @@ from pathlib import Path
 
 import pytest
 
-from nanobot.bus.queue import MessageBus
-from nanobot.session.manager import SessionManager
-from nanobot.session.recovery import RecoveryCoordinator
+from kohaku.bus.queue import MessageBus
+from kohaku.session.manager import SessionManager
+from kohaku.session.recovery import RecoveryCoordinator
 
 SETTLED_KEY = "websocket:settled-startup"
 UNRESOLVED_KEY = "websocket:unresolved-startup"
@@ -32,7 +32,7 @@ def _canonical_manager(tmp_path: Path, keys: tuple[str, ...]) -> SessionManager:
 
 
 def _count_body_loads(monkeypatch: pytest.MonkeyPatch) -> list[str]:
-    from nanobot.session.source_store import SourceSessionStore
+    from kohaku.session.source_store import SourceSessionStore
 
     loaded: list[str] = []
     original = SourceSessionStore.load_source_snapshot
@@ -68,18 +68,18 @@ async def test_unresolved_canonical_session_still_loads_owner_snapshot(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from nanobot.session.pending_followups import (
+    from kohaku.session.pending_followups import (
         mint_pending_followup_id,
         record_pending_followup,
     )
-    from nanobot.session.persistence_metadata import (
+    from kohaku.session.persistence_metadata import (
         SOURCE_PENDING_FOLLOWUPS_METADATA_KEY,
     )
 
     sessions = _canonical_manager(tmp_path, (UNRESOLVED_KEY,))
     backend = sessions.source_backend(UNRESOLVED_KEY)
     assert backend is not None
-    from nanobot.bus.events import InboundMessage
+    from kohaku.bus.events import InboundMessage
 
     message = InboundMessage(
         channel="websocket",
@@ -90,7 +90,7 @@ async def test_unresolved_canonical_session_still_loads_owner_snapshot(
     )
     mint_pending_followup_id(message)
     record = record_pending_followup(message)
-    from nanobot.session.execution_owner import acquire_execution
+    from kohaku.session.execution_owner import acquire_execution
 
     async with acquire_execution(backend, UNRESOLVED_KEY, run_id="startup") as owner:
         assert backend.source.admit_pending_followup(UNRESOLVED_KEY, owner, record)

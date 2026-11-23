@@ -4,7 +4,7 @@ import type { ApplySettingsPayload } from "@/components/settings/contracts";
 import { providerFormFromRow } from "@/components/settings/models/ProviderSettings";
 import type { ModelSettingsState } from "@/components/settings/models/useModelSettingsState";
 import { completeProviderOAuth } from "@/lib/api";
-import type { NanobotClient } from "@/lib/nanobot-client";
+import type { KohakuClient } from "@/lib/kohaku-client";
 import type {
   ProviderOAuthCompletionResult,
   ProviderOAuthPending,
@@ -19,7 +19,7 @@ function isProviderOAuthPending(
 
 interface ProviderOAuthPollingOptions {
   state: ModelSettingsState;
-  client: NanobotClient;
+  client: KohakuClient;
   applyPayload: ApplySettingsPayload;
   setError: Dispatch<SetStateAction<string | null>>;
   closeProviderOAuthFlow: () => void;

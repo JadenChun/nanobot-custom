@@ -8,17 +8,17 @@ import asyncio
 
 import pytest
 
-from nanobot.agent.hook import AgentRunHookContext
-from nanobot.agent.loop import AgentLoop
-from nanobot.agent.tools.mcp import MCPProvider
-from nanobot.agent.tools.registry import ToolRegistry
-from nanobot.cli.gateway_runtime import (
+from kohaku.agent.hook import AgentRunHookContext
+from kohaku.agent.loop import AgentLoop
+from kohaku.agent.tools.mcp import MCPProvider
+from kohaku.agent.tools.registry import ToolRegistry
+from kohaku.cli.gateway_runtime import (
     _close_gateway_runtime,
     _gateway_readiness_payload,
     _MCPReadinessHook,
 )
-from nanobot.providers.unconfigured_provider import UnconfiguredProvider
-from nanobot.runtime_composition import RuntimeState
+from kohaku.providers.unconfigured_provider import UnconfiguredProvider
+from kohaku.runtime_composition import RuntimeState
 from tests.agent.p6_admitted_fixtures import AdmittedGraphs
 
 
@@ -234,7 +234,7 @@ def test_gateway_readiness_is_degraded_when_required_websocket_is_unavailable() 
 
 
 async def test_health_server_reports_its_actual_bound_management_port() -> None:
-    from nanobot.cli.gateway_runtime import _health_server
+    from kohaku.cli.gateway_runtime import _health_server
 
     ports: list[int] = []
     bound = asyncio.Event()
@@ -256,7 +256,7 @@ async def test_health_server_reports_its_actual_bound_management_port() -> None:
 
 
 async def test_publish_gateway_identity_waits_for_websocket_readiness() -> None:
-    from nanobot.cli.gateway_runtime import _publish_gateway_identity_when_ready
+    from kohaku.cli.gateway_runtime import _publish_gateway_identity_when_ready
 
     ws_running = False
 
@@ -290,7 +290,7 @@ async def test_publish_gateway_identity_waits_for_websocket_readiness() -> None:
 
 
 async def test_publish_gateway_identity_skips_publish_when_shutdown_before_ready() -> None:
-    from nanobot.cli.gateway_runtime import _publish_gateway_identity_when_ready
+    from kohaku.cli.gateway_runtime import _publish_gateway_identity_when_ready
 
     class _Channels:
         enabled_channels = ["websocket"]
@@ -325,9 +325,9 @@ async def test_mcp_readiness_hook_delegates_to_application_provider() -> None:
 
 @pytest.mark.parametrize("calls", [1, 3])
 def test_webui_refresh_notification_is_lazy_and_discards_runtime(calls) -> None:
-    from nanobot.cli.gateway_runtime import _webui_refresh_notification
-    from nanobot.providers.unconfigured_provider import UnconfiguredProvider
-    from nanobot.utils.llm_runtime import LLMRuntime
+    from kohaku.cli.gateway_runtime import _webui_refresh_notification
+    from kohaku.providers.unconfigured_provider import UnconfiguredProvider
+    from kohaku.utils.llm_runtime import LLMRuntime
 
     class UnreadRuntime(LLMRuntime):
         def __bool__(self):
@@ -355,8 +355,8 @@ def test_webui_refresh_notification_is_lazy_and_discards_runtime(calls) -> None:
 
 @pytest.mark.parametrize("error_type", [RuntimeError, ValueError, asyncio.CancelledError])
 def test_webui_refresh_notification_preserves_error_identity(error_type) -> None:
-    from nanobot.cli.gateway_runtime import _webui_refresh_notification
-    from nanobot.utils.llm_runtime import LLMRuntime
+    from kohaku.cli.gateway_runtime import _webui_refresh_notification
+    from kohaku.utils.llm_runtime import LLMRuntime
 
     error = error_type("synthetic refresh error")
     seen: list[str] = []
@@ -376,9 +376,9 @@ def test_webui_refresh_notification_preserves_error_identity(error_type) -> None
 
 
 def test_webui_refresh_notification_keeps_captured_method_binding() -> None:
-    from nanobot.cli.gateway_runtime import _webui_refresh_notification
-    from nanobot.providers.unconfigured_provider import UnconfiguredProvider
-    from nanobot.utils.llm_runtime import LLMRuntime
+    from kohaku.cli.gateway_runtime import _webui_refresh_notification
+    from kohaku.providers.unconfigured_provider import UnconfiguredProvider
+    from kohaku.utils.llm_runtime import LLMRuntime
 
     runtime = LLMRuntime.capture(
         UnconfiguredProvider("test/model"), "test/model", context_window_tokens=4096,
@@ -436,8 +436,8 @@ def _serve_health(body: bytes, status: int = 200):
 
 
 def _readiness_from_both_entry_points(port: int) -> tuple[bool, bool]:
-    from nanobot.cli.webui_support import _gateway_health_ready as cli_ready
-    from nanobot.gateway.runtime import gateway_health_ready
+    from kohaku.cli.webui_support import _gateway_health_ready as cli_ready
+    from kohaku.gateway.runtime import gateway_health_ready
 
     return cli_ready("127.0.0.1", port), gateway_health_ready("127.0.0.1", port)
 

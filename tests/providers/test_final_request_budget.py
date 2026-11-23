@@ -13,19 +13,19 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 import tiktoken
 
-import nanobot.providers.openai_codex_provider as codex_provider_module
-from nanobot.providers.anthropic_provider import AnthropicProvider
-from nanobot.providers.azure_openai_provider import AzureOpenAIProvider
-from nanobot.providers.base import LLMProvider, LLMResponse, LLMUsage, ProviderCallContext
-from nanobot.providers.bedrock_provider import BedrockProvider
-from nanobot.providers.fallback_provider import FallbackProvider
-from nanobot.providers.github_copilot_provider import GitHubCopilotProvider
-from nanobot.providers.openai_codex_provider import OpenAICodexProvider
-from nanobot.providers.openai_compat_provider import OpenAICompatProvider
-from nanobot.providers.openai_responses import build_responses_state
-from nanobot.providers.pooled_provider import PooledProvider
-from nanobot.providers.registry import find_by_name
-from nanobot.providers.request_budget import (
+import kohaku.providers.openai_codex_provider as codex_provider_module
+from kohaku.providers.anthropic_provider import AnthropicProvider
+from kohaku.providers.azure_openai_provider import AzureOpenAIProvider
+from kohaku.providers.base import LLMProvider, LLMResponse, LLMUsage, ProviderCallContext
+from kohaku.providers.bedrock_provider import BedrockProvider
+from kohaku.providers.fallback_provider import FallbackProvider
+from kohaku.providers.github_copilot_provider import GitHubCopilotProvider
+from kohaku.providers.openai_codex_provider import OpenAICodexProvider
+from kohaku.providers.openai_compat_provider import OpenAICompatProvider
+from kohaku.providers.openai_responses import build_responses_state
+from kohaku.providers.pooled_provider import PooledProvider
+from kohaku.providers.registry import find_by_name
+from kohaku.providers.request_budget import (
     FinalizedRequestBudgetExceeded,
     ProviderRequestLimits,
     TransportIdentity,
@@ -33,7 +33,7 @@ from nanobot.providers.request_budget import (
     measure_finalized_request,
     validate_finalized_request,
 )
-from nanobot.providers.xai_grok_provider import (
+from kohaku.providers.xai_grok_provider import (
     XAIGrokProvider,
     _XAIHTTPError,
     _XAIIncompleteHostedToolError,
@@ -152,7 +152,7 @@ def test_measurement_fails_closed_to_the_byte_ceiling_without_a_tokenizer(
     def unavailable(_name: str) -> object:
         raise RuntimeError("tokenizer unavailable")
 
-    monkeypatch.setattr("nanobot.providers.request_budget.tiktoken.get_encoding", unavailable)
+    monkeypatch.setattr("kohaku.providers.request_budget.tiktoken.get_encoding", unavailable)
     identity = TransportIdentity("openai", "openai_chat_completions", "gpt-4o")
     body = {"model": "gpt-4o", "input": ["plain text"], "max_tokens": 1}
 
@@ -396,7 +396,7 @@ def test_responses_function_output_image_is_counted_once_and_not_mutated() -> No
     identity = TransportIdentity("openai", "openai_responses", "gpt-4o")
 
     canonical, supplemental, kinds = __import__(
-        "nanobot.providers.request_budget", fromlist=["_canonicalize_finalized_value"],
+        "kohaku.providers.request_budget", fromlist=["_canonicalize_finalized_value"],
     )._canonicalize_finalized_value(body, identity)
 
     assert body == original
@@ -538,7 +538,7 @@ def test_openai_model_and_detail_image_allowances(model: str, detail: str, expec
         }]}],
     }
     canonical, supplemental, _ = __import__(
-        "nanobot.providers.request_budget", fromlist=["_canonicalize_finalized_value"],
+        "kohaku.providers.request_budget", fromlist=["_canonicalize_finalized_value"],
     )._canonicalize_finalized_value(
         body, TransportIdentity("openai", "openai_chat_completions", model),
     )
@@ -1598,7 +1598,7 @@ async def test_xai_hosted_tool_recovery_revalidates_each_generation_attempt(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
-        "nanobot.providers.xai_grok_provider.get_xai_oauth_token",
+        "kohaku.providers.xai_grok_provider.get_xai_oauth_token",
         lambda **_kwargs: SimpleNamespace(access="token"),
     )
     attempts = 0
@@ -1615,7 +1615,7 @@ async def test_xai_hosted_tool_recovery_revalidates_each_generation_attempt(
             )
         return "recovered", [], "stop", None, None
 
-    monkeypatch.setattr("nanobot.providers.xai_grok_provider._request_xai", request)
+    monkeypatch.setattr("kohaku.providers.xai_grok_provider._request_xai", request)
     provider = XAIGrokProvider()
     provider._supports_backend_search = AsyncMock(return_value=False)
     original = provider.validate_finalized_request
@@ -1654,7 +1654,7 @@ async def test_xai_auth_refresh_revalidates_second_generation_attempt(
         token_calls += 1
         return SimpleNamespace(access="fresh" if force_refresh else "stale")
 
-    monkeypatch.setattr("nanobot.providers.xai_grok_provider.get_xai_oauth_token", token)
+    monkeypatch.setattr("kohaku.providers.xai_grok_provider.get_xai_oauth_token", token)
     attempts = 0
 
     async def request(*_args: object, **_kwargs: object) -> tuple[
@@ -1666,7 +1666,7 @@ async def test_xai_auth_refresh_revalidates_second_generation_attempt(
             raise _XAIHTTPError("unauthorized", status_code=401, should_retry=False)
         return "refreshed", [], "stop", None, None
 
-    monkeypatch.setattr("nanobot.providers.xai_grok_provider._request_xai", request)
+    monkeypatch.setattr("kohaku.providers.xai_grok_provider._request_xai", request)
     provider = XAIGrokProvider()
     provider._supports_backend_search = AsyncMock(return_value=False)
     original = provider.validate_finalized_request
@@ -1694,10 +1694,10 @@ async def test_xai_auth_refresh_revalidates_second_generation_attempt(
 async def test_codex_and_xai_hard_limits_block_final_http_generation(monkeypatch: pytest.MonkeyPatch) -> None:
     codex_send = AsyncMock()
     monkeypatch.setattr(
-        "nanobot.providers.openai_codex_provider.get_codex_token",
+        "kohaku.providers.openai_codex_provider.get_codex_token",
         lambda **_kwargs: SimpleNamespace(account_id="account", access="token"),
     )
-    monkeypatch.setattr("nanobot.providers.openai_codex_provider._request_codex", codex_send)
+    monkeypatch.setattr("kohaku.providers.openai_codex_provider._request_codex", codex_send)
     codex = OpenAICodexProvider()
     with pytest.raises(FinalizedRequestBudgetExceeded):
         await codex.chat_with_context(
@@ -1707,10 +1707,10 @@ async def test_codex_and_xai_hard_limits_block_final_http_generation(monkeypatch
 
     xai_send = AsyncMock()
     monkeypatch.setattr(
-        "nanobot.providers.xai_grok_provider.get_xai_oauth_token",
+        "kohaku.providers.xai_grok_provider.get_xai_oauth_token",
         lambda **_kwargs: SimpleNamespace(access="token"),
     )
-    monkeypatch.setattr("nanobot.providers.xai_grok_provider._request_xai", xai_send)
+    monkeypatch.setattr("kohaku.providers.xai_grok_provider._request_xai", xai_send)
     xai = XAIGrokProvider()
     xai._supports_backend_search = AsyncMock(return_value=False)
     with pytest.raises(FinalizedRequestBudgetExceeded):
@@ -1725,7 +1725,7 @@ async def test_codex_native_compaction_and_generation_each_validate_before_dispa
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
-        "nanobot.providers.openai_codex_provider.get_codex_token",
+        "kohaku.providers.openai_codex_provider.get_codex_token",
         lambda **_kwargs: SimpleNamespace(account_id="account", access="token"),
     )
     provider = OpenAICodexProvider(default_model="openai-codex/gpt-5.6-sol")
@@ -1758,7 +1758,7 @@ async def test_codex_native_compaction_and_generation_each_validate_before_dispa
             ),
         )
 
-    monkeypatch.setattr("nanobot.providers.openai_codex_provider._request_codex", request)
+    monkeypatch.setattr("kohaku.providers.openai_codex_provider._request_codex", request)
     context = ProviderCallContext(
         conversation_state=state.with_pending_messages([{"role": "user", "content": "new"}]),
         context_window_tokens=100,

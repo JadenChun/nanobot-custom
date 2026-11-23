@@ -6,8 +6,8 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from nanobot.agent.tools.agent_device import AgentDeviceTool, classify_device_action
-from nanobot.agent.turn import RunStatus, ToolOutcome
+from kohaku.agent.tools.agent_device import AgentDeviceTool, classify_device_action
+from kohaku.agent.turn import RunStatus, ToolOutcome
 
 
 class _FakeProcess:
@@ -30,7 +30,7 @@ async def test_agent_device_requires_args() -> None:
 @pytest.mark.asyncio
 async def test_agent_device_reports_missing_npx() -> None:
     tool = AgentDeviceTool()
-    with patch("nanobot.agent.tools.agent_device._resolve_npx", return_value=None):
+    with patch("kohaku.agent.tools.agent_device._resolve_npx", return_value=None):
         result = await tool.execute(args=["devices", "--platform", "ios"])
 
     assert "npx" in result
@@ -44,10 +44,10 @@ async def test_agent_device_returns_json_payload_for_success() -> None:
     npx_path = r"C:\Program Files\nodejs\npx.cmd"
 
     with patch(
-        "nanobot.agent.tools.agent_device._resolve_npx",
+        "kohaku.agent.tools.agent_device._resolve_npx",
         return_value=npx_path,
     ), patch(
-        "nanobot.agent.tools.agent_device.asyncio.create_subprocess_exec",
+        "kohaku.agent.tools.agent_device.asyncio.create_subprocess_exec",
         return_value=fake_process,
     ) as mock_exec:
         result = await tool.execute(args=["devices", "--platform", "ios"])
@@ -82,7 +82,7 @@ async def test_agent_device_read_only_rejects_screenshot_output_and_caller_cwd(
     args: list[str], working_dir: str | None, monkeypatch
 ) -> None:
     process = AsyncMock()
-    monkeypatch.setattr("nanobot.agent.tools.agent_device.run_owned_process", process)
+    monkeypatch.setattr("kohaku.agent.tools.agent_device.run_owned_process", process)
 
     result = await AgentDeviceTool(
         read_only=True,
@@ -102,8 +102,8 @@ async def test_agent_device_read_only_allows_snapshot_without_override(monkeypat
         stderr=b"",
         returncode=0,
     ))
-    monkeypatch.setattr("nanobot.agent.tools.agent_device._resolve_npx", lambda: "npx")
-    monkeypatch.setattr("nanobot.agent.tools.agent_device.run_owned_process", process)
+    monkeypatch.setattr("kohaku.agent.tools.agent_device._resolve_npx", lambda: "npx")
+    monkeypatch.setattr("kohaku.agent.tools.agent_device.run_owned_process", process)
 
     result = await AgentDeviceTool(read_only=True, working_dir="/tmp/configured").execute(
         args=["snapshot"],

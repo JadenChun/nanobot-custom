@@ -8,7 +8,7 @@ from types import CodeType
 
 import pytest
 
-from nanobot.agent import memory_recovery_storage as storage
+from kohaku.agent import memory_recovery_storage as storage
 from tests.agent.idle_acceptance_support import NetworkDenial
 from tests.agent.test_idle_binding_owner_operations import (
     test_existing_public_revalidate_refuses_invalid_inputs_without_effects as original_revalidate,

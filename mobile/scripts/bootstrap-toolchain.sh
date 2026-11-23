@@ -7,7 +7,7 @@ set -euo pipefail
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 mobile_root="$(cd -- "${script_dir}/.." && pwd)"
 toolchain="${mobile_root}/toolchain"
-download_dir="${TMPDIR:-/tmp}/nanobot-mobile-toolchain"
+download_dir="${TMPDIR:-/tmp}/kohaku-mobile-toolchain"
 manifest="${mobile_root}/toolchain.lock.json"
 
 sha256_of() { sha256sum "$1" | awk '{print $1}'; }

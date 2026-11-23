@@ -45,7 +45,7 @@ export class SessionMenu {
     onSelect?: (session: SessionSummary) => void,
   ) {
     this.picker = new PickerMenu<SessionMenuRow>(renderer, theme, {
-      id: "nanobot-tui-session-menu",
+      id: "kohaku-tui-session-menu",
       key: (session) => session.chatId,
       searchText: (session) => [
         sessionLabel(session),

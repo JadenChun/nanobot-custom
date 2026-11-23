@@ -3,13 +3,13 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
-from nanobot.agent.loop import AgentLoop, TurnKind
-from nanobot.agent.loop import TurnContext as StageContext
-from nanobot.agent.turn import TurnContext, TurnRequest
-from nanobot.bus.events import InboundMessage, OutboundMessage
-from nanobot.config.schema import ToolsConfig
-from nanobot.session.manager import Session
-from nanobot.session.summary import SessionSummaryCheckpoint
+from kohaku.agent.loop import AgentLoop, TurnKind
+from kohaku.agent.loop import TurnContext as StageContext
+from kohaku.agent.turn import TurnContext, TurnRequest
+from kohaku.bus.events import InboundMessage, OutboundMessage
+from kohaku.config.schema import ToolsConfig
+from kohaku.session.manager import Session
+from kohaku.session.summary import SessionSummaryCheckpoint
 
 
 def host():
@@ -95,7 +95,7 @@ async def test_command_shortcut_tags_input_and_reply():
 
 
 async def test_persist_stage_forwards_canonical_run_id():
-    from nanobot.agent.context import TranscriptInput
+    from kohaku.agent.context import TranscriptInput
 
     loop = host()
     session = Session(key='cli:test')
@@ -122,7 +122,7 @@ def test_internal_followup_tagged_without_reassigning_deduplicated_input():
 
 
 async def test_fresh_build_tags_current_input_without_relabeling_retained_history():
-    from nanobot.agent.turn import HistoryMode
+    from kohaku.agent.turn import HistoryMode
 
     loop = host()
     session = Session(key='cli:test')

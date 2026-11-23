@@ -6,12 +6,12 @@ from pathlib import Path
 
 import pytest
 
-from nanobot.remote.protocol import (
+from kohaku.remote.protocol import (
     MutationDecision,
     MutationEnvelope,
     stable_operation_digest,
 )
-from nanobot.remote.replay import OperationReplayCache
+from kohaku.remote.replay import OperationReplayCache
 
 
 def envelope(**overrides) -> MutationEnvelope:

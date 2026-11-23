@@ -10,18 +10,18 @@ from types import MethodType, SimpleNamespace
 import pytest
 from websockets.datastructures import Headers
 
-from nanobot.remote.edge import AccessIdentity
-from nanobot.security.folder_grants import FolderGrantStore
-from nanobot.security.workspace_access import default_workspace_scope
-from nanobot.session.manager import Session, SessionManager
-from nanobot.session.runtime_authority import DurableSessionAuthority, SessionAuthorityLease
-from nanobot.webui.inbound_commands import WebUICommandRouter, _mobile_mutation_allowed
-from nanobot.webui.replay_store import DurableWebUIReplay
-from nanobot.webui.workspaces import (
+from kohaku.remote.edge import AccessIdentity
+from kohaku.security.folder_grants import FolderGrantStore
+from kohaku.security.workspace_access import default_workspace_scope
+from kohaku.session.manager import Session, SessionManager
+from kohaku.session.runtime_authority import DurableSessionAuthority, SessionAuthorityLease
+from kohaku.webui.inbound_commands import WebUICommandRouter, _mobile_mutation_allowed
+from kohaku.webui.replay_store import DurableWebUIReplay
+from kohaku.webui.workspaces import (
     WebUIWorkspaceController,
     WorkspacePermissionActionError,
 )
-from nanobot.webui.ws_http import GatewayHTTPHandler
+from kohaku.webui.ws_http import GatewayHTTPHandler
 
 
 class _Connection:
@@ -729,7 +729,7 @@ async def test_prepare_admission_binding_is_checked_before_controller_execution(
 
 
 def test_mobile_mutation_allowlist_is_sidebar_only() -> None:
-    from nanobot.remote.edge import AccessIdentity
+    from kohaku.remote.edge import AccessIdentity
 
     legacy = AccessIdentity("install-legacy", ("chat.read", "chat.write"), 1e12, 1)
     mobile = SimpleNamespace(mobile_identity=legacy)
@@ -846,7 +846,7 @@ async def test_durable_replay_survives_router_restart(tmp_path: Path) -> None:
 
 
 def test_owner_delegated_workspace_paths_allow_owner_mobile() -> None:
-    from nanobot.remote.edge import AccessIdentity
+    from kohaku.remote.edge import AccessIdentity
 
     handler = object.__new__(GatewayHTTPHandler)
     handler.config = SimpleNamespace(host="127.0.0.1")
@@ -882,7 +882,7 @@ def test_owner_delegated_workspace_paths_allow_owner_mobile() -> None:
 
 @pytest.mark.asyncio
 async def test_product_mutation_effect_timeout(monkeypatch, tmp_path) -> None:
-    from nanobot.remote import operations as operations_module
+    from kohaku.remote import operations as operations_module
 
     spec = SimpleNamespace(timeout_s=0.01, max_request_bytes=1024)
     monkeypatch.setattr(

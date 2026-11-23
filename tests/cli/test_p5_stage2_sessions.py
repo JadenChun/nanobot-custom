@@ -10,17 +10,17 @@ from types import SimpleNamespace
 import pytest
 from typer.testing import CliRunner
 
-from nanobot.cli.commands import app
-from nanobot.context_repo import ContextRepoManager
-from nanobot.session.manager import SessionManager
-from nanobot.session.runtime_authority import OfflineSessionOperator
+from kohaku.cli.commands import app
+from kohaku.context_repo import ContextRepoManager
+from kohaku.session.manager import SessionManager
+from kohaku.session.runtime_authority import OfflineSessionOperator
 
 runner = CliRunner()
 
 
 @pytest.fixture(autouse=True)
 def _isolate_process_title(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("nanobot.cli.process_identity._set_process_title", lambda _title: None)
+    monkeypatch.setattr("kohaku.cli.process_identity._set_process_title", lambda _title: None)
 
 
 def _config(tmp_path: Path, *, artifacts: dict[str, object] | None = None) -> tuple[Path, Path, Path]:
@@ -64,16 +64,16 @@ def _copy_options(config: Path, workspace: Path, sessions: Path) -> list[str]:
 
 
 async def _artifact_copy(tmp_path: Path) -> dict[str, object]:
-    from nanobot.agent.tools.execution import KnownToolResult
-    from nanobot.agent.tools.filesystem import ReadFileTool
-    from nanobot.agent.tools.registry import ToolRegistry
-    from nanobot.session.artifact import parse_artifact_descriptor
-    from nanobot.session.artifact_factory import ConfiguredArtifactReaderFactory
-    from nanobot.session.artifact_store import PrivateArtifactStore
-    from nanobot.session.execution_owner import acquire_execution
-    from nanobot.session.manager import JsonlSessionStore, Session
-    from nanobot.session.source_store import SourceSessionStore
-    from nanobot.session.turn_writer import SourceTurnWriter
+    from kohaku.agent.tools.execution import KnownToolResult
+    from kohaku.agent.tools.filesystem import ReadFileTool
+    from kohaku.agent.tools.registry import ToolRegistry
+    from kohaku.session.artifact import parse_artifact_descriptor
+    from kohaku.session.artifact_factory import ConfiguredArtifactReaderFactory
+    from kohaku.session.artifact_store import PrivateArtifactStore
+    from kohaku.session.execution_owner import acquire_execution
+    from kohaku.session.manager import JsonlSessionStore, Session
+    from kohaku.session.source_store import SourceSessionStore
+    from kohaku.session.turn_writer import SourceTurnWriter
 
     live_workspace = tmp_path / "live-artifact-workspace"
     live_workspace.mkdir()
@@ -206,7 +206,7 @@ def test_cli_bootstrap_convert_recover_and_export_real_copy(tmp_path: Path) -> N
 
     bootstrap = runner.invoke(app, ["sessions", "bootstrap", *options])
     assert bootstrap.exit_code == 0, bootstrap.output
-    assert "older nanobot binaries" in bootstrap.output
+    assert "older kohaku binaries" in bootstrap.output
     assert "do not honor the Stage 2 writer lease" in bootstrap.output
     assert source.read_bytes() == legacy_bytes
 
@@ -350,7 +350,7 @@ def test_cli_rematerialize_rejects_generation_before_config_or_root_access(
     def unexpected_config(_path: Path) -> None:
         raise AssertionError("configuration load must remain unreachable")
 
-    monkeypatch.setattr("nanobot.config.loader.load_config", unexpected_config)
+    monkeypatch.setattr("kohaku.config.loader.load_config", unexpected_config)
     workspace = tmp_path / "absent-workspace"
     sessions = tmp_path / "absent-sessions"
     artifacts = (tmp_path / "absent-artifacts").resolve()
@@ -539,8 +539,8 @@ def test_restore_workspace_classification_failure_never_falls_through(
     def forbidden_generic_loader(*_args: object, **_kwargs: object) -> None:
         raise AssertionError("generic loader must remain unreachable")
 
-    monkeypatch.setattr(f"nanobot.session.mode_storage.{checker}", fail_classification)
-    monkeypatch.setattr("nanobot.cli.commands._load_runtime_config", forbidden_generic_loader)
+    monkeypatch.setattr(f"kohaku.session.mode_storage.{checker}", fail_classification)
+    monkeypatch.setattr("kohaku.cli.commands._load_runtime_config", forbidden_generic_loader)
     before = tuple(tmp_path.rglob("*"))
     result = runner.invoke(app, ["sessions", "restore-workspace", "--config", str(config)])
 

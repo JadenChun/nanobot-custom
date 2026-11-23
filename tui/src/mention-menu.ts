@@ -55,7 +55,7 @@ export class MentionMenu {
 
   constructor(renderer: CliRenderer, theme: PickerMenuTheme) {
     this.picker = new PickerMenu(renderer, theme, {
-      id: "nanobot-tui-mention-menu",
+      id: "kohaku-tui-mention-menu",
       searchText: (item) => `${item.name} ${item.displayName} ${item.description}`,
       render: (item) => `${item.displayName}  @${item.name} · ${item.kind}`,
       emptyText: "No matching sessions or tools",

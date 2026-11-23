@@ -1,9 +1,9 @@
 from pathlib import Path
 from unittest.mock import MagicMock
 
-from nanobot.agent.loop import AgentLoop
-from nanobot.agent.tools.cron import CronTool
-from nanobot.providers.base import GenerationSettings
+from kohaku.agent.loop import AgentLoop
+from kohaku.agent.tools.cron import CronTool
+from kohaku.providers.base import GenerationSettings
 from tests.agent import p6_admitted_fixtures
 
 admitted_sync = p6_admitted_fixtures.admitted_sync

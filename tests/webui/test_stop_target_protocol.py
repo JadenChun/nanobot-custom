@@ -10,33 +10,33 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from nanobot.agent.stop_target import StopExpectation
-from nanobot.bus.events import (
+from kohaku.agent.stop_target import StopExpectation
+from kohaku.bus.events import (
     INBOUND_META_STOP_CLIENT,
     INBOUND_META_STOP_EXPECTATION,
     OutboundMessage,
 )
-from nanobot.bus.outbound_events import StopTargetEvent, WebUIAdmissionRejectedEvent
-from nanobot.bus.queue import MessageBus
-from nanobot.channels.manager import ChannelManager
-from nanobot.channels.websocket.runtime import _parse_envelope
-from nanobot.channels.websocket.tests.test_websocket_channel import (
+from kohaku.bus.outbound_events import StopTargetEvent, WebUIAdmissionRejectedEvent
+from kohaku.bus.queue import MessageBus
+from kohaku.channels.manager import ChannelManager
+from kohaku.channels.websocket.runtime import _parse_envelope
+from kohaku.channels.websocket.tests.test_websocket_channel import (
     _authenticate_local_webui_connection,
     _ch,
 )
-from nanobot.channels.websocket.tests.ws_test_client import InProcessHttpChannel, http_get
-from nanobot.config.schema import Config
-from nanobot.session import webui_turns as turns
-from nanobot.session.manager import SessionManager
-from nanobot.webui.outbound_projection import WebUIOutboundProjector
-from nanobot.webui.session_projection import WebUISessionProjection
+from kohaku.channels.websocket.tests.ws_test_client import InProcessHttpChannel, http_get
+from kohaku.config.schema import Config
+from kohaku.session import webui_turns as turns
+from kohaku.session.manager import SessionManager
+from kohaku.webui.outbound_projection import WebUIOutboundProjector
+from kohaku.webui.session_projection import WebUISessionProjection
 from tests.agent.test_stop_expectation import target_value
 from tests.webui.test_child_thread_route import _auth_headers, _thread_url
 
 
 @pytest.fixture(autouse=True)
 def isolate(tmp_path, monkeypatch):
-    monkeypatch.setattr("nanobot.config.paths.get_data_dir", lambda: tmp_path)
+    monkeypatch.setattr("kohaku.config.paths.get_data_dir", lambda: tmp_path)
     for name in ("_WEBSOCKET_ACTIVE_TURNS", "_WEBSOCKET_TURN_WALL_STARTED_AT", "_WEBSOCKET_TURN_IDS", "_WEBSOCKET_TURN_OWNERS"):
         getattr(turns, name).clear()
     yield
@@ -237,10 +237,10 @@ class _StopCaseLoop:
 
 @pytest.mark.parametrize("with_expectation", [True, False])
 async def test_repeated_stop_after_settlement_does_not_stop_a_later_turn(with_expectation):
-    from nanobot.agent.stop_target import parse_stop_expectation
-    from nanobot.bus.events import InboundMessage
-    from nanobot.command.builtin import cmd_stop
-    from nanobot.command.router import CommandContext
+    from kohaku.agent.stop_target import parse_stop_expectation
+    from kohaku.bus.events import InboundMessage
+    from kohaku.command.builtin import cmd_stop
+    from kohaku.command.router import CommandContext
 
     settled = target_value()
     later = {**target_value(), "active_turn_id": "turn-later"}

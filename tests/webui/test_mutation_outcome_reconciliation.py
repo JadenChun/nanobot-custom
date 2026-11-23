@@ -31,8 +31,8 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from nanobot.webui.inbound_commands import WebUICommandRouter
-from nanobot.webui.replay_store import DurableWebUIReplay
+from kohaku.webui.inbound_commands import WebUICommandRouter
+from kohaku.webui.replay_store import DurableWebUIReplay
 
 
 class _Recorder:
@@ -254,7 +254,7 @@ async def test_c6_ambiguous_timeout_is_uncertain_without_replay(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """C6: an ambiguous timeout stays uncertain and starts no automatic replay."""
-    from nanobot.remote import operations as operations_module
+    from kohaku.remote import operations as operations_module
 
     spec = SimpleNamespace(timeout_s=0.01, max_request_bytes=1024)
     monkeypatch.setattr(

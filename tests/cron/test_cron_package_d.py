@@ -7,23 +7,23 @@ from pathlib import Path
 
 import pytest
 
-from nanobot.cron.action_store import CronActionStore
-from nanobot.cron.completion import (
+from kohaku.cron.action_store import CronActionStore
+from kohaku.cron.completion import (
     CronCompletionConflictError,
     CronCompletionIncompleteError,
     CronCompletionProjector,
 )
-from nanobot.cron.definition_store import CronDefinitionStore
-from nanobot.cron.occurrence import (
+from kohaku.cron.definition_store import CronDefinitionStore
+from kohaku.cron.occurrence import (
     CronOccurrenceDefinitionConflictError,
     CronOccurrenceRuntimeUnavailableError,
 )
-from nanobot.cron.occurrence_store import (
+from kohaku.cron.occurrence_store import (
     CronOccurrenceStore,
     OccurrenceReconciliationRequiredError,
 )
-from nanobot.cron.service import CRON_DEFINITION_ONLY_DIAGNOSTIC, CronService
-from nanobot.cron.types import CronSchedule
+from kohaku.cron.service import CRON_DEFINITION_ONLY_DIAGNOSTIC, CronService
+from kohaku.cron.types import CronSchedule
 
 NAMESPACE = "cron:package-d-tests"
 
@@ -383,6 +383,6 @@ def test_oversized_valid_projection_is_rejected_before_reading(tmp_path: Path, m
     path = service.completion_projector.projection_path(projection.run_id)
     payload = path.read_bytes()
     path.write_bytes(payload + b" " * 32)
-    monkeypatch.setattr("nanobot.cron.completion._MAX_PROJECTION_BYTES", len(payload) + 1)
+    monkeypatch.setattr("kohaku.cron.completion._MAX_PROJECTION_BYTES", len(payload) + 1)
     with pytest.raises(CronCompletionConflictError, match="size limit"):
         service.completion_projector.project_completed(claim.occurrence_id, run_id=claim.run_id)

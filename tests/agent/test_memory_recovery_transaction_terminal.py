@@ -10,12 +10,12 @@ from typing import Any
 
 import pytest
 
-from nanobot.agent import memory_recovery_transaction_history as history
-from nanobot.agent import memory_recovery_transaction_memory as memory_stage
-from nanobot.agent import memory_recovery_transaction_offset as offset_stage
-from nanobot.agent import memory_recovery_transaction_terminal as terminal
-from nanobot.agent.memory_recovery_manifest import MemoryRecoveryManifest
-from nanobot.session.manager import JsonlSessionStore
+from kohaku.agent import memory_recovery_transaction_history as history
+from kohaku.agent import memory_recovery_transaction_memory as memory_stage
+from kohaku.agent import memory_recovery_transaction_offset as offset_stage
+from kohaku.agent import memory_recovery_transaction_terminal as terminal
+from kohaku.agent.memory_recovery_manifest import MemoryRecoveryManifest
+from kohaku.session.manager import JsonlSessionStore
 from tests.agent.test_memory_recovery_transaction_memory import _workspace_without_memory
 from tests.agent.test_memory_recovery_transaction_prepare import (
     _SESSION_KEY,

@@ -13,23 +13,23 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
-from nanobot.agent.loop import AgentLoop
-from nanobot.agent.tools.mcp import MCPProvider
-from nanobot.agent.tools.registry import ToolRegistry
-from nanobot.agent.turn_delivery import TurnDeliveryFactory
-from nanobot.bus.queue import MessageBus
-from nanobot.channels.manager import ChannelManager
-from nanobot.cli.commands import app
-from nanobot.config.schema import Config, MCPServerConfig
-from nanobot.cron.runtime import CronRuntimeInjection
-from nanobot.cron.service import CronService
-from nanobot.runtime_composition import (
+from kohaku.agent.loop import AgentLoop
+from kohaku.agent.tools.mcp import MCPProvider
+from kohaku.agent.tools.registry import ToolRegistry
+from kohaku.agent.turn_delivery import TurnDeliveryFactory
+from kohaku.bus.queue import MessageBus
+from kohaku.channels.manager import ChannelManager
+from kohaku.cli.commands import app
+from kohaku.config.schema import Config, MCPServerConfig
+from kohaku.cron.runtime import CronRuntimeInjection
+from kohaku.cron.service import CronService
+from kohaku.runtime_composition import (
     ChannelBuildOptions,
     RuntimeComposition,
     RuntimeFactories,
     RuntimeState,
 )
-from nanobot.session.manager import SessionManager
+from kohaku.session.manager import SessionManager
 from tests.cli import p6_classic_cli_fixtures
 
 classic_cli_runtime = p6_classic_cli_fixtures.classic_cli_runtime
@@ -156,7 +156,7 @@ def test_agent_construction_failure_rolls_back_native_mcp_and_writer(
 def test_one_shot_body_failure_closes_actual_graph_and_preserves_exception(
     tmp_path, monkeypatch, classic_cli_runtime,
 ):
-    agent_cli = importlib.import_module("nanobot.cli.agent")
+    agent_cli = importlib.import_module("kohaku.cli.agent")
     config = _config(tmp_path)
     # Reach the owned graph through real validation, without constructing a client.
     config.agents.defaults.provider = "custom"
@@ -186,13 +186,13 @@ def test_one_shot_body_failure_closes_actual_graph_and_preserves_exception(
             processed.append((message, session_id))
             raise failure
 
-    monkeypatch.setattr("nanobot.migration_guard.require_runtime_ready", lambda: None)
-    monkeypatch.setattr("nanobot.cli.process_identity._set_process_title", lambda _title: None)
+    monkeypatch.setattr("kohaku.migration_guard.require_runtime_ready", lambda: None)
+    monkeypatch.setattr("kohaku.cli.process_identity._set_process_title", lambda _title: None)
     monkeypatch.setattr(agent_cli, "_load_runtime_config", lambda *_: config)
     monkeypatch.setattr(agent_cli, "AgentLoop", CommandAgent)
     monkeypatch.setattr(agent_cli, "sync_workspace_templates", lambda _path: None)
     monkeypatch.setattr(agent_cli, "configure_agent_runtime_logs", lambda **_options: None)
-    monkeypatch.setattr("nanobot.providers.factory.make_provider", lambda _config: provider)
+    monkeypatch.setattr("kohaku.providers.factory.make_provider", lambda _config: provider)
     result = CliRunner().invoke(app, ["agent", "-m", "hello", "-s", "cli:fixture"])
     assert result.exit_code == 1
     assert result.exception is failure
@@ -288,7 +288,7 @@ def test_each_external_effect_trap_fails_without_underlying_io(
 def test_classic_cli_preflight_rejects_enabled_idle_compaction_without_effects(
     tmp_path, monkeypatch, classic_cli_runtime,
 ):
-    agent_cli = importlib.import_module("nanobot.cli.agent")
+    agent_cli = importlib.import_module("kohaku.cli.agent")
     config = _config(tmp_path)
     config.agents.defaults.idle_compaction.enabled = True
     loaded = []
@@ -297,7 +297,7 @@ def test_classic_cli_preflight_rejects_enabled_idle_compaction_without_effects(
         loaded.append(True)
         return config
 
-    monkeypatch.setattr("nanobot.cli.process_identity._set_process_title", lambda _title: None)
+    monkeypatch.setattr("kohaku.cli.process_identity._set_process_title", lambda _title: None)
     monkeypatch.setattr(agent_cli, "_load_runtime_config", load)
     # This test intentionally leaves the config-aware foreground preflight real.
     result = CliRunner().invoke(app, ["agent", "-m", "hello"])

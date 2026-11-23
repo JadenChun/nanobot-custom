@@ -7,10 +7,10 @@ from pathlib import Path
 
 import pytest
 
-from nanobot.agent import memory_recovery_transaction_history as history
-from nanobot.agent import memory_recovery_transaction_memory as memory_stage
-from nanobot.agent import memory_recovery_transaction_offset as offset_stage
-from nanobot.session.manager import JsonlSessionStore
+from kohaku.agent import memory_recovery_transaction_history as history
+from kohaku.agent import memory_recovery_transaction_memory as memory_stage
+from kohaku.agent import memory_recovery_transaction_offset as offset_stage
+from kohaku.session.manager import JsonlSessionStore
 from tests.agent.test_memory_recovery_transaction_memory import _workspace_without_memory
 from tests.agent.test_memory_recovery_transaction_prepare import (
     _SESSION_KEY,
@@ -77,7 +77,7 @@ def test_old_to_new_durable_replay_and_no_second_mutation(tmp_path: Path, monkey
 def test_existing_new_before_publication_replays_without_replace(tmp_path: Path, monkeypatch):
     workspace, sessions, _, _, source = _setup(tmp_path)
     _, records = _transaction_chain(workspace)
-    from nanobot.agent import memory_recovery_storage as storage
+    from kohaku.agent import memory_recovery_storage as storage
 
     with storage.open_workspace_memory(workspace) as authority:
         proposed = authority.read_blob(records[1].payload["source"]["new_digest"])
@@ -230,7 +230,7 @@ def test_append_before_publication_failure_replays_new_without_replacement(
     tmp_path: Path, monkeypatch,
 ):
     workspace, sessions, _, _, source = _setup(tmp_path)
-    from nanobot.agent.memory_recovery_manifest import MemoryRecoveryManifest
+    from kohaku.agent.memory_recovery_manifest import MemoryRecoveryManifest
 
     original = MemoryRecoveryManifest.append
     calls = 0
@@ -253,7 +253,7 @@ def test_append_before_publication_failure_replays_new_without_replacement(
 
 def test_append_after_publication_failure_replays_existing_phase(tmp_path: Path, monkeypatch):
     workspace, sessions, _, _, source = _setup(tmp_path)
-    from nanobot.agent.memory_recovery_manifest import MemoryRecoveryManifest
+    from kohaku.agent.memory_recovery_manifest import MemoryRecoveryManifest
 
     original = MemoryRecoveryManifest.append
     calls = 0
@@ -293,7 +293,7 @@ def test_missing_source_proposal_blob_fails_before_mutation(tmp_path: Path):
 @pytest.mark.parametrize("kind", ["file", "directory"])
 def test_durable_source_verify_fsync_fault_blocks_phase(tmp_path: Path, monkeypatch, kind: str):
     workspace, sessions, _, _, source = _setup(tmp_path)
-    import nanobot.session.checked_source as checked_source
+    import kohaku.session.checked_source as checked_source
 
     original = checked_source.os.fsync
     hits: list[str] = []

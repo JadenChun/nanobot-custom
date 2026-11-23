@@ -163,7 +163,7 @@ fn runtime_directory() -> Result<PathBuf, String> {
     {
         return Err("host_lock_unavailable".to_owned());
     }
-    let app_dir = path.join("nanobot-desktop");
+    let app_dir = path.join("kohaku-desktop");
     match fs::create_dir(&app_dir) {
         Ok(()) => {
             fs::set_permissions(&app_dir, fs::Permissions::from_mode(0o700))
@@ -287,7 +287,7 @@ fn install_tray(app: &AppHandle<Wry>, shared: Arc<Shared>) -> Result<(), tauri::
     let menu = Menu::with_items(app, &[&status, &open, &retry, &separator, &quit])?;
     shared.set_tray_status_item(status);
     let shared_for_menu = shared.clone();
-    TrayIconBuilder::with_id("nanobot-desktop-tray")
+    TrayIconBuilder::with_id("kohaku-desktop-tray")
         .icon(app_icon())
         .menu(&menu)
         .show_menu_on_left_click(false)
@@ -723,7 +723,7 @@ pub fn app_icon() -> tauri::image::Image<'static> {
 pub fn set_window_icon(window: &WebviewWindow<Wry>) -> tauri::Result<()> {
     #[cfg(target_os = "linux")]
     // Use the packaged theme icon so GTK publishes the icon to the window manager.
-    window.gtk_window()?.set_property("icon-name", "nanobot-desktop");
+    window.gtk_window()?.set_property("icon-name", "kohaku-desktop");
     #[cfg(target_os = "macos")]
     let _ = window; // The bundle supplies the Dock and app icon.
     Ok(())

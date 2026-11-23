@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from nanobot.agent.hook import AgentHook, AgentHookContext, CompositeHook
+from kohaku.agent.hook import AgentHook, AgentHookContext, CompositeHook
 
 
 def _ctx() -> AgentHookContext:
@@ -210,7 +210,7 @@ def test_composite_finalize_content_isolates_failures_and_continues(monkeypatch)
     calls: list[str] = []
     logged: list[tuple[object, ...]] = []
     monkeypatch.setattr(
-        "nanobot.agent.hook.logger.error",
+        "kohaku.agent.hook.logger.error",
         lambda *args, **kwargs: logged.append(args),
     )
 
@@ -265,7 +265,7 @@ def test_composite_wants_streaming_isolates_failures_and_continues(monkeypatch):
     calls: list[str] = []
     logged: list[tuple[object, ...]] = []
     monkeypatch.setattr(
-        "nanobot.agent.hook.logger.error",
+        "kohaku.agent.hook.logger.error",
         lambda *args, **kwargs: logged.append(args),
     )
 

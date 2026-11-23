@@ -22,7 +22,7 @@ def _isolate_active_config_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch)
     binding with monkeypatch so both the default and test-specific changes are
     restored, including an originally unbound loader.
     """
-    from nanobot.config import loader
+    from kohaku.config import loader
 
     monkeypatch.setattr(loader, "_current_config_path", loader._current_config_path)
     reference = tmp_path.parent / f"{tmp_path.name}-test-config" / "config.json"
@@ -34,13 +34,13 @@ def _isolate_active_config_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch)
 
 
 @pytest.fixture(autouse=True)
-def _isolate_nanobot_log_activation() -> Iterator[None]:
+def _isolate_kohaku_log_activation() -> Iterator[None]:
     """Keep CLI log settings from leaking into later tests in the same process."""
-    logger.enable("nanobot")
+    logger.enable("kohaku")
     try:
         yield
     finally:
-        logger.enable("nanobot")
+        logger.enable("kohaku")
 
 
 @pytest.fixture(autouse=True)
@@ -58,13 +58,13 @@ def _isolate_sessions_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> I
         return runtime_root / "sessions"
 
     for target in (
-        "nanobot.config.paths.get_default_sessions_root",
-        "nanobot.agent.memory.get_default_sessions_root",
-        "nanobot.session.manager.get_default_sessions_root",
+        "kohaku.config.paths.get_default_sessions_root",
+        "kohaku.agent.memory.get_default_sessions_root",
+        "kohaku.session.manager.get_default_sessions_root",
     ):
         monkeypatch.setattr(target, sessions_root)
     monkeypatch.setattr(
-        "nanobot.session.manager.get_legacy_sessions_dir",
+        "kohaku.session.manager.get_legacy_sessions_dir",
         lambda: legacy_root,
     )
     yield
@@ -75,7 +75,7 @@ def _isolate_pairing_store(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> N
     """Keep channel pairing tests out of the user's active pairing store."""
     pairing_path = tmp_path / "pairing.json"
     monkeypatch.setattr(
-        "nanobot.pairing.store._store_path",
+        "kohaku.pairing.store._store_path",
         lambda: pairing_path,
     )
 

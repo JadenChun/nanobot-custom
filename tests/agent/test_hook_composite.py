@@ -6,18 +6,18 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from nanobot.agent.foreground import build_foreground_dependencies
-from nanobot.agent.hook import (
+from kohaku.agent.foreground import build_foreground_dependencies
+from kohaku.agent.hook import (
     AgentHook,
     AgentHookContext,
     AgentRunHookContext,
     AgentTurnHookContext,
     CompositeHook,
 )
-from nanobot.agent.turn import DeliveryTarget, TurnRequest
-from nanobot.config.schema import ToolsConfig
-from nanobot.providers.base import GenerationSettings
-from nanobot.utils.llm_runtime import LLMRuntime
+from kohaku.agent.turn import DeliveryTarget, TurnRequest
+from kohaku.config.schema import ToolsConfig
+from kohaku.providers.base import GenerationSettings
+from kohaku.utils.llm_runtime import LLMRuntime
 
 
 def _ctx() -> AgentHookContext:
@@ -415,12 +415,12 @@ async def test_composite_can_wrap_another_composite():
 @pytest.fixture(autouse=True)
 def _allow_guarded_constructor_for_this_suite(monkeypatch):
     """Open only this suite's constructor seam; restore the fail-closed guard after each test."""
-    monkeypatch.setattr("nanobot.migration_guard.require_runtime_ready", lambda: None)
+    monkeypatch.setattr("kohaku.migration_guard.require_runtime_ready", lambda: None)
 
 
 def _make_loop(tmp_path, hooks=None, hook_factories=None):
-    from nanobot.agent.loop import AgentLoop
-    from nanobot.bus.queue import MessageBus
+    from kohaku.agent.loop import AgentLoop
+    from kohaku.bus.queue import MessageBus
 
     bus = MessageBus()
     provider = MagicMock()
@@ -434,8 +434,8 @@ def _make_loop(tmp_path, hooks=None, hook_factories=None):
         restrict_to_workspace=False,
     )
 
-    with patch("nanobot.agent.loop.SubagentManager") as mock_sub_mgr, \
-         patch("nanobot.agent.loop.Consolidator"):
+    with patch("kohaku.agent.loop.SubagentManager") as mock_sub_mgr, \
+         patch("kohaku.agent.loop.Consolidator"):
         mock_sub_mgr.return_value.cancel_by_session = AsyncMock(return_value=0)
         loop = AgentLoop(
             bus=bus,
@@ -451,7 +451,7 @@ def _make_loop(tmp_path, hooks=None, hook_factories=None):
 @pytest.mark.asyncio
 async def test_agent_loop_extra_hook_receives_calls(tmp_path):
     """Extra hook passed to AgentLoop is called alongside core LoopHook."""
-    from nanobot.providers.base import LLMResponse
+    from kohaku.providers.base import LLMResponse
 
     events: list[str] = []
 
@@ -490,7 +490,7 @@ async def test_agent_loop_extra_hook_receives_calls(tmp_path):
 @pytest.mark.asyncio
 async def test_agent_loop_turn_hook_factories_receive_context(tmp_path):
     """Turn-scoped hooks can be supplied externally and see turn-local context."""
-    from nanobot.providers.base import LLMResponse
+    from kohaku.providers.base import LLMResponse
 
     captured: list[tuple[str, AgentTurnHookContext]] = []
     events: list[str] = []
@@ -545,7 +545,7 @@ async def test_agent_loop_turn_hook_factories_receive_context(tmp_path):
 @pytest.mark.asyncio
 async def test_agent_loop_extra_hook_error_isolation(tmp_path):
     """A faulty extra hook does not crash the agent loop."""
-    from nanobot.providers.base import LLMResponse
+    from kohaku.providers.base import LLMResponse
 
     class BadHook(AgentHook):
         async def before_iteration(self, context):
@@ -569,7 +569,7 @@ async def test_agent_loop_extra_hook_error_isolation(tmp_path):
 @pytest.mark.asyncio
 async def test_agent_loop_extra_hooks_do_not_swallow_loop_hook_errors(tmp_path):
     """Extra hooks must not change the core LoopHook failure behavior."""
-    from nanobot.providers.base import LLMResponse, ToolCallRequest
+    from kohaku.providers.base import LLMResponse, ToolCallRequest
 
     loop = _make_loop(tmp_path, hooks=[AgentHook()])
     loop.provider.chat_with_retry = AsyncMock(return_value=LLMResponse(
@@ -595,7 +595,7 @@ async def test_agent_loop_extra_hooks_do_not_swallow_loop_hook_errors(tmp_path):
 @pytest.mark.asyncio
 async def test_agent_loop_no_hooks_backward_compat(tmp_path):
     """Without hooks param, behavior is identical to before."""
-    from nanobot.providers.base import LLMResponse, ToolCallRequest
+    from kohaku.providers.base import LLMResponse, ToolCallRequest
 
     loop = _make_loop(tmp_path)
     loop.provider.chat_with_retry = AsyncMock(return_value=LLMResponse(

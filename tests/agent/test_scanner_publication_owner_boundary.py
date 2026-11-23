@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 
 import pytest
 
-from nanobot.agent.idle_scanner import (
+from kohaku.agent.idle_scanner import (
     IdleScannerCapture,
     IdleScannerComputation,
     IdleScannerPublicationConflict,

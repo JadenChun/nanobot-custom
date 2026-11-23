@@ -2,8 +2,8 @@ import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { afterEach, describe, expect, it } from "vitest";
 
 import { ThreadComposer } from "@/components/thread/ThreadComposer";
-import { useNanobotStream } from "@/hooks/useNanobotStream";
-import { NanobotClient } from "@/lib/nanobot-client";
+import { useKohakuStream } from "@/hooks/useKohakuStream";
+import { KohakuClient } from "@/lib/kohaku-client";
 import { ClientProvider } from "@/providers/ClientProvider";
 
 class SocketStub {
@@ -39,7 +39,7 @@ class SocketStub {
 }
 
 function IntegrationComposer({ chatId }: { chatId: string }) {
-  const stream = useNanobotStream(chatId);
+  const stream = useKohakuStream(chatId);
   return (
     <ThreadComposer
       onSend={stream.send}
@@ -61,7 +61,7 @@ function messageFrames(socket: SocketStub) {
 }
 
 describe("queued guidance owner admission over the actual client boundary", () => {
-  let client: NanobotClient | null = null;
+  let client: KohakuClient | null = null;
 
   afterEach(() => {
     act(() => client?.close());
@@ -73,7 +73,7 @@ describe("queued guidance owner admission over the actual client boundary", () =
     async (caseName) => {
       const chatId = `queue-not-natural-${caseName}`;
       const socket = new SocketStub();
-      const current = client = new NanobotClient({
+      const current = client = new KohakuClient({
         url: "ws://test",
         reconnect: false,
         socketFactory: () => socket as unknown as WebSocket,
@@ -116,7 +116,7 @@ describe("queued guidance owner admission over the actual client boundary", () =
       const first = new SocketStub();
       const second = new SocketStub();
       const sockets = [first, second];
-      const current = client = new NanobotClient({
+      const current = client = new KohakuClient({
         url: "ws://test",
         socketFactory: () => sockets.shift()! as unknown as WebSocket,
       });
@@ -163,7 +163,7 @@ describe("queued guidance owner admission over the actual client boundary", () =
   it("keeps the exact row through route acceptance and removes it only on its owner receipt", async () => {
     const chatId = "chat-queued-guidance-integration";
     const socket = new SocketStub();
-    client = new NanobotClient({
+    client = new KohakuClient({
       url: "ws://test",
       reconnect: false,
       socketFactory: () => socket as unknown as WebSocket,

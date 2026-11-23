@@ -4,8 +4,8 @@ from typing import Any
 
 import httpx
 
-from nanobot.config.schema import Config, MCPServerConfig
-from nanobot.webui.settings_capabilities import (
+from kohaku.config.schema import Config, MCPServerConfig
+from kohaku.webui.settings_capabilities import (
     capability_settings_payload,
     update_api_settings,
     update_image_generation_settings,
@@ -114,7 +114,7 @@ def test_web_settings_report_browser_session_defaults() -> None:
 def test_web_settings_persist_browser_session(monkeypatch) -> None:
     config = Config()
     monkeypatch.setattr(
-        "nanobot.webui.settings_capabilities.httpx.get",
+        "kohaku.webui.settings_capabilities.httpx.get",
         lambda *args, **kwargs: type("R", (), {"status_code": 200})(),
     )
 
@@ -151,7 +151,7 @@ def test_web_settings_persist_browser_session(monkeypatch) -> None:
 def test_web_settings_reject_invalid_browser_session_values() -> None:
     import pytest
 
-    from nanobot.webui.settings_contracts import WebUISettingsError
+    from kohaku.webui.settings_contracts import WebUISettingsError
 
     with pytest.raises(WebUISettingsError):
         update_web_search_settings(

@@ -11,7 +11,7 @@ from collections import Counter
 
 import pytest
 
-from nanobot.security.desktop_permissions import (
+from kohaku.security.desktop_permissions import (
     DesktopPermissionOwner,
     WorkspacePermissionConflictError,
 )

@@ -6,14 +6,14 @@ from dataclasses import FrozenInstanceError
 
 import pytest
 
-from nanobot.agent.tools.filesystem import ReadFileTool
-from nanobot.context_repo import ContextRepoManager, ManagedContextRepo, ResourceAccessPolicy
-from nanobot.session import artifact_factory, artifact_reader
-from nanobot.session.artifact import ArtifactValidationError
-from nanobot.session.artifact_reader import ArtifactReader
-from nanobot.session.execution_owner import ExecutionOwnershipError
-from nanobot.session.manager import JsonlSessionStore
-from nanobot.session.source_store import SourceSessionStore
+from kohaku.agent.tools.filesystem import ReadFileTool
+from kohaku.context_repo import ContextRepoManager, ManagedContextRepo, ResourceAccessPolicy
+from kohaku.session import artifact_factory, artifact_reader
+from kohaku.session.artifact import ArtifactValidationError
+from kohaku.session.artifact_reader import ArtifactReader
+from kohaku.session.execution_owner import ExecutionOwnershipError
+from kohaku.session.manager import JsonlSessionStore
+from kohaku.session.source_store import SourceSessionStore
 from tests.session.test_artifact_reader import setup_read
 
 

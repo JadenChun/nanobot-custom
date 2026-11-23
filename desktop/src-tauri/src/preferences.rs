@@ -48,7 +48,7 @@ fn home_directory() -> Option<PathBuf> {
 }
 
 fn config_under(home: &Path) -> PathBuf {
-    home.join(".nanobot").join("config.json")
+    home.join(".kohaku").join("config.json")
 }
 
 fn is_executable_file(path: &Path) -> bool {
@@ -64,8 +64,8 @@ fn resolve_release_python(root: &Path, selector: &str, relative_python: &str) ->
 }
 
 fn setup_defaults_under(home: &Path) -> Option<SetupDefaults> {
-    let managed = home.join(".local/share/nanobot");
-    let release_root = home.join(".local/share/nanobot-release");
+    let managed = home.join(".local/share/kohaku");
+    let release_root = home.join(".local/share/kohaku-release");
     let interpreter_path = resolve_release_python(&managed, "desktop-current", "env/bin/python")
         .or_else(|| resolve_release_python(&managed, "current", "env/bin/python"))
         .or_else(|| resolve_release_python(&release_root, "desktop-current", "venv/bin/python"))
@@ -123,7 +123,7 @@ pub fn preference_path() -> Result<PathBuf, &'static str> {
         return Err("preferences_unavailable");
     }
     ensure_base_directory(&base)?;
-    let app_dir = base.join("nanobot-desktop");
+    let app_dir = base.join("kohaku-desktop");
     ensure_private_directory(&app_dir)?;
     Ok(app_dir.join("preferences.json"))
 }
@@ -274,11 +274,11 @@ mod tests {
         ));
         fs::create_dir(&home).unwrap();
         let defaults = setup_defaults_under(&home).unwrap();
-        assert_eq!(Path::new(&defaults.config_path), home.join(".nanobot/config.json"));
-        assert!(!home.join(".nanobot").exists());
+        assert_eq!(Path::new(&defaults.config_path), home.join(".kohaku/config.json"));
+        assert!(!home.join(".kohaku").exists());
         assert!(defaults.interpreter_path.is_none());
         for selector in ["current", "desktop-current"] {
-            let python = home.join(".local/share/nanobot").join(selector).join("env/bin/python");
+            let python = home.join(".local/share/kohaku").join(selector).join("env/bin/python");
             fs::create_dir_all(python.parent().unwrap()).unwrap();
             fs::write(&python, []).unwrap();
             fs::set_permissions(&python, fs::Permissions::from_mode(0o700)).unwrap();

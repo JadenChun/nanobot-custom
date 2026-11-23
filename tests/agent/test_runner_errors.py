@@ -8,12 +8,12 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from nanobot.agent.hook import AgentHook, AgentHookContext
-from nanobot.agent.tools import ToolResult
-from nanobot.agent.tools.execution import execute_tool_calls
-from nanobot.config.schema import AgentDefaults
-from nanobot.providers.base import LLMProvider, LLMResponse, ToolCallRequest
-from nanobot.providers.request_budget import FinalizedRequestBudgetExceeded
+from kohaku.agent.hook import AgentHook, AgentHookContext
+from kohaku.agent.tools import ToolResult
+from kohaku.agent.tools.execution import execute_tool_calls
+from kohaku.config.schema import AgentDefaults
+from kohaku.providers.base import LLMProvider, LLMResponse, ToolCallRequest
+from kohaku.providers.request_budget import FinalizedRequestBudgetExceeded
 from tests.agent.runner_helpers import install_test_tool_dispatch, make_run_spec
 
 _MAX_TOOL_RESULT_CHARS = AgentDefaults().max_tool_result_chars
@@ -21,7 +21,7 @@ _MAX_TOOL_RESULT_CHARS = AgentDefaults().max_tool_result_chars
 
 @pytest.mark.asyncio
 async def test_runner_returns_tool_exception_to_model_for_recovery():
-    from nanobot.agent.runner import AgentRunner
+    from kohaku.agent.runner import AgentRunner
 
     provider = MagicMock(spec=LLMProvider)
     provider.chat_with_retry = AsyncMock(side_effect=[
@@ -108,7 +108,7 @@ async def test_tool_execution_propagates_control_flow_exceptions(control_error: 
 async def test_llm_error_not_appended_to_session_messages():
     """When LLM returns finish_reason='error', the error content must NOT be
     appended to the messages list (prevents polluting session history)."""
-    from nanobot.agent.runner import (
+    from kohaku.agent.runner import (
         _PERSISTED_MODEL_ERROR_PLACEHOLDER,
         AgentRunner,
     )
@@ -140,7 +140,7 @@ async def test_llm_error_not_appended_to_session_messages():
 @pytest.mark.asyncio
 async def test_llm_arrearage_error_surfaces_clear_message():
     """Arrearage errors yield a clear user-facing message, not a raw dump (#3006)."""
-    from nanobot.agent.runner import _ARREARAGE_ERROR_MESSAGE, AgentRunner
+    from kohaku.agent.runner import _ARREARAGE_ERROR_MESSAGE, AgentRunner
 
     provider = MagicMock(spec=LLMProvider)
     provider.chat_with_retry = AsyncMock(return_value=LLMResponse(
@@ -177,7 +177,7 @@ async def test_runner_ignores_tool_calls_when_finish_reason_blocks_execution(
     expected_stop_reason: str,
 ):
     """Provider/gateway-injected tool calls under terminal block reasons must not run."""
-    from nanobot.agent.runner import AgentRunner
+    from kohaku.agent.runner import AgentRunner
 
     provider = MagicMock(spec=LLMProvider)
     provider.chat_with_retry = AsyncMock(return_value=LLMResponse(
@@ -207,7 +207,7 @@ async def test_runner_ignores_tool_calls_when_finish_reason_blocks_execution(
 
 @pytest.mark.asyncio
 async def test_runner_returns_structured_tool_error_to_model_for_recovery():
-    from nanobot.agent.runner import AgentRunner
+    from kohaku.agent.runner import AgentRunner
 
     provider = MagicMock(spec=LLMProvider)
 
@@ -242,9 +242,9 @@ async def test_runner_returns_structured_tool_error_to_model_for_recovery():
 
 @pytest.mark.asyncio
 async def test_runner_recovers_from_missing_builtin_skill_file_when_fail_fast_is_enabled(tmp_path):
-    from nanobot.agent.runner import AgentRunner
-    from nanobot.agent.tools.filesystem import ReadFileTool
-    from nanobot.agent.tools.registry import ToolRegistry
+    from kohaku.agent.runner import AgentRunner
+    from kohaku.agent.tools.filesystem import ReadFileTool
+    from kohaku.agent.tools.registry import ToolRegistry
 
     missing_path = str(tmp_path / "shared" / "skills" / "memory" / "SKILL.md")
 
@@ -282,9 +282,9 @@ async def test_runner_recovers_from_missing_builtin_skill_file_when_fail_fast_is
 
 @pytest.mark.asyncio
 async def test_missing_skill_file_recovery_is_limited_to_one_attempt(tmp_path):
-    from nanobot.agent.runner import AgentRunner
-    from nanobot.agent.tools.filesystem import ReadFileTool
-    from nanobot.agent.tools.registry import ToolRegistry
+    from kohaku.agent.runner import AgentRunner
+    from kohaku.agent.tools.filesystem import ReadFileTool
+    from kohaku.agent.tools.registry import ToolRegistry
 
     path = str(tmp_path / "shared" / "skills" / "memory" / "SKILL.md")
     provider = MagicMock(spec=LLMProvider)
@@ -307,8 +307,8 @@ async def test_missing_skill_file_recovery_is_limited_to_one_attempt(tmp_path):
 
 @pytest.mark.asyncio
 async def test_runner_turns_final_request_budget_rejection_into_context_error():
-    from nanobot.agent.runner import AgentRunner
-    from nanobot.utils.runtime import CONTEXT_BUDGET_ERROR_MESSAGE
+    from kohaku.agent.runner import AgentRunner
+    from kohaku.utils.runtime import CONTEXT_BUDGET_ERROR_MESSAGE
 
     provider = MagicMock(spec=LLMProvider)
     provider.chat_with_retry = AsyncMock(side_effect=FinalizedRequestBudgetExceeded())
@@ -332,7 +332,7 @@ async def test_runner_turns_final_request_budget_rejection_into_context_error():
 
 @pytest.mark.asyncio
 async def test_runner_recovers_from_ordinary_tool_error_when_fail_fast_is_enabled():
-    from nanobot.agent.runner import AgentRunner
+    from kohaku.agent.runner import AgentRunner
 
     provider = MagicMock(spec=LLMProvider)
     provider.chat_with_retry = AsyncMock(side_effect=[
@@ -379,7 +379,7 @@ async def test_runner_recovers_from_ordinary_tool_error_when_fail_fast_is_enable
 
 @pytest.mark.asyncio
 async def test_runner_stops_after_repeating_the_same_tool_error():
-    from nanobot.agent.runner import AgentRunner
+    from kohaku.agent.runner import AgentRunner
 
     provider = MagicMock(spec=LLMProvider)
     provider.chat_with_retry = AsyncMock(return_value=LLMResponse(
@@ -411,7 +411,7 @@ async def test_runner_stops_after_repeating_the_same_tool_error():
 
 @pytest.mark.asyncio
 async def test_runner_limits_distinct_tool_error_recoveries():
-    from nanobot.agent.runner import AgentRunner
+    from kohaku.agent.runner import AgentRunner
 
     def failing_call(call_id: str, path: str) -> LLMResponse:
         return LLMResponse(
@@ -454,7 +454,7 @@ async def test_runner_limits_distinct_tool_error_recoveries():
 
 @pytest.mark.asyncio
 async def test_context_repository_exec_denial_explains_the_cause_without_retrying():
-    from nanobot.agent.runner import AgentRunner
+    from kohaku.agent.runner import AgentRunner
 
     provider = MagicMock(spec=LLMProvider)
     provider.chat_with_retry = AsyncMock(return_value=LLMResponse(
@@ -489,11 +489,11 @@ async def test_context_repository_exec_denial_explains_the_cause_without_retryin
 async def test_context_repo_exec_denial_allows_one_safe_tool_recovery(
     tmp_path, monkeypatch, repeat_denied_command,
 ):
-    from nanobot.agent.runner import AgentRunner
-    from nanobot.agent.tools.filesystem import ListDirTool
-    from nanobot.agent.tools.registry import ToolRegistry
-    from nanobot.agent.tools.shell import ExecTool
-    from nanobot.context_repo import ContextRepoManager, ResourceAccessPolicy
+    from kohaku.agent.runner import AgentRunner
+    from kohaku.agent.tools.filesystem import ListDirTool
+    from kohaku.agent.tools.registry import ToolRegistry
+    from kohaku.agent.tools.shell import ExecTool
+    from kohaku.context_repo import ContextRepoManager, ResourceAccessPolicy
 
     workspace = tmp_path / "workspace"
     shared = tmp_path / "shared"
@@ -556,13 +556,13 @@ async def test_context_repo_exec_denial_allows_one_safe_tool_recovery(
 async def test_managed_repo_exec_denial_recovers_with_read_file_and_stops_cleanly_on_repeat(
     tmp_path, monkeypatch, repeat_denied_command,
 ):
-    from nanobot.agent.runner import AgentRunner
-    from nanobot.agent.tools.filesystem import ReadFileTool
-    from nanobot.agent.tools.registry import ToolRegistry
-    from nanobot.agent.tools.shell import ExecTool
-    from nanobot.context_repo import ContextRepoManager, ResourceAccessPolicy
-    from nanobot.security.folder_grants import FolderGrantStore
-    from nanobot.utils.runtime import CONTEXT_REPO_EXEC_DISABLED_MESSAGE
+    from kohaku.agent.runner import AgentRunner
+    from kohaku.agent.tools.filesystem import ReadFileTool
+    from kohaku.agent.tools.registry import ToolRegistry
+    from kohaku.agent.tools.shell import ExecTool
+    from kohaku.context_repo import ContextRepoManager, ResourceAccessPolicy
+    from kohaku.security.folder_grants import FolderGrantStore
+    from kohaku.utils.runtime import CONTEXT_REPO_EXEC_DISABLED_MESSAGE
 
     workspace = tmp_path / "workspace"
     shared = tmp_path / "shared"
@@ -658,7 +658,7 @@ async def test_managed_repo_exec_denial_recovers_with_read_file_and_stops_cleanl
 
 @pytest.mark.asyncio
 async def test_runner_preserves_successful_exec_output_that_starts_with_error():
-    from nanobot.agent.runner import AgentRunner
+    from kohaku.agent.runner import AgentRunner
 
     provider = MagicMock(spec=LLMProvider)
 
@@ -698,7 +698,7 @@ async def test_runner_preserves_successful_exec_output_that_starts_with_error():
 @pytest.mark.asyncio
 async def test_runner_preserves_tool_error_results_in_messages():
     """Tool errors stay paired with their calls so the model can recover (#2943)."""
-    from nanobot.agent.runner import AgentRunner
+    from kohaku.agent.runner import AgentRunner
 
     provider = MagicMock(spec=LLMProvider)
 
@@ -764,8 +764,8 @@ async def test_length_finish_with_blank_content_routes_to_length_recovery():
     retry path. Retrying the same prompt cannot recover from output-budget
     exhaustion.
     """
-    from nanobot.agent.runner import AgentRunner
-    from nanobot.utils.runtime import LENGTH_RECOVERY_PROMPT
+    from kohaku.agent.runner import AgentRunner
+    from kohaku.utils.runtime import LENGTH_RECOVERY_PROMPT
 
     provider = MagicMock(spec=LLMProvider)
     # First call: truncated (length) with blank content and a dropped tool call.

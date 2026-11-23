@@ -17,13 +17,13 @@ from pathlib import Path
 
 import pytest
 
-from nanobot.attachments.lifecycle import migrate_legacy_media, prune_unreferenced
-from nanobot.attachments.store import AttachmentStore
-from nanobot.config.loader import set_config_path
-from nanobot.session.manager import JsonlSessionStore, Session
-from nanobot.session.source import new_source_event
-from nanobot.utils.artifacts import store_generated_image_artifact
-from nanobot.webui.media_maintenance import garbage_collect_generated_media
+from kohaku.attachments.lifecycle import migrate_legacy_media, prune_unreferenced
+from kohaku.attachments.store import AttachmentStore
+from kohaku.config.loader import set_config_path
+from kohaku.session.manager import JsonlSessionStore, Session
+from kohaku.session.source import new_source_event
+from kohaku.utils.artifacts import store_generated_image_artifact
+from kohaku.webui.media_maintenance import garbage_collect_generated_media
 
 PNG = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+yF9kAAAAASUVORK5CYII="
 
@@ -149,7 +149,7 @@ def test_supported_complete_source_satisfies_generated_quota(tmp_path: Path) -> 
 
 
 def test_nullable_folder_target_survives_canonical_publication(tmp_path: Path) -> None:
-    from nanobot.workspace_access_recovery import parse_folder_access_need
+    from kohaku.workspace_access_recovery import parse_folder_access_need
 
     backend, store = backend_store(tmp_path)
     need = parse_folder_access_need({
@@ -209,8 +209,8 @@ def test_malformed_retained_thread_rows_fence_every_deletion_branch(tmp_path: Pa
 
 @pytest.mark.parametrize("generated", [False, True])
 def test_real_retained_display_messages_protect_then_release_media(tmp_path: Path, generated) -> None:
-    from nanobot.webui.media_api import sign_existing_media_path, signed_media_attachments
-    from nanobot.webui.transcript import replay_transcript_to_ui_messages
+    from kohaku.webui.media_api import sign_existing_media_path, signed_media_attachments
+    from kohaku.webui.transcript import replay_transcript_to_ui_messages
 
     backend, store, _record, path = orphan(tmp_path, generated=generated)
     display = tmp_path / "webui"
@@ -242,7 +242,7 @@ def test_real_retained_display_messages_protect_then_release_media(tmp_path: Pat
 
 
 def test_authorized_workspace_move_rebinds_exact_media_and_memory_roots(tmp_path: Path) -> None:
-    from nanobot.agent.memory import MemoryStore
+    from kohaku.agent.memory import MemoryStore
 
     backend, store, _record, path = orphan(tmp_path)
     memory = MemoryStore(backend.workspace, sessions_root=backend.sessions_root)
@@ -267,8 +267,8 @@ def test_authorized_workspace_move_rebinds_exact_media_and_memory_roots(tmp_path
 
 @pytest.mark.parametrize("replacement", ["workspace", "namespace", "memory", "workspace-symlink", "memory-symlink"])
 def test_workspace_relocation_never_refreshes_replaced_root_identity(tmp_path: Path, replacement) -> None:
-    from nanobot.agent.memory import MemoryStore
-    from nanobot.attachments._media import MediaRetentionError
+    from kohaku.agent.memory import MemoryStore
+    from kohaku.attachments._media import MediaRetentionError
 
     backend, store, _record, path = orphan(tmp_path)
     memory = MemoryStore(backend.workspace, sessions_root=backend.sessions_root)
@@ -308,7 +308,7 @@ def test_workspace_relocation_never_refreshes_replaced_root_identity(tmp_path: P
 
 @pytest.mark.parametrize("binding", ["unclaimed", "wrong-workspace-id", "old-path-replaced"])
 def test_workspace_relocation_requires_current_owner_binding(tmp_path: Path, binding) -> None:
-    from nanobot.attachments._media import MediaRetentionError
+    from kohaku.attachments._media import MediaRetentionError
 
     backend, store, _record, path = orphan(tmp_path)
     moved = tmp_path / "workspace-moved"
@@ -414,7 +414,7 @@ def test_non_webui_canonical_source_protects_generated_media(tmp_path: Path, key
 
 
 def test_memory_history_breadcrumb_is_retained_evidence(tmp_path: Path) -> None:
-    from nanobot.agent.memory import MemoryStore
+    from kohaku.agent.memory import MemoryStore
 
     backend, store, _record, path = orphan(tmp_path)
     memory = MemoryStore(backend.workspace, sessions_root=backend.sessions_root)
@@ -447,7 +447,7 @@ def test_failed_source_publication_retains_exact_pin(tmp_path: Path, monkeypatch
 @pytest.mark.parametrize("branch", ["attachment", "retention", "orphan", "quota"])
 @pytest.mark.parametrize("corruption", ["malformed", "duplicate", "nonobject", "version", "missing", "traversal", "unreadable", "budget", "media-null", "native-lock-nonempty", "native-lock-symlink", "native-lock-replaced", "unknown-control"])
 def test_qualified_evidence_failure_protects_each_destructive_branch(tmp_path: Path, monkeypatch, branch, corruption) -> None:
-    import nanobot.attachments._inventory as inventory
+    import kohaku.attachments._inventory as inventory
 
     backend, store, _record, path = orphan(tmp_path, generated=branch != "attachment")
     snapshot = publish(backend, "telegram:evidence", [{"role": "user", "content": "ordinary"}])
@@ -519,7 +519,7 @@ def test_qualified_evidence_failure_protects_each_destructive_branch(tmp_path: P
 
 
 def test_live_fence_is_exact_process_scope_and_not_copyable(tmp_path: Path) -> None:
-    from nanobot.attachments._media import MediaFence
+    from kohaku.attachments._media import MediaFence
 
     _backend, store, _record, path = orphan(tmp_path)
     with store.custody.maintenance() as (gate, evidence):
@@ -547,7 +547,7 @@ def test_live_fence_is_exact_process_scope_and_not_copyable(tmp_path: Path) -> N
 
 def test_separate_process_media_fence_refuses_maintenance_boundedly(tmp_path: Path) -> None:
     backend, store, _record, path = orphan(tmp_path)
-    code = """import sys\nfrom pathlib import Path\nfrom nanobot.attachments.store import AttachmentStore\ns = AttachmentStore(Path(sys.argv[1]) / 'attachments', media_root=Path(sys.argv[1]))\nwith s.custody.fence():\n print('locked', flush=True)\n sys.stdin.readline()\n"""
+    code = """import sys\nfrom pathlib import Path\nfrom kohaku.attachments.store import AttachmentStore\ns = AttachmentStore(Path(sys.argv[1]) / 'attachments', media_root=Path(sys.argv[1]))\nwith s.custody.fence():\n print('locked', flush=True)\n sys.stdin.readline()\n"""
     child = subprocess.Popen([sys.executable, "-B", "-c", code, str(store.media_root)],
                              stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     try:
@@ -564,7 +564,7 @@ def test_separate_process_media_fence_refuses_maintenance_boundedly(tmp_path: Pa
 
 @pytest.mark.parametrize("fault", ["blob", "sidecar"])
 def test_partial_unlink_reopens_with_fresh_evidence_and_consumes_own_intent(tmp_path: Path, monkeypatch, fault) -> None:
-    import nanobot.attachments._media as media
+    import kohaku.attachments._media as media
 
     backend, store, _record, path = orphan(tmp_path)
     original = media.os.unlink
@@ -599,8 +599,8 @@ def test_preview_of_absent_roots_creates_no_files_or_locks(tmp_path: Path) -> No
 async def test_header_only_nested_followup_publication_transfers_exact_pin(tmp_path: Path) -> None:
     from uuid import uuid4
 
-    from nanobot.session.execution_owner import acquire_execution
-    from nanobot.session.pending_followups import PendingFollowupRecord
+    from kohaku.session.execution_owner import acquire_execution
+    from kohaku.session.pending_followups import PendingFollowupRecord
 
     backend, store = backend_store(tmp_path)
     snapshot = publish(backend, "websocket:pending", [{"role": "user", "content": "start"}])
@@ -617,7 +617,7 @@ async def test_header_only_nested_followup_publication_transfers_exact_pin(tmp_p
 
 
 def test_segmented_display_and_unlisted_rotation_residue_protect_media(tmp_path: Path, monkeypatch) -> None:
-    import nanobot.webui.transcript as transcript
+    import kohaku.webui.transcript as transcript
 
     backend, store, record, path = orphan(tmp_path)
     monkeypatch.setattr(transcript, "_ACTIVE_TRANSCRIPT_ROTATE_BYTES", 1)
@@ -638,8 +638,8 @@ def test_segmented_display_and_unlisted_rotation_residue_protect_media(tmp_path:
 
 
 def test_pending_upload_expiry_and_registry_restart_never_release_storage_pin(tmp_path: Path, monkeypatch) -> None:
-    import nanobot.attachments.uploads as uploads
-    from nanobot.attachments.uploads import UploadRegistry
+    import kohaku.attachments.uploads as uploads
+    from kohaku.attachments.uploads import UploadRegistry
 
     backend, store = backend_store(tmp_path)
     record = store.commit(store.stage_bytes(b"upload", mime="text/plain", name="up.txt", source="websocket"))
@@ -655,8 +655,8 @@ def test_pending_upload_expiry_and_registry_restart_never_release_storage_pin(tm
 
 
 async def test_retained_legacy_rollback_after_reset_protects_media(tmp_path: Path) -> None:
-    from nanobot.session.execution_owner import acquire_execution
-    from nanobot.session.runtime_authority import OfflineSessionOperator
+    from kohaku.session.execution_owner import acquire_execution
+    from kohaku.session.runtime_authority import OfflineSessionOperator
 
     backend, store = backend_store(tmp_path)
     record = store.commit(store.stage_bytes(b"rollback", mime="text/plain", name="old.txt", source="telegram"))
@@ -741,7 +741,7 @@ def test_publication_before_delete_is_excluded_by_real_namespace_lock(tmp_path: 
 
 
 def test_delete_before_publication_refuses_missing_asset_after_real_lock_barrier(tmp_path: Path, monkeypatch) -> None:
-    from nanobot.attachments._media import MediaCustody
+    from kohaku.attachments._media import MediaCustody
 
     backend, store, record, path = orphan(tmp_path)
     snapshot = publish(backend, "telegram:later", [{"role": "user", "content": "base"}])
@@ -772,7 +772,7 @@ def test_delete_before_publication_refuses_missing_asset_after_real_lock_barrier
 
 @pytest.mark.parametrize("replacement", ["namespace", "asset", "sidecar", "lock", "root"])
 def test_replaced_inventory_generation_cannot_be_deleted(tmp_path: Path, monkeypatch, replacement) -> None:
-    from nanobot.attachments._media import MediaCustody
+    from kohaku.attachments._media import MediaCustody
 
     backend, store, _record, path = orphan(tmp_path)
     original = MediaCustody.delete
@@ -807,11 +807,11 @@ def test_replaced_inventory_generation_cannot_be_deleted(tmp_path: Path, monkeyp
 async def test_temporary_cleanup_preserves_shared_then_reclaims_exact_exclusive_custody(tmp_path: Path) -> None:
     from types import SimpleNamespace
 
-    from nanobot.bus.queue import MessageBus
-    from nanobot.security.folder_grants import FolderGrantStore
-    from nanobot.session.manager import SessionManager
-    from nanobot.webui.temporary_chats import WebUITemporaryChats
-    from nanobot.webui.workspaces import WebUIWorkspaceController
+    from kohaku.bus.queue import MessageBus
+    from kohaku.security.folder_grants import FolderGrantStore
+    from kohaku.session.manager import SessionManager
+    from kohaku.webui.temporary_chats import WebUITemporaryChats
+    from kohaku.webui.workspaces import WebUIWorkspaceController
 
     backend, store = backend_store(tmp_path)
     manager = SessionManager(backend.workspace, sessions_root=backend.sessions_root)
@@ -837,7 +837,7 @@ async def test_temporary_cleanup_preserves_shared_then_reclaims_exact_exclusive_
 
 
 def test_normal_delegated_child_activity_allows_positive_reclamation(tmp_path: Path) -> None:
-    from nanobot.webui.transcript import append_transcript_object
+    from kohaku.webui.transcript import append_transcript_object
 
     backend, store, _record, path = orphan(tmp_path)
     append_transcript_object("websocket:parent", {"event": "delegated_child", "chat_id": "parent",
@@ -851,8 +851,8 @@ def test_normal_delegated_child_activity_allows_positive_reclamation(tmp_path: P
 @pytest.mark.parametrize("row", [{"event": "delegated_child", "child_id": "missing"},
     {"event": "unknown_future_activity", "text": "unsupported"}])
 def test_unsupported_display_activity_refuses_reclamation(tmp_path: Path, row) -> None:
-    from nanobot.attachments.lifecycle import prune_unreferenced_result
-    from nanobot.webui.transcript import append_transcript_object
+    from kohaku.attachments.lifecycle import prune_unreferenced_result
+    from kohaku.webui.transcript import append_transcript_object
 
     backend, store, _record, path = orphan(tmp_path)
     append_transcript_object("websocket:future", row)
@@ -864,7 +864,7 @@ def test_unsupported_display_activity_refuses_reclamation(tmp_path: Path, row) -
 def test_custom_backend_cannot_reuse_prior_complete_declarations(tmp_path: Path) -> None:
     from unittest.mock import MagicMock
 
-    from nanobot.session.manager import SessionManager, SessionStore
+    from kohaku.session.manager import SessionManager, SessionStore
 
     backend, store, _record, path = orphan(tmp_path)
     with store.custody.maintenance() as (_gate, evidence):
@@ -879,9 +879,9 @@ def test_custom_backend_cannot_reuse_prior_complete_declarations(tmp_path: Path)
 
 
 def test_evidence_budget_is_shared_by_display_and_memory(tmp_path: Path, monkeypatch) -> None:
-    import nanobot.attachments._inventory as inventory
-    from nanobot.agent.memory import MemoryStore
-    from nanobot.webui.transcript import append_transcript_object
+    import kohaku.attachments._inventory as inventory
+    from kohaku.agent.memory import MemoryStore
+    from kohaku.webui.transcript import append_transcript_object
 
     backend, store, _record, path = orphan(tmp_path)
     append_transcript_object("websocket:budget", {"event": "message", "text": "x" * 12_000})
@@ -904,7 +904,7 @@ def test_unknown_custody_state_refuses_without_mutation(tmp_path: Path) -> None:
 
 @pytest.mark.parametrize("changed", ["replacement", "new_reference"])
 def test_reopened_deletion_intent_protects_new_generation_or_reference(tmp_path: Path, monkeypatch, changed) -> None:
-    import nanobot.attachments._media as media
+    import kohaku.attachments._media as media
 
     backend, store, record, path = orphan(tmp_path)
     original = media.os.unlink
@@ -931,7 +931,7 @@ def test_reopened_deletion_intent_protects_new_generation_or_reference(tmp_path:
 
 
 def test_namespace_allocation_waits_for_maintenance_migration_fence(tmp_path: Path, monkeypatch) -> None:
-    from nanobot.attachments._media import MediaCustody
+    from kohaku.attachments._media import MediaCustody
 
     backend, store, _record, path = orphan(tmp_path)
     entered, release, allocating = threading.Event(), threading.Event(), threading.Event()
@@ -961,7 +961,7 @@ def test_namespace_allocation_waits_for_maintenance_migration_fence(tmp_path: Pa
 def test_cli_preview_decline_and_retired_command_leave_whole_tree_unchanged(tmp_path: Path) -> None:
     from typer.testing import CliRunner
 
-    from nanobot.cli.commands import app
+    from kohaku.cli.commands import app
 
     backend, store, _record, path = orphan(tmp_path)
     config = tmp_path / "config.json"
@@ -983,7 +983,7 @@ def test_cli_preview_decline_and_retired_command_leave_whole_tree_unchanged(tmp_
 
 
 def test_historical_media_and_markdown_signing_remain_pure_and_reclaimable(tmp_path: Path) -> None:
-    from nanobot.webui.media_gateway import WebUIMediaGateway
+    from kohaku.webui.media_gateway import WebUIMediaGateway
 
     backend, store, _record, path = orphan(tmp_path)
     _backend, _store, _artifact, image = orphan(tmp_path, generated=True)
@@ -1015,11 +1015,11 @@ def test_initial_media_root_symlink_cannot_authorize_reclamation(tmp_path: Path)
 
 
 async def test_private_artifact_manifest_validates_full_canonical_media_result(tmp_path: Path) -> None:
-    from nanobot.session.artifact import parse_artifact_descriptor
-    from nanobot.session.artifact_store import PrivateArtifactStore
-    from nanobot.session.execution_owner import acquire_execution
-    from nanobot.session.source_store import SourceSessionStore
-    from nanobot.session.turn_writer import SourceTurnWriter
+    from kohaku.session.artifact import parse_artifact_descriptor
+    from kohaku.session.artifact_store import PrivateArtifactStore
+    from kohaku.session.execution_owner import acquire_execution
+    from kohaku.session.source_store import SourceSessionStore
+    from kohaku.session.turn_writer import SourceTurnWriter
     from tests.session.test_artifact import fixture
     from tests.session.test_source_turn_writer import assistant, result
 
@@ -1062,8 +1062,8 @@ async def test_private_artifact_manifest_validates_full_canonical_media_result(t
 
 
 async def test_export_retained_files_protect_and_missing_stage_refuses(tmp_path: Path) -> None:
-    from nanobot.session.runtime_authority import OfflineSessionOperator
-    from nanobot.session.session_export import export_canonical_session
+    from kohaku.session.runtime_authority import OfflineSessionOperator
+    from kohaku.session.session_export import export_canonical_session
 
     backend, store = backend_store(tmp_path)
     record = store.commit(store.stage_bytes(b"export media", mime="text/plain", name="export.txt", source="telegram"))
@@ -1159,8 +1159,8 @@ def test_declared_custom_generated_root_retains_source_images_and_reclaims_outpu
 
 
 def test_unavailable_media_capability_preserves_text_startup_and_refuses_media(tmp_path: Path, monkeypatch) -> None:
-    import nanobot.attachments._media as media
-    from nanobot.attachments.lifecycle import prune_unreferenced_result
+    import kohaku.attachments._media as media
+    from kohaku.attachments.lifecycle import prune_unreferenced_result
 
     set_config_path(tmp_path / "config.json")
     monkeypatch.setattr(media, "media_custody_available", lambda: False)

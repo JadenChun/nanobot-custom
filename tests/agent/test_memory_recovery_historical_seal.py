@@ -10,11 +10,11 @@ from pathlib import Path
 
 import pytest
 
-from nanobot.agent import memory_recovery_conversion as conversion
-from nanobot.agent import memory_recovery_quarantine_storage as quarantine
-from nanobot.agent import memory_recovery_storage as storage
-from nanobot.agent import memory_recovery_transaction_terminal as terminal
-from nanobot.agent.memory_recovery_historical_seal import (
+from kohaku.agent import memory_recovery_conversion as conversion
+from kohaku.agent import memory_recovery_quarantine_storage as quarantine
+from kohaku.agent import memory_recovery_storage as storage
+from kohaku.agent import memory_recovery_transaction_terminal as terminal
+from kohaku.agent.memory_recovery_historical_seal import (
     HistoricalSealError,
     validate_historical_seals_under_gate,
 )

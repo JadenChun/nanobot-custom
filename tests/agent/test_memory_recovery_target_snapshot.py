@@ -14,7 +14,7 @@ from typing import Any
 
 import pytest
 
-from nanobot.agent import memory_recovery_storage as storage
+from kohaku.agent import memory_recovery_storage as storage
 
 
 def test_r2_new_snapshot_operations_refuse_before_raw_fields_and_keep_unbound_seam(monkeypatch):

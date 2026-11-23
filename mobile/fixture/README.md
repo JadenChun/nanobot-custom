@@ -1,7 +1,7 @@
 # M02 non-agent fixture
 
-This fixture is a deterministic transport peer for the Android client. It is **not** a Nanobot
-gateway: it imports no `nanobot` package, starts no agent, and uses synthetic credentials and
+This fixture is a deterministic transport peer for the Android client. It is **not** a Kohaku
+gateway: it imports no `kohaku` package, starts no agent, and uses synthetic credentials and
 media only. The versioned contract is `../contracts/fixture-v1.json`.
 
 ## Run

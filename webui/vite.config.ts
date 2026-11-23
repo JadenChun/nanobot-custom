@@ -16,7 +16,7 @@ export function entryLazyFeatureImports(imports: string[]): string[] {
 
 function guardWebuiEntryChunk(): Plugin {
   return {
-    name: "nanobot-guard-webui-entry-chunk",
+    name: "kohaku-guard-webui-entry-chunk",
     apply: "build",
     generateBundle(_options, bundle) {
       for (const output of Object.values(bundle)) {
@@ -46,7 +46,7 @@ export function writeCompressedWebuiAssets(outputDir: string, fileNames: string[
 
 export function gzipWebuiAssets(): Plugin {
   return {
-    name: "nanobot-gzip-webui-assets",
+    name: "kohaku-gzip-webui-assets",
     apply: "build",
     writeBundle(options, bundle) {
       const outputDir = options.dir ?? (options.file ? path.dirname(options.file) : undefined);
@@ -108,8 +108,8 @@ export function webuiManualChunk(id: string): string | undefined {
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), "");
-  const target = env.NANOBOT_API_URL ?? "http://127.0.0.1:8765";
-  const hmrPath = "/__nanobot_vite_hmr";
+  const target = env.KOHAKU_API_URL ?? "http://127.0.0.1:8765";
+  const hmrPath = "/__kohaku_vite_hmr";
 
   return {
     plugins: [react(), guardWebuiEntryChunk(), gzipWebuiAssets()],
@@ -128,7 +128,7 @@ export default defineConfig(({ mode }) => {
       exclude: ["@radix-ui/react-dialog"],
     },
     build: {
-      outDir: path.resolve(__dirname, "../nanobot/web/dist"),
+      outDir: path.resolve(__dirname, "../kohaku/web/dist"),
       emptyOutDir: true,
       manifest: "asset-manifest.json",
       sourcemap: false,
@@ -145,7 +145,7 @@ export default defineConfig(({ mode }) => {
       fs: {
         allow: [path.resolve(__dirname, "..")],
       },
-      // Keep Vite's HMR socket on a dedicated path. Nanobot's app WebSocket is
+      // Keep Vite's HMR socket on a dedicated path. Kohaku's app WebSocket is
       // opened directly from the browser to the gateway, so the dev server
       // should never proxy WebSocket upgrades.
       hmr: {

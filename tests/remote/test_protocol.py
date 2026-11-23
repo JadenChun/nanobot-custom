@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from nanobot.remote.protocol import (
+from kohaku.remote.protocol import (
     ACCESS_TTL_SECONDS,
     BRIDGE_VERSION,
     CHALLENGE_TTL_SECONDS,

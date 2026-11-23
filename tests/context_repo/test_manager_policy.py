@@ -5,9 +5,9 @@ from pathlib import Path
 
 import pytest
 
-from nanobot.agent.tools.filesystem import WriteFileTool
-from nanobot.context_repo import ContextRepoManager, ResourceAccessPolicy
-from nanobot.context_repo.manager import ManagedContextRepo
+from kohaku.agent.tools.filesystem import WriteFileTool
+from kohaku.context_repo import ContextRepoManager, ResourceAccessPolicy
+from kohaku.context_repo.manager import ManagedContextRepo
 
 
 @pytest.mark.parametrize("field", ["stores", "modules", "entrypoints", "sync", "tools"])

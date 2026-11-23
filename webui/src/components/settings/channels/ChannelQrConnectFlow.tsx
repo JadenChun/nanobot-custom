@@ -12,7 +12,7 @@ import {
 } from "@/lib/api";
 import type {
   ChannelConnectPayload,
-  NanobotFeaturesPayload,
+  KohakuFeaturesPayload,
 } from "@/lib/types";
 import { useClient } from "@/providers/ClientProvider";
 
@@ -63,7 +63,7 @@ export function ChannelQrConnectFlow({
   connectRequestId?: number;
   forceOnRepeat?: boolean;
   labels: ChannelQrConnectLabels;
-  onFeaturesUpdate: (payload: NanobotFeaturesPayload) => void;
+  onFeaturesUpdate: (payload: KohakuFeaturesPayload) => void;
   pausePolling?: (payload: ChannelConnectPayload) => boolean;
   renderPending?: (context: ChannelQrConnectPendingContext) => ReactNode;
   resolveMessage?: (payload: ChannelConnectPayload) => string | undefined;

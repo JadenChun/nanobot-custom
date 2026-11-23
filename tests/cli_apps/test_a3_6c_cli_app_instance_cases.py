@@ -9,11 +9,11 @@ from pathlib import Path
 
 import pytest
 
-from nanobot.agent import plugins as agent_plugins
-from nanobot.apps.cli.service import CliAppManager
-from nanobot.config.loader import save_config, set_config_path
-from nanobot.config.schema import Config
-from nanobot.webui.cli_apps_api import cli_apps_action, cli_apps_payload
+from kohaku.agent import plugins as agent_plugins
+from kohaku.apps.cli.service import CliAppManager
+from kohaku.config.loader import save_config, set_config_path
+from kohaku.config.schema import Config
+from kohaku.webui.cli_apps_api import cli_apps_action, cli_apps_payload
 
 
 def _config(root: Path) -> Path:

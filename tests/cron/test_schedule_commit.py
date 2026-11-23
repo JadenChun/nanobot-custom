@@ -3,8 +3,8 @@ from dataclasses import asdict, replace
 
 import pytest
 
-from nanobot.cron.action_store import CronActionStore
-from nanobot.cron.definition_store import (
+from kohaku.cron.action_store import CronActionStore
+from kohaku.cron.definition_store import (
     CronDefinitionAction,
     CronDefinitionStore,
     DefinitionStoreConflictError,
@@ -92,8 +92,8 @@ def test_replaced_replay_candidate_or_receipt_cannot_commit(tmp_path):
 
 
 def test_explicit_normalization_is_labelled_and_stopped_writer_only(tmp_path):
-    from nanobot.cron.occurrence_store import CronOccurrenceStore
-    from nanobot.cron.scheduler_store import SchedulerConflictError, SchedulerStore
+    from kohaku.cron.occurrence_store import CronOccurrenceStore
+    from kohaku.cron.scheduler_store import SchedulerConflictError, SchedulerStore
 
     store, item, clock = definitions(tmp_path)
     raw = store.action_store.replay()

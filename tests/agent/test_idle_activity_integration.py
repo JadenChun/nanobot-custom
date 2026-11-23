@@ -7,9 +7,9 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from nanobot.agent.loop import AgentLoop
-from nanobot.agent.tools.registry import ToolRegistry
-from nanobot.agent.turn import (
+from kohaku.agent.loop import AgentLoop
+from kohaku.agent.tools.registry import ToolRegistry
+from kohaku.agent.turn import (
     ApprovalDecision,
     DeliveryTarget,
     RunStatus,
@@ -17,11 +17,11 @@ from nanobot.agent.turn import (
     TurnRequest,
     TurnSource,
 )
-from nanobot.agent.turn_admission import ApprovalSnapshot
-from nanobot.bus.events import InboundMessage
-from nanobot.providers.base import LLMResponse
-from nanobot.session.recovery import RECOVERY_INBOUND_METADATA_KEY
-from nanobot.triggers.local_session_turns import LOCAL_TRIGGER_META
+from kohaku.agent.turn_admission import ApprovalSnapshot
+from kohaku.bus.events import InboundMessage
+from kohaku.providers.base import LLMResponse
+from kohaku.session.recovery import RECOVERY_INBOUND_METADATA_KEY
+from kohaku.triggers.local_session_turns import LOCAL_TRIGGER_META
 from tests.agent import test_migration_engine as engine_fixtures
 from tests.agent.test_migration_engine import ScriptedProvider
 

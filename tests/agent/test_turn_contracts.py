@@ -3,9 +3,9 @@ from typing import Any
 
 import pytest
 
-from nanobot.agent.tools.base import Tool
-from nanobot.agent.tools.registry import ToolRegistry
-from nanobot.agent.turn import (
+from kohaku.agent.tools.base import Tool
+from kohaku.agent.tools.registry import ToolRegistry
+from kohaku.agent.turn import (
     ApprovalGrant,
     DeliveryTarget,
     HistoryMode,
@@ -20,7 +20,7 @@ from nanobot.agent.turn import (
     TurnResult,
     TurnSource,
 )
-from nanobot.session.manager import Session
+from kohaku.session.manager import Session
 
 
 def test_turn_request_is_frozen_and_enums_are_typed() -> None:
@@ -205,7 +205,7 @@ def test_turn_request_conflicting_aliases_reject_before_media_adoption(
         adoption_calls.append(args)
         raise AssertionError("media adoption must not run for conflicting aliases")
 
-    monkeypatch.setattr("nanobot.attachments.adoption.adopt_media_paths", fail_adoption)
+    monkeypatch.setattr("kohaku.attachments.adoption.adopt_media_paths", fail_adoption)
 
     with pytest.raises(ValueError):
         TurnRequest(prompt=marker, message="different", media=[str(image)])

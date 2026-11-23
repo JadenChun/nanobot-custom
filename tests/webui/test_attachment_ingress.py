@@ -7,12 +7,12 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from nanobot.webui.attachment_ingress import (
+from kohaku.webui.attachment_ingress import (
     extract_data_url_mime,
     store_inbound_attachments,
     store_inbound_records,
 )
-from nanobot.webui.ingress_policy import AttachmentIngressLimits
+from kohaku.webui.ingress_policy import AttachmentIngressLimits
 
 
 def _data_url(mime: str, payload: bytes) -> str:

@@ -1,0 +1,378 @@
+"""Message tool for sending messages to users."""
+
+# pyright: reportIncompatibleMethodOverride=false
+
+from asyncio import Lock
+from collections.abc import Awaitable, Callable, Generator
+from contextlib import contextmanager
+from contextvars import ContextVar, Token
+from copy import deepcopy
+from dataclasses import replace
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, cast
+
+from loguru import logger
+
+from kohaku.agent.tools.base import Tool, ToolResult, tool_parameters
+from kohaku.agent.tools.context import (
+    RequestContext,
+    ToolContext,
+    bind_request_context,
+    current_request_context,
+    reset_request_context,
+)
+from kohaku.agent.tools.path_utils import resolve_workspace_path
+from kohaku.agent.tools.schema import ArraySchema, StringSchema, tool_parameters_schema
+from kohaku.agent.turn import TurnContext
+from kohaku.bus.events import OutboundMessage
+from kohaku.config.paths import get_workspace_path
+from kohaku.security.workspace_access import current_tool_workspace
+from kohaku.webui.metadata import WEBUI_DISPLAY_SOURCE_KEY
+from kohaku.webui.session_identity import webui_session_key
+
+if TYPE_CHECKING:
+    from kohaku.context_repo.policy import ResourceAccessPolicy
+
+_CURRENT_MESSAGE_SENDS: ContextVar[set[tuple[str, str]] | None] = ContextVar(
+    "message_sends",
+    default=None,
+)
+
+
+_CURRENT_MESSAGE_RECORDS: ContextVar[tuple[list[OutboundMessage], Lock] | None] = ContextVar(
+    "message_records", default=None,
+)
+
+
+@contextmanager
+def capture_message_deliveries(records: list[OutboundMessage] | None = None) -> Generator[set[tuple[str, str]], None, None]:
+    """Record successful MessageTool targets within one agent run."""
+    sends: set[tuple[str, str]] = set()
+    token = _CURRENT_MESSAGE_SENDS.set(sends)
+    record_token = _CURRENT_MESSAGE_RECORDS.set((records, Lock()) if records is not None else None)
+    try:
+        yield sends
+    finally:
+        _CURRENT_MESSAGE_SENDS.reset(token)
+        _CURRENT_MESSAGE_RECORDS.reset(record_token)
+
+
+@tool_parameters(
+    tool_parameters_schema(
+        content=StringSchema(
+            "Message content for proactive or cross-channel delivery. "
+            "Do not use this for a normal reply in the current chat."
+        ),
+        channel=StringSchema(
+            "Optional target channel for cross-channel/proactive delivery. "
+            "Do not set this to the current runtime channel for a normal reply."
+        ),
+        chat_id=StringSchema(
+            "Optional target chat/user ID for cross-channel/proactive delivery. "
+            "On WebSocket/WebUI turns: omit chat_id to use the server's conversation id "
+            "(never pass client_id values like anon-…). "
+            "Do not set this to the current runtime chat for a normal reply."
+        ),
+        media=ArraySchema(
+            StringSchema(""),
+            description=(
+                "Optional list of existing file paths to attach. "
+                "Use artifact paths returned by generate_image here when delivering generated images."
+            ),
+        ),
+        buttons=ArraySchema(
+            ArraySchema(StringSchema("Button label")),
+            description="Optional: inline keyboard buttons as list of rows, each row is list of button labels.",
+        ),
+        required=["content"],
+    )
+)
+class MessageTool(Tool):
+    """Tool to send messages to users on chat channels."""
+
+    def __init__(
+        self,
+        send_callback: Callable[[OutboundMessage], Awaitable[None]] | None = None,
+        default_channel: str = "",
+        default_chat_id: str = "",
+        default_message_id: str | None = None,
+        workspace: str | Path | None = None,
+        restrict_to_workspace: bool = False,
+        resource_policy: "ResourceAccessPolicy | None" = None,
+    ):
+        self._send_callback = send_callback
+        self._workspace = (
+            Path(workspace).expanduser() if workspace is not None else get_workspace_path()
+        )
+        self._restrict_to_workspace = restrict_to_workspace
+        self._resource_policy = resource_policy
+        self._fallback_channel = default_channel
+        self._fallback_chat_id = default_chat_id
+        self._fallback_message_id = default_message_id
+        self._fallback_metadata: dict[str, Any] = {}
+        self._suppress_delivery_var: ContextVar[bool] = ContextVar(
+            "message_suppress_delivery",
+            default=False,
+        )
+
+    @classmethod
+    def create(cls, ctx: ToolContext) -> Tool:
+        send_callback = ctx.bus.publish_outbound if ctx.bus else None
+        return cls(
+            send_callback=send_callback,
+            workspace=ctx.workspace,
+            restrict_to_workspace=ctx.config.restrict_to_workspace,
+            resource_policy=(
+                ctx.fork_dependencies.resource_policy
+                if ctx.fork_dependencies is not None
+                else None
+            ),
+        )
+
+    async def execute_with_context(
+        self, context: TurnContext, **kwargs: Any,
+    ) -> ToolResult | str:
+        """Use the trusted turn route and record acknowledged sends per invocation."""
+        captured = _CURRENT_MESSAGE_RECORDS.get()
+        records = context.delivery.sent_messages
+        if captured is not None and captured[0] is not records:
+            raise ValueError("turn capture and contextual message ledger must share one list")
+        target = context.delivery.primary or context.delivery.target
+        request_token = None
+        if target is not None:
+            current = current_request_context()
+            same_target = current is not None and (current.channel, current.chat_id) == (
+                target.channel, target.chat_id,
+            )
+            routing = current or RequestContext(channel=target.channel, chat_id=target.chat_id or "")
+            source_state = routing.source_state
+            if source_state is None and context.execution_owner is not None:
+                source_state = context.execution_owner.read_snapshot().state
+            elif source_state is None and context.source_writer is not None:
+                source_state = context.source_writer.committed_state
+            request_token = bind_request_context(replace(
+                routing, channel=target.channel, chat_id=target.chat_id or "",
+                session_key=context.session_key,
+                message_id=target.message_id or (routing.message_id if same_target else None),
+                metadata=dict(routing.metadata) if same_target else {},
+                source_state=source_state,
+            ))
+        token = _CURRENT_MESSAGE_RECORDS.set(captured or (records, context.delivery.message_send_lock))
+        before = len(records)
+        try:
+            result = await self.execute(**kwargs)
+            for message in records[before:]:
+                if target and (message.channel, message.chat_id) == (target.channel, target.chat_id):
+                    # Legacy flag means callback submission succeeded, not remote delivery.
+                    context.delivery.delivered = True
+            return result
+        finally:
+            _CURRENT_MESSAGE_RECORDS.reset(token)
+            if request_token is not None:
+                reset_request_context(request_token)
+
+    def set_send_callback(self, callback: Callable[[OutboundMessage], Awaitable[None]]) -> None:
+        """Set the callback for sending messages."""
+        self._send_callback = callback
+
+    def set_suppress_delivery(self, active: bool) -> Token[bool]:
+        """Acknowledge but don't deliver tool sends (heartbeat internal check)."""
+        return self._suppress_delivery_var.set(active)
+
+    def reset_suppress_delivery(self, token: Token[bool]) -> None:
+        """Restore previous delivery-suppression state."""
+        self._suppress_delivery_var.reset(token)
+
+    @property
+    def name(self) -> str:
+        return "message"
+
+    @property
+    def description(self) -> str:
+        return (
+            "Proactively send a message to a user/channel, optionally with file attachments. "
+            "Use this for reminders, cross-channel delivery, or explicit proactive sends. "
+            "Do not use this for the normal reply in the current chat: answer naturally instead. "
+            "If channel/chat_id would target the current runtime conversation, do not call this tool "
+            "unless the user explicitly asked you to proactively send an existing file attachment. "
+            "When generate_image creates images in the current chat, use the message tool "
+            "with the artifact paths in the media parameter to deliver the images to the user. "
+            "For proactive attachment delivery, use the 'media' parameter with file paths. "
+            "Do NOT use read_file to send files — that only reads content for your own analysis."
+        )
+
+    def _resolve_media(self, media: list[str]) -> list[str]:
+        """Resolve local media attachments and enforce the managed read policy."""
+        resolved: list[str] = []
+        access = current_tool_workspace(
+            self._workspace,
+            restrict_to_workspace=self._restrict_to_workspace,
+        )
+        workspace = access.project_path or self._workspace
+        for p in media:
+            if p.startswith(("http://", "https://")):
+                resolved.append(p)
+                continue
+            if not access.restrict_to_workspace:
+                path = Path(p).expanduser()
+                resolved.append(p if path.is_absolute() else str(workspace / path))
+                continue
+            candidate = Path(p).expanduser()
+            if not candidate.is_absolute():
+                candidate = workspace / candidate
+            if self._resource_policy is not None and self._resource_policy.managed_mode:
+                # Managed reads are authorized by the shared policy, not by the
+                # focus-only workspace root. This keeps outbound attachments
+                # consistent with read_file for folder-granted files.
+                validated = candidate.resolve(strict=False)
+                self._resource_policy.validate_path(
+                    validated,
+                    "read",
+                    target_kind="file",
+                )
+                resolved.append(str(validated))
+                continue
+            resolved.append(str(resolve_workspace_path(p, workspace, access.allowed_root)))
+        return resolved
+
+    async def execute(
+        self,
+        content: str,
+        channel: str | None = None,
+        chat_id: str | None = None,
+        message_id: str | None = None,
+        media: list[str] | None = None,
+        buttons: Any = None,
+        **kwargs: Any,
+    ) -> str:  # pyright: ignore[reportIncompatibleMethodOverride]
+        from kohaku.utils.helpers import strip_think
+
+        content = strip_think(content)
+
+        button_rows: list[list[str]] | None = None
+        if buttons is not None:
+            raw_buttons = cast(list[Any], buttons) if isinstance(buttons, list) else None
+            if raw_buttons is None or any(
+                not isinstance(row, list)
+                or any(not isinstance(label, str) for label in cast(list[Any], row))
+                for row in raw_buttons
+            ):
+                return ToolResult.error("Error: buttons must be a list of list of strings")
+            button_rows = cast(list[list[str]], raw_buttons)
+        request_ctx = current_request_context()
+        default_channel = (
+            request_ctx.channel if request_ctx is not None else self._fallback_channel
+        )
+        default_chat_id = (
+            request_ctx.chat_id if request_ctx is not None else self._fallback_chat_id
+        )
+        default_message_id = (
+            request_ctx.message_id
+            if request_ctx is not None
+            else self._fallback_message_id
+        )
+        default_metadata = (
+            request_ctx.metadata
+            if request_ctx is not None
+            else self._fallback_metadata
+        )
+        channel = channel or default_channel
+        explicit_chat_id = chat_id
+        if (
+            default_channel == "websocket"
+            and channel == "websocket"
+            and explicit_chat_id is not None
+            and str(explicit_chat_id).strip() != ""
+            and str(explicit_chat_id).strip() != str(default_chat_id).strip()
+        ):
+            return ToolResult.error(
+                "Error: chat_id does not match the active WebSocket conversation. "
+                "Omit chat_id (and usually channel) so delivery uses the current "
+                "conversation id from context — WebSocket client_id strings "
+                "(e.g. anon-…) are not chat ids."
+            )
+        chat_id = chat_id or default_chat_id
+        # Only inherit default message_id when targeting the same channel+chat.
+        # Cross-chat sends must not carry the original message_id, because
+        # some channels (e.g. Feishu) use it to determine the target
+        # conversation via their Reply API, which would route the message
+        # to the wrong chat entirely.
+        same_target = channel == default_channel and chat_id == default_chat_id
+        if same_target:
+            message_id = message_id or default_message_id
+        else:
+            message_id = None
+
+        if not channel or not chat_id:
+            return ToolResult.error("Error: No target channel/chat specified")
+
+        send_callback = self._send_callback
+        if not send_callback:
+            return ToolResult.error("Error: Message sending not configured")
+
+        if media:
+            try:
+                media = self._resolve_media(media)
+            except (OSError, PermissionError, ValueError) as e:
+                return ToolResult.error(f"Error: media path is not allowed: {str(e)}")
+
+        metadata = dict(default_metadata) if same_target else {}
+        metadata.pop(WEBUI_DISPLAY_SOURCE_KEY, None)
+        if message_id:
+            metadata["message_id"] = message_id
+        if media:
+            metadata["_record_channel_delivery"] = True
+        if (
+            same_target
+            and channel == "websocket"
+            and request_ctx is not None
+            and request_ctx.source_state is not None
+            and request_ctx.source_state.session_key == webui_session_key(chat_id)
+        ):
+            metadata[WEBUI_DISPLAY_SOURCE_KEY] = request_ctx.source_state
+
+        msg = OutboundMessage(
+            channel=channel,
+            chat_id=chat_id,
+            content=content,
+            media=media or [],
+            buttons=button_rows or [],
+            metadata=metadata,
+        )
+
+        if self._suppress_delivery_var.get():
+            logger.debug("MessageTool: delivery suppressed during internal check")
+            return f"Message acknowledged for {channel}:{chat_id} (not delivered)"
+
+        try:
+            captured = _CURRENT_MESSAGE_RECORDS.get()
+            if captured is None:
+                await send_callback(msg)
+            else:
+                records, lock = captured
+                async with lock:
+                    if same_target and any(
+                        sent.channel == msg.channel
+                        and sent.chat_id == msg.chat_id
+                        and sent.content == msg.content
+                        and sent.media == msg.media
+                        and sent.buttons == msg.buttons
+                        and sent.metadata.get("message_id") == msg.metadata.get("message_id")
+                        for sent in records
+                    ):
+                        return f"Message already sent to {channel}:{chat_id} in this turn"
+                    record = deepcopy(msg)
+                    await send_callback(msg)
+                    records.append(record)
+            sends = _CURRENT_MESSAGE_SENDS.get()
+            if sends is not None:
+                sends.add((channel, chat_id))
+            media_info = f" with {len(media)} attachments" if media else ""
+            button_info = (
+                f" with {sum(len(row) for row in button_rows)} button(s)"
+                if button_rows
+                else ""
+            )
+            return f"Message sent to {channel}:{chat_id}{media_info}{button_info}"
+        except Exception as e:
+            return ToolResult.error(f"Error sending message: {str(e)}")

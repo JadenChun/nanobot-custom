@@ -7,8 +7,8 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
-from nanobot.cli import entry
-from nanobot.cli.commands import app
+from kohaku.cli import entry
+from kohaku.cli.commands import app
 
 
 @pytest.mark.parametrize("args", [["--workspace", "./project"], ["-mhello"], ["-m", "hello"]])
@@ -33,15 +33,15 @@ def test_root_shell_completion_keeps_root_subcommands() -> None:
     env = os.environ.copy()
     env.update(
         {
-            "_NANOBOT_COMPLETE": "complete_bash",
-            "COMP_WORDS": "nanobot ",
+            "_KOHAKU_COMPLETE": "complete_bash",
+            "COMP_WORDS": "kohaku ",
             "COMP_CWORD": "1",
         }
     )
     script = (
         "import sys; "
-        "from nanobot.cli.entry import main; "
-        "sys.argv = ['nanobot']; "
+        "from kohaku.cli.entry import main; "
+        "sys.argv = ['kohaku']; "
         "main()"
     )
 
@@ -61,23 +61,23 @@ def test_root_shell_completion_keeps_root_subcommands() -> None:
 
 @pytest.mark.parametrize("args", [[], ["agent", "-m", "hello"], ["gateway"], ["webui"]])
 def test_entry_dispatches_unchanged_arguments_after_console_setup(monkeypatch, args) -> None:
-    from nanobot.cli import commands
+    from kohaku.cli import commands
 
     calls = []
-    monkeypatch.setattr(entry.sys, "argv", ["nanobot", *args])
+    monkeypatch.setattr(entry.sys, "argv", ["kohaku", *args])
     monkeypatch.setattr(entry, "_configure_windows_console", lambda: calls.append("console"))
     monkeypatch.setattr(commands, "app", lambda: calls.append(list(entry.sys.argv)))
     entry.main()
-    assert calls == ["console", ["nanobot", *args]]
+    assert calls == ["console", ["kohaku", *args]]
 
 
 def test_bare_invocation_does_not_discover_desktop_or_start_runtime(monkeypatch) -> None:
-    from nanobot.cli import desktop_target
+    from kohaku.cli import desktop_target
 
-    monkeypatch.setattr(entry.sys, "argv", ["nanobot"])
+    monkeypatch.setattr(entry.sys, "argv", ["kohaku"])
     monkeypatch.setattr(desktop_target, "dispatch_bare_desktop_target",
                         lambda *_args: pytest.fail("desktop discovery must not start"))
-    monkeypatch.setattr("nanobot.migration_guard.require_runtime_ready",
+    monkeypatch.setattr("kohaku.migration_guard.require_runtime_ready",
                         lambda: pytest.fail("bare help must not request runtime admission"))
     with pytest.raises(SystemExit) as exc:
         entry.main()

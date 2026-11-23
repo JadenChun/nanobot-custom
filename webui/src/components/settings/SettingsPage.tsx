@@ -21,7 +21,7 @@ import {
 import { AppearanceSettings, OverviewSettings } from "@/components/settings/overview/OverviewSettings";
 import { SettingsSidebar, standaloneSectionTitle } from "@/components/settings/SettingsSidebar";
 import {
-  NanobotFeatureInstallDialog,
+  KohakuFeatureInstallDialog,
   SettingsGroup,
   SettingsRow,
 } from "@/components/settings/shared/SettingsControls";
@@ -128,7 +128,7 @@ export function SettingsPage({
     handleMcpPresetAction,
     handleMcpToolsChange,
     handleMigrateModelConfigurations,
-    handleNanobotFeatureAction,
+    handleKohakuFeatureAction,
     handleSaveCustomMcp,
     handleToggleProvider,
     handleWebSearchProviderChange,
@@ -213,9 +213,9 @@ export function SettingsPage({
     setModelPresetEditingName,
     setModelPresetNameError,
     setModelPresetPendingDelete,
-    setNanobotFeatureConfirm,
-    setNanobotFeatures,
-    setNanobotFeaturesError,
+    setKohakuFeatureConfirm,
+    setKohakuFeatures,
+    setKohakuFeaturesError,
     setNetworkSafetyForm,
     setProviderForms,
     setProviderOAuthDialogError,
@@ -415,10 +415,10 @@ export function SettingsPage({
             error={nanobotFeaturesError}
             requiresRestartPending={pendingRestartSections.runtime}
             onQueryChange={setChannelsQuery}
-            onAction={handleNanobotFeatureAction}
-            onFeaturesUpdate={setNanobotFeatures}
+            onAction={handleKohakuFeatureAction}
+            onFeaturesUpdate={setKohakuFeatures}
             onDismissStatus={() => {
-              setNanobotFeaturesError(null);
+              setKohakuFeaturesError(null);
             }}
             onRestart={restartViaSettingsSurface}
             isRestarting={isRestarting || hostEngineApplying}
@@ -624,13 +624,13 @@ export function SettingsPage({
         onClose={closeProviderOAuthFlow}
       />
 
-      <NanobotFeatureInstallDialog
+      <KohakuFeatureInstallDialog
         feature={nanobotFeatureConfirm}
         installing={nanobotFeatureAction === `enable:${nanobotFeatureConfirm?.name ?? ""}`}
         onOpenChange={(open) => {
-          if (!open) setNanobotFeatureConfirm(null);
+          if (!open) setKohakuFeatureConfirm(null);
         }}
-        onConfirm={(feature) => handleNanobotFeatureAction("enable", feature.name, true)}
+        onConfirm={(feature) => handleKohakuFeatureAction("enable", feature.name, true)}
       />
 
       <AutomationDeleteDialog

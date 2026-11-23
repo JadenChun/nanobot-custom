@@ -2,17 +2,17 @@ from __future__ import annotations
 
 import json
 
-from nanobot.session.manager import SessionManager
-from nanobot.session.session_handles import (
+from kohaku.session.manager import SessionManager
+from kohaku.session.session_handles import (
     SessionHandle,
     SessionHandleResolver,
     session_handle_for_name,
 )
-from nanobot.webui.session_access import (
+from kohaku.webui.session_access import (
     WebuiSessionAccess,
     session_mentions_runtime_context,
 )
-from nanobot.webui.transcript import normalize_session_mentions_metadata
+from kohaku.webui.transcript import normalize_session_mentions_metadata
 
 
 def _save_session(manager: SessionManager, key: str, title: str) -> None:
@@ -93,8 +93,8 @@ def test_session_mention_context_treats_titles_as_data() -> None:
 
 def test_session_mentions_do_not_isolate_workspaces(tmp_path, monkeypatch) -> None:
     webui_dir = tmp_path / "webui"
-    monkeypatch.setattr("nanobot.webui.transcript.get_webui_dir", lambda: webui_dir)
-    monkeypatch.setattr("nanobot.webui.session_list_index.get_webui_dir", lambda: webui_dir)
+    monkeypatch.setattr("kohaku.webui.transcript.get_webui_dir", lambda: webui_dir)
+    monkeypatch.setattr("kohaku.webui.session_list_index.get_webui_dir", lambda: webui_dir)
     manager = SessionManager(tmp_path)
     project_b = tmp_path / "b"
     project_b.mkdir()

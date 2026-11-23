@@ -1,12 +1,12 @@
-# How to Configure Web Search for a nanobot AI Agent
+# How to Configure Web Search for a Kohaku AI Agent
 
-nanobot includes built-in web search and web fetch tools. Search uses
+Kohaku includes built-in web search and web fetch tools. Search uses
 DuckDuckGo by default and can be configured for API-backed or self-hosted
 providers.
 
 ## What you will build
 
-- web tools enabled in nanobot
+- web tools enabled in Kohaku
 - one search provider selected in the WebUI or `config.json`
 - optional web fetch settings for page reading
 
@@ -18,9 +18,10 @@ research, source discovery, or page fetching during a task.
 ## Install
 
 ```bash
-python -m pip install nanobot-ai
-nanobot onboard --wizard
-nanobot agent -m "Hello!"
+# Run from the root of a clone of this repository
+python -m pip install -e .
+kohaku onboard --wizard
+kohaku agent -m "Hello!"
 ```
 
 Web tools are enabled by default. Configure them only when you want a specific
@@ -30,7 +31,7 @@ provider, API key, proxy, fetch behavior, or SSRF allowlist.
 
 For local interactive setup:
 
-1. Run `nanobot webui`.
+1. Run `kohaku webui`.
 2. Open **Settings → Web**.
 3. Enable web search, choose a provider, and enter its API key if required.
 4. Save and restart when prompted.
@@ -95,7 +96,7 @@ in the WebUI or logs.
 - If fetch is blocked, inspect the target URL and SSRF whitelist.
 - If a proxy changes network behavior, verify `NO_PROXY` and proxy settings.
 
-## Related nanobot docs
+## Related Kohaku docs
 
 - [Configuration: Web Tools](../configuration.md#web-tools)
 - [Security](../configuration.md#security)

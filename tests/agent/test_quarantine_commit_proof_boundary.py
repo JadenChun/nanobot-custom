@@ -8,11 +8,11 @@ from pathlib import Path
 
 import pytest
 
-from nanobot.agent import memory_recovery_quarantine_storage as quarantine
-from nanobot.agent import memory_recovery_storage as storage
-from nanobot.agent import memory_recovery_transaction_terminal as terminal
-from nanobot.session.checked_source import open_checked_recovery_session
-from nanobot.session.recovery_locator import locate_recovery_candidate
+from kohaku.agent import memory_recovery_quarantine_storage as quarantine
+from kohaku.agent import memory_recovery_storage as storage
+from kohaku.agent import memory_recovery_transaction_terminal as terminal
+from kohaku.session.checked_source import open_checked_recovery_session
+from kohaku.session.recovery_locator import locate_recovery_candidate
 from tests.agent.test_memory_recovery_quarantine_storage import _real_layout
 from tests.agent.test_memory_recovery_transaction_prepare import _SESSION_KEY, _WORKSPACE_ID
 

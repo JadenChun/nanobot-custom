@@ -6,14 +6,14 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from nanobot.agent.loop import AgentLoop, _TurnExecutionOptions
-from nanobot.agent.tools.registry import ToolRegistry
-from nanobot.agent.turn import TurnCallbacks, TurnRequest
-from nanobot.bus.events import InboundMessage
-from nanobot.bus.outbound_events import TurnEndEvent
-from nanobot.providers.base import GenerationSettings
-from nanobot.providers.openai_compat_provider import OpenAICompatProvider
-from nanobot.session.webui_turns import WebuiTurnCoordinator
+from kohaku.agent.loop import AgentLoop, _TurnExecutionOptions
+from kohaku.agent.tools.registry import ToolRegistry
+from kohaku.agent.turn import TurnCallbacks, TurnRequest
+from kohaku.bus.events import InboundMessage
+from kohaku.bus.outbound_events import TurnEndEvent
+from kohaku.providers.base import GenerationSettings
+from kohaku.providers.openai_compat_provider import OpenAICompatProvider
+from kohaku.session.webui_turns import WebuiTurnCoordinator
 from tests.agent import test_migration_engine as engine_fixtures
 from tests.agent.test_migration_source_engine import upgrade
 

@@ -9,12 +9,12 @@ are kept from ``req-a38-cron/CASES.md``.
 
 import json
 
-from nanobot.bus.events import InboundMessage, OutboundMessage
-from nanobot.triggers.local_runner import (
+from kohaku.bus.events import InboundMessage, OutboundMessage
+from kohaku.triggers.local_runner import (
     drain_local_trigger_queue_once,
     recover_after_restart,
 )
-from nanobot.triggers.local_store import LocalTriggerStore
+from kohaku.triggers.local_store import LocalTriggerStore
 
 
 def _channel_is_enabled(_name: str) -> bool:

@@ -7,7 +7,7 @@
     },
     "error": {
       "title": "Tidak dapat menjangkau Kohaku",
-      "gatewayHint": "Pastikan gateway sedang berjalan (`nanobot gateway`) dan halaman ini dibuka pada mesin yang sama."
+      "gatewayHint": "Pastikan gateway sedang berjalan (`kohaku gateway`) dan halaman ini dibuka pada mesin yang sama."
     },
     "auth": {
       "label": "Kata sandi",
@@ -1576,7 +1576,7 @@
     "close": "Tutup pratinjau file",
     "loading": "Memuat pratinjau...",
     "failed": "Tidak dapat mempratinjau file ini.",
-    "routeMissing": "Pratinjau file memerlukan gateway terbaru. Mulai ulang nanobot gateway lalu coba lagi.",
+    "routeMissing": "Pratinjau file memerlukan gateway terbaru. Mulai ulang kohaku gateway lalu coba lagi.",
     "resize": "Ubah ukuran pratinjau file",
     "truncated": "Pratinjau dipotong karena file ini besar."
   },

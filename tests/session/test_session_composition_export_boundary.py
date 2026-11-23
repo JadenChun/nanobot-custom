@@ -4,11 +4,11 @@ from pathlib import Path
 
 import pytest
 
-from nanobot.session.manager import SessionManager
-from nanobot.session.mode_storage import LifetimeWriterLease
-from nanobot.session.runtime_authority import DurableSessionAuthority, OfflineSessionOperator
-from nanobot.session.session_export import export_canonical_session
-from nanobot.session.session_mode import SessionModeError, SessionModeResolver
+from kohaku.session.manager import SessionManager
+from kohaku.session.mode_storage import LifetimeWriterLease
+from kohaku.session.runtime_authority import DurableSessionAuthority, OfflineSessionOperator
+from kohaku.session.session_export import export_canonical_session
+from kohaku.session.session_mode import SessionModeError, SessionModeResolver
 from tests.session.test_session_mode_export import _rich_manager
 
 
@@ -253,7 +253,7 @@ def test_public_export_dispatches_nonvirtually_and_refuses_before_target(tmp_pat
     def forbidden(*args, **kwargs):
         raise AssertionError("unmanaged refusal must precede target handling")
 
-    from nanobot.session import session_export
+    from kohaku.session import session_export
 
     with monkeypatch.context() as patch:
         patch.setattr(SessionManager, "canonical_export_operations", command)
@@ -274,7 +274,7 @@ async def test_live_manager_export_refuses_before_target(tmp_path, monkeypatch):
     def forbidden(*args, **kwargs):
         raise AssertionError("runtime operator refusal must precede target handling")
 
-    from nanobot.session import session_export
+    from kohaku.session import session_export
 
     try:
         with monkeypatch.context() as patch:
@@ -294,7 +294,7 @@ async def test_compatibility_parser_selection_precedes_staged_argument_observati
     manager = lease.manager
     backend = manager._jsonl_store
     original_parse = backend.parse_legacy_bytes
-    from nanobot.session.session_mode import SessionExportTransaction
+    from kohaku.session.session_mode import SessionExportTransaction
 
     original_read = SessionExportTransaction.read_staged
     trace = []

@@ -7,11 +7,11 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from nanobot.agent.turn import TurnResult
-from nanobot.cron.channel_sender import CronChannelSender
-from nanobot.cron.composition import CronCompositionPreflightError, compose_claimed_text_occurrence
-from nanobot.cron.job_hooks import CronJobHooks, run_adapter
-from nanobot.cron.types import CronVerifier
+from kohaku.agent.turn import TurnResult
+from kohaku.cron.channel_sender import CronChannelSender
+from kohaku.cron.composition import CronCompositionPreflightError, compose_claimed_text_occurrence
+from kohaku.cron.job_hooks import CronJobHooks, run_adapter
+from kohaku.cron.types import CronVerifier
 from tests.cron.test_cron_composition import ReceiptChannel, _claimed
 
 

@@ -6,10 +6,10 @@ from pathlib import Path
 import httpx
 import pytest
 
-from nanobot.remote.data_server import MobileDataServer
-from nanobot.remote.device_proof import DeviceProofClaims, device_proof_fingerprint
-from nanobot.remote.owner import RemoteAccessOwner
-from nanobot.remote.protocol import stable_operation_digest
+from kohaku.remote.data_server import MobileDataServer
+from kohaku.remote.device_proof import DeviceProofClaims, device_proof_fingerprint
+from kohaku.remote.owner import RemoteAccessOwner
+from kohaku.remote.protocol import stable_operation_digest
 from tests.remote.proof_helpers import encode_proof_base64url, new_device_key, sign_claims
 
 

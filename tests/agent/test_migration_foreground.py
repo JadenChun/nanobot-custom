@@ -5,14 +5,14 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
-from nanobot.agent.foreground import build_foreground_dependencies, validate_foreground_dependencies
-from nanobot.agent.loop import AgentLoop
-from nanobot.agent.tools.registry import ToolRegistry
-from nanobot.agent.tools.web import WebFetchTool
-from nanobot.agent.write_guard import FileLockRegistry
-from nanobot.providers.base import LLMResponse, ToolCallRequest
-from nanobot.providers.factory import ProviderSnapshot
-from nanobot.utils.llm_runtime import LLMRuntime
+from kohaku.agent.foreground import build_foreground_dependencies, validate_foreground_dependencies
+from kohaku.agent.loop import AgentLoop
+from kohaku.agent.tools.registry import ToolRegistry
+from kohaku.agent.tools.web import WebFetchTool
+from kohaku.agent.write_guard import FileLockRegistry
+from kohaku.providers.base import LLMResponse, ToolCallRequest
+from kohaku.providers.factory import ProviderSnapshot
+from kohaku.utils.llm_runtime import LLMRuntime
 
 from .test_migration_engine import ScriptedProvider
 
@@ -27,7 +27,7 @@ def build(config):
 
 
 def test_shared_identity_and_disabled_crawler_does_not_construct_provider(engine_config, monkeypatch):
-    monkeypatch.setattr('nanobot.extensions.crawler.build_provider_snapshot', Mock(side_effect=AssertionError('provider constructed')))
+    monkeypatch.setattr('kohaku.extensions.crawler.build_provider_snapshot', Mock(side_effect=AssertionError('provider constructed')))
     deps = build(engine_config)
     manager = deps.foreground_manager
     assert deps.resource_policy is manager.resource_policy
@@ -55,7 +55,7 @@ async def test_owned_manager_closed_once_and_cleanup_continues_after_failure(eng
 
 async def test_injected_bundle_is_shared_and_not_owned(engine_config, monkeypatch):
     deps = build(engine_config)
-    monkeypatch.setattr('nanobot.agent.loop.build_foreground_dependencies', Mock(side_effect=AssertionError('replacement constructed')))
+    monkeypatch.setattr('kohaku.agent.loop.build_foreground_dependencies', Mock(side_effect=AssertionError('replacement constructed')))
     close = AsyncMock()
     deps.foreground_manager.close = close
     loop = AgentLoop.from_config(engine_config, tool_registry=ToolRegistry(), provider=ScriptedProvider([]), fork_dependencies=deps)
@@ -136,8 +136,8 @@ def test_crawler_uses_explicit_snapshot_without_main_fallbacks(engine_config, mo
         assert copied.agents.defaults.fallback_models == [] and copied.agents.defaults.fallback == []
         return ProviderSnapshot(provider=crawler_provider, model=preset.model,
             context_window_tokens=preset.context_window_tokens, signature=('crawler',), generation=preset.to_generation_settings())
-    monkeypatch.setattr('nanobot.extensions.crawler.crawl_tools_enabled', lambda: enabled_by_environment)
-    monkeypatch.setattr('nanobot.extensions.crawler.build_provider_snapshot', snapshot)
+    monkeypatch.setattr('kohaku.extensions.crawler.crawl_tools_enabled', lambda: enabled_by_environment)
+    monkeypatch.setattr('kohaku.extensions.crawler.build_provider_snapshot', snapshot)
     deps = build(config)
     assert deps.crawler_enabled is enabled_by_environment
     assert len(seen) == int(enabled_by_environment)
@@ -167,8 +167,8 @@ async def test_configured_context_repositories_reach_prompt_and_tool_policy(engi
 def test_configured_crawler_failure_does_not_fall_back_to_main(engine_config, monkeypatch):
     engine_config.agents.crawler.enabled = True
     engine_config.agents.crawler.provider = 'missing-provider'
-    monkeypatch.setattr('nanobot.extensions.crawler.crawl_tools_enabled', lambda: True)
-    monkeypatch.setattr('nanobot.extensions.crawler.build_provider_snapshot', Mock(side_effect=ValueError('crawler configuration invalid')))
+    monkeypatch.setattr('kohaku.extensions.crawler.crawl_tools_enabled', lambda: True)
+    monkeypatch.setattr('kohaku.extensions.crawler.build_provider_snapshot', Mock(side_effect=ValueError('crawler configuration invalid')))
     with pytest.raises(ValueError, match='crawler configuration invalid'):
         build(engine_config)
 
@@ -184,8 +184,8 @@ def test_injected_manager_scope_must_match_its_policy(engine_config, field, valu
 
 
 async def test_direct_constructor_builds_coherent_owned_defaults(engine_config):
-    from nanobot.bus.queue import MessageBus
-    from nanobot.session.manager import SessionManager
+    from kohaku.bus.queue import MessageBus
+    from kohaku.session.manager import SessionManager
 
     config = engine_config
     sessions = SessionManager(config.workspace_path, sessions_root=config.runtime_data_dir / 'sessions')
@@ -223,10 +223,10 @@ async def test_real_foreground_builder_preserves_web_fetch_policy(engine_config,
     monkeypatch.setattr(WebFetchTool, "_fetch_tinyfish", tinyfish)
     monkeypatch.setattr(WebFetchTool, "_fetch_jina", jina)
     monkeypatch.setattr(
-        "nanobot.agent.tools.web._stream_with_safe_redirects",
+        "kohaku.agent.tools.web._stream_with_safe_redirects",
         AsyncMock(return_value=(SimpleNamespace(headers={"content-type": "text/html"}), None, None, False)),
     )
-    monkeypatch.setattr("nanobot.agent.tools.web._validate_url_safe", lambda url: (True, ""))
+    monkeypatch.setattr("kohaku.agent.tools.web._validate_url_safe", lambda url: (True, ""))
 
     assert await delegated.execute("https://allowed.example/page") == "local result"
     blocked_config = config.model_copy(deep=True)

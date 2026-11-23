@@ -2,13 +2,13 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from nanobot.agent.loop import AgentLoop
-from nanobot.providers.base import (
+from kohaku.agent.loop import AgentLoop
+from kohaku.providers.base import (
     GenerationSettings,
     LLMResponse,
     ProviderConversationState,
 )
-from nanobot.session.summary import SUMMARY_CONTINUATION_TEXT
+from kohaku.session.summary import SUMMARY_CONTINUATION_TEXT
 from tests.agent import p6_admitted_fixtures
 
 admitted_async = p6_admitted_fixtures.admitted_async

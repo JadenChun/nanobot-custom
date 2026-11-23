@@ -2,7 +2,7 @@ from datetime import UTC, datetime
 
 import pytest
 
-from nanobot.cron.schedule import ScheduleError, is_fire, next_fire
+from kohaku.cron.schedule import ScheduleError, is_fire, next_fire
 from tests.cron.stage3_fixtures import offline_denial  # noqa: F401
 
 

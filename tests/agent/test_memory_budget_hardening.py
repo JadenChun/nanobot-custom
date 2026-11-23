@@ -8,34 +8,34 @@ from copy import deepcopy
 
 import pytest
 
-from nanobot.agent.context_governance import ContextGovernor, ContextWindowExceededError
-from nanobot.agent.hook import AgentHook
-from nanobot.agent.memory import MemoryStore
-from nanobot.agent.memory_recovery_coordinator import (
+from kohaku.agent.context_governance import ContextGovernor, ContextWindowExceededError
+from kohaku.agent.hook import AgentHook
+from kohaku.agent.memory import MemoryStore
+from kohaku.agent.memory_recovery_coordinator import (
     OfflineMemoryRecoveryError,
     reconcile_pending_memory_receipt_offline,
 )
-from nanobot.agent.memory_recovery_quarantine_storage import inspect_receipt_quarantine
-from nanobot.agent.memory_recovery_receipt_finalizer import (
+from kohaku.agent.memory_recovery_quarantine_storage import inspect_receipt_quarantine
+from kohaku.agent.memory_recovery_receipt_finalizer import (
     OfflineReceiptFinalizationError,
     finalize_pending_memory_receipt_offline,
 )
-from nanobot.agent.runner import AgentRunner, AgentRunSpec
-from nanobot.agent.tools.execution import KnownToolResult
-from nanobot.agent.tools.registry import ToolRegistry
-from nanobot.providers.base import GenerationSettings, LLMProvider, LLMResponse
-from nanobot.providers.request_budget import FinalizedRequestBudgetExceeded
-from nanobot.session.execution_owner import acquire_execution
-from nanobot.session.manager import SessionManager
-from nanobot.session.source import (
+from kohaku.agent.runner import AgentRunner, AgentRunSpec
+from kohaku.agent.tools.execution import KnownToolResult
+from kohaku.agent.tools.registry import ToolRegistry
+from kohaku.providers.base import GenerationSettings, LLMProvider, LLMResponse
+from kohaku.providers.request_budget import FinalizedRequestBudgetExceeded
+from kohaku.session.execution_owner import acquire_execution
+from kohaku.session.manager import SessionManager
+from kohaku.session.source import (
     SourceValidationError,
     validate_closed_boundary,
     validate_execution_links,
 )
-from nanobot.session.source_projection import source_nodes
-from nanobot.session.turn_writer import SourceTurnWriter
-from nanobot.utils.llm_runtime import LLMRuntime
-from nanobot.utils.prompt_budget import PromptBudget, measure_prompt, reduce_messages_to_budget
+from kohaku.session.source_projection import source_nodes
+from kohaku.session.turn_writer import SourceTurnWriter
+from kohaku.utils.llm_runtime import LLMRuntime
+from kohaku.utils.prompt_budget import PromptBudget, measure_prompt, reduce_messages_to_budget
 from tests.agent.p6_memory_contract_fixtures import (
     SummaryProvider,
     concrete_provider,

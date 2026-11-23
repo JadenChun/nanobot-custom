@@ -2,8 +2,8 @@ import asyncio
 
 import pytest
 
-from nanobot.agent.turn import ApprovalDecision
-from nanobot.agent.turn_admission import ApprovalAdmission
+from kohaku.agent.turn import ApprovalDecision
+from kohaku.agent.turn_admission import ApprovalAdmission
 
 
 async def store(admission, summary='action', *, ttl_seconds=None):
@@ -180,7 +180,7 @@ async def test_text_does_not_consume_typed_request():
 async def test_expired_approval_is_removed_before_decision(monkeypatch):
     admission = ApprovalAdmission()
     now = [1_000_000.0]
-    monkeypatch.setattr('nanobot.agent.turn_admission.time.time', lambda: now[0])
+    monkeypatch.setattr('kohaku.agent.turn_admission.time.time', lambda: now[0])
     pending = await store(admission, ttl_seconds=900)
 
     now[0] += 899

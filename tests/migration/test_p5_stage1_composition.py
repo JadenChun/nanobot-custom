@@ -8,9 +8,9 @@ from types import SimpleNamespace
 
 import pytest
 
-from nanobot.bus.queue import MessageBus
-from nanobot.config.schema import Config
-from nanobot.runtime_composition import (
+from kohaku.bus.queue import MessageBus
+from kohaku.config.schema import Config
+from kohaku.runtime_composition import (
     ChannelBuildOptions,
     RuntimeComposition,
     RuntimeFactories,
@@ -21,8 +21,8 @@ from nanobot.runtime_composition import (
     inspect_session_modes,
     runtime_preflight,
 )
-from nanobot.runtime_errors import RuntimeOwnedWorkError
-from nanobot.session.runtime_authority import (
+from kohaku.runtime_errors import RuntimeOwnedWorkError
+from kohaku.session.runtime_authority import (
     SessionAuthorityLease,
     SessionAuthorityUnavailableError,
     Stage1UnavailableSessionAuthority,
@@ -114,7 +114,7 @@ async def test_default_definition_and_acquisition_are_read_only_and_fail_closed(
     tmp_path: Path,
     case: str,
 ) -> None:
-    monkeypatch.setattr("nanobot.migration_guard.require_runtime_ready", lambda: None)
+    monkeypatch.setattr("kohaku.migration_guard.require_runtime_ready", lambda: None)
     workspace = tmp_path / "workspace"
     root = tmp_path / "runtime" / "sessions"
     identity = "a" * 32
@@ -578,8 +578,8 @@ async def test_builder_cancellation_rolls_back_on_owner_loop(tmp_path: Path) -> 
 
 
 def test_public_source_validator_rejects_incomplete_canonical_v1(tmp_path: Path) -> None:
-    from nanobot.session.source import SourceValidationError
-    from nanobot.session.source_store import validate_source_session_file
+    from kohaku.session.source import SourceValidationError
+    from kohaku.session.source_store import validate_source_session_file
 
     location = tmp_path / "sessions"
     location.mkdir()
@@ -603,7 +603,7 @@ async def test_default_definition_and_acquire_never_construct_or_migrate_jsonl_s
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    from nanobot.session.manager import JsonlSessionStore, SessionManager
+    from kohaku.session.manager import JsonlSessionStore, SessionManager
 
     sentinel = AssertionError("persistent store construction is unreachable")
     monkeypatch.setattr(
@@ -631,7 +631,7 @@ async def test_default_definition_and_acquire_never_construct_or_migrate_jsonl_s
 
 
 async def test_channel_start_failure_stops_only_started_channels_in_reverse() -> None:
-    from nanobot.channels.manager import ChannelManager
+    from kohaku.channels.manager import ChannelManager
 
     events: list[str] = []
 
@@ -672,7 +672,7 @@ async def test_channel_start_failure_stops_only_started_channels_in_reverse() ->
 
 
 async def test_channel_acquisition_cancellation_restores_every_provisional_field() -> None:
-    from nanobot.channels.manager import ChannelManager
+    from kohaku.channels.manager import ChannelManager
 
     manager = ChannelManager(Config(), MessageBus())
     entered = asyncio.Event()
@@ -709,7 +709,7 @@ async def test_channel_acquisition_cancellation_restores_every_provisional_field
 
 
 async def test_channel_shutdown_attempts_reverse_cleanup_once_and_aggregates() -> None:
-    from nanobot.channels.manager import ChannelManager
+    from kohaku.channels.manager import ChannelManager
 
     events: list[str] = []
 
@@ -737,8 +737,8 @@ async def test_channel_shutdown_attempts_reverse_cleanup_once_and_aggregates() -
 async def test_restart_notice_task_is_cancelled_before_start_rollback(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from nanobot.channels.manager import ChannelManager
-    from nanobot.utils.restart import RestartNotice
+    from kohaku.channels.manager import ChannelManager
+    from kohaku.utils.restart import RestartNotice
 
     fail = asyncio.Event()
     sent: list[str] = []
@@ -770,7 +770,7 @@ async def test_restart_notice_task_is_cancelled_before_start_rollback(
         started_at_raw="2026-01-01T00:00:00+00:00",
     )
     monkeypatch.setattr(
-        "nanobot.channels.manager.consume_restart_notice_from_env",
+        "kohaku.channels.manager.consume_restart_notice_from_env",
         lambda: notice,
     )
     manager = ChannelManager(Config(), MessageBus())

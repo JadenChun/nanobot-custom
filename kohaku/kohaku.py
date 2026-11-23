@@ -1,0 +1,451 @@
+"""High-level programmatic interface to Kohaku."""
+
+from __future__ import annotations
+
+import asyncio
+from collections.abc import AsyncIterator, Mapping
+from pathlib import Path
+from typing import TYPE_CHECKING, Any
+
+from kohaku.agent.hook import AgentHook
+from kohaku.agent.loop import AgentLoop
+from kohaku.agent.tools.mcp import MCPProvider
+from kohaku.agent.turn import RunStatus, TraceMode, TurnSource
+from kohaku.config.schema import Config
+from kohaku.providers.base import LLMUsage
+from kohaku.sdk.clients import MemoryClient, RuntimeClient, SessionClient
+from kohaku.sdk.runtime import (
+    build_process_direct_kwargs,
+    ensure_single_model_selector,
+)
+from kohaku.sdk.streaming import RunStream, SDKStreamEmitter, SDKStreamingHook
+from kohaku.sdk.types import (
+    STREAM_EVENT_REASONING_COMPLETED,
+    STREAM_EVENT_REASONING_DELTA,
+    STREAM_EVENT_RUN_COMPLETED,
+    STREAM_EVENT_RUN_FAILED,
+    STREAM_EVENT_RUN_STARTED,
+    STREAM_EVENT_TEXT_COMPLETED,
+    STREAM_EVENT_TEXT_DELTA,
+    STREAM_EVENT_TOOL_COMPLETED,
+    STREAM_EVENT_TOOL_FAILED,
+    STREAM_EVENT_TOOL_STARTED,
+    STREAM_EVENT_TYPES,
+    RunResult,
+    SessionInfo,
+    SessionSnapshot,
+    StreamEvent,
+    StreamEventType,
+    result_from_turn,
+)
+from kohaku.utils.llm_runtime import LLMRuntime
+
+if TYPE_CHECKING:
+    from kohaku.runtime_composition import RuntimeComposition
+    from kohaku.session.runtime_authority import SessionAuthority
+
+__all__ = [
+    "Kohaku",
+    "LLMUsage",
+    "RunResult",
+    "RunStream",
+    "SessionInfo",
+    "SessionSnapshot",
+    "STREAM_EVENT_REASONING_COMPLETED",
+    "STREAM_EVENT_REASONING_DELTA",
+    "STREAM_EVENT_RUN_COMPLETED",
+    "STREAM_EVENT_RUN_FAILED",
+    "STREAM_EVENT_RUN_STARTED",
+    "STREAM_EVENT_TEXT_COMPLETED",
+    "STREAM_EVENT_TEXT_DELTA",
+    "STREAM_EVENT_TOOL_COMPLETED",
+    "STREAM_EVENT_TOOL_FAILED",
+    "STREAM_EVENT_TOOL_STARTED",
+    "STREAM_EVENT_TYPES",
+    "StreamEvent",
+    "StreamEventType",
+]
+
+
+class Kohaku:
+    """Programmatic facade for running the Kohaku agent.
+
+    Usage::
+
+        bot = Kohaku.from_config()
+        result = await bot.run("Summarize this repo", hooks=[MyHook()])
+        print(result.content)
+    """
+
+    def __init__(
+        self,
+        loop: AgentLoop | None,
+        *,
+        config: Config | None = None,
+        mcp_provider: MCPProvider | None = None,
+        composition: RuntimeComposition | None = None,
+    ) -> None:
+        self._loop = loop
+        self._config = config
+        self._mcp_provider = mcp_provider
+        self._composition = composition
+        self._closed = False
+        self._closing = False
+        self._close_task: asyncio.Task[None] | None = None
+        self._loop_close_settled = loop is None
+        self._mcp_close_settled = mcp_provider is None
+        resolver = self._require_loop
+        self.sessions = SessionClient(resolver)
+        self.memory = MemoryClient(resolver)
+        self.runtime = RuntimeClient(resolver)
+
+    def _require_loop(self) -> AgentLoop:
+        if getattr(self, "_closed", False) or getattr(self, "_closing", False):
+            raise RuntimeError("Kohaku is closed")
+        if self._loop is not None:
+            return self._loop
+        if self._composition is None:
+            raise RuntimeError("Kohaku runtime is unavailable")
+        return self._composition.require_ready().agent
+
+    async def _ensure_runtime(self) -> AgentLoop:
+        if getattr(self, "_closed", False) or getattr(self, "_closing", False):
+            raise RuntimeError("Kohaku is closed")
+        if self._loop is None:
+            if self._composition is None:
+                raise RuntimeError("Kohaku runtime is unavailable")
+            handle = await self._composition.acquire()
+            self._loop = handle.agent
+            self._mcp_provider = handle.mcp
+        return self._loop
+
+    @classmethod
+    def from_config(
+        cls,
+        config_path: str | Path | None = None,
+        *,
+        workspace: str | Path | None = None,
+        model: str | None = None,
+        model_preset: str | None = None,
+        session_authority: SessionAuthority | None = None,
+    ) -> Kohaku:
+        """Create a Kohaku instance from a config file.
+
+        Args:
+            config_path: Path to ``config.json``.  Defaults to
+                ``~/.kohaku/config.json``.
+            workspace: Override the workspace directory from config.
+            model: Override the instance default model.
+            model_preset: Override the instance default model preset.
+        """
+        from kohaku.config.loader import load_config, resolve_config_env_vars
+
+        ensure_single_model_selector(model=model, model_preset=model_preset)
+        resolved: Path | None = None
+        if config_path is not None:
+            resolved = Path(config_path).expanduser().resolve()
+            if not resolved.exists():
+                raise FileNotFoundError(f"Config not found: {resolved}")
+
+        config: Config = resolve_config_env_vars(
+            load_config(resolved),
+            config_path=resolved,
+        )
+        if workspace is not None:
+            config.agents.defaults.workspace = str(
+                Path(workspace).expanduser().resolve()
+            )
+        if model is not None:
+            config.agents.defaults.model_preset = None
+            config.agents.defaults.model = model
+            config.agents.defaults.provider = "auto"
+        elif model_preset is not None:
+            config.agents.defaults.model_preset = model_preset
+
+        from kohaku.runtime_composition import RuntimeComposition
+
+        composition = RuntimeComposition.define(
+            config,
+            session_authority=session_authority,
+        )
+        return cls(
+            None,
+            config=config,
+            composition=composition,
+        )
+
+    async def run(
+        self,
+        message: str,
+        *,
+        session_key: str = "sdk:default",
+        channel: str | None = None,
+        chat_id: str | None = None,
+        sender_id: str = "user",
+        media: list[str] | None = None,
+        ephemeral: bool = False,
+        attributes: Mapping[str, Any] | None = None,
+        hooks: list[AgentHook] | None = None,
+        include_messages: bool = False,
+        model: str | None = None,
+        model_preset: str | None = None,
+    ) -> RunResult:
+        """Run the agent once and return the result.
+
+        Args:
+            message: The user message to process.
+            session_key: Session identifier for conversation isolation.
+                Different keys get independent history.
+            channel: Logical channel label for runtime context.
+            chat_id: Logical chat identifier for runtime context.
+            sender_id: Logical sender identifier for runtime context.
+            media: Optional local media paths attached to the message.
+            ephemeral: If true, do not persist the turn or compact session history.
+            attributes: Optional caller-owned request data exposed to context
+                providers and turn-hook factories. Attributes are kept separate
+                from Kohaku's trusted internal message metadata.
+            hooks: Optional lifecycle hooks for this run.
+            include_messages: Include a detached, sanitized trace for this invocation.
+            model: Override the model for this run only.
+            model_preset: Override the model preset for this run only.
+        """
+        loop = await self._ensure_runtime()
+        channel = "sdk" if channel is None else channel
+        chat_id = (session_key if channel == "sdk" else "direct") if chat_id is None else chat_id
+        per_run_hooks = list(hooks or [])
+        runtime = loop.runtime_resolver.resolve_override(
+            model=model,
+            model_preset=model_preset,
+            config=self._config,
+        )
+        kwargs = build_process_direct_kwargs(
+            session_key=session_key,
+            channel=channel,
+            chat_id=chat_id,
+            sender_id=sender_id,
+            media=media,
+            ephemeral=ephemeral,
+            attributes=attributes,
+        )
+        if runtime is not None:
+            kwargs["runtime"] = runtime
+        if self._mcp_provider is not None:
+            await self._mcp_provider.connect()
+        response = await loop.process_direct_result(
+            message, **kwargs, hooks=per_run_hooks, source=TurnSource.SDK,
+            trace_mode=TraceMode.SANITIZED if include_messages else TraceMode.NONE,
+        )
+
+        return result_from_turn(response, include_messages=include_messages)
+
+    async def run_streamed(
+        self,
+        message: str,
+        *,
+        session_key: str = "sdk:default",
+        channel: str | None = None,
+        chat_id: str | None = None,
+        sender_id: str = "user",
+        media: list[str] | None = None,
+        ephemeral: bool = False,
+        attributes: Mapping[str, Any] | None = None,
+        hooks: list[AgentHook] | None = None,
+        include_messages: bool = False,
+        model: str | None = None,
+        model_preset: str | None = None,
+    ) -> RunStream:
+        """Start a streamed run and return a handle for events and final result.
+
+        include_messages controls the final sanitized trace. Explicit stream
+        events retain their tool and reasoning fields.
+        """
+        loop = await self._ensure_runtime()
+        channel = "sdk" if channel is None else channel
+        chat_id = (session_key if channel == "sdk" else "direct") if chat_id is None else chat_id
+        override_runtime = loop.runtime_resolver.resolve_override(
+            model=model,
+            model_preset=model_preset,
+            config=self._config,
+        )
+        queue: asyncio.Queue[StreamEvent | object] = asyncio.Queue(maxsize=256)
+        emitter = SDKStreamEmitter(queue)
+        stream_hook = SDKStreamingHook(emitter)
+        per_run_hooks = [stream_hook, *(hooks or [])]
+        run_started = False
+
+        async def _emit_run_started(runtime: LLMRuntime | None = None) -> None:
+            nonlocal run_started
+            if run_started:
+                return
+            if runtime is None:
+                runtime = override_runtime
+            metadata: dict[str, Any] = {
+                "session_key": session_key,
+                "channel": channel,
+                "chat_id": chat_id,
+                "sender_id": sender_id,
+            }
+            if runtime is not None:
+                metadata.update({
+                    "model": runtime.model,
+                    "model_preset": runtime.model_preset,
+                })
+            await emitter.emit(StreamEvent(
+                type=STREAM_EVENT_RUN_STARTED,
+                metadata=metadata,
+            ))
+            run_started = True
+
+        async def _on_stream(delta: str) -> None:
+            await emitter.text_delta(delta)
+
+        async def _on_stream_end(*_args: Any, resuming: bool = False, **_kwargs: Any) -> None:
+            await emitter.text_completed(resuming=resuming)
+
+        async def _run() -> RunResult:
+            kwargs = build_process_direct_kwargs(
+                session_key=session_key,
+                channel=channel,
+                chat_id=chat_id,
+                sender_id=sender_id,
+                media=media,
+                ephemeral=ephemeral,
+                attributes=attributes,
+                on_stream=_on_stream,
+                on_stream_end=_on_stream_end,
+            )
+            kwargs["on_runtime_admitted"] = _emit_run_started
+            if override_runtime is not None:
+                kwargs["runtime"] = override_runtime
+            try:
+                if self._mcp_provider is not None:
+                    await self._mcp_provider.connect()
+                response = await loop.process_direct_result(
+                    message, **kwargs, hooks=per_run_hooks, source=TurnSource.SDK,
+                    trace_mode=TraceMode.SANITIZED if include_messages else TraceMode.NONE,
+                )
+                await _emit_run_started()
+                await emitter.text_completed(resuming=False, force=False)
+                result = result_from_turn(response, include_messages=include_messages)
+                await emitter.emit(StreamEvent(
+                    type=(STREAM_EVENT_RUN_FAILED if result.error or result.status in
+                          (RunStatus.ERROR, RunStatus.TOOL_ERROR, RunStatus.CANCELLED)
+                          else STREAM_EVENT_RUN_COMPLETED),
+                    error=result.error,
+                    content=result.content,
+                    result=result,
+                    usage=result.usage,
+                    metadata=dict(result.metadata),
+                ))
+                return result
+            except Exception as exc:
+                await _emit_run_started()
+                await emitter.emit(StreamEvent(
+                    type=STREAM_EVENT_RUN_FAILED,
+                    error=str(exc),
+                    metadata={"exception_type": type(exc).__name__},
+                ))
+                raise
+            finally:
+                await emitter.close()
+
+        task = asyncio.create_task(_run())
+        return RunStream(task, queue)
+
+    async def stream(
+        self,
+        message: str,
+        *,
+        session_key: str = "sdk:default",
+        channel: str | None = None,
+        chat_id: str | None = None,
+        sender_id: str = "user",
+        media: list[str] | None = None,
+        ephemeral: bool = False,
+        attributes: Mapping[str, Any] | None = None,
+        hooks: list[AgentHook] | None = None,
+        include_messages: bool = False,
+        model: str | None = None,
+        model_preset: str | None = None,
+    ) -> AsyncIterator[StreamEvent]:
+        """Stream events for one agent turn."""
+        run = await self.run_streamed(
+            message,
+            session_key=session_key,
+            channel=channel,
+            chat_id=chat_id,
+            sender_id=sender_id,
+            media=media,
+            ephemeral=ephemeral,
+            attributes=attributes,
+            hooks=hooks,
+            include_messages=include_messages,
+            model=model,
+            model_preset=model_preset,
+        )
+        try:
+            async for event in run.stream_events():
+                yield event
+            await run.wait()
+        finally:
+            if not run.done:
+                await run.aclose()
+
+    async def aclose(self) -> None:
+        """Release resources held by this instance."""
+        if getattr(self, "_closed", False):
+            return
+        task = getattr(self, "_close_task", None)
+        if task is None or task.done():
+            self._closing = True
+            if self._loop is None and self._mcp_provider is None:
+                from kohaku.runtime_composition import RuntimeComposition
+
+                composition = self._composition
+                if composition is None or (
+                    type(composition) is RuntimeComposition and composition.close_if_idle()
+                ):
+                    self._closed = True
+                    self._closing = False
+                    return
+            task = asyncio.create_task(self._finish_close())
+            task.add_done_callback(
+                lambda completed: (
+                    completed.exception() if not completed.cancelled() else None
+                )
+            )
+            self._close_task = task
+        await asyncio.shield(task)
+
+    async def _finish_close(self) -> None:
+        if self._composition is not None:
+            await self._composition.aclose()
+        else:
+            errors: list[BaseException] = []
+            if self._loop is not None and not self._loop_close_settled:
+                try:
+                    await self._loop.aclose()
+                except BaseException as exc:
+                    errors.append(exc)
+                else:
+                    self._loop_close_settled = True
+            if self._mcp_provider is not None and not self._mcp_close_settled:
+                try:
+                    await self._mcp_provider.aclose()
+                except BaseException as exc:
+                    errors.append(exc)
+                else:
+                    self._mcp_close_settled = True
+            if len(errors) == 1:
+                raise errors[0]
+            if errors:
+                raise BaseExceptionGroup("Kohaku resource cleanup failed", errors)
+        self._closed = True
+        self._closing = False
+
+    async def __aenter__(self) -> Kohaku:
+        await self._ensure_runtime()
+        return self
+
+    async def __aexit__(self, *exc: object) -> None:
+        await self.aclose()

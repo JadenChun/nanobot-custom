@@ -3,7 +3,7 @@
 import argparse
 from pathlib import Path
 
-from nanobot.cron.import_copy import import_legacy_cron_copy
+from kohaku.cron.import_copy import import_legacy_cron_copy
 
 
 def main() -> None:

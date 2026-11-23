@@ -1,7 +1,7 @@
 import pytest
 
-from nanobot.agent.hook import AgentHook, AgentHookContext, AgentTurnHookContext
-from nanobot.agent.turn_hooks import AgentTurnHookSpec, build_agent_turn_hook
+from kohaku.agent.hook import AgentHook, AgentHookContext, AgentTurnHookContext
+from kohaku.agent.turn_hooks import AgentTurnHookSpec, build_agent_turn_hook
 
 
 class RecordingHook(AgentHook):
@@ -140,12 +140,12 @@ async def test_turn_hook_builder_can_include_extra_hooks_for_ephemeral_turns() -
 async def test_scoped_context_finalizer_precedes_plugins_and_survives_ephemeral_skip(ephemeral, plugin_raises) -> None:
     import asyncio
 
-    from nanobot.agent.hook import AgentRunHookContext
-    from nanobot.agent.turn_delivery import TurnDeliveryFactory
-    from nanobot.bus.events import InboundMessage
-    from nanobot.bus.queue import MessageBus
-    from nanobot.bus.runtime_events import TurnCompleted
-    from nanobot.providers.base import ContextUsageSnapshot
+    from kohaku.agent.hook import AgentRunHookContext
+    from kohaku.agent.turn_delivery import TurnDeliveryFactory
+    from kohaku.bus.events import InboundMessage
+    from kohaku.bus.queue import MessageBus
+    from kohaku.bus.runtime_events import TurnCompleted
+    from kohaku.providers.base import ContextUsageSnapshot
 
     factory = TurnDeliveryFactory(MessageBus())
     delivery = factory.create(InboundMessage(channel="websocket", sender_id="u", chat_id="t", content="hello"), "t")

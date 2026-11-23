@@ -21,7 +21,7 @@ import { copyTextToClipboard } from "@/lib/clipboard";
 import { logoFallbackUrls } from "@/lib/provider-brand";
 import type {
   ChannelValidationPayload,
-  NanobotFeatureInfo,
+  KohakuFeatureInfo,
 } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
@@ -31,7 +31,7 @@ export function ChannelGuideLink({
   chatAppsDocsUrl,
   compact = false,
 }: {
-  feature: NanobotFeatureInfo;
+  feature: KohakuFeatureInfo;
   setup: ChannelSetupPresentation;
   chatAppsDocsUrl?: string;
   compact?: boolean;
@@ -100,7 +100,7 @@ export function ChannelSetupLinks({
   setup,
   chatAppsDocsUrl,
 }: {
-  feature: NanobotFeatureInfo;
+  feature: KohakuFeatureInfo;
   setup: ChannelSetupPresentation;
   chatAppsDocsUrl?: string;
 }) {
@@ -116,7 +116,7 @@ function ChannelOfficialLink({
   feature,
   setup,
 }: {
-  feature: NanobotFeatureInfo;
+  feature: KohakuFeatureInfo;
   setup: ChannelSetupPresentation;
 }) {
   const presentation = channelUiPresentation(feature.name, feature.webui);
@@ -169,7 +169,7 @@ export function ChannelSetupActions({
   setup,
   onNotice,
 }: {
-  feature: NanobotFeatureInfo;
+  feature: KohakuFeatureInfo;
   setup: ChannelSetupPresentation;
   onNotice: (message: string | null) => void;
 }) {
@@ -264,7 +264,7 @@ export function ChannelValidationBadge({
 }: {
   validation: ChannelValidationPayload | null;
   validating: boolean;
-  feature: NanobotFeatureInfo;
+  feature: KohakuFeatureInfo;
 }) {
   const { t } = useTranslation();
   const status = validation?.status ?? (feature.configured ? "configured" : "needs_setup");

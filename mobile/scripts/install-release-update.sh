@@ -17,7 +17,7 @@ if [[ -z "${SERIAL}" ]]; then
   exit 2
 fi
 
-APK="${2:-${MOBILE_ROOT}/evidence/20261101-m22-release/nanobot-mobile-release.apk}"
+APK="${2:-${MOBILE_ROOT}/evidence/$(date +%Y%m%d)-m22-release/kohaku-mobile-release.apk}"
 if [[ ! -f "${APK}" ]]; then
   echo "release APK not found: ${APK}" >&2
   exit 2

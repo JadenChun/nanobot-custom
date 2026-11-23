@@ -49,7 +49,7 @@ def _make_installer_fixture(tmp_path: Path, *, create_executable: bool) -> dict[
     installed_log = tmp_path / "installed.log"
 
     # A sentinel proves the temporary `pipx run` environment is never used.
-    sentinel = tmp_path / "temporary-env" / "nanobot"
+    sentinel = tmp_path / "temporary-env" / "kohaku"
     _write_exec(
         sentinel,
         'printf "TEMPORARY-ENV-SENTINEL\\n"\nexit 99\n',
@@ -59,15 +59,15 @@ def _make_installer_fixture(tmp_path: Path, *, create_executable: bool) -> dict[
     if create_executable:
         create_line = """
 /bin/mkdir -p "$PIPX_BIN_DIR"
-/bin/cat > "$PIPX_BIN_DIR/nanobot" <<'INSTALLED'
+/bin/cat > "$PIPX_BIN_DIR/kohaku" <<'INSTALLED'
 #!/bin/sh
-printf 'installed-nanobot %s\\n' "$*" >> "$INSTALLED_LOG"
-printf 'nanobot 9.9.9\\n'
+printf 'installed-kohaku %s\\n' "$*" >> "$INSTALLED_LOG"
+printf 'kohaku 9.9.9\\n'
 INSTALLED
-/bin/chmod +x "$PIPX_BIN_DIR/nanobot"
+/bin/chmod +x "$PIPX_BIN_DIR/kohaku"
 """
     else:
-        create_line = '/bin/rm -f "$PIPX_BIN_DIR/nanobot"\n'
+        create_line = '/bin/rm -f "$PIPX_BIN_DIR/kohaku"\n'
 
     _write_exec(
         bin_dir / "pipx",
@@ -102,7 +102,7 @@ exit 0
         "PIPX_BIN_DIR": str(pipx_bin),
         "PIPX_LOG": str(pipx_log),
         "INSTALLED_LOG": str(installed_log),
-        "NANOBOT_SKIP_WIZARD": "1",
+        "KOHAKU_SKIP_WIZARD": "1",
     }
 
 
@@ -113,8 +113,8 @@ def test_pipx_version_check_uses_installed_executable(tmp_path: Path) -> None:
 
     assert result.returncode == 0, result.stdout + result.stderr
     output = result.stdout + result.stderr
-    assert "nanobot 9.9.9" in output
-    assert str(Path(env["PIPX_BIN_DIR"]) / "nanobot") in output
+    assert "kohaku 9.9.9" in output
+    assert str(Path(env["PIPX_BIN_DIR"]) / "kohaku") in output
     assert "TEMPORARY-ENV-SENTINEL" not in output
 
     pipx_log = Path(env["PIPX_LOG"]).read_text(encoding="utf-8")
@@ -132,7 +132,7 @@ def test_pipx_missing_installed_executable_is_an_explicit_failure(tmp_path: Path
     output = result.stdout + result.stderr
     assert result.returncode != 0, output
     assert "not found" in output.lower()
-    assert "nanobot" in output
+    assert "kohaku" in output
     assert "TEMPORARY-ENV-SENTINEL" not in output
     assert not Path(env["INSTALLED_LOG"]).exists()
 
@@ -147,7 +147,7 @@ def test_pipx_dry_run_reports_installed_executable_not_temporary_environment(
     assert result.returncode == 0, result.stdout + result.stderr
     output = result.stdout + result.stderr
     assert "pipx run" not in output
-    assert str(tmp_path / "pipx-bin" / "nanobot") in output
+    assert str(tmp_path / "pipx-bin" / "kohaku") in output
 
 
 def test_powershell_installer_never_uses_pipx_run() -> None:
@@ -155,7 +155,7 @@ def test_powershell_installer_never_uses_pipx_run() -> None:
 
     assert "pipx run --spec" not in script
     assert "PIPX_BIN_DIR" in script
-    assert "Resolve-PipxNanobot" in script
+    assert "Resolve-PipxKohaku" in script
 
 
 def _run_installer(env: dict[str, str], *args: str):

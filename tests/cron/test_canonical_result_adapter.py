@@ -8,20 +8,20 @@ from pathlib import Path
 
 import pytest
 
-from nanobot.agent.turn import RunStatus, TurnResult
-from nanobot.bus.events import OutboundMessage
-from nanobot.cron.action_store import CronActionStore
-from nanobot.cron.canonical_result import (
+from kohaku.agent.turn import RunStatus, TurnResult
+from kohaku.bus.events import OutboundMessage
+from kohaku.cron.action_store import CronActionStore
+from kohaku.cron.canonical_result import (
     UnsupportedCronResultError,
     complete_text_cron_result,
 )
-from nanobot.cron.completion import CronCompletionProjector
-from nanobot.cron.definition_store import CronDefinitionStore
-from nanobot.cron.delivery_runtime import ConfirmedDelivered, CronDeliveryRuntime
-from nanobot.cron.delivery_store import CronDeliveryOutboxStore
-from nanobot.cron.occurrence_store import CronOccurrenceStore
-from nanobot.cron.service import CronService
-from nanobot.cron.types import CronDestination, CronSchedule
+from kohaku.cron.completion import CronCompletionProjector
+from kohaku.cron.definition_store import CronDefinitionStore
+from kohaku.cron.delivery_runtime import ConfirmedDelivered, CronDeliveryRuntime
+from kohaku.cron.delivery_store import CronDeliveryOutboxStore
+from kohaku.cron.occurrence_store import CronOccurrenceStore
+from kohaku.cron.service import CronService
+from kohaku.cron.types import CronDestination, CronSchedule
 
 
 def _claimed_service(tmp_path: Path, *, deliver: bool = True):

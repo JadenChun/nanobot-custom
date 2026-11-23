@@ -8,11 +8,11 @@ import pytest
 from websockets.datastructures import Headers
 from websockets.http11 import Request
 
-from nanobot.security.folder_grants import (
+from kohaku.security.folder_grants import (
     NativeProcessesActiveError,
     NativeProcessesUnknownError,
 )
-from nanobot.webui.ws_http import GatewayHTTPHandler
+from kohaku.webui.ws_http import GatewayHTTPHandler
 
 
 @pytest.mark.asyncio

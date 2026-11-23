@@ -16,9 +16,9 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
-import nanobot.agent.idle_summary as idle_summary_module
-from nanobot.agent.idle_runtime import IdleRuntimeBindingRegistry
-from nanobot.agent.idle_summary import (
+import kohaku.agent.idle_summary as idle_summary_module
+from kohaku.agent.idle_runtime import IdleRuntimeBindingRegistry
+from kohaku.agent.idle_summary import (
     IdleDependencyVerification,
     IdleSummaryAdapter,
     IdleSummaryAttemptAccounting,
@@ -36,11 +36,11 @@ from nanobot.agent.idle_summary import (
     _checkpoint_from_capture,
     _verify_dependencies_async,
 )
-from nanobot.providers.base import GenerationSettings, LLMProvider
-from nanobot.session.idle_checkpoint import IdlePolicyBinding
-from nanobot.session.manager import JsonlSessionStore, Session
-from nanobot.session.source import new_source_event
-from nanobot.utils.llm_runtime import LLMRuntime
+from kohaku.providers.base import GenerationSettings, LLMProvider
+from kohaku.session.idle_checkpoint import IdlePolicyBinding
+from kohaku.session.manager import JsonlSessionStore, Session
+from kohaku.session.source import new_source_event
+from kohaku.utils.llm_runtime import LLMRuntime
 from tests.session.test_idle_checkpoint import _artifact_source
 
 
@@ -1841,7 +1841,7 @@ async def test_dependency_verifier_is_required_and_bound_before_call(tmp_path: P
             return True
 
     with pytest.raises(IdleSummaryDependencyError):
-        from nanobot.agent.idle_summary import _verify_dependencies
+        from kohaku.agent.idle_summary import _verify_dependencies
 
         _verify_dependencies(
             BadVerifier(),

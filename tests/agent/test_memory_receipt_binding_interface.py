@@ -8,9 +8,9 @@ from pathlib import Path
 
 import pytest
 
-from nanobot.agent import memory_recovery_conversion_apply as application
-from nanobot.agent import memory_recovery_storage as storage
-from nanobot.agent import memory_recovery_transaction_prepare as preparation
+from kohaku.agent import memory_recovery_conversion_apply as application
+from kohaku.agent import memory_recovery_storage as storage
+from kohaku.agent import memory_recovery_transaction_prepare as preparation
 
 _RECEIPT = ".consolidation.pending.json"
 _BINDINGS = (

@@ -22,14 +22,14 @@ from types import SimpleNamespace
 from typing import Any, Callable
 from weakref import ReferenceType, ref
 
-from nanobot.agent.idle_compaction import IdleCompactionPolicy
-from nanobot.agent.idle_lifecycle import IdleLifecycleIntegration
-from nanobot.agent.idle_runtime import IdleRuntimeBinding, IdleRuntimeBindingRegistry
-from nanobot.agent.idle_scanner import (
+from kohaku.agent.idle_compaction import IdleCompactionPolicy
+from kohaku.agent.idle_lifecycle import IdleLifecycleIntegration
+from kohaku.agent.idle_runtime import IdleRuntimeBinding, IdleRuntimeBindingRegistry
+from kohaku.agent.idle_scanner import (
     IdleCompactionScanner,
     InMemoryIdleBlockerAuthority,
 )
-from nanobot.agent.idle_summary import (
+from kohaku.agent.idle_summary import (
     IdleDependencyVerification,
     IdleSummaryAdapter,
     IdleSummaryAttemptResponse,
@@ -39,22 +39,22 @@ from nanobot.agent.idle_summary import (
     IdleSummaryRequestReceipt,
     IdleSummaryTransportRegistry,
 )
-from nanobot.agent.tools.execution import KnownToolResult
-from nanobot.agent.tools.filesystem import ReadFileTool
-from nanobot.agent.tools.registry import ToolRegistry
-from nanobot.agent.turn import ToolOutcome
-from nanobot.providers.base import GenerationSettings, LLMProvider
-from nanobot.session.artifact import parse_artifact_descriptor
-from nanobot.session.artifact_reader import ArtifactReader
-from nanobot.session.artifact_store import PrivateArtifactStore
-from nanobot.session.execution_owner import acquire_execution
-from nanobot.session.idle_checkpoint import IdlePolicyBinding
-from nanobot.session.manager import JsonlSessionStore, Session
-from nanobot.session.source import new_source_event
-from nanobot.session.source_discovery import SourceDiscoveryLimits
-from nanobot.session.source_store import SourceSessionStore
-from nanobot.session.turn_writer import SourceTurnWriter
-from nanobot.utils.llm_runtime import LLMRuntime
+from kohaku.agent.tools.execution import KnownToolResult
+from kohaku.agent.tools.filesystem import ReadFileTool
+from kohaku.agent.tools.registry import ToolRegistry
+from kohaku.agent.turn import ToolOutcome
+from kohaku.providers.base import GenerationSettings, LLMProvider
+from kohaku.session.artifact import parse_artifact_descriptor
+from kohaku.session.artifact_reader import ArtifactReader
+from kohaku.session.artifact_store import PrivateArtifactStore
+from kohaku.session.execution_owner import acquire_execution
+from kohaku.session.idle_checkpoint import IdlePolicyBinding
+from kohaku.session.manager import JsonlSessionStore, Session
+from kohaku.session.source import new_source_event
+from kohaku.session.source_discovery import SourceDiscoveryLimits
+from kohaku.session.source_store import SourceSessionStore
+from kohaku.session.turn_writer import SourceTurnWriter
+from kohaku.utils.llm_runtime import LLMRuntime
 
 
 class AcceptanceNetworkViolationError(AssertionError):
@@ -447,7 +447,7 @@ def _summary_limits(*, force_split: bool = False) -> IdleSummaryLimits:
 
 
 async def append_retrieval(writer: SourceTurnWriter, reader: ArtifactReader, reference: str) -> None:
-    from nanobot.agent.tools.artifact import ReadArtifactTool
+    from kohaku.agent.tools.artifact import ReadArtifactTool
 
     outcome = await ToolRegistry.execute_prepared(
         ReadArtifactTool(reader), {"reference": reference}, SimpleNamespace(lock_owner=None)

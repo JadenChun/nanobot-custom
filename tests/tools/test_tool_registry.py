@@ -7,14 +7,14 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from nanobot.agent.tools.base import Tool, ToolResult, tool_parameters
-from nanobot.agent.tools.filesystem import EditFileTool, ListDirTool, ReadFileTool, WriteFileTool
-from nanobot.agent.tools.image_generation import ImageGenerationTool
-from nanobot.agent.tools.read_provenance import FilesystemReadReceipt
-from nanobot.agent.tools.registry import ToolRegistry
-from nanobot.agent.tools.web import WebFetchTool, WebSearchTool
-from nanobot.agent.turn import ToolOutcome, TurnContext
-from nanobot.session.artifact import FilesystemArtifactOrigin
+from kohaku.agent.tools.base import Tool, ToolResult, tool_parameters
+from kohaku.agent.tools.filesystem import EditFileTool, ListDirTool, ReadFileTool, WriteFileTool
+from kohaku.agent.tools.image_generation import ImageGenerationTool
+from kohaku.agent.tools.read_provenance import FilesystemReadReceipt
+from kohaku.agent.tools.registry import ToolRegistry
+from kohaku.agent.tools.web import WebFetchTool, WebSearchTool
+from kohaku.agent.turn import ToolOutcome, TurnContext
+from kohaku.session.artifact import FilesystemArtifactOrigin
 
 
 class _FakeTool(Tool):

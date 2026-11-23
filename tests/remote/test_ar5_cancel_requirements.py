@@ -34,30 +34,30 @@ def _load(attr, module_names):
 
 
 PAIRING_MODULES = (
-    "nanobot.remote.pairing",
-    "nanobot.remote.pairing_service",
-    "nanobot.remote.service",
-    "nanobot.remote",
+    "kohaku.remote.pairing",
+    "kohaku.remote.pairing_service",
+    "kohaku.remote.service",
+    "kohaku.remote",
 )
 STORE_MODULES = (
-    "nanobot.remote.access_store",
-    "nanobot.remote.store",
-    "nanobot.remote.access",
-    "nanobot.remote.pairing",
-    "nanobot.remote",
+    "kohaku.remote.access_store",
+    "kohaku.remote.store",
+    "kohaku.remote.access",
+    "kohaku.remote.pairing",
+    "kohaku.remote",
 )
 TOKEN_MODULES = (
-    "nanobot.remote.auth",
-    "nanobot.remote.tokens",
-    "nanobot.remote.token",
-    "nanobot.remote.access",
-    "nanobot.remote",
+    "kohaku.remote.auth",
+    "kohaku.remote.tokens",
+    "kohaku.remote.token",
+    "kohaku.remote.access",
+    "kohaku.remote",
 )
 ERROR_MODULES = (
-    "nanobot.remote.pairing",
-    "nanobot.remote.errors",
-    "nanobot.remote.exceptions",
-    "nanobot.remote",
+    "kohaku.remote.pairing",
+    "kohaku.remote.errors",
+    "kohaku.remote.exceptions",
+    "kohaku.remote",
 )
 
 

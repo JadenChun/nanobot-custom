@@ -10,18 +10,18 @@ import pytest
 from websockets.datastructures import Headers
 from websockets.http11 import Request
 
-from nanobot.channels.delivery_contract import ChannelTextPartReceipt, ChannelTextReceipt
-from nanobot.channels.telegram.runtime import TelegramChannel
-from nanobot.channels.websocket.runtime import WebSocketConfig
-from nanobot.cli import gateway_runtime
-from nanobot.config.schema import Config
-from nanobot.cron.gateway import GatewayCron, validate_gateway_job
-from nanobot.cron.service import CronService
-from nanobot.cron.types import CronSchedule
-from nanobot.providers.base import LLMResponse
-from nanobot.providers.factory import ProviderSnapshot
-from nanobot.providers.unconfigured_provider import UnconfiguredProvider
-from nanobot.webui.gateway_services import build_gateway_services
+from kohaku.channels.delivery_contract import ChannelTextPartReceipt, ChannelTextReceipt
+from kohaku.channels.telegram.runtime import TelegramChannel
+from kohaku.channels.websocket.runtime import WebSocketConfig
+from kohaku.cli import gateway_runtime
+from kohaku.config.schema import Config
+from kohaku.cron.gateway import GatewayCron, validate_gateway_job
+from kohaku.cron.service import CronService
+from kohaku.cron.types import CronSchedule
+from kohaku.providers.base import LLMResponse
+from kohaku.providers.factory import ProviderSnapshot
+from kohaku.providers.unconfigured_provider import UnconfiguredProvider
+from kohaku.webui.gateway_services import build_gateway_services
 
 
 @pytest.mark.parametrize("mode", ["due", "manual"])
@@ -129,14 +129,14 @@ def test_normal_gateway_runs_due_and_manual_jobs(tmp_path, monkeypatch, mode):
     def foreground(*_args, **_kwargs):
         yield
 
-    monkeypatch.setattr("nanobot.config.loader.get_config_path", lambda: path)
-    monkeypatch.setattr("nanobot.providers.factory.build_provider_snapshot", snapshot)
+    monkeypatch.setattr("kohaku.config.loader.get_config_path", lambda: path)
+    monkeypatch.setattr("kohaku.providers.factory.build_provider_snapshot", snapshot)
     monkeypatch.setattr(GatewayCron, "__init__", capture)
     monkeypatch.setattr(TelegramChannel, "start", start)
     monkeypatch.setattr(TelegramChannel, "stop", stop)
     monkeypatch.setattr(TelegramChannel, "send_text_with_receipt", receipt)
-    monkeypatch.setattr("nanobot.gateway.runtime.monitor_gateway_clients", idle)
-    monkeypatch.setattr("nanobot.gateway.runtime.GatewayRuntime.foreground_instance", foreground)
+    monkeypatch.setattr("kohaku.gateway.runtime.monitor_gateway_clients", idle)
+    monkeypatch.setattr("kohaku.gateway.runtime.GatewayRuntime.foreground_instance", foreground)
     monkeypatch.setattr(
         gateway_runtime,
         "_install_gateway_shutdown_handlers",

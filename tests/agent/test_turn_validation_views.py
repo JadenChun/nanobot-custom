@@ -8,15 +8,15 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from nanobot.agent.loop import AgentLoop
-from nanobot.agent.runner import AgentRunResult
-from nanobot.agent.tools.registry import ToolRegistry
-from nanobot.agent.turn import RunPolicyContext, TraceMode, TurnRequest
-from nanobot.agent.turn import TurnContext as RunContext
-from nanobot.bus.events import InboundMessage
-from nanobot.events import NO_EVENTS
-from nanobot.session.manager import Session
-from nanobot.utils.llm_runtime import LLMRuntime
+from kohaku.agent.loop import AgentLoop
+from kohaku.agent.runner import AgentRunResult
+from kohaku.agent.tools.registry import ToolRegistry
+from kohaku.agent.turn import RunPolicyContext, TraceMode, TurnRequest
+from kohaku.agent.turn import TurnContext as RunContext
+from kohaku.bus.events import InboundMessage
+from kohaku.events import NO_EVENTS
+from kohaku.session.manager import Session
+from kohaku.utils.llm_runtime import LLMRuntime
 from tests.agent.test_migration_engine import ScriptedProvider
 from tests.agent.test_migration_fresh_turn import stage
 

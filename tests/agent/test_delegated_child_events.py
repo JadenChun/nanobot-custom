@@ -7,18 +7,18 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from nanobot.agent.child_sessions import ChildAdmission
-from nanobot.agent.loop import AgentLoop
-from nanobot.agent.tools.context import (
+from kohaku.agent.child_sessions import ChildAdmission
+from kohaku.agent.loop import AgentLoop
+from kohaku.agent.tools.context import (
     RequestContext,
     bind_request_context,
     reset_request_context,
 )
-from nanobot.agent.tools.registry import ToolRegistry
-from nanobot.agent.turn import DeliveryTarget, TurnRequest
-from nanobot.bus.outbound_events import DelegatedChildEvent
-from nanobot.providers.base import LLMResponse, ToolCallRequest
-from nanobot.session.source_store import SourceState
+from kohaku.agent.tools.registry import ToolRegistry
+from kohaku.agent.turn import DeliveryTarget, TurnRequest
+from kohaku.bus.outbound_events import DelegatedChildEvent
+from kohaku.providers.base import LLMResponse, ToolCallRequest
+from kohaku.session.source_store import SourceState
 from tests.agent.test_migration_engine import ScriptedProvider
 from tests.agent.test_migration_source_engine import upgrade
 

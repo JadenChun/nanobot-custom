@@ -6,17 +6,17 @@ from types import SimpleNamespace
 
 import pytest
 
-from nanobot.agent.tools.filesystem import ReadFileTool
-from nanobot.agent.tools.read_provenance import (
+from kohaku.agent.tools.filesystem import ReadFileTool
+from kohaku.agent.tools.read_provenance import (
     locate_read,
     parse_read_receipt,
     qualified_text_bytes,
     root_binding,
 )
-from nanobot.agent.tools.registry import ToolRegistry
-from nanobot.agent.turn import ToolOutcome
-from nanobot.context_repo.manager import ContextRepoManager, ManagedContextRepo
-from nanobot.context_repo.policy import ResourceAccessPolicy
+from kohaku.agent.tools.registry import ToolRegistry
+from kohaku.agent.turn import ToolOutcome
+from kohaku.context_repo.manager import ContextRepoManager, ManagedContextRepo
+from kohaku.context_repo.policy import ResourceAccessPolicy
 
 
 async def read(tool, **params):
@@ -68,7 +68,7 @@ async def test_unsupported_results_have_no_producer_receipt(tmp_path, monkeypatc
 
 async def test_unqualified_platform_preserves_inline_text(tmp_path, monkeypatch):
     (tmp_path / 'file').write_text('evidence')
-    from nanobot.agent.tools import read_provenance
+    from kohaku.agent.tools import read_provenance
     monkeypatch.setattr(read_provenance.os, 'supports_dir_fd', set())
     result = await read(ReadFileTool(workspace=tmp_path), path='file')
     assert 'evidence' in result.content and result.producer_receipt is None
@@ -156,7 +156,7 @@ async def test_receipt_parser_rejects_extra_keys_and_digest_mismatch(tmp_path):
 
 
 async def test_legacy_upgrade_cannot_retroactively_authenticate_read(tmp_path):
-    from nanobot.session.manager import JsonlSessionStore, Session
+    from kohaku.session.manager import JsonlSessionStore, Session
 
     workspace = tmp_path / 'workspace'
     workspace.mkdir()
@@ -180,7 +180,7 @@ async def test_legacy_upgrade_cannot_retroactively_authenticate_read(tmp_path):
 
 @pytest.mark.parametrize('change', ['removed', 'protected', 'root', 'precedence'])
 async def test_current_policy_rejects_revoked_or_rebound_receipt(tmp_path, change):
-    from nanobot.agent.tools.read_provenance import revalidate_read_receipt
+    from kohaku.agent.tools.read_provenance import revalidate_read_receipt
 
     workspace = tmp_path / 'workspace'
     context = workspace / 'context'
@@ -205,7 +205,7 @@ async def test_current_policy_rejects_revoked_or_rebound_receipt(tmp_path, chang
 
 
 async def test_current_workspace_cannot_rebase_receipt(tmp_path):
-    from nanobot.agent.tools.read_provenance import revalidate_read_receipt
+    from kohaku.agent.tools.read_provenance import revalidate_read_receipt
 
     (tmp_path / 'file').write_text('evidence')
     tool = ReadFileTool(workspace=tmp_path)

@@ -3,9 +3,9 @@
 import httpx
 import pytest
 
-from nanobot.agent.tools.registry import is_tool_error_result
-from nanobot.agent.tools.web import WebSearchTool
-from nanobot.config.schema import WebSearchConfig
+from kohaku.agent.tools.registry import is_tool_error_result
+from kohaku.agent.tools.web import WebSearchTool
+from kohaku.config.schema import WebSearchConfig
 
 
 def _tool(
@@ -93,7 +93,7 @@ async def test_brave_search_retries_rate_limit_once(monkeypatch):
             "web": {"results": [{"title": "Recovered", "url": "https://example.com", "description": "ok"}]}
         })
 
-    monkeypatch.setattr("nanobot.agent.tools.web.asyncio.sleep", mock_sleep)
+    monkeypatch.setattr("kohaku.agent.tools.web.asyncio.sleep", mock_sleep)
     monkeypatch.setattr(httpx.AsyncClient, "get", mock_get)
 
     tool = _tool(provider="brave", api_key="brave-key")
@@ -115,7 +115,7 @@ async def test_brave_search_returns_clear_rate_limit_after_retries(monkeypatch):
         calls["n"] += 1
         return _response(status=429, json={"error": "rate limit"})
 
-    monkeypatch.setattr("nanobot.agent.tools.web.asyncio.sleep", mock_sleep)
+    monkeypatch.setattr("kohaku.agent.tools.web.asyncio.sleep", mock_sleep)
     monkeypatch.setattr(httpx.AsyncClient, "get", mock_get)
 
     tool = _tool(provider="brave", api_key="brave-key")
@@ -549,8 +549,8 @@ async def test_duckduckgo_search(monkeypatch):
         def text(self, query, max_results=5):
             return [{"title": "DDG Result", "href": "https://ddg.example", "body": "From DuckDuckGo"}]
 
-    monkeypatch.setattr("nanobot.agent.tools.web.DDGS", MockDDGS, raising=False)
-    import nanobot.agent.tools.web as web_mod
+    monkeypatch.setattr("kohaku.agent.tools.web.DDGS", MockDDGS, raising=False)
+    import kohaku.agent.tools.web as web_mod
     monkeypatch.setattr(web_mod, "DDGS", MockDDGS, raising=False)
 
     monkeypatch.setattr("ddgs.DDGS", MockDDGS)
@@ -930,7 +930,7 @@ async def test_olostep_package_missing_returns_install_hint(monkeypatch):
     result = await tool.execute(query="test query")
 
     assert result == (
-        "Error: Olostep support is not installed. Run `nanobot plugins enable olostep`."
+        "Error: Olostep support is not installed. Run `kohaku plugins enable olostep`."
     )
 
 

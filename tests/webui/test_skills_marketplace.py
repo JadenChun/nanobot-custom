@@ -8,8 +8,8 @@ from typing import Any
 import httpx
 import pytest
 
-from nanobot.context_repo.policy import ResourceAccessPolicy
-from nanobot.webui.skills_marketplace import (
+from kohaku.context_repo.policy import ResourceAccessPolicy
+from kohaku.webui.skills_marketplace import (
     SkillsMarketplaceError,
     _valid_skillhub_download_url,
     _validated_skillhub_entries,
@@ -60,11 +60,11 @@ async def test_search_marketplace_skills_filters_and_marks_installed(
             return FakeResponse()
 
     monkeypatch.setattr(
-        "nanobot.webui.skills_marketplace.httpx.AsyncClient",
+        "kohaku.webui.skills_marketplace.httpx.AsyncClient",
         lambda **_kwargs: FakeClient(),
     )
     monkeypatch.setattr(
-        "nanobot.webui.skills_marketplace.skills_install_supported",
+        "kohaku.webui.skills_marketplace.skills_install_supported",
         lambda: True,
     )
     payload = await search_marketplace_skills(
@@ -140,11 +140,11 @@ async def test_search_and_trending_mark_shared_skills_installed(
             return FakeResponse()
 
     monkeypatch.setattr(
-        "nanobot.webui.skills_marketplace._skills_client",
+        "kohaku.webui.skills_marketplace._skills_client",
         lambda: FakeClient(),
     )
     monkeypatch.setattr(
-        "nanobot.webui.skills_marketplace.skills_install_supported",
+        "kohaku.webui.skills_marketplace.skills_install_supported",
         lambda: True,
     )
 
@@ -184,7 +184,7 @@ async def test_install_does_not_shadow_shared_skill(
     def should_not_run(*_args: object, **_kwargs: object) -> object:
         raise AssertionError("a shared skill must not be shadowed by a marketplace install")
 
-    monkeypatch.setattr("nanobot.webui.skills_marketplace.shutil.which", should_not_run)
+    monkeypatch.setattr("kohaku.webui.skills_marketplace.shutil.which", should_not_run)
     result = await install_marketplace_skill(
         "acme/agent-skills",
         "shared-tool",
@@ -232,9 +232,9 @@ async def test_incomplete_catalog_blocks_new_marketplace_installs_uniformly(
     def no_install_side_effect(*_args: object, **_kwargs: object) -> object:
         raise AssertionError("installation side effects must not run for an incomplete catalog")
 
-    monkeypatch.setattr("nanobot.webui.skills_marketplace.shutil.which", no_install_side_effect)
-    monkeypatch.setattr("nanobot.webui.skills_marketplace._skills_client", no_install_side_effect)
-    monkeypatch.setattr("nanobot.webui.skills_marketplace._skillhub_client", no_install_side_effect)
+    monkeypatch.setattr("kohaku.webui.skills_marketplace.shutil.which", no_install_side_effect)
+    monkeypatch.setattr("kohaku.webui.skills_marketplace._skills_client", no_install_side_effect)
+    monkeypatch.setattr("kohaku.webui.skills_marketplace._skillhub_client", no_install_side_effect)
 
     errors = []
     for skill_id in ("hidden-skill", "arbitrary-new-skill"):
@@ -305,11 +305,11 @@ async def test_marketplace_marks_unmatched_install_state_unknown_when_catalog_is
             super().validate_path(path, action, **kwargs)
 
     monkeypatch.setattr(
-        "nanobot.webui.skills_marketplace._skills_client",
+        "kohaku.webui.skills_marketplace._skills_client",
         lambda: FakeClient(),
     )
     monkeypatch.setattr(
-        "nanobot.webui.skills_marketplace.skills_install_supported",
+        "kohaku.webui.skills_marketplace.skills_install_supported",
         lambda: True,
     )
 
@@ -371,7 +371,7 @@ async def test_search_skillhub_skills_normalizes_provider_metadata(
             return FakeResponse()
 
     monkeypatch.setattr(
-        "nanobot.webui.skills_marketplace.httpx.AsyncClient",
+        "kohaku.webui.skills_marketplace.httpx.AsyncClient",
         lambda **_kwargs: FakeClient(),
     )
 
@@ -451,7 +451,7 @@ async def test_trending_marketplace_skills_diversifies_sources_and_keeps_rank(
             return FakeResponse()
 
     monkeypatch.setattr(
-        "nanobot.webui.skills_marketplace.httpx.AsyncClient",
+        "kohaku.webui.skills_marketplace.httpx.AsyncClient",
         lambda **_kwargs: FakeClient(),
     )
     payload = await trending_marketplace_skills(tmp_path, provider="skills_sh")
@@ -490,11 +490,11 @@ async def test_marketplace_skill_trends_returns_history_separately(
         }
 
     monkeypatch.setattr(
-        "nanobot.webui.skills_marketplace.httpx.AsyncClient",
+        "kohaku.webui.skills_marketplace.httpx.AsyncClient",
         lambda **_kwargs: FakeClient(),
     )
     monkeypatch.setattr(
-        "nanobot.webui.skills_marketplace._load_weekly_installs",
+        "kohaku.webui.skills_marketplace._load_weekly_installs",
         weekly_installs,
     )
 
@@ -528,7 +528,7 @@ async def test_search_marketplace_skills_returns_safe_upstream_error(
             raise httpx.ConnectError("private network detail")
 
     monkeypatch.setattr(
-        "nanobot.webui.skills_marketplace.httpx.AsyncClient",
+        "kohaku.webui.skills_marketplace.httpx.AsyncClient",
         lambda **_kwargs: FailingClient(),
     )
 
@@ -566,11 +566,11 @@ async def test_install_marketplace_skill_uses_official_cli_and_workspace(
         return FakeProcess()
 
     monkeypatch.setattr(
-        "nanobot.webui.skills_marketplace.shutil.which",
+        "kohaku.webui.skills_marketplace.shutil.which",
         lambda executable: "/usr/local/bin/npx" if executable == "npx" else None,
     )
     monkeypatch.setattr(
-        "nanobot.agent.tools.process.create_owned_process",
+        "kohaku.agent.tools.process.create_owned_process",
         create_owned_process,
     )
 
@@ -694,7 +694,7 @@ async def test_install_skillhub_skill_checks_fingerprint_and_extracts_safely(
             )
 
     monkeypatch.setattr(
-        "nanobot.webui.skills_marketplace.httpx.AsyncClient",
+        "kohaku.webui.skills_marketplace.httpx.AsyncClient",
         lambda **_kwargs: FakeClient(),
     )
 
@@ -757,7 +757,7 @@ async def test_install_marketplace_skill_is_idempotent(
     (skill_dir / "SKILL.md").write_text("---\nname: already-here\n---\n", encoding="utf-8")
     launch = pytest.fail
     monkeypatch.setattr(
-        "nanobot.webui.skills_marketplace.asyncio.create_subprocess_exec",
+        "kohaku.webui.skills_marketplace.asyncio.create_subprocess_exec",
         launch,
     )
 

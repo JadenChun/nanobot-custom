@@ -11,11 +11,11 @@ import json
 
 import pytest
 
-from nanobot.context_repo import ContextRepoManager, ResourceAccessPolicy
-from nanobot.context_repo.catalog import RepositoryCatalog
-from nanobot.security.folder_grants import FolderGrantStore
-from nanobot.session.manager import SessionManager
-from nanobot.session.workspace_focus import WorkspaceFocusOwner
+from kohaku.context_repo import ContextRepoManager, ResourceAccessPolicy
+from kohaku.context_repo.catalog import RepositoryCatalog
+from kohaku.security.folder_grants import FolderGrantStore
+from kohaku.session.manager import SessionManager
+from kohaku.session.workspace_focus import WorkspaceFocusOwner
 
 CHAT = "websocket:chat-a"
 BINDING = {"store_identity": "store-req", "incarnation": "inc-b", "generation": 1}
@@ -244,8 +244,8 @@ def test_c5_once_projection_denies_write_to_a_proposal_path(tmp_path) -> None:
 
 
 def test_c6_once_commands_reflect_managed_repository_exclusion(tmp_path) -> None:
-    from nanobot.agent.tools.native_process import native_supervisor_available
-    from nanobot.agent.tools.sandbox import managed_bwrap_available
+    from kohaku.agent.tools.native_process import native_supervisor_available
+    from kohaku.agent.tools.sandbox import managed_bwrap_available
 
     owner, _policy, sessions, repo = _build_scoped_owner(tmp_path)
     reference = _live_once(sessions, repo)

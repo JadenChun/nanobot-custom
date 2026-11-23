@@ -1,5 +1,5 @@
 [project]
-name = "nanobot-ai"
+name = "kohaku"
 version = "0.3.0"
 description = "A lightweight personal AI assistant framework"
 readme = { file = "README.md", content-type = "text/markdown" }
@@ -110,9 +110,9 @@ dev = [
 ]
 
 [project.scripts]
-nanobot = "nanobot.cli.entry:main"
-nanobot-crawl-worker = "nanobot.crawler.worker:main"
-nanobot-desktop-tui = "nanobot.cli.desktop_tui:main"
+kohaku = "kohaku.cli.entry:main"
+kohaku-crawl-worker = "kohaku.crawler.worker:main"
+kohaku-desktop-tui = "kohaku.cli.desktop_tui:main"
 
 # Third-party tool plugins register here.  Built-in tools are discovered
 # automatically via pkgutil scanning in ToolLoader.discover().
@@ -131,39 +131,39 @@ allow-direct-references = true
 
 [tool.hatch.build]
 include = [
-    "nanobot/**/*.py",
-    "nanobot/templates/**/*.md",
-    "nanobot/skills/**/*.md",
-    "nanobot/skills/**/*.sh",
-    "nanobot/skills/**/*.py",
-    "nanobot/channels/*/webui/**/*",
-    "nanobot/web/dist/**/*",
+    "kohaku/**/*.py",
+    "kohaku/templates/**/*.md",
+    "kohaku/skills/**/*.md",
+    "kohaku/skills/**/*.sh",
+    "kohaku/skills/**/*.py",
+    "kohaku/channels/*/webui/**/*",
+    "kohaku/web/dist/**/*",
 ]
-# nanobot/web/dist/ is produced by `cd webui && bun run build` and is
+# kohaku/web/dist/ is produced by `cd webui && bun run build` and is
 # git-ignored. List it as an artifact so hatch ships it in both wheel and
 # sdist even though VCS does not track it.
 artifacts = [
-    "nanobot/web/dist/**/*",
+    "kohaku/web/dist/**/*",
 ]
 
 [tool.hatch.build.targets.wheel]
-packages = ["nanobot"]
-exclude = ["nanobot/channels/*/tests/**"]
+packages = ["kohaku"]
+exclude = ["kohaku/channels/*/tests/**"]
 
 [tool.hatch.build.targets.wheel.sources]
-"nanobot" = "nanobot"
+"kohaku" = "kohaku"
 
 [tool.hatch.build.targets.sdist]
 include = [
-    "/nanobot/",
-    "/nanobot/web/dist/",
+    "/kohaku/",
+    "/kohaku/web/dist/",
     "/hatch_build.py",
     "/README.md",
     "/LICENSE",
     "/THIRD_PARTY_NOTICES.md",
     "/pyproject.toml",
 ]
-exclude = ["nanobot/channels/*/tests/**"]
+exclude = ["kohaku/channels/*/tests/**"]
 
 [tool.ruff]
 line-length = 100
@@ -174,17 +174,17 @@ select = ["E", "F", "I", "N", "W"]
 ignore = ["E501"]
 
 [tool.basedpyright]
-include = ["nanobot"]
+include = ["kohaku"]
 exclude = ["**/tests"]
 typeCheckingMode = "strict"
 pythonVersion = "3.11"
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
-testpaths = ["tests", "nanobot/channels"]
+testpaths = ["tests", "kohaku/channels"]
 
 [tool.coverage.run]
-source = ["nanobot"]
+source = ["kohaku"]
 omit = ["tests/*", "**/tests/*"]
 
 [tool.coverage.report]

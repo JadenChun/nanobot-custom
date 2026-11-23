@@ -6,14 +6,14 @@ import pytest
 from websockets.datastructures import Headers
 from websockets.http11 import Request
 
-from nanobot.channels.websocket.runtime import WebSocketConfig
-from nanobot.remote.auth import TokenService
-from nanobot.remote.edge import MobileGatewayEdge, OwnerAccessValidator
-from nanobot.remote.ipc import OwnerIPCServer
-from nanobot.remote.store import RemoteAccessStore
-from nanobot.webui.gateway_endpoint import WebUIGatewayEndpoint
-from nanobot.webui.inbound_commands import WebUICommandRouter, _mobile_mutation_allowed
-from nanobot.webui.ws_http import GatewayHTTPHandler
+from kohaku.channels.websocket.runtime import WebSocketConfig
+from kohaku.remote.auth import TokenService
+from kohaku.remote.edge import MobileGatewayEdge, OwnerAccessValidator
+from kohaku.remote.ipc import OwnerIPCServer
+from kohaku.remote.store import RemoteAccessStore
+from kohaku.webui.gateway_endpoint import WebUIGatewayEndpoint
+from kohaku.webui.inbound_commands import WebUICommandRouter, _mobile_mutation_allowed
+from kohaku.webui.ws_http import GatewayHTTPHandler
 
 ORIGIN = "https://admitted.example"
 

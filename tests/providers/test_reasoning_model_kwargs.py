@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import pytest
 
-from nanobot.providers.openai_compat_provider import (
+from kohaku.providers.openai_compat_provider import (
     OpenAICompatProvider,
     _requires_max_completion_tokens,
 )
-from nanobot.providers.registry import find_by_name
+from kohaku.providers.registry import find_by_name
 
 
 @pytest.mark.parametrize(

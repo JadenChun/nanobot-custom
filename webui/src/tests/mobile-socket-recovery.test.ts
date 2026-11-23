@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createMobileRuntime, type MobileEvent, type MobileTransport } from "@/lib/mobile-runtime";
-import { NanobotClient } from "@/lib/nanobot-client";
+import { KohakuClient } from "@/lib/kohaku-client";
 
 async function flushSocketWork(): Promise<void> {
   for (let index = 0; index < 40; index += 1) await Promise.resolve();
@@ -9,7 +9,7 @@ async function flushSocketWork(): Promise<void> {
 
 afterEach(() => vi.useRealTimers());
 
-describe("NanobotClient with the actual mobile socket adapter", () => {
+describe("KohakuClient with the actual mobile socket adapter", () => {
   it.each(["recover", "renew"] as const)("owns reconnect after %s and never replays an unacknowledged message", async (operation) => {
     vi.useFakeTimers();
     let listener: ((event: MobileEvent) => void) | null = null;
@@ -46,7 +46,7 @@ describe("NanobotClient with the actual mobile socket adapter", () => {
     };
     const runtime = createMobileRuntime(transport);
     const adapters: WebSocket[] = [];
-    const client = new NanobotClient({
+    const client = new KohakuClient({
       url: "wss://host/mobile/v1/ws",
       maxBackoffMs: 50,
       socketFactory: (url) => {

@@ -9,8 +9,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from nanobot.security import native_admission
-from nanobot.security.native_admission import (
+from kohaku.security import native_admission
+from kohaku.security.native_admission import (
     HostIdentity,
     NativeAdmissionActiveError,
     NativeAdmissionLedger,
@@ -126,7 +126,7 @@ def test_corrupt_receipt_fails_closed_instead_of_clearing_barrier(tmp_path, monk
 
 def test_first_activation_and_native_admission_share_a_fence(tmp_path, monkeypatch):
     _configure_identity(monkeypatch)
-    import nanobot.security.folder_grants as folder_grants
+    import kohaku.security.folder_grants as folder_grants
 
     home = tmp_path / "home"
     project = tmp_path / "project"

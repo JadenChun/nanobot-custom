@@ -7,12 +7,12 @@ from unittest.mock import MagicMock
 
 import pytest
 
-import nanobot.agent.tools.filesystem as filesystem
-from nanobot.agent.tools.filesystem import WriteFileTool
-from nanobot.agent.tools.image_generation import ImageGenerationTool, ImageGenerationToolConfig
-from nanobot.agent.turn import TurnContext
-from nanobot.config.schema import ProviderConfig
-from nanobot.providers.image_generation import ImageGenerationError
+import kohaku.agent.tools.filesystem as filesystem
+from kohaku.agent.tools.filesystem import WriteFileTool
+from kohaku.agent.tools.image_generation import ImageGenerationTool, ImageGenerationToolConfig
+from kohaku.agent.turn import TurnContext
+from kohaku.config.schema import ProviderConfig
+from kohaku.providers.image_generation import ImageGenerationError
 
 
 @pytest.mark.parametrize("operation", ("read", "write"))

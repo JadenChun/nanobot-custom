@@ -10,11 +10,11 @@ from unittest.mock import MagicMock
 
 import pytest
 
-import nanobot.session.mode_storage as mode_storage
-from nanobot.session.execution_owner import execution_lock_guard
-from nanobot.session.manager import Session, SessionManager, SessionStore
-from nanobot.session.runtime_authority import DurableSessionAuthority, OfflineSessionOperator
-from nanobot.session.session_mode import SessionModeError
+import kohaku.session.mode_storage as mode_storage
+from kohaku.session.execution_owner import execution_lock_guard
+from kohaku.session.manager import Session, SessionManager, SessionStore
+from kohaku.session.runtime_authority import DurableSessionAuthority, OfflineSessionOperator
+from kohaku.session.session_mode import SessionModeError
 
 
 def _legacy_with_checkpoint(tmp_path: Path) -> tuple[Path, Path, SessionManager, Session, bytes]:

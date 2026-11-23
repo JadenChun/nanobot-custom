@@ -22,7 +22,7 @@ const nativePackagesByTarget: Record<string, string[]> = {
 const root = join(import.meta.dir, "..")
 const projectRoot = join(root, "..")
 const extension = target.startsWith("win32-") ? ".exe" : ""
-const asset = `nanobot-tui-${target}${extension}`
+const asset = `kohaku-tui-${target}${extension}`
 const output = join(root, "dist", `${asset}.THIRD_PARTY_NOTICES.txt`)
 
 type PackageNotice = {

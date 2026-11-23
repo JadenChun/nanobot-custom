@@ -16,7 +16,7 @@ import { ToggleButton } from "@/components/settings/ToggleButton";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import type {
-  NanobotFeatureInfo,
+  KohakuFeatureInfo,
   SettingsPayload,
   WebSearchSettingsUpdate,
 } from "@/lib/types";
@@ -101,7 +101,7 @@ export function WebSettings({
   onRestart?: () => void;
   isRestarting?: boolean;
   requiresRestartPending: boolean;
-  olostepFeature?: NanobotFeatureInfo;
+  olostepFeature?: KohakuFeatureInfo;
   olostepInstalling: boolean;
   capabilityError: string | null;
 }) {

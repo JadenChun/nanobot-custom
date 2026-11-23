@@ -8,17 +8,17 @@ from types import SimpleNamespace
 
 import pytest
 
-from nanobot.agent.tools.context import RequestContext
-from nanobot.agent.tools.exec_session import ExecCompletion
-from nanobot.bus.queue import MessageBus
-from nanobot.config.loader import set_config_path
-from nanobot.process_completion import ProcessCompletionRuntime
-from nanobot.security.folder_grants import FolderGrantStore
-from nanobot.security.workspace_access import build_workspace_scope
-from nanobot.session.manager import SessionManager
-from nanobot.webui.media_maintenance import garbage_collect_generated_media
-from nanobot.webui.temporary_chats import WebUITemporaryChats
-from nanobot.webui.workspaces import WebUIWorkspaceController
+from kohaku.agent.tools.context import RequestContext
+from kohaku.agent.tools.exec_session import ExecCompletion
+from kohaku.bus.queue import MessageBus
+from kohaku.config.loader import set_config_path
+from kohaku.process_completion import ProcessCompletionRuntime
+from kohaku.security.folder_grants import FolderGrantStore
+from kohaku.security.workspace_access import build_workspace_scope
+from kohaku.session.manager import SessionManager
+from kohaku.webui.media_maintenance import garbage_collect_generated_media
+from kohaku.webui.temporary_chats import WebUITemporaryChats
+from kohaku.webui.workspaces import WebUIWorkspaceController
 
 
 class Assistant:
@@ -119,7 +119,7 @@ async def test_process_completion_restart_marks_unfinished_execution_unknown(tmp
 
 
 def test_partial_generated_media_deletion_retains_failed_ownership(tmp_path, monkeypatch):
-    import nanobot.attachments._media as media_storage
+    import kohaku.attachments._media as media_storage
 
     set_config_path(tmp_path / "config.json")
     SessionManager(tmp_path / "home", sessions_root=tmp_path / "sessions")
@@ -195,7 +195,7 @@ async def test_temporary_chat_retains_failed_cleanup_until_retry(tmp_path, monke
     media.write_text("attachment\n", encoding="utf-8")
     chats.register_media(owner, chat_id, [str(media)])
 
-    import nanobot.attachments._media as media_storage
+    import kohaku.attachments._media as media_storage
     original_unlink = media_storage.os.unlink
 
     def failing_unlink(self, *args, **kwargs):

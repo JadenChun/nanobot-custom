@@ -109,7 +109,7 @@ export class DiffViewer {
     private readonly treeSitterClient: TreeSitterClient,
   ) {
     this.root = new BoxRenderable(renderer, {
-      id: "nanobot-tui-diff-viewer",
+      id: "kohaku-tui-diff-viewer",
       position: "absolute",
       top: 0,
       left: 0,
@@ -122,7 +122,7 @@ export class DiffViewer {
       visible: false,
     })
     this.header = new TextRenderable(renderer, {
-      id: "nanobot-tui-diff-header",
+      id: "kohaku-tui-diff-header",
       content: "Diff · Last turn",
       width: "100%",
       height: 1,
@@ -131,7 +131,7 @@ export class DiffViewer {
       attributes: TextAttributes.BOLD,
     })
     this.fileHeader = new TextRenderable(renderer, {
-      id: "nanobot-tui-diff-file",
+      id: "kohaku-tui-diff-file",
       content: "",
       width: "100%",
       minHeight: 1,
@@ -141,7 +141,7 @@ export class DiffViewer {
       wrapMode: "word",
     })
     this.scroll = new ScrollBoxRenderable(renderer, {
-      id: "nanobot-tui-diff-scroll",
+      id: "kohaku-tui-diff-scroll",
       width: "100%",
       minHeight: 0,
       flexGrow: 1,
@@ -158,7 +158,7 @@ export class DiffViewer {
     })
     hideScrollbars(this.scroll)
     this.footer = new TextRenderable(renderer, {
-      id: "nanobot-tui-diff-footer",
+      id: "kohaku-tui-diff-footer",
       content: "←/→ file · pgup/pgdn scroll · esc close",
       width: "100%",
       height: 1,
@@ -270,7 +270,7 @@ export class DiffViewer {
     const text = edit.diff?.format === "unified" ? edit.diff.text?.trimEnd() : ""
     if (text) {
       this.scroll.add(new DiffRenderable(this.renderer, {
-        id: `nanobot-tui-diff-${this.selected}`,
+        id: `kohaku-tui-diff-${this.selected}`,
         diff: text,
         width: "100%",
         height: "auto",
@@ -314,7 +314,7 @@ export class DiffViewer {
 
   private text(content: string, tone: "muted" | "error" | "accent"): TextRenderable {
     return new TextRenderable(this.renderer, {
-      id: `nanobot-tui-diff-note-${this.selected}-${tone}`,
+      id: `kohaku-tui-diff-note-${this.selected}-${tone}`,
       content,
       width: "100%",
       minHeight: 1,

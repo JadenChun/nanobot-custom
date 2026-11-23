@@ -12,7 +12,7 @@ import pytest
 def _load_module():
     script_path = (
         Path(__file__).resolve().parents[2]
-        / "nanobot"
+        / "kohaku"
         / "skills"
         / "video-understanding"
         / "scripts"

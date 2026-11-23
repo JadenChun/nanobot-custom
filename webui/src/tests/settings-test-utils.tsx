@@ -123,9 +123,9 @@ export function settingsPayload(): SettingsPayload {
     },
     docs: {
       version: "0.2.2",
-      base_url: "https://nanobot.wiki/docs/0.2.2",
-      chat_apps_url: "https://nanobot.wiki/docs/0.2.2/getting-started/chat-apps",
-      latest_url: "https://nanobot.wiki/docs/latest",
+      base_url: "https://github.com/JadenChun/nanobot-custom/blob/staging/docs",
+      chat_apps_url: "https://github.com/JadenChun/nanobot-custom/blob/staging/docs/chat-apps.md",
+      latest_url: "https://github.com/JadenChun/nanobot-custom/blob/staging/docs",
     },
   };
 }
