@@ -1,20 +1,27 @@
 import type { SettingsPayload } from "@/lib/types";
 
-export type SettingsSectionKey =
-  | "overview"
-  | "appearance"
-  | "models"
-  | "image"
-  | "voice"
-  | "browser"
-  | "channels"
-  | "folders"
-  | "apps"
-  | "automations"
-  | "skills"
-  | "runtime"
-  | "advanced"
-  | "remote_access";
+const SETTINGS_SECTION_KEYS = [
+  "overview",
+  "appearance",
+  "models",
+  "image",
+  "voice",
+  "browser",
+  "channels",
+  "folders",
+  "apps",
+  "automations",
+  "skills",
+  "runtime",
+  "advanced",
+  "remote_access",
+] as const;
+
+export type SettingsSectionKey = (typeof SETTINGS_SECTION_KEYS)[number];
+
+export function isSettingsSectionKey(value: string | null): value is SettingsSectionKey {
+  return SETTINGS_SECTION_KEYS.some((section) => section === value);
+}
 
 type PendingRestartSection = "runtime" | "browser" | "image";
 export type PendingRestartSections = Record<PendingRestartSection, boolean>;

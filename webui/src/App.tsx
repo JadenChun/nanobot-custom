@@ -15,7 +15,7 @@ import { channelUiPresentation } from "@/channel-plugins/registry";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { Sidebar } from "@/components/Sidebar";
 import type { SidebarDeleteItem } from "@/components/ChatList";
-import type { SettingsSectionKey } from "@/components/settings/SettingsView";
+import { isSettingsSectionKey, type SettingsSectionKey } from "@/components/settings/contracts";
 import { ThreadShell } from "@/components/thread/ThreadShell";
 import { floatingSurfaceElevationClassName } from "@/components/ui/floating-surface";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
@@ -145,27 +145,6 @@ function SurfaceLoadingFallback() {
       <div className="h-28 w-full max-w-3xl animate-pulse rounded-md bg-muted/40 motion-reduce:animate-none" />
     </div>
   );
-}
-
-const SETTINGS_SECTION_KEYS: SettingsSectionKey[] = [
-  "overview",
-  "appearance",
-  "models",
-  "image",
-  "voice",
-  "browser",
-  "channels",
-  "folders",
-  "apps",
-  "automations",
-  "skills",
-  "runtime",
-  "advanced",
-  "remote_access",
-];
-
-function isSettingsSectionKey(value: string | null): value is SettingsSectionKey {
-  return SETTINGS_SECTION_KEYS.includes(value as SettingsSectionKey);
 }
 
 function defaultShellRoute(): ShellRoute {

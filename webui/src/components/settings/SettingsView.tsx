@@ -3,8 +3,6 @@ import type { SettingsSectionKey } from "@/components/settings/contracts";
 import { useSettingsController } from "@/components/settings/useSettingsController";
 import type { SettingsPayload, SkillSummary, WorkspacesPayload } from "@/lib/types";
 
-export type { SettingsSectionKey } from "@/components/settings/contracts";
-
 interface SettingsViewProps {
   theme: "light" | "dark";
   initialSection?: SettingsSectionKey;
