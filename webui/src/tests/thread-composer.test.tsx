@@ -4949,6 +4949,9 @@ describe("A3-4 P3 queued admission cases (U1-U3)", () => {
       target: { files: [new File(["image"], "draft.png", { type: "image/png" })] },
     });
     await screen.findByText("draft.png");
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Add to queue" })).toBeEnabled();
+    });
     fireEvent.keyDown(input, { key: "Enter" });
     fireEvent.change(input, { target: { value: "later text" } });
     fireEvent.keyDown(input, { key: "Enter" });
