@@ -10,6 +10,8 @@ const MIN_INSPECTOR_WIDTH = 360;
 const MIN_CHAT_WIDTH = 420;
 const MAX_INSPECTOR_WIDTH = 960;
 export const MIN_INSPECTOR_DOCK_WIDTH = MIN_CHAT_WIDTH + MIN_INSPECTOR_WIDTH;
+const INSPECTOR_ENTER_CLASS =
+  "animate-in fade-in-0 slide-in-from-right-6 rtl:slide-in-from-left-6 duration-200 ease-out motion-reduce:animate-none";
 
 export type InspectorTabId = "subagents" | "file" | "assets";
 
@@ -60,7 +62,10 @@ export function ThreadInspector({
     <aside
       aria-label={docked ? t("thread.inspector.label", "Chat side panel") : undefined}
       className={!visible ? "hidden" : docked
-          ? "relative flex min-h-0 min-w-0 shrink-0 flex-col border-s border-border/70 bg-background"
+          ? cn(
+              "relative flex min-h-0 min-w-0 shrink-0 flex-col border-s border-border/70 bg-background",
+              INSPECTOR_ENTER_CLASS,
+            )
           : "contents"}
       style={docked ? { width } : undefined}
     >
@@ -200,7 +205,10 @@ export function ThreadInspectorDialog({
       <Dialog.Portal>
         <Dialog.Content
           aria-modal="true"
-          className="fixed inset-0 z-50 flex min-h-0 flex-col overflow-hidden bg-background pb-[env(safe-area-inset-bottom)] pt-[env(safe-area-inset-top)]"
+          className={cn(
+            "fixed inset-0 z-50 flex min-h-0 flex-col overflow-hidden bg-background pb-[env(safe-area-inset-bottom)] pt-[env(safe-area-inset-top)]",
+            INSPECTOR_ENTER_CLASS,
+          )}
           data-testid={testId}
           onOpenAutoFocus={(event) => {
             event.preventDefault();
