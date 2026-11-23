@@ -1351,19 +1351,21 @@ class JsonlSessionStore:
                     view = view[os.write(tmp_fd, view) :]
                 remaining = body_size
                 offset = body_offset
+                copy_file_range = os.copy_file_range if hasattr(os, "copy_file_range") else None
                 while remaining > 0:
-                    try:
-                        copied = os.copy_file_range(
-                            src_fd, tmp_fd, remaining, offset_src=offset,
-                        )
-                    except OSError as exc:
-                        if exc.errno not in {
-                            errno.ENOSYS,
-                            errno.EXDEV,
-                            errno.EINVAL,
-                            getattr(errno, "EOPNOTSUPP", errno.EINVAL),
-                        }:
-                            raise
+                    copied = None
+                    if copy_file_range is not None:
+                        try:
+                            copied = copy_file_range(src_fd, tmp_fd, remaining, offset_src=offset)
+                        except OSError as exc:
+                            if exc.errno not in {
+                                errno.ENOSYS,
+                                errno.EXDEV,
+                                errno.EINVAL,
+                                getattr(errno, "EOPNOTSUPP", errno.EINVAL),
+                            }:
+                                raise
+                    if copied is None:
                         chunk = os.pread(src_fd, min(remaining, 65536), offset)
                         if not chunk:
                             raise SessionStorageError() from None

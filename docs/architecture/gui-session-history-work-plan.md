@@ -562,6 +562,14 @@ production code changed.
 **Status: COMPLETE.** All three unblock conditions and cutover invariants are
 implemented and verified with zero regressions.
 
+**macOS storage check (2026-11-23).** Staging `8034271c9` reproduced three
+failures because the [header replacement path](../../nanobot/session/manager.py)
+called `os.copy_file_range` before taking its buffered fallback. With the fallback
+used when the function is unavailable, both existing storage suites passed
+(26 tests on macOS arm64, Python 3.14.2). An isolated browser run sent a message,
+received a synthetic reply, and reopened the saved chat without an error row.
+This verifies the affected flow, not the entire macOS release.
+
 - **Bounded canonical event-offset index ([canonical_event_index.py](../../nanobot/session/canonical_event_index.py)):**
   - Stores a rebuildable per-event byte-offset map under
     `<sessions_dir>/.event-index/<storage_key>.json` (registered in
