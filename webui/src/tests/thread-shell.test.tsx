@@ -7793,7 +7793,7 @@ describe("ThreadShell", () => {
 
       await screen.findByText(replyText("Here are the candidates."));
       const shell = container.querySelector("section") as HTMLElement;
-      Object.defineProperty(shell, "clientWidth", { configurable: true, value: 1_200 });
+      Object.defineProperty(shell, "clientWidth", { configurable: true, value: 2_000 });
       const observer = resizeObserver.observers.find((entry) => entry.elements.includes(shell));
       expect(observer).toBeDefined();
       act(() => {
@@ -8064,11 +8064,15 @@ describe("ThreadShell", () => {
       await waitFor(() => {
         expect(screen.queryByTestId("session-summary-card")).not.toBeInTheDocument();
       });
-      expect(summaryButton).toHaveAttribute("aria-pressed", "false");
+      expect(screen.queryByRole("button", { name: "Session details" })).not.toBeInTheDocument();
+
+      resize(390);
+      expect(screen.queryByRole("button", { name: "Session details" })).not.toBeInTheDocument();
 
       // Widening back restores the card automatically.
       resize(1_400);
       expect(await screen.findByTestId("session-summary-gutter")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Session details" })).toHaveAttribute("aria-pressed", "true");
     } finally {
       resizeObserver.restore();
     }

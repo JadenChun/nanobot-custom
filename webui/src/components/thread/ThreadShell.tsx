@@ -3878,15 +3878,15 @@ export function ThreadShell({
       : shellWidth > 0
         ? Math.max(0, shellWidth - (inspectorOpen && inspectorDocked ? 440 : 0))
         : 0;
-  const canFitSessionSummary = effectiveChatPaneWidth >= SESSION_SUMMARY_MIN_PANE_WIDTH;
+  const sessionSummaryAvailable = Boolean(historyKey)
+    && !isMobileRuntimeActive()
+    && effectiveChatPaneWidth >= SESSION_SUMMARY_MIN_PANE_WIDTH
+    && !inspectorModal;
   const sessionSummaryInGutter = effectiveChatPaneWidth >= SESSION_SUMMARY_GUTTER_MIN_WIDTH;
-  const sessionSummaryVisible =
-    Boolean(historyKey) && sessionSummaryOpen && canFitSessionSummary && !inspectorModal;
+  const sessionSummaryVisible = sessionSummaryAvailable && sessionSummaryOpen;
 
-  // Session summary stays in the chat toolbar and toggles a non-overlapping
-  // card container within the chat space (automatically hidden when space is
-  // too narrow to display without colliding with the chat history).
-  const sessionInfoAction = historyKey ? (
+  // Only offer the toggle where the summary can appear beside the transcript.
+  const sessionInfoAction = sessionSummaryAvailable ? (
     <Button
       type="button"
       variant="ghost"
