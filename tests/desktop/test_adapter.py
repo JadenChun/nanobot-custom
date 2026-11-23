@@ -173,15 +173,20 @@ def test_desktop_start_reports_unsupported_platform_without_launching(
     sys.platform != "linux" and not darwin_desktop_available(),
     reason="requires an instance-bound Linux or macOS process handle",
 )
+@pytest.mark.parametrize("reject_identity", [False, True], ids=["admit", "refuse"])
 def test_desktop_start_returns_handle_without_waiting_for_readiness(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    reject_identity: bool,
 ) -> None:
+    from nanobot.gateway.runtime import GatewayClientLease
+
     config_path = tmp_path / "profile" / "config.json"
     _prepared_config(config_path, tmp_path / "workspace")
     adapter = DesktopAdapter()
     gateway_pid: int | None = None
     handle: str | None = None
+    rejected_child: subprocess.Popen[bytes] | None = None
     try:
         adapter.handle("hello", {"config_path": str(config_path), "workspace": None})
         runtime = adapter._runtime
@@ -193,10 +198,27 @@ def test_desktop_start_returns_handle_without_waiting_for_readiness(
             pytest.fail("start must not perform readiness probes")
 
         monkeypatch.setattr(adapter, "_ready", readiness_must_be_polled_later)
+        if reject_identity:
+            def refuse_spawn(_pid: int, _argv: list[str]) -> bool:
+                nonlocal rejected_child
+                rejected_child = runtime._owned_process
+                return False
+
+            monkeypatch.setattr(runtime, "_verify_desktop_process", refuse_spawn)
         began = time.monotonic()
         started = adapter.handle("start", {})
         elapsed = time.monotonic() - began
         assert elapsed < 3.0
+        if reject_identity:
+            assert started["state"] == "unavailable"
+            assert started["code"] == "gateway_identity_conflict"
+            assert started["handle"] is None
+            assert rejected_child is not None and rejected_child.poll() is not None
+            assert runtime._owned_process is None
+            assert not runtime.paths.state_path.exists()
+            assert runtime._desktop_lease is None
+            assert not GatewayClientLease(runtime, kind="test").state_path.exists()
+            return
         assert started["state"] == "starting"
         handle_value = started["handle"]
         assert isinstance(handle_value, str)
@@ -225,11 +247,12 @@ def test_desktop_start_returns_handle_without_waiting_for_readiness(
                     identity = runtime.desktop_identity(selection.options)
                     if identity is not None and (gateway_pid is None or identity.pid == gateway_pid):
                         runtime.stop_desktop(selection.options, handle or identity.handle, timeout_s=5)
-                child = runtime._owned_process
-                if child is not None and gateway_pid in {None, child.pid}:
-                    child.wait(timeout=5)
             except Exception:
                 pass
+            child = runtime._owned_process or rejected_child
+            if child is not None and gateway_pid in {None, child.pid} and child.poll() is None:
+                child.kill()
+                child.wait(timeout=5)
         adapter.close()
 
 

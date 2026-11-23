@@ -370,6 +370,7 @@ class GatewayRuntime(ManagedProcessRuntime[ProcessStartOptions]):
                 with self._desktop_lock(self._transition_lock(), remaining):
                     with self._desktop_lock(self._lifecycle_lock(), remaining):
                         start_new = False
+                        was_auto_stop = False
                         with self._desktop_lock(lease.lock, remaining):
                             clients = lease._live_state()
                             if clients.get("stopping"):
@@ -428,6 +429,7 @@ class GatewayRuntime(ManagedProcessRuntime[ProcessStartOptions]):
                                     return self._desktop_admission_failure(
                                         "gateway_listener_conflict"
                                     )
+                                was_auto_stop = bool(clients.get("auto_stop"))
                                 clients["auto_stop"] = False
                                 lease._register(clients)
                                 self._desktop_lease = lease
@@ -436,42 +438,11 @@ class GatewayRuntime(ManagedProcessRuntime[ProcessStartOptions]):
                             # _start_background() calls status(), which takes a
                             # fresh client lease lock. Release this lock after
                             # atomically registering the persistent client.
-                            result = self._start_background(options)
-                            if not result.ok:
-                                with self._desktop_lock(lease.lock, remaining):
-                                    clients = lease._live_state()
-                                    lease._clients(clients).pop(lease.token, None)
-                                    lease._acquired = False
-                                    lease._write_or_clear(clients)
-                                self._desktop_lease = None
-                                return self._desktop_admission_failure(
-                                    "gateway_start_failed",
-                                    status=result.status,
-                                )
-                            state = self._read_state()
-                            if state is None:
-                                return self._desktop_admission_failure(
-                                    "gateway_identity_unavailable",
-                                    status=result.status,
-                                )
-                            try:
-                                identity = self._classify_desktop_state(state, options)
-                            except GatewayDesktopLifecycleError as exc:
-                                return self._desktop_admission_failure(
-                                    exc.code,
-                                    status=result.status,
-                                )
-                            if not self._desktop_identity_compatible(identity) and not identity.starting:
-                                return self._desktop_admission_failure(
-                                    "gateway_identity_unavailable",
-                                    status=result.status,
-                                )
-                            return DesktopAdmissionResult(
-                                True,
-                                "gateway_desktop_started",
-                                result.status,
-                                False,
-                                identity,
+                            return self._start_desktop_child(
+                                options,
+                                lease,
+                                lock_timeout_s=remaining,
+                                was_auto_stop=was_auto_stop,
                             )
             except GatewayDesktopLifecycleError as exc:
                 return self._desktop_admission_failure(exc.code)
@@ -479,6 +450,81 @@ class GatewayRuntime(ManagedProcessRuntime[ProcessStartOptions]):
                 if time.monotonic() >= deadline:
                     return self._desktop_admission_failure("gateway_busy")
                 self._sleep(min(0.05, max(deadline - time.monotonic(), 0.0)))
+
+    def _start_desktop_child(
+        self,
+        options: GatewayStartOptions,
+        lease: GatewayClientLease,
+        *,
+        lock_timeout_s: float,
+        was_auto_stop: bool,
+    ) -> DesktopAdmissionResult:
+        previous_child: object = self._owned_process
+        admitted = False
+        try:
+            result = self._start_background(options)
+            if not result.ok:
+                return self._desktop_admission_failure("gateway_start_failed", status=result.status)
+            state = self._read_state()
+            if state is None:
+                return self._desktop_admission_failure("gateway_identity_unavailable")
+            identity = self._classify_desktop_state(state, options)
+            if not self._desktop_identity_compatible(identity) and not identity.starting:
+                return self._desktop_admission_failure("gateway_identity_unavailable")
+            admitted = True
+            return DesktopAdmissionResult(
+                True, "gateway_desktop_started", result.status, False, identity,
+            )
+        finally:
+            if not admitted:
+                try:
+                    self._discard_unadmitted_desktop_child(previous_child)
+                finally:
+                    with self._desktop_lock(lease.lock, lock_timeout_s):
+                        clients = lease._live_state()
+                        lease._clients(clients).pop(lease.token, None)
+                        clients["auto_stop"] = was_auto_stop
+                        lease._acquired = False
+                        lease._write_or_clear(clients)
+                    self._desktop_lease = None
+
+    def _discard_unadmitted_desktop_child(self, previous_child: object) -> None:
+        child = self._owned_process
+        if child is None or child is previous_child:
+            return
+        # The child cannot claim the gateway while startup holds the transition
+        # lock. Cancel this spawn using its own handle, never a PID from disk.
+        try:
+            if child.poll() is None:
+                if self.platform_name == "Darwin":
+                    watch = DarwinProcessWatch.capture(child.pid)
+                    try:
+                        if child.poll() is None:
+                            watch.send_signal(signal.SIGKILL)
+                    finally:
+                        watch.close()
+                else:
+                    pidfd = self._open_pidfd(child.pid)
+                    try:
+                        if child.poll() is None:
+                            self._pidfd_send_signal(pidfd, signal.SIGKILL)
+                    finally:
+                        os.close(pidfd)
+        except OSError:
+            if child.poll() is None:
+                raise GatewayDesktopLifecycleError("gateway_start_failed") from None
+        try:
+            child.wait(timeout=1.0)
+        except (OSError, subprocess.TimeoutExpired):
+            raise GatewayDesktopLifecycleError("gateway_start_failed") from None
+        self._owned_process = None
+        state = self._read_state()
+        if (
+            state is not None
+            and state.get("pid") == child.pid
+            and state.get("command") == child.args
+        ):
+            self._clear_state()
 
     def adopt_desktop_handle(
         self,
@@ -651,7 +697,7 @@ class GatewayRuntime(ManagedProcessRuntime[ProcessStartOptions]):
                         return self._desktop_failure("gateway_identity_conflict")
                     try:
                         if darwin_watch is not None:
-                            darwin_watch.terminate()
+                            darwin_watch.send_signal(signal.SIGTERM)
                         else:
                             assert pidfd is not None
                             self._pidfd_send_signal(pidfd, signal.SIGTERM)
