@@ -1446,7 +1446,7 @@
       "view": "Visualização de recursos",
       "byCall": "Por chamada de ferramenta",
       "all": "Recursos da sessão",
-      "total": "Imagens: {{count}}",
+      "total": "Recursos: {{count}}",
       "candidates": "Candidatos: {{count}}",
       "loading": "Carregando recursos gerados…",
       "loadFailed": "Não foi possível carregar os recursos gerados.",

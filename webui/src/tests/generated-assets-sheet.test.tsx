@@ -209,6 +209,26 @@ describe("GeneratedAssetsSheet", () => {
       expect.stringContaining("/api/generated-assets?limit=50"),
       expect.any(Object),
     );
+
+    vi.mocked(fetch).mockResolvedValueOnce(response({
+      ...payload,
+      sessionKey: "*",
+      total: 1,
+      totalScope: "page",
+      next: null,
+      groups: [{
+        ...payload.groups[1],
+        sessionKey: "websocket:lib",
+        artifacts: [{
+          ...asset("v1", "clip.mp4"),
+          kind: "video",
+          mime: "video/mp4",
+        }],
+      }],
+    }));
+    await user.click(screen.getByRole("button", { name: "Load more" }));
+    expect(await screen.findByText("Assets: 3")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Open clip.mp4" })).toBeInTheDocument();
   });
 
   it("renders newest-first session assets first in flat and call views", async () => {
@@ -263,6 +283,7 @@ describe("GeneratedAssetsSheet", () => {
     await user.click(screen.getByRole("button", { name: "Open generated assets" }));
     const thumbnail = await screen.findByTestId("generated-asset-thumbnail");
     expect(thumbnail.querySelector("video")).not.toBeNull();
+    expect(screen.getByText("Assets: 1")).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "Open clip.mp4" }));
 

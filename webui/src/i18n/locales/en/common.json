@@ -1446,7 +1446,7 @@
       "view": "Asset view",
       "byCall": "By tool call",
       "all": "Session assets",
-      "total": "Images: {{count}}",
+      "total": "Assets: {{count}}",
       "candidates": "Candidates: {{count}}",
       "loading": "Loading generated assets…",
       "loadFailed": "Could not load generated assets.",

@@ -1446,7 +1446,7 @@
       "view": "Tampilan aset",
       "byCall": "Per panggilan alat",
       "all": "Aset sesi",
-      "total": "Gambar: {{count}}",
+      "total": "Aset: {{count}}",
       "candidates": "Kandidat: {{count}}",
       "loading": "Memuat aset yang dihasilkan…",
       "loadFailed": "Tidak dapat memuat aset yang dihasilkan.",

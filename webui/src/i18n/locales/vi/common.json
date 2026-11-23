@@ -1446,7 +1446,7 @@
       "view": "Chế độ xem nội dung",
       "byCall": "Theo lệnh gọi công cụ",
       "all": "Nội dung phiên",
-      "total": "Hình ảnh: {{count}}",
+      "total": "Nội dung: {{count}}",
       "candidates": "Ứng viên: {{count}}",
       "loading": "Đang tải nội dung đã tạo…",
       "loadFailed": "Không thể tải nội dung đã tạo.",

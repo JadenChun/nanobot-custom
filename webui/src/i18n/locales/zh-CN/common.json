@@ -1446,7 +1446,7 @@
       "view": "素材视图",
       "byCall": "按工具调用",
       "all": "会话素材",
-      "total": "图片：{{count}}",
+      "total": "素材：{{count}}",
       "candidates": "候选：{{count}}",
       "loading": "正在加载生成的素材…",
       "loadFailed": "无法加载生成的素材。",

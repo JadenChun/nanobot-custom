@@ -1446,7 +1446,7 @@
       "view": "素材檢視",
       "byCall": "依工具呼叫",
       "all": "工作階段素材",
-      "total": "圖片：{{count}}",
+      "total": "素材：{{count}}",
       "candidates": "候選：{{count}}",
       "loading": "正在載入生成的素材…",
       "loadFailed": "無法載入生成的素材。",

@@ -1446,7 +1446,7 @@
       "view": "에셋 보기",
       "byCall": "도구 호출별",
       "all": "세션 에셋",
-      "total": "이미지: {{count}}",
+      "total": "에셋: {{count}}",
       "candidates": "후보: {{count}}",
       "loading": "생성된 에셋을 불러오는 중…",
       "loadFailed": "생성된 에셋을 불러오지 못했습니다.",
