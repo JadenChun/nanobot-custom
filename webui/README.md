@@ -28,6 +28,10 @@ webui/                 source tree (this directory)
 nanobot/web/dist/      build output served by the gateway
 ```
 
+Use the [WebUI guide](../docs/webui.md) to find product flows. The hash routes
+are owned by [`App.tsx`](src/App.tsx), and Settings section IDs are defined in
+[`contracts.ts`](src/components/settings/contracts.ts).
+
 ## Develop the WebUI (Vite HMR)
 
 ### 1. Install nanobot from source
@@ -49,8 +53,9 @@ nanobot webui --dev
 ```
 
 The command safely prepares the local WebSocket channel, starts both the gateway and Vite,
-and opens `http://127.0.0.1:5173`. Vite proxies to the configured WebSocket channel and applies
-frontend changes with HMR. Press Ctrl+C in that terminal to stop both processes.
+and opens `http://127.0.0.1:5173`. Vite serves the frontend with HMR and proxies
+HTTP requests to the gateway. The browser connects directly to the gateway's
+app WebSocket. Press Ctrl+C in that terminal to stop both processes.
 
 Use `--no-open` to skip opening a browser. `--dev` is foreground-only and cannot be combined
 with `--background`.
@@ -81,13 +86,15 @@ In another terminal:
 
 ```bash
 cd webui
-bun install            # npm install also works
+bun install --frozen-lockfile
 bun run dev
 ```
 
-Then open `http://127.0.0.1:5173`.
+Then open `http://127.0.0.1:5173`. Rerun the frozen install after syncing
+changes to `bun.lock`; if you use npm, run `npm ci` instead.
 
-By default the dev server proxies `/api`, `/webui`, `/auth`, and WebSocket traffic to `http://127.0.0.1:8765`.
+By default Vite proxies HTTP requests to `/api`, `/webui`, and `/auth` to
+`http://127.0.0.1:8765`. It does not proxy the app WebSocket.
 
 If your gateway listens on a non-default port, point the dev server at it:
 
@@ -114,6 +121,10 @@ The gateway picks up the new bundle on the next restart.
 cd webui
 bun run test
 ```
+
+For settings, chat, or history changes, also use a browser against an isolated
+gateway: open Settings → Models, send a message, and reload the saved chat.
+Use disposable config and workspace state, not your installed instance.
 
 ## Acknowledgements
 

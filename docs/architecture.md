@@ -4,23 +4,26 @@ This page maps nanobot's runtime behavior to source files. Use it when you are d
 
 For the product-level mental model, read [`concepts.md`](./concepts.md) first.
 
-This page describes the pre-refactor staging architecture. Its updated code baseline is
-`ab9598217f7bfe230466bc4c5513f188e869fced`, which combines remote staging
-`29612c3df01dc3dce3501fe349bcf555cd6c58b6` with the local feature repairs and a
-validated cancellation/recovery correction. The
-[feature repair results](./audits/feature-implementation-2026-11-05/repair-results.md)
-and [macOS follow-up](./audits/feature-implementation-2026-11-05/macos-repair-results.md)
-record those changes and their original validation limits.
-The separately pinned A3 candidate is documented in the [A3 architecture record](./architecture/a3/README.md),
-with its design, alternatives, decision status, ordered plan and review gates. Publishing that
-record does not make the candidate merged behavior; its implementation merge remains on hold.
+This guide describes the staging runtime after the
+[A3 implementation merge](https://github.com/JadenChun/nanobot-custom/pull/27).
+The [A3 architecture record](./architecture/a3/README.md) preserves the pinned
+pre-refactor baseline, decisions, reviews, and qualification evidence. A merge
+is not release or platform acceptance.
 
 ## Core Flow
 
+Gateway clients use the WebSocket channel (Android reaches it through the
+remote edge). The Python SDK and OpenAI-compatible API can submit turns without
+a chat channel. The channel response path below does not represent saved
+history reads.
+
 ```mermaid
 flowchart LR
-    Channel["Channel<br/>CLI, WebUI, chat apps"] --> Bus["MessageBus<br/>InboundMessage"]
+    Clients["WebUI, TUI, desktop, Android"] <--> Channel["Channel adapter"]
+    ChatApps["External chat apps"] <--> Channel
+    Channel --> Bus["MessageBus<br/>InboundMessage"]
     Bus --> Loop["AgentLoop<br/>session, workspace, context"]
+    Direct["Python SDK / OpenAI-compatible API"] <-->|Direct turn| Loop
     Loop --> Runner["AgentRunner<br/>provider/tool loop"]
     Runner --> Provider["Provider<br/>LLM backend"]
     Provider --> Runner
@@ -37,6 +40,8 @@ Main files:
 
 | Area | Files |
 |---|---|
+| Runtime acquisition and teardown | `nanobot/runtime_composition.py` |
+| CLI, Python SDK, and HTTP API | `nanobot/cli/commands.py`, `nanobot/nanobot.py`, `nanobot/api/server.py` |
 | Message events and queue | `nanobot/bus/events.py`, `nanobot/bus/queue.py` |
 | Turn orchestration | `nanobot/agent/loop.py` |
 | Provider/tool conversation loop | `nanobot/agent/runner.py` |
@@ -134,13 +139,10 @@ Channels are discovered by scanning self-contained packages under `nanobot/chann
 
 ## WebUI and Gateway
 
-`nanobot gateway` starts:
-
-- enabled chat channels;
-- the WebSocket channel when configured;
-- workspace-scoped cron service;
-- system jobs such as Dream and heartbeat;
-- the health endpoint on `gateway.port`.
+`nanobot gateway` starts enabled channels and the health endpoint on
+`gateway.port`. By default, cron stores definitions without running them.
+See [Automations](./automations.md) for the opt-in cron and local-trigger
+execution paths. The normal gateway does not start periodic Heartbeat or Dream.
 
 The packaged WebUI is served by the WebSocket channel, not the health endpoint:
 
@@ -151,11 +153,18 @@ The packaged WebUI is served by the WebSocket channel, not the health endpoint:
 
 WebUI source lives in `webui/`. The production build is written to `nanobot/web/dist/` and bundled into the wheel.
 
-Useful docs:
+The browser, [TUI](../tui/README.md), [Kohaku desktop](../desktop/README.md), and
+[Android remote](../mobile/README.md) connect to gateway client surfaces; they
+do not each run a separate agent loop. The gateway handles saved-history reads
+separately from live turn admission and control. Rendering a saved reply does
+not resume the turn or authorize Stop.
 
-- [`webui.md`](./webui.md) for the WebUI user guide;
-- [`../webui/README.md`](../webui/README.md) for frontend source development;
-- [`websocket.md`](./websocket.md) for protocol details.
+For client behavior and verification, start with the [WebUI user guide](./webui.md),
+the [WebUI source guide](../webui/README.md), or the
+[WebSocket protocol](./websocket.md). The
+[Android desktop-parity inventory](../mobile/contracts/desktop-parity.json)
+maps shared flows to routes, native operations, and checks; it is not a
+substitute for running the Android client.
 
 ## Tools
 
@@ -243,7 +252,8 @@ Session history is the near-term conversation replay. Memory is the longer-term 
 | Consolidation source history | `<workspace>/memory/history.jsonl` |
 | Bootstrap identity files | `<workspace>/SOUL.md`, `<workspace>/USER.md`, templates under `nanobot/templates/` |
 
-Dream is implemented in `nanobot/agent/memory.py` and scheduled by the runtime when enabled.
+Dream is implemented in `nanobot/agent/memory.py`. Run it manually with
+`/dream`; see [Memory](./memory.md#stage-2-dream) for behavior and configuration.
 
 ## Security Boundaries
 
@@ -278,10 +288,10 @@ Prefer existing registry/discovery patterns over ad hoc wiring.
 Common checks:
 
 ```bash
-pytest tests/test_openai_api.py::test_function -v
+uv run --no-sync python -m pytest tests/webui/test_dev.py -v
 ruff check nanobot/
-cd webui && bun run test
-cd webui && bun run build
+(cd webui && bun run test)
+(cd webui && bun run build)
 ```
 
 Choose tests based on the changed surface:

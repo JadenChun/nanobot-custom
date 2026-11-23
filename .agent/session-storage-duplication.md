@@ -1,13 +1,15 @@
-# Deferred design note: single session storage (W9)
+# Historical design note: single session storage (W9)
 
-**Status:** deferred, not started. Recorded so the context survives the
-session-load simplification work (WI-1 … WI-8).
+**Status:** pre-cutover investigation. For the implemented text-reference
+cutover, legacy-read compatibility, and rollback behavior, see
+[Package 5](../docs/architecture/gui-session-history-work-plan.md#package-5-bounded-canonical-event-offset-reader--reversible-writer-cutover).
+The measurements and proposals below describe the earlier design.
 
 **One-line summary:** the WebUI keeps a second, derived copy of every
 conversation. Removing that copy is the largest simplification available in the
 session-load path, but it is a persistence migration, not a load optimisation.
 
-## What exists today
+## What existed before the cutover
 
 Two independent stores hold the same conversation:
 

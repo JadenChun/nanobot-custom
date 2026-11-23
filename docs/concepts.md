@@ -80,7 +80,7 @@ That flow is the same whether the message starts in the CLI, WebUI, Telegram, Di
 |---|---|---|
 | CLI one-shot | `nanobot agent -m "..."` | First-run checks, scripts, and quick local questions |
 | CLI interactive | `nanobot agent` | Terminal chat with persistent session history |
-| Gateway | `nanobot gateway` | Chat apps, WebUI, heartbeat, Dream, and long-running service mode |
+| Gateway | `nanobot gateway` | Chat apps, WebUI, and long-running service mode |
 | OpenAI-compatible API | `nanobot serve` | Programmatic access through `/v1/chat/completions` |
 | WebUI | `nanobot webui` | Prepare the local WebUI, start the gateway, and open the browser workbench |
 
@@ -129,7 +129,8 @@ nanobot uses two related stores:
 | Sessions | `<config-dir>/sessions/<workspace-id>/*.jsonl` | Recent conversation turns replayed into context |
 | Memory | `<workspace>/memory/MEMORY.md` and `<workspace>/memory/history.jsonl` | Long-term facts and consolidated history |
 
-Dream is a periodic consolidation job. It reads accumulated history and updates workspace memory so useful context can survive beyond short session replay.
+Dream reads accumulated history and updates workspace memory so useful context
+can survive beyond short session replay. Run it manually with `/dream`.
 
 The configured workspace contains a `.nanobot/workspace-id` file. It contains only an
 opaque random identifier—never conversation content or credentials. Keep it with workspace
@@ -161,13 +162,15 @@ the package contract.
 
 ## Tools and Safety
 
-Tools are discovered automatically from built-in modules and plugin entry points. Common tool groups include:
+Built-in tools are registered explicitly; installed tool packages can register
+through entry points. See [Architecture → Tools](./architecture.md#tools) for
+the registration boundary. Common tool groups include:
 
 - file read/write/edit and patching;
 - shell execution with configurable sandboxing;
 - web search and web fetch with SSRF checks;
 - MCP servers;
-- cron reminders, local triggers, and heartbeat tasks;
+- cron reminders and local triggers;
 - image generation;
 - subagents and runtime self-inspection.
 
@@ -175,29 +178,11 @@ Security-sensitive controls live in [`configuration.md#security`](./configuratio
 
 ## Background Jobs
 
-When `nanobot gateway` starts, it runs workspace-scoped automations and
-registers system jobs:
-
-- `dream`, when `agents.defaults.dream.enabled` is true;
-- `heartbeat`, when `gateway.heartbeat.enabled` is true.
-
-Heartbeat reads `<workspace>/HEARTBEAT.md`. If the file has tasks under `## Active Tasks`, nanobot executes them and sends only useful/actionable results to the most recently active chat target. Routine "nothing changed" results are suppressed.
-
-User-created reminders use the same cron service but are not the same as the
-protected heartbeat system job. They run as scheduled turns in their origin
-chat/session and normally deliver the result back to that channel.
-
-Local triggers are also session-bound, but they do not have their own
-schedule. Create one from the target chat with `/trigger <name>`, then call
-`nanobot trigger <id> "<message>"` when a local script or external service wants
-nanobot to respond in that session. Webhook servers, third-party auth, and
-event-to-message formatting stay outside nanobot. Trigger deliveries are stored
-in the workspace until the linked agent turn finishes successfully. If the
-target session is busy, the trigger waits until that session is idle instead of
-being injected into the active turn. The message is recorded as an automation
-turn in that session. Delivery is at-least-once, so external systems should
-tolerate repeated trigger messages; a delivery that reaches the agent but fails
-is marked failed rather than retried forever.
+Scheduled automations and local triggers are separate, opt-in gateway paths.
+Scheduled execution starts a fresh turn with Telegram delivery. Local triggers
+send queued messages to a bound chat session. Periodic Heartbeat and Dream are
+inactive in the normal gateway. See [Automations](./automations.md) for how to
+enable the supported paths and what each one delivers.
 
 ## Where to Go Next
 

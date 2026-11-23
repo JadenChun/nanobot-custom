@@ -1,11 +1,11 @@
 # A3 architecture record
 
-This records the A3 audit and candidate refactor. The architecture baseline is
-dated 2026-11-11; implementation progress is updated through 2026-11-13. It collects
-the design, reasons, implementation order and evidence in the repository.
-**The plan is frozen as `A3-PLAN-2026-11-11`; the implementation merge is on HOLD.**
-The [freeze record](plan-review.md#frozen-baseline-and-subsequent-work) identifies the
-documentation baseline. Implementation and release acceptance remain open.
+This records the A3 audit, design, implementation, and qualification evidence.
+The plan is frozen as `A3-PLAN-2026-11-11`; the
+[freeze record](plan-review.md#frozen-baseline-and-subsequent-work) identifies
+that historical documentation baseline. The implementation landed on staging
+in [PR #27](https://github.com/JadenChun/nanobot-custom/pull/27). The merge does
+not close separate review, release, or platform qualification gates.
 
 The product decisions and plan are settled. Start with
 the [planning review and accepted D1–D7 direction](plan-review.md). The user selected Linux and
@@ -31,11 +31,11 @@ Candidate-code findings and runtime qualification are later work and do not sele
 planning requirements.
 
 **Linux and Android emulator verification (2026-11-13).** The implementation
-branch includes current staging. The full Linux suite, strict Python check, and
+branch included staging at the time. The full Linux suite, strict Python check, and
 installed WebUI scenarios passed. The Android emulator exercised signed pairing,
 access renewal, child history, and owner revocation across the recorded builds.
 The handoff pins the artifacts and lists the remaining release acceptance work.
-[Latest handoff](implementation-handoff.md#linux-and-android-emulator-verification)
+[Linux and Android evidence](implementation-handoff.md#linux-and-android-emulator-verification)
 
 | Read | Purpose |
 | --- | --- |
@@ -53,9 +53,9 @@ The handoff pins the artifacts and lists the remaining release acceptance work.
 
 ## Version boundary
 
-[The main architecture page](../../architecture.md) describes the staging baseline. This
-record describes a separately pinned implementation candidate; publishing these documents
-does not make that candidate merged behavior.
+[The main architecture page](../../architecture.md) describes the staging
+runtime. The source pins below identify the historical inputs to each audit
+and review, not the current staging head.
 
 | Identity | Durable reference and meaning |
 | --- | --- |
