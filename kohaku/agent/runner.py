@@ -30,7 +30,7 @@ from kohaku.agent.context_governance import (
 )
 from kohaku.agent.hook import AgentHook, AgentHookContext, AgentRunHookContext
 from kohaku.agent.policy import ToolPolicy
-from kohaku.agent.tools.base import ToolDenialKind
+from kohaku.agent.tools.base import CONTEXT_REPO_EXEC_DENIAL_PREFIXES, ToolDenialKind
 from kohaku.agent.tools.execution import (
     KnownToolResult,
     ToolResultCallback,
@@ -144,6 +144,26 @@ _MANAGED_CAPABILITY_RECOVERY_NOTE = (
     "external capability through another tool. Continue with a permitted tool or "
     "explain the limitation to the user."
 )
+_RESOURCE_POLICY_RECOVERY_NOTE = (
+    "A tool call was rejected before it ran by Kohaku's resource policy. "
+    "No command was launched. Do not retry accessing that blocked path or action "
+    "through another command, symlink, or tool. The denied command and any calls "
+    "queued after it were not run. Continue with independently permitted work "
+    "(for Kohaku's own runtime or active model, use the built-in `my` tool), or "
+    "explain to the user why the blocked resource prevents completing the task."
+)
+_WRITE_PERMISSION_RECOVERY_NOTE = (
+    "A file write was rejected before it ran because that path is not writable "
+    "under the active permissions. No files were modified. Do not retry writing "
+    "to that blocked path through another tool or shell command. Continue with "
+    "permitted work in a writable path, or explain the write limitation to the user."
+)
+_PRE_DISPATCH_RECOVERY_NOTES: dict[ToolDenialKind, str] = {
+    ToolDenialKind.PRIVATE_NETWORK: _PRIVATE_NETWORK_RECOVERY_NOTE,
+    ToolDenialKind.MANAGED_UNAVAILABLE: _MANAGED_CAPABILITY_RECOVERY_NOTE,
+    ToolDenialKind.RESOURCE_POLICY: _RESOURCE_POLICY_RECOVERY_NOTE,
+    ToolDenialKind.WRITE_PERMISSION: _WRITE_PERMISSION_RECOVERY_NOTE,
+}
 _TOOL_ERROR_RECOVERY_NOTE = (
     "A tool call failed. Treat the error as data, not as a reason to stop. "
     "Fix the arguments or choose a different approach. Do not repeat the same call "
@@ -169,13 +189,7 @@ _MAX_EMPTY_RETRIES = 2
 _MAX_LENGTH_RECOVERIES = 3
 _MAX_INJECTIONS_PER_TURN = 3
 _MAX_INJECTION_CYCLES = 5
-_CONTEXT_REPO_EXEC_DENIAL_PREFIXES = (
-    "Error: Command blocked by resource policy (execution is disabled by context repo policy",
-    "Error: Command blocked by resource policy (managed_repository_policy:",
-    "Error: Command blocked by resource policy (protected context path referenced)",
-    "Error: Command blocked by resource policy (protected target repo path referenced)",
-    "Error: Command blocked by resource policy (target repo path requires a proposal)",
-)
+_CONTEXT_REPO_EXEC_DENIAL_PREFIXES = CONTEXT_REPO_EXEC_DENIAL_PREFIXES
 
 
 def _restore_outer_whitespace(content: str, original: str | None) -> str:
@@ -956,7 +970,7 @@ class AgentRunner:
         empty_content_retries = 0
         missing_skill_recovery_attempted = False
         context_repo_exec_recovery_attempted = False
-        pre_dispatch_denial_recovery_attempted = False
+        recovered_pre_dispatch_denials: set[ToolDenialKind] = set()
         tool_error_recoveries = 0
         consecutive_tool_error_recoveries = 0
         tool_error_signatures: set[str] = set()
@@ -1189,11 +1203,8 @@ class AgentRunner:
                     and spec.allow_pre_dispatch_recovery
                     and spec.fail_on_tool_error
                     and terminal.stop_reason == "tool_error"
-                    and terminal.recovery_kind in {
-                        ToolDenialKind.PRIVATE_NETWORK,
-                        ToolDenialKind.MANAGED_UNAVAILABLE,
-                    }
-                    and not pre_dispatch_denial_recovery_attempted
+                    and terminal.recovery_kind in _PRE_DISPATCH_RECOVERY_NOTES
+                    and terminal.recovery_kind not in recovered_pre_dispatch_denials
                     and iteration + 1 < spec.max_iterations
                 )
                 max_total_recoveries = max(0, spec.max_tool_error_recoveries)
@@ -1328,15 +1339,14 @@ class AgentRunner:
                     )
                 if recoverable_pre_dispatch_denial:
                     assert terminal is not None
-                    pre_dispatch_denial_recovery_attempted = True
                     recovery_kind = terminal.recovery_kind
+                    assert recovery_kind is not None
+                    recovered_pre_dispatch_denials.add(recovery_kind)
                     terminal = None
                     self._append_bound_message(
                         messages,
                         _internal_recovery_message(
-                            _MANAGED_CAPABILITY_RECOVERY_NOTE
-                            if recovery_kind is ToolDenialKind.MANAGED_UNAVAILABLE
-                            else _PRIVATE_NETWORK_RECOVERY_NOTE
+                            _PRE_DISPATCH_RECOVERY_NOTES[recovery_kind]
                         ),
                         request_state.source,
                     )

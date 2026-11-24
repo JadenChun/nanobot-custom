@@ -467,6 +467,39 @@ async def _execute_tool_call(
             tool_call, validation_tool, params,
         )
         if isinstance(target_error, ToolOutcome):
+            if target_error.stop_reason == "tool_error":
+                trusted_kind = _trusted_write_denial_kind(validation_tool, target_error)
+                classified_target = (
+                    target_error
+                    if target_error.recovery_kind is trusted_kind
+                    else ToolOutcome(
+                        target_error.content,
+                        target_error.stop_reason,
+                        target_error.policy_metadata,
+                        media_artifacts=target_error.media_artifacts,
+                        recovery_kind=trusted_kind,
+                        filesystem_effects=target_error.filesystem_effects,
+                    )
+                )
+                error_event = {
+                    "name": tool_call.name,
+                    "status": "error",
+                    "detail": str(classified_target.content).replace("\n", " ").strip()[:120],
+                }
+                await _record_result(tool_result_callback, ordinal, tool_call, target_error,
+                                     classified_target, error_event, dispatched=False)
+                await _dispatch_post_hook(
+                    deferred_hooks,
+                    partial(
+                        hook.on_execute_tool_error,
+                        context,
+                        tool_call,
+                        tool,
+                        params,
+                        str(classified_target.content),
+                    ),
+                )
+                return classified_target, error_event
             stopped = {"name": tool_call.name, "status": "stopped", "detail": target_error.stop_reason}
             await _record_result(tool_result_callback, ordinal, tool_call, target_error,
                                  target_error, stopped, dispatched=False)
@@ -696,12 +729,24 @@ def _trusted_exec_denial_kind(tool: Tool | None, result: Any) -> ToolDenialKind 
     if (
         tool is None
         or not isinstance(result, ToolDenialResult)
-        or result.kind is not ToolDenialKind.PRIVATE_NETWORK
+        or result.kind not in {
+            ToolDenialKind.PRIVATE_NETWORK,
+            ToolDenialKind.RESOURCE_POLICY,
+        }
     ):
         return None
     from kohaku.agent.tools.shell import ExecTool
 
     return result.kind if type(tool) is ExecTool else None
+
+
+def _trusted_write_denial_kind(tool: Any, outcome: ToolOutcome) -> ToolDenialKind | None:
+    """Return a write-permission denial kind only for first-party file write tools."""
+    if tool is None or outcome.recovery_kind is not ToolDenialKind.WRITE_PERMISSION:
+        return None
+    from kohaku.agent.tools.filesystem import EditFileTool, WriteFileTool
+
+    return outcome.recovery_kind if type(tool) in {WriteFileTool, EditFileTool} else None
 
 
 def is_ssrf_violation(text: str) -> bool:

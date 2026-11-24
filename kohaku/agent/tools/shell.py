@@ -30,7 +30,9 @@ from kohaku.agent.permission_rules import (
     sandbox_command_name,
 )
 from kohaku.agent.tools.base import (
+    CONTEXT_REPO_EXEC_DENIAL_PREFIXES,
     PRIVATE_NETWORK_DENIAL_NOTE,
+    RESOURCE_POLICY_DENIAL_NOTE,
     Tool,
     ToolDenialKind,
     ToolDenialResult,
@@ -1624,6 +1626,13 @@ class ExecTool(Tool):
                     from kohaku.agent.tools.workspace import folder_access_outcome
 
                     return folder_access_outcome(policy_error, self.resource_policy)
+                if policy_error.startswith(CONTEXT_REPO_EXEC_DENIAL_PREFIXES):
+                    return ToolResult.error(policy_error)
+                if policy_error.startswith("Error: Command blocked by resource policy"):
+                    return ToolDenialResult(
+                        f"{policy_error}\n\n{RESOURCE_POLICY_DENIAL_NOTE}",
+                        kind=ToolDenialKind.RESOURCE_POLICY,
+                    )
                 return ToolResult.error(policy_error)
 
         should_restrict = self.restrict_to_workspace if restrict_to_workspace is None else restrict_to_workspace

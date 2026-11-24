@@ -296,6 +296,7 @@ class ToolDenialKind(StrEnum):
 
     PRIVATE_NETWORK = "private_network"
     MANAGED_UNAVAILABLE = "managed_unavailable"
+    RESOURCE_POLICY = "resource_policy"
     WRITE_PERMISSION = "write_permission"
 
 
@@ -306,6 +307,23 @@ PRIVATE_NETWORK_DENIAL_NOTE = (
     "continue without touching the denied target. If the user explicitly "
     "trusts this private service, ask them to whitelist its exact IP/CIDR "
     "via tools.ssrfWhitelist."
+)
+
+RESOURCE_POLICY_DENIAL_NOTE = (
+    "This is a non-bypassable resource policy boundary for the denied path or action. "
+    "Do not retry that access through another shell command, symlink, or tool. "
+    "Unrelated permitted work may continue without touching the denied target. "
+    "For inspecting Kohaku's own runtime or active model, use the built-in `my` tool "
+    "instead of reading Kohaku runtime storage. If the blocked resource is required to "
+    "complete the task, explain the limitation to the user."
+)
+
+CONTEXT_REPO_EXEC_DENIAL_PREFIXES = (
+    "Error: Command blocked by resource policy (execution is disabled by context repo policy",
+    "Error: Command blocked by resource policy (managed_repository_policy:",
+    "Error: Command blocked by resource policy (protected context path referenced)",
+    "Error: Command blocked by resource policy (protected target repo path referenced)",
+    "Error: Command blocked by resource policy (target repo path requires a proposal)",
 )
 
 
