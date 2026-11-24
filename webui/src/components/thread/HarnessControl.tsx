@@ -1,6 +1,6 @@
 import { useId } from "react";
 import { useTranslation } from "react-i18next";
-import { Check, ChevronDown, Sparkles, Terminal } from "lucide-react";
+import { Check, ChevronDown } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -10,6 +10,34 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
 import type { ChatHarness } from "@/lib/types";
+
+function KohakuIcon({ className }: { className?: string }) {
+  return (
+    <img
+      src="/brand/kohaku_icon_192.png"
+      alt=""
+      aria-hidden
+      draggable={false}
+      className={cn("select-none rounded-[4px] object-contain", className)}
+    />
+  );
+}
+
+function ClaudeIcon({ className }: { className?: string }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      aria-hidden
+      className={cn("text-[#D97757]", className)}
+    >
+      <path
+        fill="currentColor"
+        d="M16.92 15.17 13.73 13l4.64-.55a.84.84 0 0 0 .74-.93.85.85 0 0 0-.93-.74l-4.53.54 3.4-2.8a.84.84 0 1 0-1.07-1.3l-3.13 2.57 1.72-4.4a.84.84 0 1 0-1.57-.61l-1.56 3.99-.64-4.23a.84.84 0 1 0-1.66.25l.65 4.26-2.87-3.42a.84.84 0 0 0-1.29 1.08l2.7 3.22-4.38-1.63a.84.84 0 0 0-.59 1.58l4.02 1.5-4.39.52a.84.84 0 1 0 .2 1.67l4.38-.52-3.45 2.83a.84.84 0 1 0 1.07 1.3l3.27-2.68-1.66 4.26a.84.84 0 1 0 1.57.61l1.56-4.01.66 4.35a.84.84 0 1 0 1.66-.25l-.63-4.14 2.9 3.46a.84.84 0 0 0 1.29-1.08l-2.46-2.93 3.74 2.55a.84.84 0 1 0 .95-1.39Z"
+      />
+    </svg>
+  );
+}
 
 export interface HarnessControlProps {
   value: ChatHarness;
@@ -60,9 +88,9 @@ export function HarnessControl({
             )}
           >
             {isClaude ? (
-              <Terminal className="mr-1.5 h-3.5 w-3.5 shrink-0" aria-hidden />
+              <ClaudeIcon className="mr-1.5 h-3.5 w-3.5 shrink-0" />
             ) : (
-              <Sparkles className="mr-1.5 h-3.5 w-3.5 shrink-0" aria-hidden />
+              <KohakuIcon className="mr-1.5 h-4 w-4 shrink-0" />
             )}
             <span className="min-w-0 truncate">{label}</span>
             <ChevronDown className="ml-1.5 h-3 w-3 shrink-0" aria-hidden />
@@ -75,8 +103,8 @@ export function HarnessControl({
               onSelect={() => onChange("native")}
               className="flex h-10 items-center gap-3 px-3 text-[13.5px] font-semibold"
             >
-              <span className="grid h-5 w-5 shrink-0 place-items-center text-current" aria-hidden>
-                <Sparkles className="h-4 w-4" />
+              <span className="grid h-5 w-5 shrink-0 place-items-center" aria-hidden>
+                <KohakuIcon className="h-4.5 w-4.5" />
               </span>
               <span className="min-w-0 flex-1 truncate">
                 {t("thread.harness.kohaku", { defaultValue: "Kohaku" })}
@@ -93,8 +121,8 @@ export function HarnessControl({
                 "text-amber-700 focus:text-amber-700 dark:text-amber-300 dark:focus:text-amber-300",
               )}
             >
-              <span className="grid h-5 w-5 shrink-0 place-items-center text-current" aria-hidden>
-                <Terminal className="h-4 w-4" />
+              <span className="grid h-5 w-5 shrink-0 place-items-center" aria-hidden>
+                <ClaudeIcon className="h-4 w-4" />
               </span>
               <span className="min-w-0 flex-1 truncate">
                 {t("thread.harness.claude", { defaultValue: "Claude" })}
