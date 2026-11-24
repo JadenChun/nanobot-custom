@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import os
 import re
@@ -27,6 +28,7 @@ if TYPE_CHECKING:
 
 _TOOLS_TOKEN_CACHE_MAX_ENTRIES = 64
 _TOOLS_TOKEN_CACHE: dict[tuple[int, str], tuple[tuple[int, ...], dict[bool, int]]] = {}
+_TOOLS_CONTENT_TOKEN_CACHE: dict[tuple[int, str, str, bool, bytes], int] = {}
 _T = TypeVar("_T")
 
 
@@ -123,6 +125,18 @@ def _cache_tools_token_count(
     _TOOLS_TOKEN_CACHE[cache_key] = (fingerprint, counts)
 
 
+def _cache_tools_content_token_count(
+    content_key: tuple[int, str, str, bool, bytes],
+    token_count: int,
+) -> None:
+    if (
+        content_key not in _TOOLS_CONTENT_TOKEN_CACHE
+        and len(_TOOLS_CONTENT_TOKEN_CACHE) >= _TOOLS_TOKEN_CACHE_MAX_ENTRIES
+    ):
+        _TOOLS_CONTENT_TOKEN_CACHE.pop(next(iter(_TOOLS_CONTENT_TOKEN_CACHE)))
+    _TOOLS_CONTENT_TOKEN_CACHE[content_key] = token_count
+
+
 def _estimate_tools_tokens(
     enc: Any,
     tools: list[dict[str, Any]],
@@ -131,6 +145,8 @@ def _estimate_tools_tokens(
     leading_separator: bool,
 ) -> int:
     """Estimate stable tool definition tokens without re-encoding every loop."""
+    if not _TOOLS_TOKEN_CACHE and _TOOLS_CONTENT_TOKEN_CACHE:
+        _TOOLS_CONTENT_TOKEN_CACHE.clear()
     # ToolRegistry keeps the returned definitions list alive until the registry changes.
     cache_key = (id(tools), encoding_name)
     fingerprint = tuple(id(tool) for tool in tools)
@@ -146,9 +162,20 @@ def _estimate_tools_tokens(
     rendered = json.dumps(tools, ensure_ascii=False)
     if leading_separator:
         rendered = "\n" + rendered
+    enc_name = getattr(enc, "name", encoding_name)
+    enc_label = enc_name if isinstance(enc_name, str) else encoding_name
+    digest = hashlib.sha256(rendered.encode("utf-8", errors="surrogatepass")).digest()
+    content_key = (id(enc), enc_label, encoding_name, leading_separator, digest)
+    cached_count = _TOOLS_CONTENT_TOKEN_CACHE.get(content_key)
+    if cached_count is not None:
+        counts[leading_separator] = cached_count
+        _cache_tools_token_count(cache_key, fingerprint, counts)
+        return cached_count
+
     token_count = len(enc.encode(rendered))
     counts[leading_separator] = token_count
     _cache_tools_token_count(cache_key, fingerprint, counts)
+    _cache_tools_content_token_count(content_key, token_count)
     return token_count
 
 

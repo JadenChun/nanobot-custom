@@ -8,6 +8,8 @@ import os
 import re
 import secrets
 import stat
+import threading
+import time
 import uuid
 from collections import OrderedDict
 from contextlib import contextmanager, suppress
@@ -29,7 +31,7 @@ from typing import (
 )
 from weakref import WeakValueDictionary
 
-from filelock import FileLock
+from filelock import FileLock, Timeout
 from loguru import logger
 
 from kohaku.agent.memory_recovery import MEMORY_RECEIPT_FILENAME, require_memory_receipt_recovery
@@ -973,6 +975,122 @@ class SessionStore(Protocol):
     def list_sessions(self) -> list[SessionInfo]: ...
 
 
+class _SessionFilesLockProxy:
+    """Context manager proxy returned by `_SessionFilesLock.acquire()`."""
+
+    def __init__(self, lock: "_SessionFilesLock") -> None:
+        self.lock = lock
+
+    def __enter__(self) -> "_SessionFilesLock":
+        return self.lock
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_value: BaseException | None,
+        traceback: Any,
+    ) -> None:
+        self.lock.release()
+
+
+class _SessionFilesLock:
+    """In-process futex RLock layered over cross-process FileLock.
+
+    Avoids filelock's 50ms polling sleep when multiple worker threads and the
+    event loop contend on the same SessionManager, while preserving re-entrancy,
+    cross-process flock exclusivity, ``timeout=0``, and ``is_locked``.
+    """
+
+    def __init__(self, lock_file: str, *, poll_interval: float = 0.002) -> None:
+        self._file_lock = FileLock(lock_file, poll_interval=poll_interval)
+        self._thread_lock = threading.RLock()
+        self._thread_state = threading.local()
+
+    @property
+    def lock_file(self) -> str:
+        return self._file_lock.lock_file
+
+    @property
+    def timeout(self) -> float:
+        return self._file_lock.timeout
+
+    @timeout.setter
+    def timeout(self, value: float) -> None:
+        self._file_lock.timeout = value
+
+    @property
+    def is_locked(self) -> bool:
+        return self._file_lock.is_locked
+
+    def _hold_depth(self) -> int:
+        depth = getattr(self._thread_state, "depth", 0)
+        return depth if isinstance(depth, int) else 0
+
+    def acquire(
+        self,
+        timeout: float | None = None,
+        poll_interval: float | None = None,
+        *,
+        blocking: bool | None = None,
+    ) -> _SessionFilesLockProxy:
+        effective_timeout = self._file_lock.timeout if timeout is None else timeout
+        effective_blocking = True if blocking is None else blocking
+        start = time.monotonic()
+        if not effective_blocking or effective_timeout == 0:
+            acquired = self._thread_lock.acquire(blocking=False)
+        elif effective_timeout > 0:
+            acquired = self._thread_lock.acquire(blocking=True, timeout=effective_timeout)
+        else:
+            acquired = self._thread_lock.acquire(blocking=True)
+        if not acquired:
+            raise Timeout(self._file_lock.lock_file)
+
+        try:
+            remaining_timeout: float | None
+            if effective_timeout > 0:
+                remaining_timeout = max(0.0, effective_timeout - (time.monotonic() - start))
+            else:
+                remaining_timeout = effective_timeout
+            self._file_lock.acquire(
+                timeout=remaining_timeout,
+                poll_interval=poll_interval,
+                blocking=blocking,
+            )
+        except BaseException:
+            self._thread_lock.release()
+            raise
+        self._thread_state.depth = self._hold_depth() + 1
+        return _SessionFilesLockProxy(self)
+
+    def release(self, force: bool = False) -> None:
+        depth = self._hold_depth()
+        if depth <= 0 and not force:
+            self._file_lock.release(force=False)
+            return
+        try:
+            self._file_lock.release(force=force)
+        finally:
+            if force:
+                while self._hold_depth() > 0:
+                    self._thread_state.depth = self._hold_depth() - 1
+                    self._thread_lock.release()
+            elif depth > 0:
+                self._thread_state.depth = depth - 1
+                self._thread_lock.release()
+
+    def __enter__(self) -> "_SessionFilesLock":
+        self.acquire()
+        return self
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_value: BaseException | None,
+        traceback: Any,
+    ) -> None:
+        self.release()
+
+
 class JsonlSessionStore:
     """JSONL implementation of session persistence."""
 
@@ -1031,7 +1149,7 @@ class JsonlSessionStore:
                 if _managed_access is not None:
                     _managed_access.bind(self)
                 self.legacy_sessions_dir = get_legacy_sessions_dir()
-                self._session_files_lock = FileLock(
+                self._session_files_lock = _SessionFilesLock(
                     str(self.sessions_dir / _SESSION_FILES_LOCK_FILENAME)
                 )
                 with self._session_files_lock:

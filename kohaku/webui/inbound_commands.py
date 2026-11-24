@@ -1657,10 +1657,11 @@ class WebUICommandRouter:
             if mcp_presets:
                 metadata["mcp_presets"] = mcp_presets
             session_mentions: list[SessionMention] = []
-            if trusted_webui and self._session_access is not None:
+            raw_session_mentions = envelope.get("session_mentions")
+            if trusted_webui and self._session_access is not None and raw_session_mentions:
                 session_mentions = await asyncio.to_thread(
                     self._session_access.normalize_mentions,
-                    envelope.get("session_mentions"),
+                    raw_session_mentions,
                     exclude_session_key=webui_session_key(chat_id),
                 )
                 if session_mentions:
@@ -1782,33 +1783,6 @@ class WebUICommandRouter:
                     workspace_scope=scope,
                     permission_reference=permission_reference,
                 )
-                if temporary_policy is None:
-                    stripped_content = content.strip()
-                    is_model_cmd = (
-                        bool(stripped_content)
-                        and stripped_content.lower().split(maxsplit=1)[0] == "/model"
-                    )
-                    should_persist_scope = (
-                        not was_chat_running
-                        and not is_stop
-                        and request_intent != "steer"
-                        and (
-                            not is_model_cmd
-                            or self.gateway.session_manager is None
-                            or self.gateway.session_manager.read_session_metadata(
-                                webui_session_key(chat_id)
-                            )
-                            is None
-                        )
-                    )
-                    if should_persist_scope:
-                        def _persist_scope_and_defaults() -> None:
-                            self._workspaces.persist_scope(chat_id, scope)
-                            self._workspaces.remember_request_defaults(
-                                chat_id, scope, skip_if_unchanged=True,
-                            )
-
-                        await asyncio.to_thread(_persist_scope_and_defaults)
                 accepted = True
             finally:
                 if not accepted and queued_owner is not None:
@@ -1849,6 +1823,34 @@ class WebUICommandRouter:
                         else {}
                     ),
                 )
+
+            if temporary_policy is None:
+                stripped_content = content.strip()
+                is_model_cmd = (
+                    bool(stripped_content)
+                    and stripped_content.lower().split(maxsplit=1)[0] == "/model"
+                )
+                if (
+                    not was_chat_running
+                    and not is_stop
+                    and request_intent != "steer"
+                ):
+                    def _persist_scope_and_defaults() -> None:
+                        if (
+                            is_model_cmd
+                            and self.gateway.session_manager is not None
+                            and self.gateway.session_manager.read_session_metadata(
+                                webui_session_key(chat_id)
+                            )
+                            is not None
+                        ):
+                            return
+                        self._workspaces.persist_scope(chat_id, scope)
+                        self._workspaces.remember_request_defaults(
+                            chat_id, scope, skip_if_unchanged=True,
+                        )
+
+                    await asyncio.to_thread(_persist_scope_and_defaults)
 
         finally:
             if not accepted and queued_owner is not None:

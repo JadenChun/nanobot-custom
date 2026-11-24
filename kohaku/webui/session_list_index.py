@@ -7,14 +7,16 @@ store from the other, so core session writes stay independent from UI state.
 
 from __future__ import annotations
 
+import builtins
 import hashlib
 import json
 import os
 import re
 import secrets
+import threading
 from datetime import datetime
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, BinaryIO, cast
 
 from loguru import logger
 
@@ -73,6 +75,11 @@ _WEBUI_SESSION_STEM_PREFIX = SessionManager.safe_key(WEBUI_SESSION_STORAGE_PREFI
 _WEBUI_CHAT_ID_RE = re.compile(r"^[A-Za-z0-9_:-]{1,64}$")
 _TRANSCRIPT_SEGMENTS_SUFFIX = ".segments"
 _TRANSCRIPT_NON_ANSWER_KINDS = {"progress", "reasoning", "tool_hint"}
+_TAIL_SEEK_THRESHOLD_BYTES = 131_072
+_TAIL_SEEK_CHUNK_BYTES = 65_536
+_INDEX_CACHE_MAX_ENTRIES = 32
+_INDEX_CACHE_LOCK = threading.Lock()
+_INDEX_ROWS_CACHE: dict[Path, tuple[tuple[int, int, int], list[dict[str, Any]]]] = {}
 
 
 def _session_key_from_stem(stem: str) -> str | None:
@@ -88,11 +95,11 @@ def list_webui_sessions(session_manager: SessionManager) -> list[dict[str, Any]]
     """Return session rows for the WebUI sidebar, backed by a rebuildable cache."""
     with session_manager.locked_session_files():
         rows, changed = _reconcile_index(session_manager)
-        if changed:
-            try:
-                _write_index_rows(session_manager.sessions_dir, rows)
-            except Exception as e:
-                logger.debug("Failed to write WebUI session list index: {}", e)
+    if changed:
+        try:
+            _write_index_rows(session_manager.sessions_dir, rows)
+        except Exception as e:
+            logger.debug("Failed to write WebUI session list index: {}", e)
     sessions = [
         _public_row(session_manager.sessions_dir, get_webui_dir(), row)
         for row in rows
@@ -185,10 +192,32 @@ def _index_path(sessions_dir: Path) -> Path:
     return get_webui_dir() / "session-index" / f"{namespace}.json"
 
 
+def _cache_index_rows(
+    path: Path,
+    stat_key: tuple[int, int, int],
+    rows: list[dict[str, Any]],
+) -> None:
+    with _INDEX_CACHE_LOCK:
+        if path not in _INDEX_ROWS_CACHE and len(_INDEX_ROWS_CACHE) >= _INDEX_CACHE_MAX_ENTRIES:
+            _INDEX_ROWS_CACHE.pop(next(iter(_INDEX_ROWS_CACHE)))
+        _INDEX_ROWS_CACHE[path] = (stat_key, list(rows))
+
+
 def _read_index_rows(sessions_dir: Path) -> list[dict[str, Any]] | None:
     path = _index_path(sessions_dir)
+    try:
+        st = path.stat()
+    except OSError:
+        with _INDEX_CACHE_LOCK:
+            _INDEX_ROWS_CACHE.pop(path, None)
+        return None
     if not path.is_file():
         return None
+    stat_key = (st.st_ino, st.st_mtime_ns, st.st_size)
+    with _INDEX_CACHE_LOCK:
+        cached = _INDEX_ROWS_CACHE.get(path)
+        if cached is not None and cached[0] == stat_key:
+            return list(cached[1])
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
@@ -204,7 +233,9 @@ def _read_index_rows(sessions_dir: Path) -> list[dict[str, Any]] | None:
     index_rows = cast(list[Any], rows)
     if not all(isinstance(row, dict) for row in index_rows):
         return None
-    return [cast(dict[str, Any], row) for row in index_rows]
+    parsed = [cast(dict[str, Any], row) for row in index_rows]
+    _cache_index_rows(path, stat_key, parsed)
+    return parsed
 
 
 def _write_index_rows(sessions_dir: Path, rows: list[dict[str, Any]]) -> None:
@@ -218,6 +249,11 @@ def _write_index_rows(sessions_dir: Path, rows: list[dict[str, Any]]) -> None:
         os.replace(tmp_path, path)
     finally:
         tmp_path.unlink(missing_ok=True)
+    try:
+        st = path.stat()
+    except OSError:
+        return
+    _cache_index_rows(path, (st.st_ino, st.st_mtime_ns, st.st_size), rows)
 
 
 def _file_signature(path: Path) -> dict[str, int]:
@@ -670,6 +706,58 @@ def _scan_transcript_row(
     }
 
 
+def _scan_tail_visible_message_at(
+    raw_file: BinaryIO,
+    *,
+    min_offset: int,
+    file_size: int,
+) -> str | None:
+    """Scan backward in chunks from EOF for the latest visible message timestamp."""
+    if min_offset >= file_size:
+        return None
+    latest: str | None = None
+    pos = file_size
+    carry = b""
+    while pos > min_offset:
+        chunk_start = max(min_offset, pos - _TAIL_SEEK_CHUNK_BYTES)
+        raw_file.seek(chunk_start)
+        chunk = raw_file.read(pos - chunk_start)
+        pos = chunk_start
+        combined = chunk + carry
+        lines = combined.split(b"\n")
+        if pos > min_offset:
+            carry = lines[0]
+            complete_lines = lines[1:]
+        else:
+            carry = b""
+            complete_lines = lines
+        if b'"timestamp"' not in combined:
+            continue
+        for raw_line in reversed(complete_lines):
+            if not raw_line.strip() or b'"timestamp"' not in raw_line:
+                continue
+            line = raw_line.decode("utf-8")
+            if _is_provider_state_record_line(line):
+                continue
+            item = json.loads(line)
+            if item.get("_type") == _PROVIDER_STATE_RECORD_TYPE:
+                continue
+            timestamp = _visible_message_timestamp(item)
+            if timestamp is not None:
+                latest = _latest_updated_at(latest, timestamp)
+        if latest is not None:
+            return latest
+    if carry.strip() and b'"timestamp"' in carry:
+        line = carry.decode("utf-8")
+        if not _is_provider_state_record_line(line):
+            item = json.loads(line)
+            if item.get("_type") != _PROVIDER_STATE_RECORD_TYPE:
+                timestamp = _visible_message_timestamp(item)
+                if timestamp is not None:
+                    latest = _latest_updated_at(latest, timestamp)
+    return latest
+
+
 def _scan_session_row(
     session_manager: SessionManager,
     path: Path,
@@ -680,85 +768,134 @@ def _scan_session_row(
         return None
     try:
         signature = _file_signature(path)
-        with open(path, encoding="utf-8") as f:
-            first_line = f.readline().strip()
-            if not first_line:
-                return None
-            data = json.loads(first_line)
-            if data.get("_type") != "metadata":
-                return None
-            preview = ""
-            fallback_preview = ""
-            visible_message_at = None
-            preview_done = False
-            scanned_records = 0
-            scanned_chars = 0
-            for line in f:
-                if not line.strip():
-                    continue
-                if _is_provider_state_record_line(line):
-                    continue
-                item = json.loads(line)
-                if item.get("_type") == _PROVIDER_STATE_RECORD_TYPE:
-                    continue
-                timestamp = _visible_message_timestamp(item)
-                if timestamp is not None:
-                    visible_message_at = _latest_updated_at(visible_message_at, timestamp)
-                if not preview_done:
-                    scanned_records += 1
-                    scanned_chars += len(line)
-                    if (
-                        scanned_records > _SESSION_LIST_PREVIEW_MAX_RECORDS
-                        or scanned_chars > _SESSION_LIST_PREVIEW_MAX_CHARS
-                    ):
-                        preview_done = True
+        preview = ""
+        fallback_preview = ""
+        visible_message_at: str | None = None
+        preview_done = False
+        scanned_records = 0
+        scanned_chars = 0
+        if open is builtins.open and signature["size"] > _TAIL_SEEK_THRESHOLD_BYTES:
+            with builtins.open(path, "rb") as raw_file:
+                first_raw = raw_file.readline()
+                first_line = first_raw.decode("utf-8").strip()
+                if not first_line:
+                    return None
+                data = json.loads(first_line)
+                if data.get("_type") != "metadata":
+                    return None
+                while True:
+                    raw_line = raw_file.readline()
+                    if not raw_line:
+                        break
+                    if not raw_line.strip():
                         continue
-                    if item.get("_type") == "metadata":
+                    line = raw_line.decode("utf-8")
+                    if _is_provider_state_record_line(line):
                         continue
-                    if is_hidden_history_message(item):
+                    item = json.loads(line)
+                    if item.get("_type") == _PROVIDER_STATE_RECORD_TYPE:
                         continue
-                    text = _message_preview_text(item)
-                    if not text:
+                    timestamp = _visible_message_timestamp(item)
+                    if timestamp is not None:
+                        visible_message_at = _latest_updated_at(visible_message_at, timestamp)
+                    if not preview_done:
+                        scanned_records += 1
+                        scanned_chars += len(line)
+                        if (
+                            scanned_records > _SESSION_LIST_PREVIEW_MAX_RECORDS
+                            or scanned_chars > _SESSION_LIST_PREVIEW_MAX_CHARS
+                        ):
+                            preview_done = True
+                        elif item.get("_type") != "metadata" and not is_hidden_history_message(item):
+                            text = _message_preview_text(item)
+                            if text:
+                                if item.get("role") == "user":
+                                    preview = text
+                                    preview_done = True
+                                elif not fallback_preview and item.get("role") == "assistant":
+                                    fallback_preview = text
+                    if preview_done:
+                        tail_ts = _scan_tail_visible_message_at(
+                            raw_file,
+                            min_offset=raw_file.tell(),
+                            file_size=signature["size"],
+                        )
+                        visible_message_at = _latest_updated_at(visible_message_at, tail_ts)
+                        break
+        else:
+            with open(path, encoding="utf-8") as f:
+                first_line = f.readline().strip()
+                if not first_line:
+                    return None
+                data = json.loads(first_line)
+                if data.get("_type") != "metadata":
+                    return None
+                for line in f:
+                    if not line.strip():
                         continue
-                    if item.get("role") == "user":
-                        preview = text
-                        preview_done = True
+                    if _is_provider_state_record_line(line):
                         continue
-                    if not fallback_preview and item.get("role") == "assistant":
-                        fallback_preview = text
-            created_at_s = data.get("created_at")
-            updated_at_s = data.get("updated_at")
-            if not created_at_s or not updated_at_s:
-                fallback_time = datetime.fromtimestamp(signature["mtime_ns"] / 1e9).isoformat()
-                created_at_s = created_at_s or fallback_time
-                updated_at_s = updated_at_s or fallback_time
-            key = data.get("key") or storage_key
-            metadata = data.get("metadata", {})
-            activity_signature = _webui_activity_signature(key, webui_dir)
-            activity_updated_at = _webui_activity_updated_at(activity_signature)
-            return {
-                "key": key,
-                "created_at": created_at_s,
-                "updated_at": _visible_activity_updated_at(
-                    updated_at_s,
-                    visible_message_at,
-                    activity_updated_at,
-                ),
-                "title": _metadata_title(metadata),
-                "preview": preview or fallback_preview,
-                _MODEL_PRESET_FIELD: model_preset_from_metadata(metadata),
-                "reasoning_effort": reasoning_effort_from_metadata(metadata),
-                "recovery_state": recovery_state_from_metadata(metadata),
-                SESSION_HANDLE_METADATA_KEY: stored_session_handle_name(metadata),
-                **_indexed_workspace_scope_fields(metadata),
-                **({"harness_binding": binding.payload()}
-                   if (binding := external_binding(metadata)) is not None else {}),
-                _ROW_SOURCE_FIELD: _SESSION_SOURCE,
-                "file": path.name,
-                "mtime_ns": signature["mtime_ns"],
-                "size": signature["size"],
-                **activity_signature,
-            }
+                    item = json.loads(line)
+                    if item.get("_type") == _PROVIDER_STATE_RECORD_TYPE:
+                        continue
+                    timestamp = _visible_message_timestamp(item)
+                    if timestamp is not None:
+                        visible_message_at = _latest_updated_at(visible_message_at, timestamp)
+                    if not preview_done:
+                        scanned_records += 1
+                        scanned_chars += len(line)
+                        if (
+                            scanned_records > _SESSION_LIST_PREVIEW_MAX_RECORDS
+                            or scanned_chars > _SESSION_LIST_PREVIEW_MAX_CHARS
+                        ):
+                            preview_done = True
+                            continue
+                        if item.get("_type") == "metadata":
+                            continue
+                        if is_hidden_history_message(item):
+                            continue
+                        text = _message_preview_text(item)
+                        if not text:
+                            continue
+                        if item.get("role") == "user":
+                            preview = text
+                            preview_done = True
+                            continue
+                        if not fallback_preview and item.get("role") == "assistant":
+                            fallback_preview = text
+        created_at_s = data.get("created_at")
+        updated_at_s = data.get("updated_at")
+        if not created_at_s or not updated_at_s:
+            fallback_time = datetime.fromtimestamp(signature["mtime_ns"] / 1e9).isoformat()
+            created_at_s = created_at_s or fallback_time
+            updated_at_s = updated_at_s or fallback_time
+        key = data.get("key") or storage_key
+        metadata = data.get("metadata", {})
+        activity_signature = _webui_activity_signature(key, webui_dir)
+        activity_updated_at = _webui_activity_updated_at(activity_signature)
+        return {
+            "key": key,
+            "created_at": created_at_s,
+            "updated_at": _visible_activity_updated_at(
+                updated_at_s,
+                visible_message_at,
+                activity_updated_at,
+            ),
+            "title": _metadata_title(metadata),
+            "preview": preview or fallback_preview,
+            _MODEL_PRESET_FIELD: model_preset_from_metadata(metadata),
+            "reasoning_effort": reasoning_effort_from_metadata(metadata),
+            "recovery_state": recovery_state_from_metadata(metadata),
+            SESSION_HANDLE_METADATA_KEY: stored_session_handle_name(metadata),
+            **_indexed_workspace_scope_fields(metadata),
+            **({"harness_binding": binding.payload()}
+               if (binding := external_binding(metadata)) is not None else {}),
+            _ROW_SOURCE_FIELD: _SESSION_SOURCE,
+            "file": path.name,
+            "mtime_ns": signature["mtime_ns"],
+            "size": signature["size"],
+            **activity_signature,
+        }
     except Exception:
         repaired = session_manager._repair(storage_key)  # pyright: ignore[reportPrivateUsage]
         if repaired is None:
