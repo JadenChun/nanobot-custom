@@ -1,4 +1,4 @@
-"""Tools for sending bounded messages between persisted sessions."""
+"""Tools for listing sessions and sending bounded messages between them."""
 
 # pyright: reportIncompatibleMethodOverride=false
 
@@ -10,7 +10,7 @@ import time
 from collections import OrderedDict, deque
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Protocol
+from typing import Any, Literal, Protocol, TypedDict, cast
 from uuid import uuid4
 
 from loguru import logger
@@ -26,6 +26,7 @@ from kohaku.agent.tools.schema import (
 from kohaku.bus.events import InboundMessage
 from kohaku.bus.queue import MessageBus
 from kohaku.runtime_context import RuntimeContextBlock
+from kohaku.security.workspace_access import WORKSPACE_SCOPE_METADATA_KEY
 from kohaku.session.manager import SessionManager
 from kohaku.session.session_handles import (
     SessionHandleResolver,
@@ -37,6 +38,9 @@ from kohaku.session.session_messages import (
     SessionMessageEnvelope,
     session_message_envelope,
 )
+from kohaku.session.webui_turns import websocket_turn_wall_started_at
+from kohaku.utils.helpers import strip_think
+from kohaku.webui.session_identity import webui_chat_id
 
 _RATE_LIMIT_WINDOW_SECONDS = 60.0
 MIN_REPLY_TIMEOUT_SECONDS = 5
@@ -59,11 +63,29 @@ class _PendingReply:
     timer: _CancelHandle | None = None
 
 
-@tool_parameters(tool_parameters_schema())
+class _SessionListEntry(TypedDict):
+    handle: str
+    session_key: str
+    title: str
+    kind: Literal["coding", "chat"]
+    status: Literal["running", "idle"]
+    workspace: str | None
+    updated_at: str | None
+
+
+@tool_parameters(
+    tool_parameters_schema(
+        include_metadata=BooleanSchema(
+            description="Include each session's key, title, kind, status, workspace, and update time.",
+            default=False,
+        ),
+    )
+)
 class ListSessionsTool(Tool):
-    """List the handles of other persisted sessions."""
+    """List other persisted sessions with optional metadata."""
 
     def __init__(self, sessions: SessionManager) -> None:
+        self._sessions = sessions
         self._handles = SessionHandleResolver(sessions)
 
     @classmethod
@@ -82,12 +104,19 @@ class ListSessionsTool(Tool):
 
     @property
     def description(self) -> str:
-        return "List other persisted sessions by @handle."
+        return "List other persisted sessions by @handle, with optional metadata."
 
-    async def execute(self, **kwargs: Any) -> str:
+    @property
+    def read_only(self) -> bool:
+        return True
+
+    async def execute(self, include_metadata: bool = False, **kwargs: Any) -> str:
         request = current_request_context()
         if request is None or not request.session_key:
             return ToolResult.error("Error: session context is unavailable")
+        if include_metadata:
+            entries = await asyncio.to_thread(self._list_metadata, request.session_key)
+            return json.dumps(entries, ensure_ascii=True)
         handles = await asyncio.to_thread(self._handles.list_all)
         return json.dumps(
             [
@@ -97,6 +126,50 @@ class ListSessionsTool(Tool):
             ],
             ensure_ascii=True,
         )
+
+    def _list_metadata(self, current_key: str) -> list[_SessionListEntry]:
+        entries: list[_SessionListEntry] = []
+        with self._sessions.locked_session_files():
+            for handle in self._handles.list_all():
+                key = handle.session_key
+                if key == current_key:
+                    continue
+                payload = self._sessions.read_session_metadata(key)
+                if payload is None:
+                    continue
+                raw_metadata: object = payload.get("metadata")
+                metadata = cast(dict[str, object], raw_metadata) if isinstance(raw_metadata, dict) else {}
+                raw_binding = metadata.get("harness_binding")
+                binding = cast(dict[str, object], raw_binding) if isinstance(raw_binding, dict) else {}
+                coding = binding.get("backend") == "external"
+                workspace = binding.get("locked_workspace") if coding else None
+                if not isinstance(workspace, str) or not workspace:
+                    scope = metadata.get(WORKSPACE_SCOPE_METADATA_KEY)
+                    workspace = (
+                        cast(dict[str, object], scope).get("project_path")
+                        if isinstance(scope, dict) else None
+                    )
+                chat_id = webui_chat_id(key)
+                running = (
+                    (chat_id is not None and websocket_turn_wall_started_at(chat_id) is not None)
+                    or isinstance(metadata.get("execution_lease"), dict)
+                )
+                title = metadata.get("title")
+                if not isinstance(title, str):
+                    title = ""
+                elif metadata.get("title_user_edited") is not True:
+                    title = strip_think(title)
+                updated_at: object = payload.get("updated_at")
+                entries.append({
+                    "handle": f"@{handle.name}",
+                    "session_key": key,
+                    "title": title.strip()[:160],
+                    "kind": "coding" if coding else "chat",
+                    "status": "running" if running else "idle",
+                    "workspace": workspace if isinstance(workspace, str) and workspace else None,
+                    "updated_at": updated_at if isinstance(updated_at, str) else None,
+                })
+        return entries
 
 
 @tool_parameters(

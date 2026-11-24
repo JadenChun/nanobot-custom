@@ -12,7 +12,7 @@ from kohaku.agent.loop import AgentLoop
 from kohaku.agent.tools.base import Tool, unsupported_json_schema_constraint
 from kohaku.agent.tools.context import ToolContext
 from kohaku.agent.tools.loader import _SKIP_MODULES, ToolLoader
-from kohaku.agent.tools.registry import ToolRegistry
+from kohaku.agent.tools.registry import MANAGED_WEBUI_TOOL_NAMES, ToolRegistry
 from kohaku.agent.tools.runtime_control import AgentRuntimeControl
 from kohaku.config.schema import Config, ToolsConfig
 from kohaku.providers.base import GenerationSettings, LLMResponse
@@ -475,6 +475,7 @@ def test_loader_registers_the_foreground_manifest_with_config_gates(loader_conte
         "read_file", "write_file", "edit_file", "list_dir", "find_files", "grep",
         "exec", "exec_session", "list_exec_sessions",
         "web_search", "web_fetch",
+        "list_sessions", "search_sessions", "read_session",
         "message", "cron", "plan_task", "delegate_task", "review_work", "explore",
         "followup_child",
         "repository_catalog", "save_knowledge",
@@ -487,6 +488,19 @@ def test_loader_registers_the_foreground_manifest_with_config_gates(loader_conte
     assert actual == expected
     assert set(registry.tool_names) == expected
     assert not actual & {"search_files", "apply_patch", "spawn", "spawn_pipeline"}
+
+
+def test_session_read_tools_are_available_in_managed_foreground(loader_context):
+    registry = ToolRegistry()
+    registered = ToolLoader().load(loader_context, registry)
+
+    for name in ("list_sessions", "search_sessions", "read_session"):
+        assert name in registered
+        assert name in MANAGED_WEBUI_TOOL_NAMES
+        tool = registry.get(name)
+        assert tool is not None and tool.read_only is True
+    assert "send_session_message" not in registered
+    assert "send_session_message" not in MANAGED_WEBUI_TOOL_NAMES
 
 
 def test_non_core_loader_scope_stays_closed_without_registry_mutation():

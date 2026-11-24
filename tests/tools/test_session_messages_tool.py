@@ -20,6 +20,10 @@ from kohaku.session.session_messages import (
     SESSION_MESSAGE_METADATA_KEY,
     session_message_envelope,
 )
+from kohaku.session.webui_turns import (
+    clear_websocket_turn_if_current,
+    register_queued_websocket_turn_if_idle,
+)
 
 
 def _persist(manager: SessionManager, *keys: str) -> None:
@@ -89,6 +93,73 @@ async def test_list_sessions_includes_all_persisted_channels_except_current(
         f"@{_handle(sessions, 'telegram:other').name}",
         f"@{_handle(sessions, 'slack:team').name}",
     }
+
+
+@pytest.mark.asyncio
+async def test_list_sessions_metadata_reports_workspace_and_live_status(tmp_path: Path) -> None:
+    sessions = SessionManager(tmp_path)
+    _persist(sessions, "websocket:current")
+    coding_workspace = str(tmp_path / "coding")
+    chat_workspace = str(tmp_path / "project")
+    coding = sessions.get_or_create("websocket:coding")
+    coding.metadata.update({
+        "title": "Coding session",
+        "harness_binding": {
+            "backend": "external",
+            "harness": "claude_sdk",
+            "locked_workspace": coding_workspace,
+            "external_session_id": "private-harness-id",
+        },
+        "private_metadata": "private-metadata-value",
+    })
+    coding.add_message("user", "private-message-text")
+    project = sessions.get_or_create("telegram:project")
+    project.metadata.update({
+        "title": "Project chat",
+        "workspace_scope": {"project_path": chat_workspace, "access_mode": "restricted"},
+    })
+    plain = sessions.get_or_create("slack:plain")
+    plain.metadata["title"] = "Plain chat"
+    for session in (coding, project, plain):
+        sessions.save(session)
+
+    tool = ListSessionsTool(sessions)
+    with request_context(RequestContext(
+        channel="websocket", chat_id="current", session_key="websocket:current",
+    )):
+        owner = register_queued_websocket_turn_if_idle("coding", "coding-turn")
+        assert owner is not None
+        try:
+            handles = json.loads(await tool.execute())
+            response = await tool.execute(include_metadata=True)
+        finally:
+            assert clear_websocket_turn_if_current("coding", owner)
+        settled = json.loads(await tool.execute(include_metadata=True))
+
+    listed = json.loads(response)
+    expected = [
+        {
+            "handle": f"@{_handle(sessions, session.key).name}",
+            "session_key": session.key,
+            "title": session.metadata["title"],
+            "kind": kind,
+            "status": status,
+            "workspace": workspace,
+            "updated_at": session.updated_at.isoformat(),
+        }
+        for session, kind, status, workspace in (
+            (coding, "coding", "running", coding_workspace),
+            (project, "chat", "idle", chat_workspace),
+            (plain, "chat", "idle", None),
+        )
+    ]
+    assert sorted(handles) == sorted(row["handle"] for row in expected)
+    assert sorted(listed, key=lambda row: row["handle"]) == sorted(
+        expected, key=lambda row: row["handle"],
+    )
+    assert next(row for row in settled if row["session_key"] == coding.key)["status"] == "idle"
+    for secret in ("private-harness-id", "private-metadata-value", "private-message-text"):
+        assert secret not in response
 
 
 @pytest.mark.asyncio

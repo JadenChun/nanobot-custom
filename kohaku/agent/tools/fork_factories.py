@@ -25,6 +25,8 @@ from kohaku.agent.tools.message import MessageTool
 from kohaku.agent.tools.repositories import RepositoryCatalogTool, SaveKnowledgeTool
 from kohaku.agent.tools.search import FindFilesTool, GrepTool
 from kohaku.agent.tools.self import MyTool
+from kohaku.agent.tools.session_messages import ListSessionsTool
+from kohaku.agent.tools.sessions import ReadSessionTool, SearchSessionsTool
 from kohaku.agent.tools.shell import ExecTool
 from kohaku.agent.tools.web import WebFetchTool, WebSearchTool
 from kohaku.extensions.optional_tools import construct_optional_tools
@@ -55,6 +57,8 @@ def construct_core_tools(ctx: ToolContext) -> list[Tool]:
                       ("exec", ExecTool), ("exec_session", ExecSessionTool),
                       ("list_exec_sessions", ListExecSessionsTool), ("web_search", WebSearchTool),
                       ("web_fetch", WebFetchTool), ("message", MessageTool),
+                      ("list_sessions", ListSessionsTool), ("search_sessions", SearchSessionsTool),
+                      ("read_session", ReadSessionTool),
                       ("cron", CronTool), ("generate_image", ImageGenerationTool),
                       ("create_goal", CreateGoalTool), ("update_goal", UpdateGoalTool),
                       ("my", MyTool),

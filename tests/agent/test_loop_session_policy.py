@@ -4,7 +4,6 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from kohaku.agent.loop import AgentLoop, _TurnExecutionOptions
-from kohaku.agent.tools.sessions import ReadSessionTool
 from kohaku.agent.turn import TurnRequest
 from kohaku.bus.events import (
     INBOUND_META_RUNTIME_CONTROL,
@@ -52,16 +51,10 @@ async def _loop(tmp_path, admitted_async, responses: list[str], **kwargs) -> Age
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("session_reader", [False, True])
 async def test_transient_session_keeps_history_without_persisting_or_durable_tools(
-    tmp_path, admitted_async, session_reader,
+    tmp_path, admitted_async,
 ) -> None:
     loop = await _loop(tmp_path, admitted_async, ["first answer", "second answer"])
-    # P4's foreground manifest excludes persisted-session readers. Preserve the
-    # policy check for an explicitly supplied read-only tool as a separate case.
-    assert not loop.tools.has("read_session")
-    if session_reader:
-        loop.tools.register(ReadSessionTool(loop.sessions))
     loop.context.memory.write_memory("private durable memory")
     key = "websocket:transient-test"
     loop.sessions.get_or_create_transient(
@@ -77,7 +70,7 @@ async def test_transient_session_keeps_history_without_persisting_or_durable_too
     assert "private durable memory" not in str(calls[0].kwargs["messages"])
     tool_names = {item["function"]["name"] for item in calls[0].kwargs["tools"]}
     assert "read_file" in tool_names
-    assert ("read_session" in tool_names) is session_reader
+    assert {"list_sessions", "search_sessions", "read_session"} <= tool_names
     assert {"create_goal", "update_goal", "spawn", "cron"}.isdisjoint(tool_names)
     assert "first answer" in str(calls[1].kwargs["messages"])
     session = loop.sessions.get_cached(key)

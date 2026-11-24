@@ -39,3 +39,13 @@ def test_identity_guidance_does_not_advertise_grep():
     content = _template_text("identity.md")
 
     assert "grep" not in content
+
+
+def test_session_guidance_follows_the_available_tools(tmp_path):
+    builder = ContextBuilder(tmp_path)
+    names = {"list_sessions", "search_sessions", "read_session"}
+
+    for available in (frozenset(), frozenset({"list_sessions", "read_session"})):
+        prompt = builder.build_system_prompt(tool_names=available)
+
+        assert {name for name in names if name in prompt} == available
