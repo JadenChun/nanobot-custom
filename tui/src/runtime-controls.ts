@@ -139,7 +139,7 @@ export class RuntimeControls {
       kind: "harness",
       harness: "claude_sdk",
       temporary: false,
-      label: "Claude Code",
+      label: "Claude",
       detail: unavailableHint ?? "",
       blocked: unavailableHint,
     })

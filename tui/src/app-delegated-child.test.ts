@@ -1263,7 +1263,7 @@ test("offers a default harness and excludes Claude from unavailable and temporar
   submitText(gateway, "/new-chat")
   const chooser = await waitForText(gateway, "Harness · Kohaku")
   expect(chooser).toContain("› Harness · Kohaku")
-  expect(chooser).toContain("Claude Code")
+  expect(chooser).toContain("Claude")
   setup.mockInput.pressEnter()
   await waitUntil(() => sentFrames(socket).some((frame) => frame.type === "new_chat"))
   expect(sentFrames(socket).at(-1)).not.toHaveProperty("harness")

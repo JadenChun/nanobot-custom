@@ -36,6 +36,7 @@ import {
   NEW_CHAT_DRAFT_KEY,
 } from "@/lib/composer-drafts";
 import { ThreadComposer } from "@/components/thread/ThreadComposer";
+import { HarnessControl } from "@/components/thread/HarnessControl";
 import type {
   ComposerContextUsage,
   ComposerRoundUsage,
@@ -3758,30 +3759,14 @@ export function ThreadShell({
       <ThreadComposer
         aboveInput={!session && !historyKey && !openingConversation
           && (!isMobileRuntimeActive() || mobileOwnerCapability()) ? (
-          <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 px-2 text-xs">
-            <label className="flex min-w-0 max-w-full items-center gap-2 font-medium text-muted-foreground">
-              {t("thread.harness.label", { defaultValue: "Harness" })}
-              <select
-                className="min-w-0 rounded-control border border-border bg-background px-2 py-1 text-foreground"
-                value={activeHarness}
-                disabled={booting || preparingFull}
-                onChange={(event) => setDraftHarness(event.target.value === "claude_sdk" ? "claude_sdk" : "native")}
-              >
-                <option value="native">Kohaku</option>
-                <option value="claude_sdk" disabled={temporaryChatEnabled || temporary || !claudeAvailable}>
-                  Claude Code
-                </option>
-              </select>
-            </label>
-            {temporaryChatEnabled || temporary ? (
-              <span className="text-muted-foreground">
-                {t("thread.harness.temporary", { defaultValue: "Claude Code requires a saved chat." })}
-              </span>
-            ) : !claudeAvailable ? (
-              <span className="text-muted-foreground">
-                {t("thread.harness.unavailable", { defaultValue: "Claude Code requires the Claude Agent SDK." })}
-              </span>
-            ) : null}
+          <div className="flex min-w-0 items-center px-1">
+            <HarnessControl
+              value={activeHarness}
+              claudeAvailable={claudeAvailable}
+              temporary={temporaryChatEnabled || temporary}
+              disabled={booting || preparingFull}
+              onChange={setDraftHarness}
+            />
           </div>
         ) : null}
         onSend={session || historyKey ? handleThreadSend : handleWelcomeSend}
