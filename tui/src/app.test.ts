@@ -1066,8 +1066,11 @@ describe("KohakuTui layout", () => {
       await Bun.sleep(1)
       ui.composer.setText("/new-chat")
       ui.composer.submit()
+      await waitUntil(() => ui.composer.plainText === "")
+      ui.composer.submit()
       await waitUntil(() => newChats.length === 1)
       expect(newChats).toEqual(["new"])
+      app.accept({ event: "attached", chat_id: "new" })
       expect(ui.runtimeControls.modelText.plainText).toBe("default ▾")
     } finally {
       globalThis.fetch = original

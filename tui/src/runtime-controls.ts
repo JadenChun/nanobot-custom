@@ -11,6 +11,7 @@ import {
   type WorkspaceScopePayload,
 } from "./protocol"
 import { PickerMenu, type PickerMenuTheme } from "./picker-menu"
+import { harnessBadge, TEMPORARY_HARNESS_HINT, WORKSPACE_LOCKED, type ChatHarness, type HarnessBinding } from "./harness"
 
 interface RuntimeControlsTheme extends PickerMenuTheme {
   accent: string
@@ -19,6 +20,7 @@ interface RuntimeControlsTheme extends PickerMenuTheme {
 
 type Choice =
   | { kind: "model"; name: string; label: string; detail: string }
+  | { kind: "harness"; harness: ChatHarness; label: string; detail: string; temporary: boolean; blocked?: string }
   | { kind: "access"; mode: "restricted" | "full"; label: string; detail: string }
 
 const CONTROLS_CACHE_MS = 10_000
@@ -36,12 +38,15 @@ interface RuntimeControlsOptions {
   refreshScope: () => Promise<void>
   onModel: (name: string) => void
   onAccess: (scope: WorkspaceScopePayload) => void
+  onHarness: (harness: ChatHarness, temporary: boolean) => void
   onStatus: (message: string) => void
   onVisibilityChange: (visible: boolean) => void
 }
 
 /** Model and workspace policy controls expose one small, mouse-optional interface. */
 export class RuntimeControls {
+  readonly harnessText: TextRenderable
+  readonly workspaceLockText: TextRenderable
   readonly modelText: TextRenderable
   readonly accessText: TextRenderable
   readonly contextText: TextRenderable
@@ -56,6 +61,7 @@ export class RuntimeControls {
   private controlsLoadedAt = 0
   private controlsPromise: Promise<void> | null = null
   private scope: WorkspaceScopePayload
+  private binding: HarnessBinding | undefined
 
   constructor(
     private readonly renderer: CliRenderer,
@@ -78,6 +84,16 @@ export class RuntimeControls {
       onSelect: (choice) => this.apply(choice),
     })
     this.menuRoot = this.menu.root
+    this.harnessText = new TextRenderable(renderer, {
+      id: "kohaku-tui-harness-badge",
+      height: 1,
+      flexShrink: 0,
+      selectable: false,
+    })
+    this.workspaceLockText = this.controlText(renderer, "workspace-lock", () => {
+      this.options.onStatus(WORKSPACE_LOCKED)
+    })
+    this.workspaceLockText.flexShrink = 1
     this.modelText = this.controlText(renderer, "model", () => void this.openModel())
     this.accessText = this.controlText(renderer, "access", () => void this.openAccess())
     this.contextText = new TextRenderable(renderer, {
@@ -95,8 +111,40 @@ export class RuntimeControls {
     return this.menu.visible
   }
 
+  get choosingHarness(): boolean {
+    return this.kind === "harness"
+  }
+
   get workspaceScope(): WorkspaceScopePayload {
-    return this.scope
+    const lockedPath = this.binding?.locked_workspace
+    return lockedPath ? { ...this.scope, project_path: lockedPath } : this.scope
+  }
+
+  updateHarness(binding: HarnessBinding | undefined): void {
+    this.binding = binding
+    this.render()
+  }
+
+  openHarness(temporary: boolean, unavailableHint: string | undefined): void {
+    this.hide()
+    this.kind = "harness"
+    const choices: Choice[] = [{
+      kind: "harness",
+      harness: "native",
+      temporary,
+      label: "Harness · Kohaku",
+      detail: temporary ? `· ${TEMPORARY_HARNESS_HINT}` : "(default)",
+    }]
+    if (!temporary) choices.push({
+      kind: "harness",
+      harness: "claude_sdk",
+      temporary: false,
+      label: "Claude Code",
+      detail: unavailableHint ?? "",
+      blocked: unavailableHint,
+    })
+    this.menu.show(choices)
+    this.opened()
   }
 
   updateModel(model: string, preset: string): void {
@@ -169,7 +217,7 @@ export class RuntimeControls {
 
   private controlText(
     renderer: CliRenderer,
-    id: "model" | "access",
+    id: "model" | "access" | "workspace-lock",
     open: () => void,
   ): TextRenderable {
     const text = new TextRenderable(renderer, {
@@ -179,6 +227,7 @@ export class RuntimeControls {
       flexShrink: id === "model" ? 1 : 0,
       fg: this.theme.muted,
       selectable: false,
+      truncate: true,
       onMouseOver: () => { text.fg = this.theme.accent },
       onMouseOut: () => this.renderColors(),
       onMouseDown: (event) => {
@@ -291,6 +340,15 @@ export class RuntimeControls {
   }
 
   private apply(choice: Choice): void {
+    if (choice.kind === "harness") {
+      if (choice.blocked) {
+        this.options.onStatus(choice.blocked)
+        return
+      }
+      this.hide()
+      this.options.onHarness(choice.harness, choice.temporary)
+      return
+    }
     this.hide()
     if (choice.kind === "model") {
       if (choice.name !== this.modelPreset) this.options.onModel(choice.name)
@@ -302,13 +360,19 @@ export class RuntimeControls {
       return
     }
     this.options.onAccess({
-      ...this.scope,
+      ...this.workspaceScope,
       access_mode: choice.mode,
       restrict_to_workspace: choice.mode === "restricted",
     })
   }
 
   private render(): void {
+    const badge = harnessBadge(this.binding?.harness)
+    this.harnessText.content = badge ? `${badge}  ` : ""
+    this.harnessText.visible = Boolean(badge)
+    const lockedPath = this.binding?.locked_workspace
+    this.workspaceLockText.content = lockedPath ? `   Workspace locked · ${lockedPath}` : ""
+    this.workspaceLockText.visible = Boolean(lockedPath)
     this.modelText.content = `${this.modelPreset} ▾`
     const access = this.scope.access_mode === "full" ? "full access" : "workspace access"
     this.accessText.content = `     ${access} ▾`
@@ -316,6 +380,8 @@ export class RuntimeControls {
   }
 
   private renderColors(): void {
+    this.harnessText.fg = this.theme.accent
+    this.workspaceLockText.fg = this.theme.muted
     this.modelText.fg = this.kind === "model" && this.visible
       ? this.theme.accent
       : this.theme.muted

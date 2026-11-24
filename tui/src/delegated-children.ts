@@ -1,3 +1,5 @@
+import { isChatHarness, type ChatHarness } from "./harness"
+
 export interface SourceOrigin {
   store_identity: string
   session_key: string
@@ -26,6 +28,7 @@ export interface StopExpectation {
 
 /** One current canonical projection row for a delegated child. */
 export interface DelegatedChildActivity {
+  harness?: ChatHarness
   history_kind?: "canonical"
   parent_session_key: string
   child_session_key: string
@@ -64,6 +67,7 @@ export interface DelegatedChildActivity {
 
 /** Explicit, source-less history summary. It carries display data only. */
 export interface DelegatedChildSummary {
+  harness?: ChatHarness
   history_kind: "summary"
   parent_session_key: string
   child_session_key: string
@@ -319,6 +323,7 @@ export function parseDelegatedChildActivity(value: unknown): DelegatedChildActiv
   ) return null
 
   return {
+    ...(isChatHarness(value.harness) ? { harness: value.harness } : {}),
     parent_session_key: value.parent_session_key,
     child_session_key: value.child_session_key,
     child_id: value.child_id,
@@ -409,6 +414,7 @@ export function parseDelegatedChildSummary(value: unknown): DelegatedChildSummar
 
   return {
     history_kind: "summary",
+    ...(isChatHarness(value.harness) ? { harness: value.harness } : {}),
     parent_session_key: value.parent_session_key,
     child_session_key: value.child_session_key,
     child_id: value.child_id,
@@ -489,6 +495,15 @@ function compareVersion(left: DelegatedChildActivity, right: DelegatedChildActiv
 
 function sameFacts(left: DelegatedChildActivity, right: DelegatedChildActivity): boolean {
   return CHILD_FACT_KEYS.every((key) => left[key] === right[key])
+}
+
+function withKnownHarness(
+  activity: DelegatedChildActivity,
+  other: DelegatedChildActivity,
+): DelegatedChildActivity {
+  return activity.harness === undefined && other.harness !== undefined
+    ? { ...activity, harness: other.harness }
+    : activity
 }
 
 /** One reducer for socket events, transcript rows, and paged live hydration. */
@@ -623,12 +638,15 @@ export class DelegatedChildProjection {
       }
       if (sameLifetime(current, candidate)) {
         const order = compareVersion(candidate, current)
-        if (order < 0) continue
-        if (order === 0) {
-          if (!sameFacts(current, candidate)) conflict = true
+        if (order === 0 && !sameFacts(current, candidate)) {
+          conflict = true
           continue
         }
-        nextRows.set(candidate.child_id, candidate)
+        const merged = order <= 0
+          ? withKnownHarness(current, candidate)
+          : withKnownHarness(candidate, current)
+        if (merged === current) continue
+        nextRows.set(candidate.child_id, merged)
         changed.add(candidate.child_id)
         continue
       }
@@ -681,13 +699,15 @@ export class DelegatedChildProjection {
     candidate: DelegatedChildActivity,
   ): DelegatedChildApplyResult {
     const order = compareVersion(candidate, current)
-    if (order < 0) return "stale"
-    if (order === 0) {
-      if (sameFacts(current, candidate)) return "duplicate"
+    if (order === 0 && !sameFacts(current, candidate)) {
       this.refreshRequired = true
       return "conflict"
     }
-    this.put(candidate)
+    const merged = order <= 0
+      ? withKnownHarness(current, candidate)
+      : withKnownHarness(candidate, current)
+    if (merged === current) return order < 0 ? "stale" : "duplicate"
+    this.put(merged)
     return "updated"
   }
 

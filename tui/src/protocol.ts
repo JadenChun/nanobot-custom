@@ -1,3 +1,4 @@
+import { isChatHarness, type ChatHarness, type HarnessBinding, type HarnessCapabilities } from "./harness"
 import { decodeNotification, isCompactionPhase, isRecoveryState } from "../../packages/client-events/notifications"
 import type { ContextCompaction, NotificationEvent, RecoveryState } from "../../packages/client-events/notifications"
 import {
@@ -98,10 +99,14 @@ export interface RuntimeControls {
 }
 
 export type InboundEvent =
-  | { event: "ready"; chat_id: string; client_id: string }
+  | { event: "ready"; chat_id: string; client_id: string; harness_capabilities?: HarnessCapabilities }
+  | ExternalApprovalEvent
   | {
       event: "attached"
       chat_id: string
+      temporary?: boolean
+      harness_binding?: HarnessBinding
+      harness_capabilities?: HarnessCapabilities
       model_preset?: string | null
       usage?: TokenUsage
       recovery_state?: RecoveryState
@@ -184,6 +189,7 @@ export type InboundEvent =
   | {
       event: "session_updated"
       chat_id: string
+      harness_binding?: HarnessBinding
       scope?: string
       workspace_scope?: WorkspaceScopePayload
     }
@@ -198,7 +204,9 @@ export type InboundEvent =
   | { event: "error"; chat_id?: string; detail?: string; reason?: string; turn_id?: string }
 
 type OutboundEvent =
-  | { type: "new_chat"; workspace_scope?: WorkspaceScopePayload }
+  | { type: "new_chat"; workspace_scope?: WorkspaceScopePayload; harness?: ChatHarness }
+  | { type: "new_temporary_chat" }
+  | { type: "discard_temporary_chat"; chat_id: string }
   | { type: "fork_chat"; source_chat_id: string; before_user_index: number; title?: string }
   | { type: "attach"; chat_id: string }
   | { type: "set_workspace_scope"; chat_id: string; workspace_scope: WorkspaceScopePayload }
@@ -282,6 +290,10 @@ export interface HistorySnapshot {
   stopTargetSnapshotValid?: boolean
   stopTarget?: StopExpectation | null
   readOnly?: boolean
+  harness?: ChatHarness
+  harnessBinding?: HarnessBinding
+  harnessCapabilities?: HarnessCapabilities
+  workspaceScope?: WorkspaceScopePayload
   historyKind?: "canonical" | "summary"
   parentSessionKey?: string
   rootKey?: string
@@ -352,9 +364,28 @@ export interface MessageOptions {
   stopExpectation?: StopExpectation
 }
 
+export interface ExternalApproval {
+  session_key: string
+  session_incarnation: string
+  run_id: string
+  generation: number
+  effect_id: string
+  summary: string
+  command: string | null
+  save_exclusion_command: string | null
+}
+
+export interface ExternalApprovalEvent {
+  event: "external_approval"
+  chat_id: string
+  approval_id: string
+  child_id?: string
+  approval: ExternalApproval | null
+}
+
 export interface ApprovalDecision {
   approval_id: string
-  decision: "approve" | "deny"
+  decision: "approve" | "approve_and_save" | "deny"
   session_key?: string
   session_incarnation?: string
   run_id?: string
@@ -388,6 +419,7 @@ export interface SessionSummary {
   runStartedAt: number | null
   modelPreset: string | null
   recoveryState?: RecoveryState | null
+  harnessBinding?: HarnessBinding
   workspaceScope?: WorkspaceScopePayload | null
   pinned: boolean
   archived: boolean
@@ -406,6 +438,7 @@ const SLASH_COMMAND_LIFECYCLES = new Set([
 const CHAT_EVENTS = new Set([
   "attached",
   "delegated_child",
+  "external_approval",
   "stop_target",
   "message_accepted",
   "message_admitted",
@@ -441,6 +474,35 @@ function optional(value: unknown, type: "boolean" | "number" | "string"): boolea
 
 function nonNegativeSafeInteger(value: unknown): value is number {
   return typeof value === "number" && Number.isSafeInteger(value) && value >= 0
+}
+
+function isHarnessCapabilities(value: unknown): value is HarnessCapabilities {
+  if (!isRecord(value)) return false
+  const claude = value.claude_sdk
+  return claude === undefined || (isRecord(claude)
+    && typeof claude.available === "boolean"
+    && optional(claude.reason, "string"))
+}
+
+function isHarnessBinding(value: unknown): value is HarnessBinding {
+  return isRecord(value)
+    && (value.backend === "native" || value.backend === "external")
+    && (value.harness === null || isChatHarness(value.harness))
+    && (value.external_session_id === null || typeof value.external_session_id === "string")
+    && (value.locked_workspace === null || typeof value.locked_workspace === "string")
+    && nonNegativeSafeInteger(value.runtime_generation)
+}
+
+function isExternalApproval(value: unknown): value is ExternalApproval {
+  return isRecord(value)
+    && typeof value.session_key === "string" && value.session_key.length > 0
+    && typeof value.session_incarnation === "string" && value.session_incarnation.length > 0
+    && typeof value.run_id === "string" && value.run_id.length > 0
+    && typeof value.effect_id === "string" && value.effect_id.length > 0
+    && nonNegativeSafeInteger(value.generation)
+    && typeof value.summary === "string"
+    && (value.command === null || typeof value.command === "string")
+    && (value.save_exclusion_command === null || typeof value.save_exclusion_command === "string")
 }
 
 function isToolEvent(value: unknown): value is ToolProgressEvent {
@@ -539,6 +601,7 @@ function decodeInboundEvent(value: unknown): InboundEvent | null | undefined {
   if (typeof name !== "string") return null
   if (name === "ready") {
     return typeof record.chat_id === "string" && typeof record.client_id === "string"
+      && (record.harness_capabilities === undefined || isHarnessCapabilities(record.harness_capabilities))
       ? value as InboundEvent
       : null
   }
@@ -562,12 +625,22 @@ function decodeInboundEvent(value: unknown): InboundEvent | null | undefined {
     && ((record.model_preset !== undefined
       && record.model_preset !== null
       && typeof record.model_preset !== "string")
+      || !optional(record.temporary, "boolean")
+      || (record.harness_capabilities !== undefined && !isHarnessCapabilities(record.harness_capabilities))
+      || (record.harness_binding !== undefined && !isHarnessBinding(record.harness_binding))
       || (record.usage !== undefined && !isTokenUsage(record.usage))
       || (record.recovery_state !== undefined && !isRecoveryState(record.recovery_state))
       || (hasOwn(record, "stop_target")
         && record.stop_target !== null
         && !parseStopExpectation(record.stop_target)))
   ) return null
+  if (name === "external_approval") {
+    return typeof record.approval_id === "string" && record.approval_id.length > 0
+      && (record.child_id === undefined || (typeof record.child_id === "string" && record.child_id.length > 0))
+      && (record.approval === null || isExternalApproval(record.approval))
+      ? value as InboundEvent
+      : null
+  }
   if (name === "delegated_child") {
     const child = parseDelegatedChildActivity(record)
     return child ? { event: "delegated_child", chat_id: record.chat_id as string, ...child } : null
@@ -648,6 +721,7 @@ function decodeInboundEvent(value: unknown): InboundEvent | null | undefined {
   if (
     name === "session_updated"
     && (!optional(record.scope, "string")
+      || (record.harness_binding !== undefined && !isHarnessBinding(record.harness_binding))
       || (record.workspace_scope !== undefined && !isWorkspaceScope(record.workspace_scope)))
   ) return null
   if (
@@ -799,6 +873,11 @@ export async function fetchHistory(
         : parseStopExpectation(payload.stop_target),
     } : {}),
     ...(typeof payload.read_only === "boolean" ? { readOnly: payload.read_only } : {}),
+    ...(isChatHarness(payload.harness) ? { harness: payload.harness } : {}),
+    ...(isHarnessBinding(payload.harness_binding) ? { harnessBinding: payload.harness_binding } : {}),
+    ...(isHarnessCapabilities(payload.harness_capabilities)
+      ? { harnessCapabilities: payload.harness_capabilities } : {}),
+    ...(isWorkspaceScope(payload.workspace_scope) ? { workspaceScope: payload.workspace_scope } : {}),
     ...(payload.history_kind === "canonical" || payload.history_kind === "summary"
       ? { historyKind: payload.history_kind }
       : {}),
@@ -978,6 +1057,7 @@ export async function fetchDelegatedChildHistory(
       const ordered = [...pages].reverse()
       return {
         ...page,
+        harness: pages[0]?.harness ?? page.harness,
         messages: ordered.flatMap((item) => item.messages),
         hasMoreBefore: false,
         beforeCursor: null,
@@ -1123,13 +1203,22 @@ export async function fetchSessions(
   apiToken: string,
   reauthenticate?: ApiReauthenticator,
 ): Promise<SessionSummary[]> {
-  if (!apiUrl || !apiToken) return []
+  return (await fetchSessionList(apiUrl, apiToken, reauthenticate)).sessions
+}
+
+export async function fetchSessionList(
+  apiUrl: string,
+  apiToken: string,
+  reauthenticate?: ApiReauthenticator,
+): Promise<{ sessions: SessionSummary[]; harnessCapabilities?: HarnessCapabilities }> {
+  if (!apiUrl || !apiToken) return { sessions: [] }
   const [response, sidebarResponse] = await Promise.all([
     fetchApi(apiUrl, apiToken, "/api/sessions", reauthenticate),
     fetchApi(apiUrl, apiToken, "/api/webui/sidebar-state", reauthenticate).catch(() => null),
   ])
   if (!response.ok) throw new Error(`session request failed: HTTP ${response.status}`)
-  const payload = await response.json() as { sessions?: unknown[] }
+  const raw: unknown = await response.json()
+  const payload = isRecord(raw) ? raw : {}
   let sidebar: Record<string, unknown> = {}
   if (sidebarResponse?.ok) {
     try {
@@ -1142,7 +1231,8 @@ export async function fetchSessions(
   const pinned = new Set(Array.isArray(sidebar.pinned_keys) ? sidebar.pinned_keys : [])
   const archived = new Set(Array.isArray(sidebar.archived_keys) ? sidebar.archived_keys : [])
   const titles = isRecord(sidebar.title_overrides) ? sidebar.title_overrides : {}
-  return (payload.sessions || []).flatMap((value) => {
+  const rows: unknown[] = Array.isArray(payload.sessions) ? payload.sessions : []
+  const sessions = rows.flatMap((value) => {
     if (!isRecord(value) || typeof value.key !== "string" || !value.key.startsWith("websocket:")) {
       return []
     }
@@ -1165,10 +1255,16 @@ export async function fetchSessions(
         ? { recoveryState: value.recovery_state }
         : {}),
       ...(isWorkspaceScope(value.workspace_scope) ? { workspaceScope: value.workspace_scope } : {}),
+      ...(isHarnessBinding(value.harness_binding) ? { harnessBinding: value.harness_binding } : {}),
       pinned: pinned.has(value.key),
       archived: archived.has(value.key),
     }]
   })
+  return {
+    sessions,
+    ...(isHarnessCapabilities(payload.harness_capabilities)
+      ? { harnessCapabilities: payload.harness_capabilities } : {}),
+  }
 }
 
 function sessionMentionName(session: SessionSummary): string {
@@ -1402,6 +1498,8 @@ export class KohakuClient {
   private handshakeTimer: ReturnType<typeof setTimeout> | null = null
   private socket: WebSocket | null = null
   private chatId = ""
+  private temporary = false
+  private lastSavedChatId = ""
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null
   private reconnectAttempt = 0
   private closedByClient = false
@@ -1575,8 +1673,16 @@ export class KohakuClient {
     this.write({ type: "attach", chat_id: chatId })
   }
 
-  newChat(scope?: WorkspaceScopePayload): void {
-    this.write({ type: "new_chat", ...(scope ? { workspace_scope: scope } : {}) })
+  newChat(scope?: WorkspaceScopePayload, harness: ChatHarness = "native"): void {
+    this.write({
+      type: "new_chat",
+      ...(scope ? { workspace_scope: scope } : {}),
+      ...(harness === "claude_sdk" ? { harness } : {}),
+    })
+  }
+
+  newTemporaryChat(): void {
+    this.write({ type: "new_temporary_chat" })
   }
 
   forkChat(sourceChatId: string, beforeUserIndex: number, title?: string): void {
@@ -1696,7 +1802,11 @@ export class KohakuClient {
     }
 
     if (event.event === "ready") {
-      const requestedChatId = this.chatId || this.options.chatId
+      const requestedChatId = (this.temporary ? this.lastSavedChatId : this.chatId) || this.options.chatId
+      if (this.temporary) {
+        this.temporary = false
+        this.chatId = ""
+      }
       if (requestedChatId) {
         this.chatId = requestedChatId
         this.write({ type: "attach", chat_id: this.chatId })
@@ -1704,7 +1814,13 @@ export class KohakuClient {
         this.newChat(this.options.initialWorkspaceScope)
       }
     } else if (event.event === "attached") {
+      const previousTemporaryChat = this.temporary ? this.chatId : ""
       this.chatId = event.chat_id
+      this.temporary = event.temporary === true
+      if (!this.temporary) this.lastSavedChatId = event.chat_id
+      if (previousTemporaryChat && previousTemporaryChat !== event.chat_id) {
+        this.write({ type: "discard_temporary_chat", chat_id: previousTemporaryChat })
+      }
     }
     this.options.onEvent(event)
   }
