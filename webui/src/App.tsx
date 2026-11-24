@@ -1608,7 +1608,7 @@ function Shell({
         setWorkspaceError(t("errors.workspaceScopeRejected.body"));
       } else if (e instanceof Error && e.message.startsWith("harness_")) {
         setWorkspaceError(e.message === "harness_unavailable"
-          ? t("thread.harness.unavailable", { defaultValue: "Claude Code requires the optional Claude Agent SDK." })
+          ? t("thread.harness.unavailable", { defaultValue: "Claude Code requires the Claude Agent SDK." })
           : t("thread.harness.createFailed", { defaultValue: "Claude Code could not open this chat. Try again." }));
       } else if (options?.fullAccess) {
         setWorkspaceError(t("workspace.permissionV2.actionFailed", {

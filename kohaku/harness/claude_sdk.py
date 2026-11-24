@@ -1,4 +1,4 @@
-"""Adapt the optional Claude Agent SDK to Kohaku's external harness contract."""
+"""Adapt the Claude Agent SDK to Kohaku's external harness contract."""
 
 from __future__ import annotations
 
@@ -97,7 +97,7 @@ def _load_sdk() -> ModuleType:
         return import_module("claude_agent_sdk")
     except ImportError as exc:
         raise HarnessCapabilityError(
-            "Claude Code requires the optional Claude Agent SDK. Install Kohaku with the coding-sdk extra."
+            "Claude Code requires the Claude Agent SDK. Reinstall Kohaku or install claude-agent-sdk."
         ) from exc
 
 

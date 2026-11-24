@@ -60,10 +60,15 @@ dependencies = [
     "python-docx>=1.1.0,<2.0.0",
     "openpyxl>=3.1.0,<4.0.0",
     "python-pptx>=1.0.0,<2.0.0",
+    "aiohttp>=3.9.0,<4.0.0",
+    "claude-agent-sdk>=0.2.188",
 ]
 
 [project.optional-dependencies]
-coding-sdk = ["claude-agent-sdk>=0.2.188"]
+coding-sdk = [
+    # Compatibility extra: claude-agent-sdk is bundled in core dependencies.
+    "claude-agent-sdk>=0.2.188",
+]
 desktop = ["pyobjc-framework-Quartz>=10.0; sys_platform == 'darwin'", "pyobjc-framework-Cocoa>=10.0; sys_platform == 'darwin'"]
 crawler-worker = ["crawl4ai>=0.9.0,<1.0.0", "pillow>=10.0.0"]
 api = [

@@ -3779,7 +3779,7 @@ export function ThreadShell({
               </span>
             ) : !claudeAvailable ? (
               <span className="text-muted-foreground">
-                {t("thread.harness.unavailable", { defaultValue: "Claude Code requires the optional Claude Agent SDK." })}
+                {t("thread.harness.unavailable", { defaultValue: "Claude Code requires the Claude Agent SDK." })}
               </span>
             ) : null}
           </div>

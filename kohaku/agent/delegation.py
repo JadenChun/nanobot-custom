@@ -1594,7 +1594,7 @@ class ForegroundAgentManager:
         if continue_from_child_id is not None and (harness != "claude_sdk" or role != "worker"):
             return refuse("Context carryover requires a Claude Code implementation child.")
         if harness == "claude_sdk" and not claude_sdk_available():
-            return refuse("Claude Code requires the optional Claude Agent SDK.")
+            return refuse("Claude Code requires the Claude Agent SDK.")
 
         call_id = str(uuid.uuid4())[:8]
         logger.info("Foreground {} [{}] started", role, call_id)
@@ -2946,7 +2946,7 @@ class ForegroundAgentManager:
         child_state = child_snapshot.state
         if child.harness == "claude_sdk":
             if not claude_sdk_available():
-                return "Error: Claude Code requires the optional Claude Agent SDK."
+                return "Error: Claude Code requires the Claude Agent SDK."
             try:
                 sdk_binding = external_binding(child_snapshot.header["metadata"])
                 if (

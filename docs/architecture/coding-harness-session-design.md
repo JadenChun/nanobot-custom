@@ -169,7 +169,7 @@ Claude Code runs the relevant tests for an implementation assignment.
 
 ## 4. Packaging and Recovery
 
-Add `claude-agent-sdk` as an optional dependency. Load it when a Claude Code run starts.
+Bundle `claude-agent-sdk` (and `aiohttp` for the loopback bridge) in Kohaku's core dependencies, while still lazy-importing the SDK only when a Claude Code run starts so startup stays fast and missing-runtime failures degrade cleanly.
 Use the SDK and bundled Claude Code versions qualified by the implementation smoke tests.
 Launch the subprocess with a controlled environment and explicit settings sources.
 

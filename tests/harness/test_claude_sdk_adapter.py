@@ -95,7 +95,7 @@ async def test_missing_sdk_fails_only_at_launch(tmp_path, monkeypatch):
         pytest.fail("The model bridge should not start without the SDK")
 
     backend = ClaudeSDKBackend(should_not_start, state_dir=tmp_path / "state")
-    with pytest.raises(HarnessCapabilityError, match="coding-sdk"):
+    with pytest.raises(HarnessCapabilityError, match="Claude Agent SDK"):
         await backend.start(request_for(tmp_path), resume=None, fork_session=False)
 
 
