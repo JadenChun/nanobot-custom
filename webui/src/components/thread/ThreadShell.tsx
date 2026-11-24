@@ -86,6 +86,7 @@ import {
   sameSourceOrigin,
 } from "@/lib/delegated-child-projection";
 import type {
+  ApprovalDecisionPayload,
   ChatSummary,
   DelegatedChildReference,
   DelegatedChildPayload,
@@ -136,6 +137,7 @@ interface ChildApprovalPrompt {
   status: "loading" | "ready" | "unavailable";
   approvalId: string | null;
   summary: string;
+  saveExclusionCommand?: string;
 }
 
 interface PendingChildApprovalDecision {
@@ -1758,6 +1760,7 @@ export function ThreadShell({
                   status: "ready",
                   approvalId: prompt.approvalId,
                   summary: prompt.summary,
+                  saveExclusionCommand: prompt.save_exclusion_command,
                 }
               : {
                   ...entry,
@@ -2022,9 +2025,15 @@ export function ThreadShell({
     }
     return null;
   }, [booting, dismissedRootApprovalIds, displayMessages, turnActive]);
+  const submitRootApprovalDecision = (decision: ApprovalDecisionPayload["decision"]) => {
+    const approvalId = riskyApproval?.approvalId;
+    if (!chatId || !approvalId) return;
+    const turnId = client.sendApprovalDecision(chatId, approvalId, decision, session?.key);
+    pendingRootApprovalRef.current = { turnId, approvalId };
+  };
   const submitChildApprovalDecision = useCallback((
     prompt: ChildApprovalPrompt,
-    decision: "approve" | "deny",
+    decision: ApprovalDecisionPayload["decision"],
   ) => {
     const current = currentDelegatedChildren.find(
       (child) => child.child_id === prompt.child.child_id,
@@ -3588,28 +3597,10 @@ export function ThreadShell({
             approvalId={riskyApproval.approvalId}
             busy={turnActive || booting || preparingFull}
             resetSignal={rootApprovalResetSignal}
-            onApprove={() => {
-              if (!chatId || !riskyApproval.approvalId) return;
-              const approvalId = riskyApproval.approvalId;
-              const turnId = client.sendApprovalDecision(
-                chatId,
-                approvalId,
-                "approve",
-                session?.key,
-              );
-              pendingRootApprovalRef.current = { turnId, approvalId };
-            }}
-            onCancel={() => {
-              if (!chatId || !riskyApproval.approvalId) return;
-              const approvalId = riskyApproval.approvalId;
-              const turnId = client.sendApprovalDecision(
-                chatId,
-                approvalId,
-                "deny",
-                session?.key,
-              );
-              pendingRootApprovalRef.current = { turnId, approvalId };
-            }}
+            saveExclusionCommand={riskyApproval.save_exclusion_command}
+            onApprove={() => submitRootApprovalDecision("approve")}
+            onApproveAndSave={() => submitRootApprovalDecision("approve_and_save")}
+            onCancel={() => submitRootApprovalDecision("deny")}
           />
         ) : null}
         {!temporary ? childApprovalPrompts.map((prompt) => {
@@ -3632,6 +3623,7 @@ export function ThreadShell({
               key={`${prompt.child.child_id}:${prompt.approvalId ?? prompt.requestKey}`}
               summary={prompt.summary || taskLabel}
               approvalId={prompt.status === "ready" ? prompt.approvalId : null}
+              saveExclusionCommand={prompt.saveExclusionCommand}
               requestLabel={requestLabel}
               contextLabel={t("thread.delegatedChild.approvalTask", {
                 defaultValue: "Delegated task: {{task}}",
@@ -3651,6 +3643,7 @@ export function ThreadShell({
                 )
               }
               onApprove={() => submitChildApprovalDecision(prompt, "approve")}
+              onApproveAndSave={() => submitChildApprovalDecision(prompt, "approve_and_save")}
               onCancel={() => submitChildApprovalDecision(prompt, "deny")}
             />
           );

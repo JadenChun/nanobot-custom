@@ -2,11 +2,13 @@ const APPROVAL_PREFIX =
   "I'm about to take a risky action and want your approval first. Planned action: ";
 const APPROVAL_SUFFIX =
   ". Reply with the approval control to continue or deny.";
-const APPROVAL_ID_PATTERN = /Approval ID:\s*([0-9a-f]{32})/i;
+const APPROVAL_ID_PATTERN =
+  /Approval ID:\s*([0-9a-f]{32})(?:\. Save exclusion command: ([a-z0-9_][a-z0-9_.+-]*))?\.?$/i;
 
 export interface RiskyApprovalPrompt {
   summary: string;
   approvalId: string | null;
+  save_exclusion_command?: string;
 }
 
 /**
@@ -25,5 +27,9 @@ export function parseRiskyApprovalPrompt(content: string): RiskyApprovalPrompt |
     .replace(APPROVAL_ID_PATTERN, "")
     .replace(/\.\s*$/, "")
     .trim();
-  return { summary: summary || body, approvalId: match?.[1] ?? null };
+  return {
+    summary: summary || body,
+    approvalId: match?.[1] ?? null,
+    ...(match?.[2] ? { save_exclusion_command: match[2] } : {}),
+  };
 }

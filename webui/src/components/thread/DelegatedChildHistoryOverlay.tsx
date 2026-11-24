@@ -215,7 +215,7 @@ export async function findDelegatedChildApprovalPrompt(
   child: DelegatedChildPayload,
   rootKey: string,
   signal: AbortSignal,
-): Promise<{ summary: string; approvalId: string } | null> {
+): Promise<{ summary: string; approvalId: string; save_exclusion_command?: string } | null> {
   const approvalId = child.pending_approval_id;
   if (
     child.state !== "waiting_approval"
@@ -239,7 +239,7 @@ export async function findDelegatedChildApprovalPrompt(
       const message = page.messages[index]!;
       if (message.role !== "assistant" || message.kind === "trace") continue;
       const prompt = parseRiskyApprovalPrompt(message.content);
-      if (prompt?.approvalId === approvalId) return { summary: prompt.summary, approvalId };
+      if (prompt?.approvalId === approvalId) return { ...prompt, approvalId };
     }
     if (!page.hasMoreBefore) return null;
     if (!page.beforeCursor || usedCursors.has(page.beforeCursor)) {

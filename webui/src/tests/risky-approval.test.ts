@@ -20,6 +20,16 @@ describe("parseRiskyApprovalPrompt", () => {
     });
   });
 
+  it("extracts the save option from a Sandbox approval prompt", () => {
+    expect(parseRiskyApprovalPrompt(
+      `I'm about to take a risky action and want your approval first. Planned action: run outside Sandbox: printf kohaku-fixture. Approval ID: ${APPROVAL_ID}. Save exclusion command: printf. Reply with the approval control to continue or deny.`,
+    )).toEqual({
+      summary: "run outside Sandbox: printf kohaku-fixture",
+      approvalId: APPROVAL_ID,
+      save_exclusion_command: "printf",
+    });
+  });
+
   it("returns a null approval id when the prompt has no approval id segment", () => {
     expect(
       parseRiskyApprovalPrompt(

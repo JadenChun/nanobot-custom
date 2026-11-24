@@ -497,6 +497,7 @@ async def _execute_tool_call(
     preflight_result: str | ToolOutcome | None = None
     edit_binding: EditContentBinding | None = None
     exec_cwd: Path | None = None
+    exec_unsandboxed = False
     with tools.dispatch_admission(tool_call.name) as dispatch_error:
         if dispatch_error is not None:
             payload = _with_retry_hint(dispatch_error)
@@ -531,6 +532,7 @@ async def _execute_tool_call(
             preflight_result = decision.preflight_result
             edit_binding = decision.edit_binding
             exec_cwd = decision.exec_cwd
+            exec_unsandboxed = decision.exec_unsandboxed
         dispatched = preflight_result is None
         progress_sink = hook.tool_progress_sink(tool_call) if dispatched else None
         try:
@@ -540,7 +542,9 @@ async def _execute_tool_call(
                     turn_context.bind_tool_intent(tool_intent_binding)
                     if turn_context is not None
                     else nullcontext()
-                ), bind_approved_exec_cwd(exec_cwd), bind_tool_progress_sink(progress_sink):
+                ), bind_approved_exec_cwd(
+                    exec_cwd, unsandboxed=exec_unsandboxed,
+                ), bind_tool_progress_sink(progress_sink):
                     if preflight_result is not None:
                         result = preflight_result
                     elif tool is not None:

@@ -4883,6 +4883,9 @@ class AgentLoop:
             return True
         snapshot = await self.approval_admission.snapshot_decision(key, decision)
         pending = snapshot.pending
+        if snapshot.action == "invalid_approval_decision":
+            await self._reject_webui_admission(msg, "not_admitted", snapshot.action)
+            return True
         if snapshot.action not in {"affirmative", "negative"} or pending is None:
             await self._reject_webui_admission(msg, "not_admitted", "approval_stale")
             return True
@@ -4936,6 +4939,23 @@ class AgentLoop:
         # waiter is shutdown-tracked, never a parent _active_tasks/root wrapper,
         # and never blocks the bus from receiving a sibling decision or Stop.
         self.schedule_background(resume_child())
+        return True
+
+    def _save_sandbox_exclusion(self, command: str) -> bool:
+        from filelock import Timeout
+
+        from kohaku.agent.tools.shell import ExecTool
+        from kohaku.config.loader import save_sandbox_exclusion
+
+        try:
+            commands = save_sandbox_exclusion(command, self._config_path)
+        except (OSError, ValueError, Timeout):
+            logger.warning("Could not save the Sandbox exclusion")
+            return False
+        self.exec_config.sandbox_excluded_commands[:] = commands
+        exec_tool = self.tools.get("exec")
+        if type(exec_tool) is ExecTool:
+            exec_tool.sandbox_excluded_commands[:] = commands
         return True
 
     async def _publish_injection_committed(
@@ -5867,6 +5887,13 @@ class AgentLoop:
                 request.approval_decision,
                 provenance=options.approval_provenance,
             )
+            if snapshot.action == "invalid_approval_decision":
+                if options.inbound is not None:
+                    await self._reject_webui_admission(options.inbound, "not_admitted", snapshot.action)
+                return TurnResult(
+                    run_id="", status=RunStatus.CANCELLED, stop_reason=snapshot.action,
+                    content="This approval does not allow saving a Sandbox exclusion.",
+                )
             if (
                 snapshot.typed
                 and snapshot.action in {"affirmative", "negative"}
@@ -6202,6 +6229,7 @@ class AgentLoop:
                             action = (
                                 await self.approval_admission.consume(
                                     snapshot, context=context, source_is_current=approval_source_is_current,
+                                    save_exclusion=self._save_sandbox_exclusion,
                                 )
                                 if snapshot.typed else snapshot.action
                             )
@@ -6252,7 +6280,7 @@ class AgentLoop:
                                         )
                                         raise activity.callback_error
                                 self._ack_admitted_activity_message(activity_marker.message)
-                            if action in ('negative', 'stale', 'denied'):
+                            if action in ('negative', 'stale', 'denied', 'approval_save_failed'):
                                 if action == 'negative':
                                     text = 'Cancelled the pending risky action.'
                                     stop_reason = 'cancelled'
@@ -6260,6 +6288,9 @@ class AgentLoop:
                                     text = ('That approval decision was not accepted from this source. '
                                             'Approve the pending request from the foreground chat.')
                                     stop_reason = 'approval_denied'
+                                elif action == 'approval_save_failed':
+                                    text = 'Kohaku could not save the Sandbox exclusion. Try again.'
+                                    stop_reason = action
                                 else:
                                     text = ('That approval request is no longer current. '
                                             'Please reply to the latest approval request.')
@@ -6374,6 +6405,7 @@ class AgentLoop:
                                     state = owner.read_snapshot().state if owner is not None else None
                                     pending_session = stage.session if state is None else None
                                     raw_turn_id = request.metadata.get(WEBUI_TURN_METADATA_KEY)
+                                    save_exclusion_command = result.policy_metadata.get("save_exclusion_command")
                                     await self.approval_admission.store(
                                         session_key=key,
                                         channel=(options.approval_target or target).channel,
@@ -6400,6 +6432,10 @@ class AgentLoop:
                                         generation=(state.generation if state else
                                             pending_session.generation if pending_session else None),
                                         source_state=state,
+                                        save_exclusion_command=(
+                                            save_exclusion_command
+                                            if isinstance(save_exclusion_command, str) else None
+                                        ),
                                     )
                             io.result = result
                         if io.delivery_error:

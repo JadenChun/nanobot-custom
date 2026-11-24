@@ -6,6 +6,7 @@ import re
 from pathlib import Path
 from typing import Any, cast, overload
 
+from filelock import FileLock
 from pydantic import BaseModel, ValidationError
 from pydantic_settings import SettingsError
 
@@ -40,12 +41,13 @@ def get_config_path() -> Path:
     return Path.home() / ".kohaku" / "config.json"
 
 
-def load_config(config_path: Path | None = None) -> Config:
+def load_config(config_path: Path | None = None, *, apply_network_policy: bool = True) -> Config:
     """
     Load configuration from file or create default.
 
     Args:
         config_path: Optional path to config file. Uses default if not provided.
+        apply_network_policy: Apply the loaded SSRF allowlist to the process.
 
     Returns:
         Loaded configuration object.
@@ -77,7 +79,8 @@ def load_config(config_path: Path | None = None) -> Config:
                 issues=validation_issues(exc),
             ) from exc
         config.bind_source_path(path)
-        _apply_ssrf_whitelist(config)
+        if apply_network_policy:
+            _apply_ssrf_whitelist(config)
         return config
 
     try:
@@ -146,7 +149,8 @@ def load_config(config_path: Path | None = None) -> Config:
         ) from exc
 
     config.bind_source_path(path)
-    _apply_ssrf_whitelist(config)
+    if apply_network_policy:
+        _apply_ssrf_whitelist(config)
     return config
 
 
@@ -189,6 +193,21 @@ def save_config(config: Config, config_path: Path | None = None) -> None:
 
     # Temp + replace so a crash mid-write cannot leave a truncated config.json.
     _write_text_atomic(path, json.dumps(data, indent=2, ensure_ascii=False))
+
+
+def save_sandbox_exclusion(command: str, config_path: Path | None) -> list[str]:
+    """Add one server-approved executable without overwriting other config changes."""
+    path = (config_path or get_config_path()).expanduser().resolve(strict=False)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    # Use the same lock as the WebUI settings writer. If it is busy, keep the
+    # pending approval available without blocking the admission event loop.
+    with FileLock(str(path.with_suffix(f"{path.suffix}.lock")), timeout=0):
+        config = load_config(path, apply_network_policy=False)
+        commands = config.tools.exec.sandbox_excluded_commands
+        if command not in commands:
+            commands.append(command)
+            save_config(config, path)
+        return commands
 
 
 def merge_missing_defaults(existing: object, defaults: object) -> object:

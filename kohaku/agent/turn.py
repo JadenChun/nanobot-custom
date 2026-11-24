@@ -207,8 +207,8 @@ class ApprovalDecision:
     def __post_init__(self) -> None:
         if type(self.approval_id) is not str or not self.approval_id.strip():
             raise ValueError("approval decision requires an approval_id")
-        if self.decision not in {"approve", "deny"}:
-            raise ValueError("approval decision must be approve or deny")
+        if self.decision not in ("approve", "approve_and_save", "deny"):
+            raise ValueError("Approval decision must be approve, approve_and_save, or deny")
         for name in (
             "session_key",
             "session_incarnation",

@@ -3,6 +3,7 @@ import { Loader2, ShieldAlert } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import { Button } from "@/components/ui/button";
+import type { ApprovalDecisionPayload } from "@/lib/types";
 
 export interface ApprovalRequestCardProps {
   summary: string;
@@ -13,7 +14,9 @@ export interface ApprovalRequestCardProps {
   busy?: boolean;
   /** Increment to clear the local submitting spinner after a rejected send. */
   resetSignal?: number;
+  saveExclusionCommand?: string;
   onApprove: () => void;
+  onApproveAndSave?: () => void;
   onCancel: () => void;
 }
 
@@ -29,15 +32,18 @@ export function ApprovalRequestCard({
   description,
   busy = false,
   resetSignal = 0,
+  saveExclusionCommand,
   onApprove,
+  onApproveAndSave,
   onCancel,
 }: ApprovalRequestCardProps) {
   const { t } = useTranslation();
-  const [pending, setPending] = useState<"approve" | "cancel" | null>(null);
+  const [pending, setPending] = useState<ApprovalDecisionPayload["decision"] | null>(null);
   useEffect(() => {
     setPending(null);
   }, [approvalId, resetSignal]);
   const disabled = busy || pending !== null || !approvalId;
+  const canSave = Boolean(saveExclusionCommand && onApproveAndSave);
   const approvalDescription = description ?? (approvalId
     ? t("approval.description", {
         defaultValue:
@@ -48,10 +54,11 @@ export function ApprovalRequestCard({
           "This approval request needs an updated client. Chat text cannot grant it.",
       }));
 
-  const submit = (action: "approve" | "cancel") => {
+  const submit = (action: ApprovalDecisionPayload["decision"]) => {
     if (disabled) return;
     setPending(action);
     if (action === "approve") onApprove();
+    else if (action === "approve_and_save") onApproveAndSave?.();
     else onCancel();
   };
 
@@ -81,19 +88,30 @@ export function ApprovalRequestCard({
           type="button"
           variant="ghost"
           disabled={disabled}
-          onClick={() => submit("cancel")}
+          onClick={() => submit("deny")}
         >
-          {pending === "cancel" ? (
+          {pending === "deny" ? (
             <Loader2 className="mr-2 size-4 animate-spin" aria-hidden />
           ) : null}
-          {t("approval.cancel", { defaultValue: "Cancel" })}
+          {canSave ? t("approval.deny", { defaultValue: "Deny" }) : t("approval.cancel", { defaultValue: "Cancel" })}
         </Button>
         <Button type="button" disabled={disabled} onClick={() => submit("approve")}>
           {pending === "approve" ? (
             <Loader2 className="mr-2 size-4 animate-spin" aria-hidden />
           ) : null}
-          {t("approval.approve", { defaultValue: "Approve and continue" })}
+          {canSave ? t("approval.allowOnce", { defaultValue: "Allow once" }) : t("approval.approve", { defaultValue: "Approve and continue" })}
         </Button>
+        {canSave ? (
+          <Button type="button" disabled={disabled} onClick={() => submit("approve_and_save")}>
+            {pending === "approve_and_save" ? (
+              <Loader2 className="mr-2 size-4 animate-spin" aria-hidden />
+            ) : null}
+            {t("approval.allowAndSave", {
+              defaultValue: "Allow & save {{command}}",
+              command: saveExclusionCommand,
+            })}
+          </Button>
+        ) : null}
       </div>
     </section>
   );

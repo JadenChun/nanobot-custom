@@ -182,6 +182,8 @@ def wrap_managed_command(
     input_files: Iterable[tuple[Path, str]] = (),
     shell_program: str | None = None,
     login: bool = False,
+    allow_local_binding: bool = True,
+    allow_unix_sockets: Iterable[str] = (),
 ) -> str:
     """Read-only host view with approved writable folders and private temp/cache.
 
@@ -224,6 +226,8 @@ def wrap_managed_command(
     args = ["bwrap", "--new-session", "--die-with-parent", "--unshare-pid",
             "--ro-bind", "/", "/", "--proc", "/proc", "--dev", "/dev",
             "--tmpfs", "/tmp", "--tmpfs", "/run", "--remount-ro", "/sys"]
+    if not allow_local_binding:
+        args.append("--unshare-net")
     # Resolver configuration may be a symlink into /run, whose sockets are
     # hidden. Preserve only its actual regular file so network DNS still works.
     resolver = Path("/etc/resolv.conf").resolve(strict=False)
@@ -240,7 +244,8 @@ def wrap_managed_command(
         args += ["--bind" if writable else "--ro-bind", str(root), str(root)]
 
     # These roots cannot be restored by a broad writable ancestor or Once grant.
-    for root in sorted({path.expanduser().resolve(strict=False) for path in excluded_roots}, key=lambda path: len(path.parts)):
+    repository_roots = {path.expanduser().resolve(strict=False) for path in excluded_roots}
+    for root in sorted(repository_roots, key=lambda path: len(path.parts)):
         if root.exists():
             if _overlaps_system_control(root) or any(
                 Path(runtime).resolve(strict=False).is_relative_to(root)
@@ -260,6 +265,22 @@ def wrap_managed_command(
         elif private.exists():
             args += _ensure_mountpoint_args(private, reset_roots=(instance, Path("/tmp")))
             args += ["--tmpfs", str(private)]
+    for socket_path in _normalize_bind_paths(allow_unix_sockets):
+        endpoint = Path(socket_path)
+        if grants.is_private_path(endpoint) or any(endpoint.is_relative_to(root) for root in (
+            Path("/proc"), Path("/sys"), Path("/dev"), *repository_roots,
+        )):
+            raise PermissionError("Sandbox socket is inside a protected path")
+        if not endpoint.exists():
+            continue
+        if not endpoint.is_socket():
+            raise ValueError("Sandbox socket path must identify a Unix socket")
+        args += _ensure_mountpoint_args(
+            endpoint.parent,
+            reset_roots=(instance, Path("/tmp"), Path("/run")),
+            backing_roots=(root for root, _, _ in mounts),
+        )
+        args += ["--ro-bind", socket_path, socket_path]
     # Exact per-invocation read snapshots are restored after private masks so
     # the approved files remain readable at their advertised paths.
     for source, target in input_files:

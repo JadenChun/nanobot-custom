@@ -509,7 +509,7 @@ class ForegroundAgentManager:
             suspended.request,
             parent_bindings,
             child_context=None,
-            require_capabilities=decision.decision == "approve",
+            require_capabilities=decision.decision != "deny",
         ):
             return None
         run_id = f"{child_id}-{uuid.uuid4().hex}"
@@ -798,7 +798,7 @@ class ForegroundAgentManager:
             resume.request,
             suspended.parent_bindings,
             child_context=context,
-            require_capabilities=resume.decision.decision == "approve",
+            require_capabilities=resume.decision.decision != "deny",
         )
 
     async def activate_child_approval_resume(

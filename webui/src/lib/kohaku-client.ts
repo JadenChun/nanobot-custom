@@ -1772,7 +1772,7 @@ export class KohakuClient {
   sendApprovalDecision(
     chatId: string,
     approvalId: string,
-    decision: "approve" | "deny",
+    decision: ApprovalDecisionPayload["decision"],
     identity?: string | ApprovalDecisionIdentity,
   ): string {
     const sourceIdentity = typeof identity === "string"

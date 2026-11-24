@@ -1210,6 +1210,8 @@ class WebUICommandRouter:
         if approval_control:
             raw_decision: object = envelope.get("approval_decision")
             try:
+                # Saving an exclusion uses the same identity-only control.
+                # The executable comes from the server's pending approval.
                 if (
                     "approval_decision" in duplicate_keys
                     or not isinstance(raw_decision, dict)

@@ -30,11 +30,13 @@ from kohaku.agent.permission_rules import (
     RISKY_EXEC_PATTERNS,
     WriteTargetGuard,
     changed_line_count,
+    extract_saveable_sandbox_command,
     is_agent_state_file,
     is_autonomous_managed_path,
     is_large_replacement,
     match_exec_risk_reason,
     match_explicit_rule,
+    sandbox_exec_risk_reason,
 )
 from kohaku.agent.tools.base import Tool
 from kohaku.agent.tools.filesystem import EditCandidate, EditContentBinding, EditFileTool
@@ -84,6 +86,7 @@ class ToolPolicyDecision:
     preflight_result: str | ToolOutcome | None = None
     edit_binding: EditContentBinding | None = None
     exec_cwd: Path | None = None
+    exec_unsandboxed: bool = False
 
 
 class ToolPolicy:
@@ -147,6 +150,7 @@ class CompositeToolPolicy(ToolPolicy):
     ) -> ToolPolicyDecision:
         edit_binding = None
         exec_cwd = None
+        exec_unsandboxed = False
         for policy in self.policies:
             decision = policy.authorize_dispatch(tool_call, arguments, turn_context)
             if decision.action != "allow" or decision.preflight_result is not None:
@@ -155,7 +159,10 @@ class CompositeToolPolicy(ToolPolicy):
                 edit_binding = decision.edit_binding
             if decision.exec_cwd is not None:
                 exec_cwd = decision.exec_cwd
-        return ToolPolicyDecision(edit_binding=edit_binding, exec_cwd=exec_cwd)
+                exec_unsandboxed = decision.exec_unsandboxed
+        return ToolPolicyDecision(
+            edit_binding=edit_binding, exec_cwd=exec_cwd, exec_unsandboxed=exec_unsandboxed,
+        )
 
     def validate_write_target_binding(
         self, tool_call: ToolCallRequest, tool: Tool | None, params: object,
@@ -305,6 +312,8 @@ class _EffectAssessment:
     edit_target: Path | None = None
     edit_binding: EditContentBinding | None = None
     exec_cwd: Path | None = None
+    sandbox_exception: bool = False
+    save_exclusion_command: str | None = None
     refusal: str | ToolOutcome | None = None
 
 
@@ -382,7 +391,7 @@ class RiskyActionPolicy(ToolPolicy):
 
         self._write_guard.clear()
         self._risky_calls.clear()
-        blocked: list[tuple[str, str]] = []
+        blocked: list[tuple[str, str, str | None]] = []
         for tool_call in tool_calls:
             prepared = self._prepare_effect_call(tool_call)
             if prepared is None:
@@ -399,7 +408,7 @@ class RiskyActionPolicy(ToolPolicy):
             if reason:
                 self._risky_calls[tool_call.id] = (effect_id, reason)
                 if self.effect_authority is None or not self.effect_authority.permits(effect_id):
-                    blocked.append((effect_id, reason))
+                    blocked.append((effect_id, reason, assessment.save_exclusion_command))
         if blocked:
             return self._request_approval(*blocked[0])
         return ToolPolicyDecision()
@@ -435,8 +444,9 @@ class RiskyActionPolicy(ToolPolicy):
         ):
             return ToolPolicyDecision(
                 edit_binding=assessment.edit_binding, exec_cwd=assessment.exec_cwd,
+                exec_unsandboxed=assessment.sandbox_exception,
             )
-        return self._request_approval(effect_id, reason)
+        return self._request_approval(effect_id, reason, assessment.save_exclusion_command)
 
     def validate_write_target(self, tool_call: ToolCallRequest, tool: Any) -> str | None:
         """Recheck the assessed target through the tool immediately before dispatch."""
@@ -504,33 +514,58 @@ class RiskyActionPolicy(ToolPolicy):
                 edit_binding=candidate.content_binding(),
             )
 
-        reason = self._risky_reason(call)
+        tool = self._tools.get(call.name) if self._tools is not None else None
+        sandbox_exception = False
+        save_exclusion_command = None
+        needs_exception_approval = False
+        if call.name == "exec" and type(tool) is ExecTool:
+            command, _ = tool.request_location(**call.arguments)
+            if command:
+                shell: str | None = call.arguments.get("shell")
+                login: bool | None = call.arguments.get("login")
+                sandbox_exception = tool.sandbox_exception_requested(
+                    command, unsandboxed=call.arguments.get("unsandboxed") is True,
+                    shell=shell, login=login,
+                )
+                needs_exception_approval = sandbox_exception and not tool.sandbox_exclusion_matches(
+                    command, shell=shell, login=login,
+                )
+                if needs_exception_approval and not shell and not login:
+                    save_exclusion_command = extract_saveable_sandbox_command(command)
+
+        reason = self._risky_reason(
+            call, sandbox_exception=sandbox_exception, needs_exception_approval=needs_exception_approval,
+        )
         if isinstance(reason, ToolPolicyDecision):
             return reason
         reason = reason or previous_reason
-        if reason is not None and call.name == "exec" and self._tools is not None:
-            tool = self._tools.get(call.name)
-            if type(tool) is ExecTool:
-                check = tool.approval_preflight(**call.arguments)
-                if not isinstance(check, Path):
-                    return _EffectAssessment(refusal=check)
-                return _EffectAssessment(reason=reason, exec_cwd=check)
+        if (reason is not None or sandbox_exception) and type(tool) is ExecTool:
+            check = tool.approval_preflight(**call.arguments)
+            if not isinstance(check, Path):
+                return _EffectAssessment(refusal=check)
+            return _EffectAssessment(
+                reason=reason, exec_cwd=check, sandbox_exception=sandbox_exception,
+                save_exclusion_command=save_exclusion_command,
+            )
         return _EffectAssessment(reason=reason)
 
-    def _risky_reason(self, tool_call: ToolCallRequest) -> str | ToolPolicyDecision | None:
+    def _risky_reason(
+        self, tool_call: ToolCallRequest, *, sandbox_exception: bool = False,
+        needs_exception_approval: bool = False,
+    ) -> str | ToolPolicyDecision | None:
         profile = self._effective_profile()
         if tool_call.name == "exec":
             command, working_dir = ExecTool.request_location(**tool_call.arguments)
             if not command:
                 return None
             launch_path = nested_launch_path(command)
-            if launch_path is not None and not launch_confinement_covers(
+            if launch_path is not None and (sandbox_exception or not launch_confinement_covers(
                 workspace=self.workspace,
                 command=command,
                 working_dir=working_dir,
                 launch_path=launch_path,
                 attestor=self.launch_confinement_attestor,
-            ):
+            )):
                 # Hard non-bypassable invariant regardless of profile or rules.
                 return self._refuse_launch(launch_path)
             explicit = match_explicit_rule(
@@ -538,6 +573,10 @@ class RiskyActionPolicy(ToolPolicy):
             )
             if explicit == "deny":
                 return self._refuse_denied_rule(tool_call, detail=command)
+            if sandbox_exception:
+                risk = sandbox_exec_risk_reason(command)
+                if risk is not None or needs_exception_approval:
+                    return f"run outside Sandbox: {command.strip()[:80]}"
             if explicit == "allow":
                 return None
             if explicit == "ask":
@@ -617,12 +656,16 @@ class RiskyActionPolicy(ToolPolicy):
             return None
         return f"run tool {tool_call.name}" if explicit == "ask" else None
 
-    def _request_approval(self, effect_id: str, summary: str) -> ToolPolicyDecision:
+    def _request_approval(
+        self, effect_id: str, summary: str, save_exclusion_command: str | None = None,
+    ) -> ToolPolicyDecision:
         """One decision identifies one concrete effect, never an entire batch."""
         approval_id = uuid.uuid4().hex
+        save_option = f"Save exclusion command: {save_exclusion_command}. " if save_exclusion_command else ""
         response = (
             "I'm about to take a risky action and want your approval first. "
             f"Planned action: {summary}. Approval ID: {approval_id}. "
+            f"{save_option}"
             "Reply with the approval control to continue or deny."
         )
         return ToolPolicyDecision(
@@ -635,6 +678,7 @@ class RiskyActionPolicy(ToolPolicy):
                 "requires_approval": True,
                 "approval_id": approval_id,
                 "effect_id": effect_id or None,
+                **({"save_exclusion_command": save_exclusion_command} if save_exclusion_command else {}),
             },
             requires_approval=True,
         )
@@ -716,6 +760,8 @@ class RiskyActionPolicy(ToolPolicy):
                 payload["edit_content"] = assessment.edit_binding
             if assessment.exec_cwd is not None:
                 payload["cwd"] = str(assessment.exec_cwd)
+            if assessment.sandbox_exception:
+                payload["exec_unsandboxed"] = True
         encoded = json.dumps(
             payload,
             sort_keys=True,

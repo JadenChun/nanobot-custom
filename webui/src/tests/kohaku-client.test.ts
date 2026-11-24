@@ -146,6 +146,25 @@ describe("KohakuClient", () => {
     await expect(pending).resolves.toEqual({ saved: true });
   });
 
+  it("sends an approval and save decision with only the approval identity", () => {
+    const client = new KohakuClient({
+      url: "ws://test",
+      reconnect: false,
+      socketFactory: (url) => new FakeSocket(url) as unknown as WebSocket,
+    });
+    client.connect();
+    const socket = lastSocket();
+    socket.fakeOpen();
+
+    const turnId = client.sendApprovalDecision("sandbox-chat", "sandbox-approval", "approve_and_save");
+    const frame = JSON.parse(socket.sent.at(-1) as string);
+    expect(frame.turn_id).toBe(turnId);
+    expect(frame.approval_decision).toEqual({
+      approval_id: "sandbox-approval",
+      decision: "approve_and_save",
+    });
+  });
+
   it("sends a typed approval decision with the exact child source and run identity", () => {
     const client = new KohakuClient({
       url: "ws://test",

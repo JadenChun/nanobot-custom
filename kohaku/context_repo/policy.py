@@ -518,11 +518,22 @@ class ResourceAccessPolicy:
         rel = repo.rel_path(path)
         return bool(rel and repo.is_protected(rel))
 
-    def validate_exec(self, command: str, cwd: str | Path) -> str | FolderAccessNeededError | None:
+    def validate_exec(
+        self, command: str, cwd: str | Path, *, extra_private_path_checks: list[str] | None = None,
+    ) -> str | FolderAccessNeededError | None:
         cwd_path = Path(cwd).expanduser().resolve(strict=False)
         if self.managed_mode and self._current_full_reference() is None:
             try:
                 self.validate_path(cwd_path, "exec", target_kind="directory")
+                if extra_private_path_checks is not None:
+                    if self.folder_grants is None:
+                        raise PermissionError("Sandbox command policy is unavailable")
+                    for candidate in self._extract_command_paths(command, cwd_path):
+                        self._validate_managed_private_path(candidate, "exec")
+                    for raw_path in extra_private_path_checks:
+                        self._validate_managed_private_path(
+                            cwd_path / Path(raw_path).expanduser(), "exec",
+                        )
             except FolderAccessNeededError as exc:
                 return exc
             except PermissionError as exc:

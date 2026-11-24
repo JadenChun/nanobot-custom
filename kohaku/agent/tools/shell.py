@@ -22,8 +22,13 @@ from typing import TYPE_CHECKING, Any, Protocol, cast
 from urllib.parse import unquote
 
 from loguru import logger
-from pydantic import Field
+from pydantic import Field, field_validator
 
+from kohaku.agent.permission_rules import (
+    matches_sandbox_excluded_command,
+    normalize_sandbox_executable,
+    sandbox_command_name,
+)
 from kohaku.agent.tools.base import (
     PRIVATE_NETWORK_DENIAL_NOTE,
     Tool,
@@ -91,17 +96,21 @@ from kohaku.security.workspace_policy import is_path_within
 
 _IS_WINDOWS = sys.platform == "win32"
 _PROCESS_TREE_OWNER_ATTR = "_nanobot_process_tree_owner"
-_approved_exec_cwd: ContextVar[Path | None] = ContextVar("nanobot_approved_exec_cwd", default=None)
+_approved_exec: ContextVar[tuple[Path | None, bool]] = ContextVar(
+    "nanobot_approved_exec", default=(None, False),
+)
 
 
 @contextmanager
-def bind_approved_exec_cwd(cwd: Path | None) -> Generator[None, None, None]:
-    """Carry the server-approved working directory to the shell executor."""
-    token = _approved_exec_cwd.set(cwd)
+def bind_approved_exec_cwd(
+    cwd: Path | None, *, unsandboxed: bool = False,
+) -> Generator[None, None, None]:
+    """Carry the exact approval to the shell executor for this dispatch."""
+    token = _approved_exec.set((cwd, unsandboxed))
     try:
         yield
     finally:
-        _approved_exec_cwd.reset(token)
+        _approved_exec.reset(token)
 
 
 class _ProcessTreeOwner(Protocol):
@@ -157,9 +166,17 @@ class ExecToolConfig(Base):
     sandbox: str = ""
     sandbox_ro_binds: list[str] = Field(default_factory=list)
     sandbox_rw_binds: list[str] = Field(default_factory=list)
+    sandbox_excluded_commands: list[str] = Field(default_factory=list)
+    sandbox_allow_local_binding: bool = True
+    sandbox_allow_unix_sockets: list[str] = Field(default_factory=list)
     allowed_env_keys: list[str] = Field(default_factory=list)
     allow_patterns: list[str] = Field(default_factory=list)
     deny_patterns: list[str] = Field(default_factory=list)
+
+    @field_validator("sandbox_excluded_commands")
+    @classmethod
+    def _validate_sandbox_exclusions(cls, values: list[str]) -> list[str]:
+        return [normalize_sandbox_executable(value) for value in values]
 
 
 @dataclass(slots=True)
@@ -180,6 +197,7 @@ class _PreparedCommand:
     shell_program: str | None
     login: bool
     managed: bool = False
+    sandbox_exception: bool = False
     logical_cwd: str | None = None
     grant_snapshot: FolderGrantSnapshot | None = None
     launch_attestation: LaunchConfinementAttestation | None = None
@@ -221,6 +239,13 @@ class _PreparedCommand:
         ),
         notify_on_exit=BooleanSchema(
             description="Continue this conversation when a background process exits (gateway feature).",
+            default=False,
+        ),
+        unsandboxed=BooleanSchema(
+            description=(
+                "Request execution outside Sandbox for a command that needs host access, "
+                "such as Docker, package installs, or local sockets. This can require user approval."
+            ),
             default=False,
         ),
         max_output_chars=IntegerSchema(
@@ -285,6 +310,9 @@ class ExecTool(Tool):
             path_append=cfg.path_append,
             sandbox_ro_binds=cfg.sandbox_ro_binds,
             sandbox_rw_binds=cfg.sandbox_rw_binds,
+            sandbox_excluded_commands=cfg.sandbox_excluded_commands,
+            sandbox_allow_local_binding=cfg.sandbox_allow_local_binding,
+            sandbox_allow_unix_sockets=cfg.sandbox_allow_unix_sockets,
             allowed_env_keys=cfg.allowed_env_keys,
             allow_patterns=cfg.allow_patterns,
             deny_patterns=cfg.deny_patterns,
@@ -313,6 +341,9 @@ class ExecTool(Tool):
         resource_policy: ResourceAccessPolicy | None = None,
         desktop_use_active: bool = False,
         read_file_tool: "ReadFileTool | None" = None,
+        sandbox_excluded_commands: list[str] | None = None,
+        sandbox_allow_local_binding: bool = True,
+        sandbox_allow_unix_sockets: list[str] | None = None,
     ):
         self.resource_policy = resource_policy
         self.desktop_use_active = desktop_use_active
@@ -348,6 +379,12 @@ class ExecTool(Tool):
         self.path_append = path_append
         self.sandbox_ro_binds = self._normalize_bind_roots(sandbox_ro_binds)
         self.sandbox_rw_binds = self._normalize_bind_roots(sandbox_rw_binds)
+        # Factory-created tools share the runtime config list across registries.
+        self.sandbox_excluded_commands = (
+            sandbox_excluded_commands if sandbox_excluded_commands is not None else []
+        )
+        self.sandbox_allow_local_binding = sandbox_allow_local_binding
+        self.sandbox_allow_unix_sockets = tuple(sandbox_allow_unix_sockets or ())
         self.allowed_env_keys = allowed_env_keys or []
         self._session_manager = session_manager or DEFAULT_EXEC_SESSION_MANAGER
         from kohaku.agent.policy import register_launch_confinement_attestor
@@ -363,6 +400,34 @@ class ExecTool(Tool):
             and focus.permission_owner is not None
             and focus.full_reference is not None
             and focus.permission_owner.is_current_full_reference(focus.full_reference)
+        )
+
+    def sandbox_exception_requested(
+        self,
+        command: str,
+        *,
+        unsandboxed: bool = False,
+        shell: str | None = None,
+        login: bool | None = None,
+    ) -> bool:
+        """Check whether this call requests an exception to managed Sandbox."""
+        return bool(
+            self.resource_policy is not None
+            and self.resource_policy.managed_mode
+            and not self._full_access_active()
+            and (
+                unsandboxed
+                or (not shell and not login
+                    and sandbox_command_name(command) in self.sandbox_excluded_commands)
+            )
+        )
+
+    def sandbox_exclusion_matches(
+        self, command: str, *, shell: str | None = None, login: bool | None = None,
+    ) -> bool:
+        """Match a configured CLI under the default shell without a login profile."""
+        return not shell and not login and matches_sandbox_excluded_command(
+            command, self.sandbox_excluded_commands,
         )
 
     def _outer_confinement_provider(self, working_dir: str | None) -> str | None:
@@ -406,7 +471,7 @@ class ExecTool(Tool):
             nested_launch_path,
         )
 
-        if nested_launch_path(command) != "shell":
+        if nested_launch_path(command) != "shell" or self.sandbox_exception_requested(command):
             return None
         sandbox = self._outer_confinement_provider(working_dir)
         owner = self._process_ownership_identity()
@@ -423,13 +488,16 @@ class ExecTool(Tool):
 
     def _admit_nested_launch(
         self, command: str, working_dir: str | None,
+        *, sandbox_exception: bool = False,
     ) -> LaunchConfinementAttestation | ToolResult | None:
         """Refuse a reduced-protection launch this executor cannot attest."""
         from kohaku.agent.policy import nested_launch_path
 
         if nested_launch_path(command) is None:
             return None
-        attestation = self.attest_launch_confinement(command, working_dir)
+        attestation = (
+            None if sandbox_exception else self.attest_launch_confinement(command, working_dir)
+        )
         if attestation is None:
             return ToolResult.error(
                 "Error: nested agent launch refused before start "
@@ -584,6 +652,7 @@ class ExecTool(Tool):
         timeout: int | None = None, shell: str | None = None,
         login: bool | None = None, yield_time_ms: int | None = None,
         notify_on_exit: bool = False, input_files: list[str] | None = None,
+        unsandboxed: bool = False,
         **kwargs: object,
     ) -> Path | str | ToolOutcome:
         """Return the effective cwd, or a refusal consent cannot change.
@@ -596,14 +665,22 @@ class ExecTool(Tool):
             return ToolResult.error("Error: Missing command. Provide command or cmd.")
         if (error := self._input_options_error(input_files, yield_time_ms, notify_on_exit)) is not None:
             return error
+        if input_files and self.sandbox_exception_requested(
+            command, unsandboxed=unsandboxed, shell=shell, login=login,
+        ):
+            return ToolResult.error("Error: input_files requires a sandboxed command")
         try:
-            prepared = self._prepare_command(command, working_dir, timeout, shell, login)
+            prepared = self._prepare_command(
+                command, working_dir, timeout, shell, login,
+                unsandboxed=unsandboxed, approval_preflight=True,
+            )
             if not isinstance(prepared, _PreparedCommand):
                 return prepared
             policy = self.resource_policy
             grants = policy.folder_grants if policy is not None else None
             refusal = self._native_command_refusal(
-                grants, managed=prepared.managed, owned=self._owned_native_permission() is not None,
+                grants, managed=prepared.managed or prepared.sandbox_exception,
+                owned=self._owned_native_permission() is not None,
             )
             if refusal is not None:
                 return refusal
@@ -637,6 +714,7 @@ class ExecTool(Tool):
         max_output_tokens: int | None = None,
         notify_on_exit: bool = False,
         input_files: list[str] | None = None,
+        unsandboxed: bool = False,
         **kwargs: Any,
     ) -> str | ToolOutcome:
         """Run a shell command, optionally exposing exact approved input files.
@@ -667,6 +745,7 @@ class ExecTool(Tool):
                 max_output_chars=max_output_chars,
                 max_output_tokens=max_output_tokens,
                 notify_on_exit=notify_on_exit,
+                unsandboxed=unsandboxed,
                 input_mounts=input_mounts,
                 staged_inputs=staged,
                 **kwargs,
@@ -684,6 +763,7 @@ class ExecTool(Tool):
         max_output_tokens: int | None = None,
         notify_on_exit: bool = False,
         *,
+        unsandboxed: bool = False,
         input_mounts: tuple[tuple[Path, str], ...] = (),
         staged_inputs: list[_StagedInput] | None = None,
         **kwargs: Any,
@@ -700,6 +780,7 @@ class ExecTool(Tool):
             timeout,
             shell,
             login,
+            unsandboxed=unsandboxed,
             input_mounts=input_mounts,
         )
         if isinstance(prepared, ToolOutcome):
@@ -869,6 +950,8 @@ class ExecTool(Tool):
         shell: str | None = None,
         login: bool | None = None,
         *,
+        unsandboxed: bool = False,
+        approval_preflight: bool = False,
         input_mounts: tuple[tuple[Path, str], ...] = (),
     ) -> _PreparedCommand | str | ToolOutcome:
         focus = current_workspace_focus()
@@ -878,6 +961,19 @@ class ExecTool(Tool):
             and self.resource_policy.managed_mode
             and not full_active
         )
+        sandbox_exception = self.sandbox_exception_requested(
+            command, unsandboxed=unsandboxed, shell=shell, login=login,
+        )
+        approved_cwd, exception_approved = _approved_exec.get()
+        if sandbox_exception:
+            if input_mounts:
+                return ToolResult.error("Error: input_files requires a sandboxed command")
+            if not (
+                approval_preflight or (approved_cwd is not None and exception_approved)
+                or self.sandbox_exclusion_matches(command, shell=shell, login=login)
+            ):
+                return ToolResult.error("Error: User approval is required to run outside Sandbox")
+        apply_managed_sandbox = managed and not sandbox_exception
         access = current_tool_workspace(
             self.working_dir,
             restrict_to_workspace=self.restrict_to_workspace,
@@ -893,7 +989,7 @@ class ExecTool(Tool):
             )
         else:
             cwd = workspace_root or os.getcwd()
-        if (approved_cwd := _approved_exec_cwd.get()) is not None:
+        if approved_cwd is not None:
             try:
                 resolved_cwd = Path(cwd).expanduser().resolve(strict=True)
             except (OSError, RuntimeError, ValueError):
@@ -924,16 +1020,18 @@ class ExecTool(Tool):
 
         guard_error = self._guard_command(
             command, cwd, restrict_to_workspace=(access.restrict_to_workspace and not managed),
-            workspace_root=workspace_root,
+            workspace_root=workspace_root, sandbox_exception=sandbox_exception,
         )
         if guard_error:
             return guard_error
-        launch_admission = self._admit_nested_launch(command, working_dir)
+        launch_admission = self._admit_nested_launch(
+            command, working_dir, sandbox_exception=sandbox_exception,
+        )
         if isinstance(launch_admission, str):
             return launch_admission
         grant_snapshot: FolderGrantSnapshot | None = None
         logical_cwd = cwd
-        if managed:
+        if apply_managed_sandbox:
             policy = self.resource_policy
             grants = policy.folder_grants if policy is not None else None
             if policy is None or grants is None:
@@ -963,6 +1061,8 @@ class ExecTool(Tool):
                     input_files=input_mounts,
                     shell_program=selected_shell,
                     login=bool(login),
+                    allow_local_binding=self.sandbox_allow_local_binding,
+                    allow_unix_sockets=self.sandbox_allow_unix_sockets,
                 )
             except (OSError, PermissionError, RuntimeError, ValueError) as exc:
                 return ToolResult.error(f"Error: Sandbox command confinement is unavailable ({exc})")
@@ -1012,7 +1112,7 @@ class ExecTool(Tool):
             else:
                 command = self._wrap_path_export(command, env)
 
-        if managed:
+        if apply_managed_sandbox:
             shell_program = None
         else:
             shell_program, shell_error = self._resolve_shell(shell)
@@ -1025,8 +1125,9 @@ class ExecTool(Tool):
             env=env,
             timeout=effective_timeout,
             shell_program=shell_program,
-            login=False if managed or login is None else login,
-            managed=managed,
+            login=False if apply_managed_sandbox or login is None else login,
+            managed=apply_managed_sandbox,
+            sandbox_exception=sandbox_exception,
             logical_cwd=logical_cwd,
             grant_snapshot=grant_snapshot,
             launch_attestation=launch_admission,
@@ -1067,7 +1168,9 @@ class ExecTool(Tool):
         policy = self.resource_policy
         grants = policy.folder_grants if policy is not None else None
         owned = self._owned_native_permission()
-        refusal = self._native_command_refusal(grants, managed=prepared.managed, owned=owned is not None)
+        refusal = self._native_command_refusal(
+            grants, managed=prepared.managed or prepared.sandbox_exception, owned=owned is not None,
+        )
         if refusal is not None:
             return refusal, None
         if owned is not None:
@@ -1085,7 +1188,7 @@ class ExecTool(Tool):
             if reservation is None:
                 return ToolResult.error("Error: workspace permission changed before command launch"), None
             return prepared, reservation
-        if prepared.managed or policy is None or grants is None:
+        if prepared.managed or prepared.sandbox_exception or policy is None or grants is None:
             return prepared, None
         try:
             reservation = grants.try_begin_native_process()
@@ -1484,6 +1587,7 @@ class ExecTool(Tool):
         *,
         restrict_to_workspace: bool | None = None,
         workspace_root: str | None = None,
+        sandbox_exception: bool = False,
     ) -> str | ToolOutcome | None:
         """Best-effort safety guard for potentially destructive commands."""
         cmd = command.strip()
@@ -1509,7 +1613,12 @@ class ExecTool(Tool):
                 kind=ToolDenialKind.PRIVATE_NETWORK,
             )
         if self.resource_policy:
-            policy_error = self.resource_policy.validate_exec(command, cwd)
+            policy_error = self.resource_policy.validate_exec(
+                command, cwd,
+                extra_private_path_checks=(
+                    self._extract_absolute_paths(command) if sandbox_exception else None
+                ),
+            )
             if policy_error:
                 if isinstance(policy_error, FolderAccessNeededError):
                     from kohaku.agent.tools.workspace import folder_access_outcome

@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import TYPE_CHECKING, NoReturn
 
+from kohaku.agent.permission_rules import extract_saveable_sandbox_command
 from kohaku.agent.turn import ApprovalDecision, TurnContext
 
 if TYPE_CHECKING:
@@ -62,6 +63,16 @@ class PendingApproval:
     generation: int | None = None
     expires_at: float = 0.0
     source_state: SourceState | None = None
+    save_exclusion_command: str | None = None
+
+    def saveable_command(self) -> str | None:
+        name = self.save_exclusion_command
+        if (
+            name and self.effect_id and re.fullmatch(r"[0-9a-f]{64}", self.effect_id)
+            and extract_saveable_sandbox_command(name) == name
+        ):
+            return name
+        return None
 
 
 @dataclass(frozen=True, slots=True)
@@ -224,7 +235,10 @@ class ApprovalAdmission:
                     key, pending, 'stale', key, decision=decision, typed=True, strict=True,
                     provenance=provenance,
                 )
-            action = 'affirmative' if decision.decision == 'approve' else 'negative'
+            if decision.decision == 'approve_and_save' and pending.saveable_command() is None:
+                action = 'invalid_approval_decision'
+            else:
+                action = 'negative' if decision.decision == 'deny' else 'affirmative'
             return ApprovalSnapshot(
                 key, pending, action, pending.session_key, decision=decision, typed=True,
                 strict=True, provenance=provenance,
@@ -248,14 +262,17 @@ class ApprovalAdmission:
         return pending.run_id != context.run_id
 
     async def consume(self, snapshot: ApprovalSnapshot, *, context: TurnContext | None = None,
-                      source_is_current: Callable[[], bool] | None = None) -> str:
+                      source_is_current: Callable[[], bool] | None = None,
+                      save_exclusion: Callable[[str], bool] | None = None) -> str:
         """Consume under the selected owner admission; install authority privately.
 
         The loop supplies its admitted context and live source/run check. The
         child owner can use the same seam with its own narrowed live check.
         Legacy direct callers retain classification but receive no authority.
         """
-        if snapshot.pending is None or snapshot.action in {'command', 'stale', 'denied'}:
+        if snapshot.pending is None or snapshot.action in {
+            'command', 'stale', 'denied', 'invalid_approval_decision',
+        }:
             return snapshot.action
         if snapshot.strict and not snapshot.typed:
             return 'other'
@@ -283,6 +300,15 @@ class ApprovalAdmission:
             if not current:
                 self._remove_identity(pending)
                 return 'stale'
+            if snapshot.decision is not None and snapshot.decision.decision == 'approve_and_save':
+                command = pending.saveable_command()
+                if (
+                    command is None or context is None or save_exclusion is None
+                    or snapshot.action != 'affirmative'
+                ):
+                    return 'invalid_approval_decision'
+                if not save_exclusion(command):
+                    return 'approval_save_failed'
             self._remove_identity(pending)
             if snapshot.typed and snapshot.action == 'affirmative' and context is not None:
                 context.policy.approval_granted = True
@@ -357,6 +383,7 @@ class ApprovalAdmission:
         generation: int | None = None,
         source_state: SourceState | None = None,
         ttl_seconds: float | None = None,
+        save_exclusion_command: str | None = None,
     ) -> PendingApproval:
         async with self._guard:
             identifier = approval_id or uuid.uuid4().hex
@@ -381,6 +408,7 @@ class ApprovalAdmission:
                 generation=generation,
                 expires_at=(created_at + effective_ttl) if effective_ttl > 0 else 0.0,
                 source_state=source_state,
+                save_exclusion_command=save_exclusion_command,
             )
             self._pending[identifier] = pending
             for alias in {session_key, f'{channel}:{chat_id}'}:

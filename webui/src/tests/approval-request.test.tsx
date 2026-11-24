@@ -23,6 +23,8 @@ describe("ApprovalRequestCard", () => {
     );
 
     expect(screen.getByText("Approval required")).toBeInTheDocument();
+    expect(screen.getAllByRole("button")).toHaveLength(2);
+    expect(screen.queryByRole("button", { name: /Allow & save/ })).not.toBeInTheDocument();
     expect(
       screen.getByText("rewrite most of the matched block in LEADERBOARD.md"),
     ).toBeInTheDocument();
@@ -31,6 +33,27 @@ describe("ApprovalRequestCard", () => {
 
     expect(onApprove).toHaveBeenCalledTimes(1);
     expect(onCancel).not.toHaveBeenCalled();
+  });
+
+  it("offers three choices when the approval can save a Sandbox exclusion", async () => {
+    const user = userEvent.setup();
+    const onApproveAndSave = vi.fn();
+    render(
+      <ApprovalRequestCard
+        summary="run outside Sandbox"
+        approvalId={APPROVAL_ID}
+        saveExclusionCommand="printf"
+        onApprove={vi.fn()}
+        onApproveAndSave={onApproveAndSave}
+        onCancel={vi.fn()}
+      />,
+    );
+
+    expect(screen.getAllByRole("button")).toHaveLength(3);
+    expect(screen.getByRole("button", { name: "Allow once" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Deny" })).toBeEnabled();
+    await user.click(screen.getByRole("button", { name: "Allow & save printf" }));
+    expect(onApproveAndSave).toHaveBeenCalledOnce();
   });
 
   it("submits the negative reply through the existing action path", async () => {

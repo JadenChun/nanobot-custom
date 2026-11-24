@@ -2310,7 +2310,7 @@ export type WebUIMutationOutcome =
 
 export interface ApprovalDecisionPayload {
   approval_id: string;
-  decision: "approve" | "deny";
+  decision: "approve" | "approve_and_save" | "deny";
   session_key?: string;
   session_incarnation?: string;
   run_id?: string;

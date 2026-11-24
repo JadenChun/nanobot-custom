@@ -5,7 +5,8 @@ from __future__ import annotations
 import difflib
 import fnmatch
 import re
-from collections.abc import Callable
+import shlex
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
@@ -48,6 +49,71 @@ EXTERNAL_EXEC_PATTERNS = (
 )
 
 RISKY_EXEC_PATTERNS = LOCAL_DESTRUCTIVE_EXEC_PATTERNS + EXTERNAL_EXEC_PATTERNS
+
+_BARE_EXECUTABLE = re.compile(r"[a-zA-Z0-9_][a-zA-Z0-9_.+-]*", re.ASCII)
+_SHELL_SYNTAX = re.compile(r"[\x00-\x08\x0a-\x1f\x7f;&|<>`$(){}\\#*?\[\]%!^]")
+_UNSAVEABLE_EXECUTABLES = frozenset({
+    "sh", "bash", "zsh", "dash", "fish", "ksh", "csh", "tcsh", "ash",
+    "pwsh", "powershell", "cmd", "python", "python3", "node", "bun", "deno",
+    "ruby", "perl", "env", "sudo", "su", "doas", "xargs", "exec", "eval",
+    "command", "builtin", "source", "time", "nohup", "busybox", "setsid",
+    "nice", "timeout", "chroot", "runuser", "trap", "enable",
+})
+
+
+def normalize_sandbox_executable(value: str) -> str:
+    """Validate a configured exclusion and return its lowercased name."""
+    name = value.strip()
+    if not _BARE_EXECUTABLE.fullmatch(name):
+        raise ValueError("Sandbox exclusions must be bare executable names")
+    return name.lower()
+
+
+def _sandbox_command_tokens(command: str) -> list[str]:
+    # Reject shell syntax before tokenization, including syntax inside quotes.
+    # This keeps the exception independent of shell-specific expansion rules.
+    if _SHELL_SYNTAX.search(command):
+        return []
+    try:
+        tokens = shlex.split(command)
+    except ValueError:
+        return []
+    if not tokens or not _BARE_EXECUTABLE.fullmatch(tokens[0]):
+        return []
+    if command.lstrip().split(maxsplit=1)[0] != tokens[0]:
+        return []
+    return tokens
+
+
+def sandbox_command_name(command: str) -> str | None:
+    """Return the bare CLI name of a simple command, including risky commands."""
+    tokens = _sandbox_command_tokens(command)
+    if not tokens:
+        return None
+    name = tokens[0].lower()
+    generic = name.removesuffix(".exe")
+    if generic in _UNSAVEABLE_EXECUTABLES or re.fullmatch(r"python\d+(?:\.\d+)*", generic):
+        return None
+    return name
+
+
+def sandbox_exec_risk_reason(command: str) -> str | None:
+    """Check both shell text and literal tokens for risky actions."""
+    return match_exec_risk_reason(command) or match_exec_risk_reason(
+        " ".join(_sandbox_command_tokens(command)),
+    )
+
+
+def extract_saveable_sandbox_command(command: str) -> str | None:
+    """Return the executable name only when its command can be saved."""
+    name = sandbox_command_name(command)
+    return name if name and sandbox_exec_risk_reason(command) is None else None
+
+
+def matches_sandbox_excluded_command(command: str, excluded: Iterable[str]) -> bool:
+    """Match a complete, save-eligible command against configured names."""
+    name = extract_saveable_sandbox_command(command)
+    return name is not None and name in excluded
 
 # Files at or below this many lines are considered trivial state; a full
 # rewrite is not "risky" because there is nothing of substance to lose.
