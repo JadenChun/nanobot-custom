@@ -715,6 +715,55 @@ class WebUICommandRouter:
             return fields, None
         return fields, snapshot
 
+    def _apply_new_chat_model_selection(
+        self,
+        chat_id: str,
+        scope: WorkspaceScope,
+        requested_preset: str | None,
+        requested_effort: str | None,
+    ) -> None:
+        """Persist validated model_preset / reasoning_effort inline during new_chat."""
+        sessions = self.gateway.session_manager
+        if sessions is None:
+            return
+        from kohaku.config.loader import ConfigLoadError, load_config
+        from kohaku.providers.registry import reasoning_effort_values_for
+        from kohaku.session.model_selection import (
+            SESSION_MODEL_PRESET_METADATA_KEY,
+            SESSION_REASONING_EFFORT_METADATA_KEY,
+        )
+
+        try:
+            config = self.gateway.settings.read(load_config, apply_network_policy=False)
+        except ConfigLoadError:
+            return
+        preset_name = requested_preset or config.agents.defaults.model_preset
+        if not preset_name or preset_name not in config.model_presets:
+            return
+        preset = config.model_presets[preset_name]
+        metadata: dict[str, Any] = {
+            "webui": True,
+            WORKSPACE_SCOPE_METADATA_KEY: scope.metadata(),
+            SESSION_MODEL_PRESET_METADATA_KEY: preset_name,
+        }
+        if requested_effort is not None:
+            provider_name = (
+                preset.provider
+                if preset.provider and preset.provider != "auto"
+                else config.get_provider_name(preset.model)
+            )
+            if not provider_name:
+                return
+            levels = reasoning_effort_values_for(provider_name, preset.model)
+            if requested_effort not in levels:
+                return
+            metadata[SESSION_REASONING_EFFORT_METADATA_KEY] = requested_effort
+        sessions.upsert_session_metadata(
+            webui_session_key(chat_id),
+            metadata,
+            create_if_absent=True,
+        )
+
     async def dispatch(
         self,
         connection: ServerConnection,
@@ -822,6 +871,28 @@ class WebUICommandRouter:
                     return
             else:
                 self._workspaces.stage_scope(new_id, scope)
+            raw_model_preset = envelope.get("model_preset")
+            raw_reasoning_effort = envelope.get("reasoning_effort")
+            requested_preset = (
+                raw_model_preset.strip()
+                if isinstance(raw_model_preset, str) and raw_model_preset.strip()
+                else None
+            )
+            requested_effort = (
+                raw_reasoning_effort.strip()
+                if isinstance(raw_reasoning_effort, str) and raw_reasoning_effort.strip()
+                else None
+            )
+            if (requested_preset is not None or requested_effort is not None) and (
+                self.gateway.session_manager is not None
+            ):
+                await asyncio.to_thread(
+                    self._apply_new_chat_model_selection,
+                    new_id,
+                    scope,
+                    requested_preset,
+                    requested_effort,
+                )
             self._transport.webui_attach(connection, new_id)
             fields = self._session_projection.attach_fields(webui_session_key(new_id))
             if _typed_mobile_identity(connection) is not None and "harness_capabilities" not in fields:

@@ -1134,7 +1134,8 @@ class WebuiTurnCoordinator:
     def _schedule_title_update_from_event(self, event: TurnCompleted) -> None:
         title_context = _validated_llm_runtime(event.runtime)
         if (
-            event.context.metadata.get("webui") is not True
+            event.outcome != "completed"
+            or event.context.metadata.get("webui") is not True
             or title_context is None
         ):
             return

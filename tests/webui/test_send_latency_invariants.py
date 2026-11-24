@@ -496,3 +496,81 @@ def test_warm_token_encodings_preloads_default_tables(monkeypatch: pytest.Monkey
     helpers.warm_token_encodings()
     assert loaded == ["cl100k_base", "o200k_base"]
     helpers._get_token_encoding.cache_clear()  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_new_chat_applies_inline_model_preset_and_reasoning_effort(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from kohaku.config.loader import get_config_path, set_config_path
+
+    previous_config = get_config_path()
+    config_path = tmp_path / "config.json"
+    config_path.write_text(
+        json.dumps({
+            "modelPresets": {
+                "fast-o3": {
+                    "model": "openai/o3-mini",
+                    "provider": "openai",
+                },
+            },
+        }),
+        encoding="utf-8",
+    )
+    set_config_path(config_path)
+    try:
+        channel, _session_manager = _make_gateway_channel(tmp_path)
+        sent_frames: list[dict[str, Any]] = []
+
+        class _FakeConnection:
+            remote_address = ("127.0.0.1", 55556)
+            request = WsRequest("/", Headers())
+
+            async def send(self, raw: str) -> None:
+                sent_frames.append(json.loads(raw))
+
+        conn = _FakeConnection()
+        await channel._dispatch_envelope(  # type: ignore[arg-type]
+            conn,
+            "desktop-client",
+            {
+                "type": "new_chat",
+                "model_preset": "fast-o3",
+                "reasoning_effort": "high",
+            },
+        )
+        attached = [f for f in sent_frames if f.get("event") == "attached"]
+        assert len(attached) == 1
+        assert attached[0]["model_preset"] == "fast-o3"
+        assert attached[0]["reasoning_effort"] == "high"
+    finally:
+        set_config_path(previous_config)
+
+
+def test_cancelled_turn_does_not_schedule_background_title_generation() -> None:
+    from kohaku.bus.runtime_events import RuntimeEventContext, TurnCompleted
+    from kohaku.session.webui_turns import WebuiTurnCoordinator
+
+    scheduled: list[Any] = []
+
+    class _FakeRuntime:
+        provider = object()
+        model = "test-model"
+
+    coordinator = WebuiTurnCoordinator(
+        bus=MessageBus(),
+        sessions=None,  # type: ignore[arg-type]
+        schedule_background=scheduled.append,
+    )
+    event = TurnCompleted(
+        context=RuntimeEventContext(
+            channel="websocket",
+            chat_id="chat-1",
+            session_key="websocket:chat-1",
+            metadata={"webui": True},
+        ),
+        runtime=_FakeRuntime(),  # type: ignore[arg-type]
+        outcome="cancelled",
+    )
+    coordinator._schedule_title_update_from_event(event)  # pyright: ignore[reportPrivateUsage]
+    assert scheduled == []

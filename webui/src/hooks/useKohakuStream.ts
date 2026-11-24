@@ -1158,7 +1158,12 @@ export function useKohakuStream(
           ));
         }
       }
-      if (ev.event === "message_accepted") return;
+      if (ev.event === "message_accepted") {
+        if (ev.starts_turn && typeof ev.started_at === "number" && !unresolvedAdmission) {
+          setRunStartedAt(ev.started_at);
+        }
+        return;
+      }
       if (ev.event === "message_admitted") {
         // Owner receipt: only this event commits a queued attempt.
         if (!unresolvedAdmission) resolveAdmission(turnId, true);

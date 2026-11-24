@@ -295,7 +295,7 @@ function UserDeliveryStatus({
     return (
       <span
         role="status"
-        className="inline-flex items-center gap-1 text-[12px] leading-none text-muted-foreground"
+        className="sending-status-delayed inline-flex items-center gap-1 text-[12px] leading-none text-muted-foreground"
       >
         <Clock3 className="h-3.5 w-3.5" aria-hidden />
         {t("message.delivery.sending")}

@@ -834,7 +834,7 @@ interface ThreadShellProps {
     workspaceScope?: WorkspaceScopePayload | null,
     initialMessage?: string,
     modelPreset?: string | null,
-    options?: { fullAccess?: boolean; harness?: ChatHarness },
+    options?: { fullAccess?: boolean; harness?: ChatHarness; reasoningEffort?: string | null },
   ) => Promise<string | null>;
   onForkChat?: (sourceChatId: string, beforeUserIndex: number) => Promise<string | null>;
   onTurnEnd?: () => void;
@@ -3159,8 +3159,14 @@ export function ThreadShell({
       });
       pendingFirstRef.current = { content, images, options };
       setPendingFirstTargetChatId(null);
-      const newId = await (activeHarness === "claude_sdk"
-        ? onCreateChat?.(workspaceScope, content, localModelPreset, { harness: activeHarness })
+      const createOptions = activeHarness === "claude_sdk" || reasoningEffort
+        ? {
+            ...(activeHarness === "claude_sdk" ? { harness: activeHarness } : {}),
+            ...(reasoningEffort ? { reasoningEffort } : {}),
+          }
+        : undefined;
+      const newId = await (createOptions
+        ? onCreateChat?.(workspaceScope, content, localModelPreset, createOptions)
         : onCreateChat?.(workspaceScope, content, localModelPreset));
       if (!newId) {
         pendingFirstRef.current = null;
@@ -3169,7 +3175,15 @@ export function ThreadShell({
         return false;
       }
       setDraftHarness("native");
-      if (reasoningEffort) {
+      const attachedPreset = typeof client.getAttachedModelPreset === "function"
+        ? client.getAttachedModelPreset(newId)
+        : undefined;
+      const attachedEffort = typeof client.getAttachedReasoningEffort === "function"
+        ? client.getAttachedReasoningEffort(newId)
+        : undefined;
+      const presetAlreadyApplied = !localModelPreset || attachedPreset === localModelPreset;
+      const effortAlreadyApplied = !reasoningEffort || attachedEffort === reasoningEffort;
+      if (reasoningEffort && !(presetAlreadyApplied && effortAlreadyApplied)) {
         try {
           await client.sendSystemCommand(newId, modelReasoningCommand(activeModelPreset, reasoningEffort));
           setLocalReasoning({ chatId: newId, preset: activeModelPreset, effort: reasoningEffort });
@@ -3181,7 +3195,9 @@ export function ThreadShell({
           setBooting(false);
           return false;
         }
-      } else if (localModelPreset) {
+      } else if (reasoningEffort) {
+        setLocalReasoning({ chatId: newId, preset: activeModelPreset, effort: reasoningEffort });
+      } else if (localModelPreset && !presetAlreadyApplied) {
         await client.sendSystemCommand(newId, `/model ${localModelPreset}`).catch(() => {});
       }
       setPendingFirstTargetChatId(newId);

@@ -2829,6 +2829,31 @@ class AgentLoop:
             if tree is None:
                 return None
             if source_snapshot is None:
+                # Idle-chat fast path: avoid loading and deepcopying multi-MB
+                # canonical logs when there are no active tasks, children, or
+                # header-recorded pending followups to stop.
+                if not self._active_root_task_identity(key):
+                    header_source = self.sessions.read_existing_canonical_source(
+                        key, header_only=True,
+                    )
+                    if header_source is None:
+                        return None
+                    header_snapshot = header_source[1]
+                    header_state = header_snapshot.state
+                    header_descendants = self._stop_descendants_for_key(
+                        tree, key, header_state, StopSourceOrigin.from_source_state(header_state),
+                    )
+                    if header_descendants is None:
+                        return None
+                    raw_pending = header_snapshot.header["metadata"].get(
+                        SOURCE_PENDING_FOLLOWUPS_METADATA_KEY, [],
+                    )
+                    if (
+                        not header_descendants
+                        and isinstance(raw_pending, list)
+                        and not raw_pending
+                    ):
+                        return None
                 source = self.sessions.read_existing_canonical_source(key)
                 if source is None:
                     return None

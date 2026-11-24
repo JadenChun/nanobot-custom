@@ -348,6 +348,7 @@ export function useSessions(): {
     workspaceScope?: WorkspaceScopePayload | null,
     modelPreset?: string | null,
     harness?: ChatHarness,
+    reasoningEffort?: string | null,
   ) => Promise<string>;
   forkChat: (sourceChatId: string, beforeUserIndex: number, title?: string) => Promise<string>;
   deleteChat: (
@@ -449,10 +450,19 @@ export function useSessions(): {
     workspaceScope?: WorkspaceScopePayload | null,
     modelPreset?: string | null,
     harness?: ChatHarness,
+    reasoningEffort?: string | null,
   ): Promise<string> => {
+    const selection = modelPreset || reasoningEffort
+      ? {
+          ...(modelPreset ? { modelPreset } : {}),
+          ...(reasoningEffort ? { reasoningEffort } : {}),
+        }
+      : undefined;
     const chatId = await (harness === "claude_sdk"
-      ? client.newChat(CHAT_CREATE_TIMEOUT_MS, workspaceScope, harness)
-      : client.newChat(CHAT_CREATE_TIMEOUT_MS, workspaceScope));
+      ? client.newChat(CHAT_CREATE_TIMEOUT_MS, workspaceScope, harness, selection)
+      : selection
+        ? client.newChat(CHAT_CREATE_TIMEOUT_MS, workspaceScope, undefined, selection)
+        : client.newChat(CHAT_CREATE_TIMEOUT_MS, workspaceScope));
     const key = `websocket:${chatId}`;
     optimisticKeysRef.current.add(key);
     // Optimistic insert; a subsequent refresh will replace it with the
