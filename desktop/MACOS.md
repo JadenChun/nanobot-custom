@@ -30,12 +30,19 @@ after Kohaku opens chat for the first time. If you deny access, use
 **Privacy & Security** in System Settings to permit access. The qualification
 below predates the microphone change.
 
-Closing the window keeps the gateway alive. Reopen from the Dock or use
-**Open Chat** from the menu bar icon. Gateway readiness and status changes
-do not restore the window or take focus. If the gateway becomes unavailable,
-use the Dock or **Open Chat** to see the setup/status controls. Use
-**Quit Kohaku** (Cmd+Q) from the application menu or the menu bar icon to stop
-the managed gateway and exit. Force Quit and external app termination are
+The menu bar icon is shown while Desktop is running and the selected gateway is
+verified ready. Closing the chat window keeps the gateway and menu bar icon
+available. Reopen chat from the Dock or choose **Open Chat** in the menu bar.
+If the gateway stops, the icon disappears; the Dock still opens the status
+window. Readiness changes never restore the window or take focus.
+
+If the matching profile is already running under `kohaku gateway --foreground`,
+Desktop connects to that gateway without starting a second one or taking over
+its lifecycle. It reconnects when the same profile comes back. **Quit Kohaku**
+(Cmd+Q) exits Desktop and removes its icon, but does not stop a CLI-owned
+gateway. Use `kohaku gateway stop` with the same config to stop that gateway.
+If Desktop started or adopted a managed gateway instead, **Quit Kohaku** still
+stops that gateway before exiting. Force Quit and external app termination are
 not managed shutdowns; the persistent gateway can remain available for
 reconciliation on relaunch. On stop, the adapter revalidates the selected
 process and uses a Darwin audit token (which includes a PID generation) to

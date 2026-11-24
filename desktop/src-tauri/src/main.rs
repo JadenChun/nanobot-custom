@@ -187,8 +187,8 @@ fn run() {
         #[cfg(target_os = "macos")]
         match _event {
             tauri::RunEvent::Reopen { .. } => native::focus_existing_window(_app),
-            // Controller-driven exit has an explicit code and occurs only
-            // after the owned gateway has stopped.
+            // Controller-driven exit has an explicit code. An attached
+            // foreground gateway is not owned by Desktop.
             tauri::RunEvent::ExitRequested { code: None, api, .. } => {
                 if let Some(shared) = _app.try_state::<Arc<Shared>>() {
                     api.prevent_exit();

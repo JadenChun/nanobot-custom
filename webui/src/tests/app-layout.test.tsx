@@ -12,6 +12,7 @@ import type {
 } from "@/lib/types";
 
 const connectSpy = vi.fn();
+const retrySpy = vi.fn();
 const refreshSpy = vi.fn();
 const createChatSpy = vi.fn().mockResolvedValue("chat-1");
 const deleteChatSpy = vi.fn();
@@ -35,6 +36,7 @@ const sessionUpdateHandlers = new Set<(
 const sidebarStateUpdateHandlers = new Set<(state: SidebarStatePayload) => void>();
 let mockSessions: ChatSummary[] = [];
 let mockSessionsLoading = false;
+let mockConnectionStatus: ConnectionStatus = "idle";
 const HERO_GREETING_PATTERN =
   /What should we work on\?|Where should we start\?|What are we building today\?|What should we tackle together\?/;
 
@@ -244,9 +246,12 @@ vi.mock("@/lib/bootstrap", () => ({
 vi.mock("@/lib/kohaku-client", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/kohaku-client")>();
   class MockClient {
-    status = "idle" as const;
+    get status(): ConnectionStatus {
+      return mockConnectionStatus;
+    }
     defaultChatId: string | null = null;
     connect = connectSpy;
+    retry = retrySpy;
     onStatus = (handler: (status: ConnectionStatus) => void) => {
       statusHandlers.add(handler);
       return () => statusHandlers.delete(handler);
@@ -307,7 +312,9 @@ describe("App layout", () => {
     await i18n.changeLanguage("en");
     mockSessions = [];
     mockSessionsLoading = false;
+    mockConnectionStatus = "idle";
     connectSpy.mockClear();
+    retrySpy.mockClear();
     updateUrlSpy.mockClear();
     refreshSpy.mockReset();
     createChatSpy.mockClear();
@@ -360,6 +367,25 @@ describe("App layout", () => {
     vi.useRealTimers();
     vi.unstubAllGlobals();
   });
+
+  it.each(["error", "closed", "reconnecting", "open"] as const)(
+    "handles verified desktop gateway recovery while the WebSocket is %s",
+    async (status) => {
+      const { unmount } = render(<App />);
+      await waitFor(() => expect(connectSpy).toHaveBeenCalledOnce());
+      mockConnectionStatus = status;
+      const notifyGatewayReady = () => {
+        window.dispatchEvent(new Event("nanobot:desktop-gateway-ready"));
+      };
+
+      act(notifyGatewayReady);
+      expect(retrySpy).toHaveBeenCalledTimes(status === "open" ? 0 : 1);
+
+      unmount();
+      act(notifyGatewayReady);
+      expect(retrySpy).toHaveBeenCalledTimes(status === "open" ? 0 : 1);
+    },
+  );
 
   it("shows the auth form without an invalid-password error on first load", async () => {
     vi.mocked(fetchBootstrap).mockRejectedValueOnce(

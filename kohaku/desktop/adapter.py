@@ -22,6 +22,7 @@ from kohaku.config.loader import load_config, resolve_config_env_vars, set_confi
 from kohaku.config.schema import Config
 from kohaku.gateway.darwin_desktop_process import darwin_desktop_available
 from kohaku.gateway.runtime import (
+    FOREGROUND_CONNECTION_HANDLE,
     DesktopAdmissionResult,
     DesktopGatewayIdentity,
     GatewayDesktopLifecycleError,
@@ -127,6 +128,8 @@ class DesktopAdapter:
         runtime = self._runtime
         if selection is None or runtime is None:
             raise DesktopError("hello_required")
+        if op == "connect_foreground":
+            return self._connect_foreground(selection)
         if op == "start":
             handle = params.get("handle")
             if isinstance(handle, str):
@@ -258,7 +261,7 @@ class DesktopAdapter:
 
     @staticmethod
     def _hello_result(selection: _Selection) -> dict[str, object]:
-        capabilities = [_CAPABILITY]
+        capabilities = [_CAPABILITY, "foreground-attach-v1"]
         if darwin_desktop_available():
             capabilities.append("darwin-identity-stop-v1")
         return {
@@ -312,38 +315,56 @@ class DesktopAdapter:
             "handle": identity.handle,
         }
 
-    def _status(self, handle: str) -> dict[str, object]:
+    def _connect_foreground(self, selection: _Selection) -> dict[str, object]:
+        identity = self._connection_identity(FOREGROUND_CONNECTION_HANDLE)
+        if identity is None:
+            return self._result("stopped", "gateway_external_offline", None, None)
+        return self._result(
+            "starting", "gateway_external_connecting", selection.origin, identity.handle,
+        )
+
+    def _connection_identity(self, handle: str) -> DesktopGatewayIdentity | None:
         selection = self._need_selection()
         runtime = self._need_runtime()
-        deadline = time.monotonic() + _SHORT_OPERATION_TIMEOUT_S
         try:
-            identity = runtime.desktop_identity(
+            if handle == FOREGROUND_CONNECTION_HANDLE:
+                return runtime.desktop_foreground_identity(selection.options)
+            return runtime.desktop_identity(
                 selection.options,
                 handle=handle,
                 lock_timeout_s=0.25,
             )
         except GatewayDesktopLifecycleError as exc:
             raise DesktopError(exc.code) from None
+
+    def _status(self, handle: str) -> dict[str, object]:
+        selection = self._need_selection()
+        deadline = time.monotonic() + _SHORT_OPERATION_TIMEOUT_S
+        external = handle == FOREGROUND_CONNECTION_HANDLE
+        try:
+            identity = self._connection_identity(handle)
+        except DesktopError as exc:
+            if not external:
+                raise
+            return self._result("unavailable", exc.code, selection.origin, handle)
         if identity is None:
+            if external:
+                return self._result("unavailable", "gateway_external_offline", None, handle)
             return self._result("stopped", "gateway_stopped", None, handle)
         ready, code = self._ready(selection, identity, deadline=deadline)
         state = "running" if ready else "starting" if identity.starting else "unavailable"
+        if external and state == "starting":
+            code = "gateway_external_connecting"
         return self._result(state, "gateway_ready" if ready else code, selection.origin, handle)
 
     def _bootstrap(self, handle: str) -> dict[str, object]:
         selection = self._need_selection()
-        runtime = self._need_runtime()
         deadline = time.monotonic() + _SHORT_OPERATION_TIMEOUT_S
-        try:
-            identity = runtime.desktop_identity(
-                selection.options,
-                handle=handle,
-                lock_timeout_s=0.25,
-            )
-        except GatewayDesktopLifecycleError as exc:
-            raise DesktopError(exc.code) from None
+        identity = self._connection_identity(handle)
         if identity is None:
-            raise DesktopError("gateway_stopped")
+            raise DesktopError(
+                "gateway_external_offline" if handle == FOREGROUND_CONNECTION_HANDLE else "gateway_stopped",
+            )
         ready, code = self._ready(selection, identity, deadline=deadline)
         if not ready:
             raise DesktopError(code)
@@ -363,6 +384,8 @@ class DesktopAdapter:
         return {"origin": selection.origin, "secret": selection.secret, "ws_url": ws_url}
 
     def _stop(self, handle: str) -> dict[str, object]:
+        if handle == FOREGROUND_CONNECTION_HANDLE:
+            raise DesktopError("gateway_not_desktop_owned")
         selection = self._need_selection()
         runtime = self._need_runtime()
         result = runtime.stop_desktop(selection.options, handle, timeout_s=20.0, lock_timeout_s=1.0)

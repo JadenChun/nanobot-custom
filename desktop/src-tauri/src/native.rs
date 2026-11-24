@@ -278,6 +278,8 @@ fn tray_host_available() -> bool {
         .unwrap_or(false)
 }
 
+pub(crate) const GATEWAY_TRAY_ID: &str = "kohaku-desktop-tray";
+
 fn install_tray(app: &AppHandle<Wry>, shared: Arc<Shared>) -> Result<(), tauri::Error> {
     let status = MenuItem::with_id(app, "status", "Setup required", false, None::<&str>)?;
     let open = MenuItem::with_id(app, "open", "Open Chat", true, None::<&str>)?;
@@ -285,12 +287,12 @@ fn install_tray(app: &AppHandle<Wry>, shared: Arc<Shared>) -> Result<(), tauri::
     let separator = PredefinedMenuItem::separator(app)?;
     let quit = MenuItem::with_id(app, "quit", "Quit Kohaku", true, None::<&str>)?;
     let menu = Menu::with_items(app, &[&status, &open, &retry, &separator, &quit])?;
-    shared.set_tray_status_item(status);
     let shared_for_menu = shared.clone();
-    TrayIconBuilder::with_id("kohaku-desktop-tray")
+    let tray = TrayIconBuilder::with_id(GATEWAY_TRAY_ID)
         .icon(app_icon())
+        .tooltip("Kohaku gateway")
         .menu(&menu)
-        .show_menu_on_left_click(false)
+        .show_menu_on_left_click(cfg!(target_os = "macos"))
         .on_menu_event(move |app, event| match event.id().as_ref() {
             "open" => focus_control_window(app, &shared_for_menu),
             "retry" => shared_for_menu.enqueue_retry_from_tray(),
@@ -298,6 +300,11 @@ fn install_tray(app: &AppHandle<Wry>, shared: Arc<Shared>) -> Result<(), tauri::
             _ => {}
         })
         .build(app)?;
+    #[cfg(target_os = "macos")]
+    tray.set_visible(false)?;
+    #[cfg(not(target_os = "macos"))]
+    let _ = tray;
+    shared.set_tray_status_item(status);
     Ok(())
 }
 

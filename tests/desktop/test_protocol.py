@@ -42,3 +42,10 @@ def test_prepare_default_config_cannot_request_an_arbitrary_path() -> None:
     with pytest.raises(ProtocolError):
         parse_request(frame.replace(b'"params":{}', b'"params":{"config_path":"/tmp/other"}'))
 
+
+def test_connect_foreground_takes_no_alternate_target() -> None:
+    frame = b'{"v":1,"id":7,"op":"connect_foreground","params":{}}\n'
+    assert parse_request(frame) == (7, "connect_foreground", {})
+    with pytest.raises(ProtocolError):
+        parse_request(frame.replace(b'"params":{}', b'"params":{"url":"http://127.0.0.1:9000"}'))
+

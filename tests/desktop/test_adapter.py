@@ -122,7 +122,7 @@ def test_hello_is_read_only_and_does_not_return_credentials(tmp_path: Path) -> N
     rendered = json.dumps(result)
 
     assert result["protocol_version"] == 1
-    expected = ["managed-gateway-v1"]
+    expected = ["managed-gateway-v1", "foreground-attach-v1"]
     if darwin_desktop_available():
         expected.append("darwin-identity-stop-v1")
     assert result["capabilities"] == expected
@@ -132,6 +132,144 @@ def test_hello_is_read_only_and_does_not_return_credentials(tmp_path: Path) -> N
     assert "desktop-webui-sentinel" not in rendered
     assert config_path.read_bytes() == before
     assert not (workspace / ".nanobot").exists()
+
+
+@pytest.mark.skipif(sys.platform not in {"darwin", "linux"}, reason="requires POSIX process identity")
+def test_desktop_reattaches_to_foreground_without_owning_its_lifetime(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from kohaku.gateway.runtime import GatewayInstance, GatewayRuntime
+
+    config_path = tmp_path / "profile" / "config.json"
+    port, _ = _prepared_config(config_path, tmp_path / "workspace")
+    instance = GatewayInstance.resolve(config_path=config_path, workspace=None)
+    runtime = GatewayRuntime(paths=instance.paths, python_executable=sys.executable)
+    adapter = DesktopAdapter()
+    command = [
+        sys.executable, "-m", "kohaku", "gateway", "--foreground", "--config", str(config_path),
+    ]
+
+    def launch() -> subprocess.Popen[bytes]:
+        return subprocess.Popen(command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+    def wait_for_publication(process: subprocess.Popen[bytes]) -> dict[str, Any]:
+        deadline = time.monotonic() + 15
+        while time.monotonic() < deadline and process.poll() is None:
+            state = runtime._read_state()
+            if state and state.get("desktop_gateway_id") and state.get("pid") == process.pid:
+                return state
+            time.sleep(0.05)
+        pytest.fail(f"foreground fixture did not publish identity (port {port})")
+
+    def stop(process: subprocess.Popen[bytes]) -> None:
+        if process.poll() is None:
+            process.terminate()
+            try:
+                process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait(timeout=5)
+
+    first = launch()
+    second = None
+    try:
+        first_state = wait_for_publication(first)
+        adapter.handle("hello", {"config_path": str(config_path), "workspace": None})
+        refused = adapter.handle("start", {})
+        assert refused["code"] == "gateway_identity_conflict"
+        assert runtime._read_state() == first_state
+        attached = adapter.handle("connect_foreground", {})
+        handle = attached["handle"]
+        assert isinstance(handle, str)
+        _wait_until_running(adapter, handle)
+        assert adapter.handle("bootstrap", {"handle": handle})["ws_url"]
+
+        assert adapter._runtime is not None
+        for record_field, value, expected_code in (
+            ("stable_identity", "different-process", "gateway_identity_conflict"),
+            ("workspace", str(tmp_path / "different"), "gateway_selector_conflict"),
+            ("desktop_websocket_ports", [], "gateway_selector_conflict"),
+            ("desktop_gateway_id", "different-server", "gateway_identity_mismatch"),
+        ):
+            record = {**first_state, record_field: value}
+            with monkeypatch.context() as patch:
+                patch.setattr(adapter._runtime, "_read_state", lambda: record)
+                assert adapter.handle("status", {"handle": handle})["code"] == expected_code
+                with pytest.raises(DesktopError, match=expected_code):
+                    adapter.handle("bootstrap", {"handle": handle})
+
+        with pytest.raises(DesktopError, match="gateway_not_desktop_owned"):
+            adapter.handle("stop", {"handle": handle})
+        assert runtime._read_state() == first_state
+        assert adapter._runtime._desktop_lease is None
+
+        stop(first)
+        offline = adapter.handle("status", {"handle": handle})
+        assert offline["state"] == "unavailable"
+        assert offline["code"] == "gateway_external_offline"
+        assert offline["handle"] == handle
+        assert not runtime.paths.state_path.exists()
+
+        second = launch()
+        second_state = wait_for_publication(second)
+        assert second_state["desktop_gateway_id"] != first_state["desktop_gateway_id"]
+        _wait_until_running(adapter, handle)
+        assert adapter.handle("bootstrap", {"handle": handle})["ws_url"]
+        adapter.close()
+        assert second.poll() is None
+        assert runtime._read_state() == second_state
+    finally:
+        adapter.close()
+        stop(first)
+        if second is not None:
+            stop(second)
+
+
+@pytest.mark.skipif(
+    sys.platform != "linux" and not darwin_desktop_available(),
+    reason="requires an instance-bound Linux or macOS process handle",
+)
+def test_desktop_start_recovers_a_stale_foreground_record(tmp_path: Path) -> None:
+    config_path = tmp_path / "profile" / "config.json"
+    gateway_port, _ = _prepared_config(config_path, tmp_path / "workspace")
+    adapter = DesktopAdapter()
+    adapter.handle("hello", {"config_path": str(config_path), "workspace": None})
+    runtime, selection = adapter._runtime, adapter._selection
+    assert runtime is not None and selection is not None
+    try:
+        exited = subprocess.Popen([sys.executable, "-c", "pass"])
+        assert exited.wait(timeout=5) == 0
+        state = {
+            "pid": exited.pid,
+            "launch_mode": "foreground",
+            "port": gateway_port,
+            "config_path": str(config_path),
+            "workspace": None,
+        }
+        mismatched = {**state, "workspace": str(tmp_path / "other-workspace")}
+        runtime._write_state(mismatched)
+        assert adapter.handle("start", {})["code"] == "gateway_identity_conflict"
+        assert runtime._read_state() == mismatched
+
+        runtime._write_state(state)
+        assert adapter.handle("connect_foreground", {})["code"] == "gateway_external_offline"
+        assert runtime._read_state() == state
+        started = adapter.handle("start", {})
+        assert started["state"] == "starting", started
+        handle = started["handle"]
+        assert isinstance(handle, str)
+        assert _wait_until_running(adapter, handle)["code"] == "gateway_ready"
+        recovered = runtime._read_state()
+        assert recovered is not None
+        assert recovered["launch_mode"] == "background"
+        assert recovered["pid"] != exited.pid
+        assert adapter.handle("stop", {"handle": handle})["state"] == "stopped"
+    finally:
+        child = runtime._owned_process
+        if child is not None and child.poll() is None:
+            child.kill()
+            child.wait(timeout=5)
+        adapter.close()
 
 
 @pytest.mark.parametrize("platform_name", ["Darwin", "Windows"])

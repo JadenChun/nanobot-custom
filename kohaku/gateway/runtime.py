@@ -61,6 +61,14 @@ _DESKTOP_CAPABILITY = "managed-gateway-v1"
 _DESKTOP_ADMISSION_LISTENER_PORTS = "desktop_admission_websocket_ports"
 _DESKTOP_OWNER_MANAGEMENT_PORT = "desktop_management_port"
 _DESKTOP_OWNER_LISTENER_PORTS = "desktop_websocket_ports"
+FOREGROUND_CONNECTION_HANDLE = "foreground-connection-v1"
+
+
+def _foreground_record_pid(state: dict[str, Any]) -> int | None:
+    pid: object = state.get("pid")
+    if state.get("launch_mode") == "foreground" and type(pid) is int and 0 < pid <= 0x7FFF_FFFF:
+        return pid
+    return None
 
 
 def _is_valid_desktop_port(value: object) -> bool:
@@ -383,10 +391,19 @@ class GatewayRuntime(ManagedProcessRuntime[ProcessStartOptions]):
                                     try:
                                         identity = self._classify_desktop_state(state, options)
                                     except GatewayDesktopLifecycleError as exc:
-                                        stale_pid = _as_int(state.get("pid"))
+                                        if exc.code == "gateway_stopped":
+                                            stale_pid = _as_int(state.get("pid"))
+                                        else:
+                                            # Foreground records cannot be adopted. An
+                                            # explicit start may only replace a dead
+                                            # foreground record for this exact instance.
+                                            stale_pid = _foreground_record_pid(state)
+                                            if stale_pid is not None and not self._selectors_match(
+                                                state, options,
+                                            ):
+                                                stale_pid = None
                                         if (
-                                            exc.code != "gateway_stopped"
-                                            or stale_pid is None
+                                            stale_pid is None
                                             or stale_pid <= 0
                                             or self._is_pid_running(stale_pid)
                                         ):
@@ -622,6 +639,50 @@ class GatewayRuntime(ManagedProcessRuntime[ProcessStartOptions]):
                     if not self._is_pid_running(state_pid):
                         return None
                     return self._classify_desktop_state(state, options, expected=payload)
+        except FileLockTimeout as exc:
+            raise GatewayDesktopLifecycleError("gateway_busy") from exc
+
+    def desktop_foreground_identity(
+        self, options: GatewayStartOptions,
+    ) -> DesktopGatewayIdentity | None:
+        """Find a foreground peer without adopting it or changing its lifetime."""
+        try:
+            with self._desktop_lock(self._transition_lock(), 0.25):
+                with self._desktop_lock(self._lifecycle_lock(), 0.25):
+                    state = self._read_state()
+                    if state is None:
+                        return None
+                    pid = _foreground_record_pid(state)
+                    if pid is None or not self._is_pid_running(pid):
+                        return None
+                    if not self._selectors_match(state, options):
+                        raise GatewayDesktopLifecycleError("gateway_selector_conflict")
+                    birth = self._state_birth_identity(state)
+                    if birth is None or self.process_identity(pid) != birth:
+                        raise GatewayDesktopLifecycleError("gateway_identity_conflict")
+                    try:
+                        group = os.getpgid(pid)
+                    except OSError:
+                        return None
+                    # The foreground process publishes the ports and WebUI ID together
+                    # when ready. Until then, don't send any requests to its listeners.
+                    starting = not (
+                        _DESKTOP_OWNER_MANAGEMENT_PORT in state
+                        or _DESKTOP_OWNER_LISTENER_PORTS in state
+                    )
+                    if not starting and not self._verify_desktop_port_proof(state, options):
+                        raise GatewayDesktopLifecycleError("gateway_selector_conflict")
+                    return DesktopGatewayIdentity(
+                        pid=pid,
+                        birth_identity=birth,
+                        process_group=group,
+                        handle=FOREGROUND_CONNECTION_HANDLE,
+                        gateway_id=_as_str(state.get("desktop_gateway_id")),
+                        backend_version=_as_str(state.get("desktop_backend_version")),
+                        capability=_as_str(state.get("desktop_capability")),
+                        python_executable=_as_str(state.get("desktop_python_executable")),
+                        starting=starting,
+                    )
         except FileLockTimeout as exc:
             raise GatewayDesktopLifecycleError("gateway_busy") from exc
 

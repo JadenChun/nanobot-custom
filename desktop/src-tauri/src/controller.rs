@@ -22,6 +22,7 @@ use crate::{
     preferences::{self, Preferences},
     protocol::{
         BeginFailure, BootstrapResult, LifecycleResult, PendingResponse, PipeAdapter,
+        FOREGROUND_CONNECTION_HANDLE,
     },
 };
 
@@ -332,8 +333,14 @@ impl Shared {
             _ => "Unavailable",
         }
         .to_owned();
+        #[cfg(target_os = "macos")]
+        let app = self.app.clone();
         let _ = self.app.run_on_main_thread(move || {
             let _ = item.set_text(label);
+            #[cfg(target_os = "macos")]
+            if let Some(tray) = app.tray_by_id(native::GATEWAY_TRAY_ID) {
+                let _ = tray.set_visible(snapshot.state == "running");
+            }
         });
     }
 }
@@ -555,6 +562,17 @@ impl Controller {
             }
         }
         self.preferences = Some(preferences);
+        match self.connect_foreground() {
+            Ok(true) => return,
+            Ok(false) => {}
+            Err(code) => {
+                // A failed attach is read-only, not an uncertain process start.
+                self.adapter.take();
+                self.admission_pending = false;
+                self.publish("unavailable", &code);
+                return;
+            }
+        }
         if !self.shared.latch_admission() {
             self.adapter.take();
             self.admission_pending = false;
@@ -587,6 +605,17 @@ impl Controller {
                 self.publish("unavailable", "stop_unconfirmed");
             }
         }
+    }
+
+    fn connect_foreground(&mut self) -> Result<bool, String> {
+        let result = self.adapter.as_mut().expect("adapter initialized")
+            .connect_foreground().map_err(|error| error.0)?;
+        let Some(result) = result else {
+            return Ok(false);
+        };
+        self.load_chat_when_ready = true;
+        self.apply_lifecycle(result);
+        Ok(true)
     }
 
     fn ensure_new_adapter(
@@ -827,7 +856,11 @@ impl Controller {
                     .as_ref()
                     .is_some_and(|url| url.origin() == origin.origin());
             if on_chat_origin {
-                return Ok(());
+                // A long outage can exhaust the page's WebSocket retries.
+                // Wake the existing client without navigating or losing drafts.
+                return existing
+                    .eval("window.dispatchEvent(new Event('nanobot:desktop-gateway-ready'));")
+                    .map_err(|_| "chat_window_unavailable".to_owned());
             }
             #[cfg(target_os = "macos")]
             {
@@ -998,6 +1031,11 @@ impl Controller {
                     self.publish("stopping", "gateway_stopping");
                     return;
                 }
+                if self.handle.as_deref() == Some(FOREGROUND_CONNECTION_HANDLE)
+                    && self.shared.snapshot().state != "running"
+                {
+                    self.load_chat_when_ready = true;
+                }
                 self.publish("running", &result.code);
                 if self.load_chat_when_ready && !self.shared.quit_requested.load(Ordering::Acquire) {
                     if self.load_chat().is_ok() {
@@ -1131,6 +1169,25 @@ impl Controller {
             Ok(Some(result)) => {
                 self.pending_start = None;
                 self.admission_pending = false;
+                if is_start_conflict(&result) {
+                    self.admission_unknown = false;
+                    self.shared.release_admission();
+                    // A CLI gateway could have claimed the profile since our
+                    // first attach check. Recheck without starting anything.
+                    if !self.shared.quit_requested.load(Ordering::Acquire) {
+                        match self.connect_foreground() {
+                            Ok(true) => return,
+                            Ok(false) => {}
+                            Err(code) => {
+                                self.adapter.take();
+                                self.publish("unavailable", &code);
+                                return;
+                            }
+                        }
+                    }
+                    self.publish("unavailable", &result.code);
+                    return;
+                }
                 if captured_start_handle(&result).is_none() {
                     self.admission_unknown = true;
                     self.publish("unavailable", "stop_unconfirmed");
@@ -1206,6 +1263,15 @@ impl Controller {
         let Some(handle) = self.handle.clone() else {
             return;
         };
+        let foreground = handle == FOREGROUND_CONNECTION_HANDLE;
+        if foreground {
+            // An adapter crash is not the same as a gateway exit. Recreate the
+            // read-only connection using the same saved profile.
+            if let Err(code) = self.ensure_adapter() {
+                self.publish("unavailable", &code);
+                return;
+            }
+        }
         let result = self
             .adapter
             .as_mut()
@@ -1238,7 +1304,7 @@ impl Controller {
             self.publish("unavailable", "stop_unconfirmed");
             return;
         }
-        let Some(handle) = self.handle.clone() else {
+        let Some(handle) = managed_stop_handle(self.handle.as_deref()).map(str::to_owned) else {
             self.exit_after_quit();
             return;
         };
@@ -1378,6 +1444,16 @@ fn captured_start_handle(result: &LifecycleResult) -> Option<&str> {
     result.handle.as_deref().filter(|handle| valid_handle(handle))
 }
 
+fn is_start_conflict(result: &LifecycleResult) -> bool {
+    result.state == "unavailable" && result.handle.is_none()
+        && matches!(result.code.as_str(),
+            "gateway_identity_conflict" | "gateway_listener_conflict" | "gateway_selector_conflict")
+}
+
+fn managed_stop_handle(handle: Option<&str>) -> Option<&str> {
+    handle.filter(|handle| *handle != FOREGROUND_CONNECTION_HANDLE)
+}
+
 fn confirms_stopped(result: &LifecycleResult, original_handle: &str) -> bool {
     result.state == "stopped" && is_bound_lifecycle(result, original_handle)
 }
@@ -1463,5 +1539,28 @@ mod tests {
         };
         assert!(confirms_stopped(&result, "original"));
         assert!(!confirms_stopped(&result, "replacement"));
+    }
+
+    #[test]
+    fn foreground_connection_does_not_have_stop_authority() {
+        assert!(managed_stop_handle(None).is_none());
+        assert!(managed_stop_handle(Some(FOREGROUND_CONNECTION_HANDLE)).is_none());
+        assert_eq!(managed_stop_handle(Some("managed-handle")), Some("managed-handle"));
+    }
+
+    #[test]
+    fn only_unowned_start_conflicts_can_retry_attachment() {
+        let mut result = LifecycleResult {
+            state: "unavailable".to_owned(),
+            code: "gateway_identity_conflict".to_owned(),
+            origin: None,
+            handle: None,
+        };
+        assert!(is_start_conflict(&result));
+        result.handle = Some("maybe-owned".to_owned());
+        assert!(!is_start_conflict(&result));
+        result.handle = None;
+        result.code = "gateway_start_failed".to_owned();
+        assert!(!is_start_conflict(&result));
     }
 }

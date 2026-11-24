@@ -14,6 +14,7 @@ use serde_json::{json, Value};
 pub const MAX_FRAME_BYTES: usize = 65_536;
 pub const BACKEND_VERSION: &str = "0.3.0";
 pub const BACKEND_CAPABILITY: &str = "managed-gateway-v1";
+pub const FOREGROUND_CONNECTION_HANDLE: &str = "foreground-connection-v1";
 
 #[derive(Debug)]
 pub struct AdapterFailure(pub String);
@@ -97,6 +98,7 @@ pub struct PipeAdapter {
     request_id: u64,
     outstanding: Option<PendingResponse>,
     interpreter: String,
+    foreground_attach: bool,
 }
 
 impl PipeAdapter {
@@ -135,6 +137,7 @@ impl PipeAdapter {
             request_id: 0,
             outstanding: None,
             interpreter: interpreter.to_string_lossy().into_owned(),
+            foreground_attach: false,
         })
     }
 
@@ -184,7 +187,23 @@ impl PipeAdapter {
         if !Path::new(&value.config_path).is_absolute() || !Path::new(&value.workspace).is_absolute() {
             return Err(AdapterFailure::new("protocol_invalid"));
         }
+        self.foreground_attach = value.capabilities.iter().any(|cap| cap == "foreground-attach-v1");
         Ok(value)
+    }
+
+    pub fn connect_foreground(&mut self) -> Result<Option<LifecycleResult>, AdapterFailure> {
+        // Older adapters close the pipe on unknown operations.
+        if !self.foreground_attach {
+            return Ok(None);
+        }
+        let result = self.lifecycle("connect_foreground", json!({}), Duration::from_secs(3))?;
+        match (result.state.as_str(), result.code.as_str(), result.handle.as_deref()) {
+            ("stopped", "gateway_external_offline", None) if result.origin.is_none() => Ok(None),
+            ("starting", "gateway_external_connecting", Some(FOREGROUND_CONNECTION_HANDLE)) => {
+                Ok(Some(result))
+            }
+            _ => Err(AdapterFailure::new("protocol_invalid")),
+        }
     }
 
     pub fn start(&mut self, handle: Option<&str>) -> Result<LifecycleResult, AdapterFailure> {

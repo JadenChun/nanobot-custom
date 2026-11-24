@@ -65,6 +65,11 @@ const copy: Record<string, string> = {
   runtime_preflight_refused: "The backend refused startup during its safety checks.",
   startup_admission_refused: "The backend refused desktop startup.",
   gateway_conflict: "Another unmanaged or incompatible gateway is using this instance.",
+  gateway_identity_conflict: "The active process could not be verified as this Kohaku gateway.",
+  gateway_listener_conflict: "Another process is using this gateway’s ports.",
+  gateway_selector_conflict: "The active gateway does not match this config, workspace, or ports.",
+  gateway_external_connecting: "Connecting to the running gateway…",
+  gateway_external_offline: "The CLI gateway stopped. Desktop will reconnect when it starts again.",
   gateway_unavailable: "The local server is unavailable. Retry to start it again.",
   gateway_starting: "Starting Kohaku…",
   gateway_stopping: "Stopping Kohaku…",
@@ -99,7 +104,7 @@ function draw(state: DesktopState, syncSelection = false): void {
         ? "Stopping Kohaku…"
         : state.state === "running"
           ? "Opening chat…"
-          : "Starting Kohaku…";
+          : message(state.code === "gateway_external_connecting" ? state.code : "gateway_starting");
     return;
   }
 

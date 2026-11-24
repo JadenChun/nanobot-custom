@@ -2069,15 +2069,24 @@ function Shell({
         void client.retry();
       }
     };
+    const reviveOnDesktopGatewayReady = () => {
+      // The native controller has confirmed the local gateway is back.
+      // Reset the retry budget even if the last socket attempt is still pending.
+      if (client.status !== "open") {
+        void client.retry();
+      }
+    };
     document.addEventListener("visibilitychange", reviveIfDisconnected);
     window.addEventListener("pageshow", reviveIfDisconnected);
     window.addEventListener("online", reviveOnOnline);
     window.addEventListener("nanobot-native-resume", reviveOnOnline);
+    window.addEventListener("nanobot:desktop-gateway-ready", reviveOnDesktopGatewayReady);
     return () => {
       document.removeEventListener("visibilitychange", reviveIfDisconnected);
       window.removeEventListener("pageshow", reviveIfDisconnected);
       window.removeEventListener("online", reviveOnOnline);
       window.removeEventListener("nanobot-native-resume", reviveOnOnline);
+      window.removeEventListener("nanobot:desktop-gateway-ready", reviveOnDesktopGatewayReady);
     };
   }, [client]);
 
