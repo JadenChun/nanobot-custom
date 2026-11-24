@@ -391,3 +391,108 @@ def test_skills_loader_avoids_quadratic_directory_walks_and_invalidates_on_edit(
     )
     updated_summary = loader.build_skills_summary()
     assert "Updated Description 0" in updated_summary
+
+
+async def test_file_preview_skips_transcript_for_workspace_files_and_filters_large_blobs(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from kohaku.webui import transcript as webui_transcript
+    from kohaku.webui import ws_http
+
+    channel, session_manager = _make_gateway_channel(tmp_path)
+    key = "websocket:preview-fast-path"
+    session = Session(key=key, metadata={"webui": True})
+    session_manager.save(session)
+
+    inside = tmp_path / "workspace" / "inside.txt"
+    inside.write_text("workspace content\n", encoding="utf-8")
+
+    # Workspace file must succeed without reading the transcript at all.
+    def fail_if_called(*_args: Any, **_kwargs: Any) -> list[dict[str, Any]]:
+        raise AssertionError("transcript should not be read for authorized workspace file")
+
+    monkeypatch.setattr(ws_http, "read_transcript_lines_for_preview", fail_if_called)
+    monkeypatch.setattr(ws_http, "read_transcript_lines", fail_if_called)
+
+    encoded_key = quote(key, safe="")
+    auth_header = ("Authorization", f"Bearer {channel.gateway.http.tokens.issue_api_token(60)}")
+    req = WsRequest(
+        f"/api/sessions/{encoded_key}/file-preview?path={quote(str(inside), safe='')}",
+        Headers([auth_header]),
+    )
+    resp = await channel.gateway.http._dispatch_session_routes(
+        None,
+        req,
+        f"/api/sessions/{encoded_key}/file-preview",
+    )
+    assert resp is not None
+    assert resp.status_code == 200
+    assert json.loads(resp.body)["content"] == "workspace content\n"
+
+    # Filtered reader skips huge unrelated JSON lines while retaining matching reference lines.
+    webui_transcript.append_transcript_object(
+        key,
+        {"event": "message", "kind": "progress", "turn_id": "t1", "blob": "A" * 100_000},
+    )
+    webui_transcript.append_transcript_object(
+        key,
+        {"event": "stream_end", "turn_id": "t2", "text": "See `/tmp/target report.txt`"},
+    )
+    filtered = webui_transcript.read_transcript_lines_for_preview(
+        key,
+        candidates=("/tmp/target report.txt",),
+    )
+    assert len(filtered) == 1
+    assert filtered[0]["turn_id"] == "t2"
+
+
+async def test_misc_and_automation_http_routes_offload_off_event_loop(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    channel, _session_manager = _make_gateway_channel(tmp_path)
+    loop_thread_id = threading.get_ident()
+    observed: dict[str, list[int]] = {"workspaces": [], "skills": [], "sidebar": [], "automations": []}
+
+    orig_ws = channel.gateway.http._handle_workspaces
+    orig_skills = channel.gateway.http._handle_webui_skills
+    orig_sidebar = channel.gateway.http._handle_webui_sidebar_state
+
+    def wrap(bucket: str, fn: Any) -> Any:
+        def _wrapped(*args: Any, **kwargs: Any) -> Any:
+            observed[bucket].append(threading.get_ident())
+            return fn(*args, **kwargs)
+        return _wrapped
+
+    monkeypatch.setattr(channel.gateway.http, "_handle_workspaces", wrap("workspaces", orig_ws))
+    monkeypatch.setattr(channel.gateway.http, "_handle_webui_skills", wrap("skills", orig_skills))
+    monkeypatch.setattr(channel.gateway.http, "_handle_webui_sidebar_state", wrap("sidebar", orig_sidebar))
+
+    from kohaku.webui import ws_http
+
+    orig_auto_payload = ws_http.all_automations_payload
+    monkeypatch.setattr(ws_http, "all_automations_payload", wrap("automations", orig_auto_payload))
+
+    auth = Headers([("Authorization", f"Bearer {channel.gateway.http.tokens.issue_api_token(60)}")])
+    for route in ("/api/workspaces", "/api/webui/skills", "/api/webui/sidebar-state", "/api/webui/automations"):
+        resp = await channel.gateway.http._dispatch_resolved(None, WsRequest(route, auth), route)
+        assert resp is not None
+        assert resp.status_code == 200
+
+    for name, tids in observed.items():
+        assert tids and tids[0] != loop_thread_id, f"{name} ran on event loop thread"
+
+
+def test_warm_token_encodings_preloads_default_tables(monkeypatch: pytest.MonkeyPatch) -> None:
+    helpers._get_token_encoding.cache_clear()  # pyright: ignore[reportPrivateUsage]
+    loaded: list[str] = []
+
+    def fake_get_encoding(name: str) -> object:
+        loaded.append(name)
+        return object()
+
+    monkeypatch.setattr(helpers.tiktoken, "get_encoding", fake_get_encoding)
+    helpers.warm_token_encodings()
+    assert loaded == ["cl100k_base", "o200k_base"]
+    helpers._get_token_encoding.cache_clear()  # pyright: ignore[reportPrivateUsage]

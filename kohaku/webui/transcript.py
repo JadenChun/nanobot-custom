@@ -14,9 +14,10 @@ import shutil
 import time
 import uuid
 from contextlib import AbstractContextManager, suppress
-from pathlib import Path
+from pathlib import Path, PurePosixPath
+from posixpath import normpath
 from typing import Any, Callable, Literal, Mapping, NamedTuple, Sequence, cast
-from urllib.parse import unquote, urlparse
+from urllib.parse import quote, unquote, urlparse
 
 from loguru import logger
 
@@ -1932,6 +1933,80 @@ def read_transcript_lines(
         origin = _record_origin(expected_source)
         return [line for line in lines if line.get(_RECORD_ORIGIN) == origin]
     return lines
+
+
+def _preview_candidate_needles(candidates: Sequence[str | None]) -> tuple[bytes, ...] | None:
+    """Derive safe raw-byte needles from preview path candidates, or None to disable filtering."""
+    needles: list[bytes] = []
+    seen: set[bytes] = set()
+    for raw in candidates:
+        if not isinstance(raw, str):
+            continue
+        cleaned = unquote(raw.strip().strip("`"))
+        if not cleaned or len(cleaned) > 4096:
+            continue
+        normalized = normpath(cleaned.replace("\\", "/"))
+        name = PurePosixPath(normalized).name
+        if not name or name in {".", ".."} or '"' in name or "\\" in name:
+            return None
+        for variant in (
+            name.encode("utf-8"),
+            name.replace(" ", "%20").encode("utf-8"),
+            quote(name, safe="").encode("ascii"),
+        ):
+            if variant and variant not in seen:
+                seen.add(variant)
+                needles.append(variant)
+    return tuple(needles) if needles else None
+
+
+def read_transcript_lines_for_preview(
+    session_key: str,
+    *,
+    candidates: Sequence[str | None],
+) -> list[dict[str, Any]]:
+    """Read display transcript rows relevant to file-preview reference resolution.
+
+    Skips decoding/JSON-parsing multi-MB records (e.g. large tool outputs or
+    inline media) that cannot mention any candidate filename, while keeping
+    user turn markers and small streaming deltas so turn grouping stays exact.
+    """
+    needles = _preview_candidate_needles(candidates)
+    if needles is None:
+        return read_transcript_lines(session_key)
+    _migrate_legacy_transcript(session_key)
+    matched: list[dict[str, Any]] = []
+    for chunk_id in _chunk_ids(session_key):
+        path = (
+            active_transcript_path(session_key)
+            if chunk_id == _TRANSCRIPT_ACTIVE_CHUNK_ID
+            else _segment_file_path(session_key, chunk_id)
+        )
+        try:
+            with open(path, "rb") as raw_file:
+                for raw_line in raw_file:
+                    if not raw_line.strip():
+                        continue
+                    has_needle = any(needle in raw_line for needle in needles)
+                    is_small_marker = (
+                        len(raw_line) <= 4096
+                        and (
+                            b'"user"' in raw_line
+                            or b'"user_message"' in raw_line
+                            or b'"delta"' in raw_line
+                        )
+                    )
+                    if not (has_needle or is_small_marker):
+                        continue
+                    try:
+                        obj = json.loads(raw_line.decode("utf-8"))
+                    except (UnicodeDecodeError, json.JSONDecodeError):
+                        continue
+                    if isinstance(obj, dict):
+                        matched.append(cast(dict[str, Any], obj))
+        except OSError:
+            continue
+    return matched
 
 
 def webui_transcript_signature(session_key: str) -> tuple[tuple[str, int, int], ...]:

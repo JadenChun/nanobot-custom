@@ -167,6 +167,7 @@ from kohaku.webui.transcript import (
     build_webui_thread_response,
     delete_webui_transcript_result,
     read_transcript_lines,
+    read_transcript_lines_for_preview,
     webui_transcript_signature,
 )
 from kohaku.webui.workspaces import (
@@ -1261,7 +1262,7 @@ class GatewayHTTPHandler:
             return response
 
         # Media routes
-        response = self._dispatch_media_routes(request, got)
+        response = await self._dispatch_media_routes(request, got)
         if response is not None:
             return response
 
@@ -1286,7 +1287,8 @@ class GatewayHTTPHandler:
 
         # Static SPA serving
         if self.static_dist_path is not None:
-            response = self._serve_static(
+            response = await asyncio.to_thread(
+                self._serve_static,
                 got,
                 accept_encoding=_combined_list_header(request.headers, "Accept-Encoding"),
             )
@@ -2457,10 +2459,6 @@ class GatewayHTTPHandler:
         requested_path = path
         if isinstance(path, str) and path.startswith("~/"):
             path = str(Path.home() / path[2:])
-        if isinstance(path, str):
-            resolved_relative = _resolve_relative_preview_path(decoded_key, path)
-            if resolved_relative is not None:
-                path = resolved_relative
         is_probe = _query_first(query, "probe") == "1"
         try:
             scope = self.workspaces.scope_for_session_key(decoded_key)
@@ -2490,26 +2488,26 @@ class GatewayHTTPHandler:
                     # instance; fall back to explicit transcript references
                     # instead of granting the full workspace root.
                     full_preview_access = local_access
-            transcript_lines = read_transcript_lines(decoded_key)
-            referenced_path = (
-                file_preview_reference(requested_path, transcript_lines)
-                or file_preview_reference(path, transcript_lines)
-            )
-            if is_probe:
-                payload = file_preview_availability_payload(
-                    path,
-                    scope=scope,
-                    resource_policy=policy,
-                    managed_access=managed_access or permission_reference is not None,
-                    allow_folder_grants=full_preview_access,
-                    permission_owner=permission_owner,
-                    permission_reference=permission_reference,
-                    restrict_to_root=None if full_preview_access else scope.project_path,
-                    referenced_path=referenced_path,
-                )
-            else:
-                payload = file_preview_payload(
-                    path,
+
+            def _run_preview(
+                target_path: str | None,
+                *,
+                referenced_path: Path | None = None,
+            ) -> dict[str, Any]:
+                if is_probe:
+                    return file_preview_availability_payload(
+                        target_path,
+                        scope=scope,
+                        resource_policy=policy,
+                        managed_access=managed_access or permission_reference is not None,
+                        allow_folder_grants=full_preview_access,
+                        permission_owner=permission_owner,
+                        permission_reference=permission_reference,
+                        restrict_to_root=None if full_preview_access else scope.project_path,
+                        referenced_path=referenced_path,
+                    )
+                return file_preview_payload(
+                    target_path,
                     scope=scope,
                     resource_policy=policy,
                     managed_access=managed_access or permission_reference is not None,
@@ -2523,6 +2521,33 @@ class GatewayHTTPHandler:
                     ),
                     referenced_path=referenced_path,
                 )
+
+            try:
+                payload = _run_preview(path)
+            except WebUIFilePreviewError as direct_err:
+                if direct_err.status not in {403, 404}:
+                    raise
+                transcript_lines = read_transcript_lines_for_preview(
+                    decoded_key,
+                    candidates=(requested_path, path),
+                )
+                referenced_path = (
+                    file_preview_reference(requested_path, transcript_lines)
+                    or file_preview_reference(path, transcript_lines)
+                )
+                resolved_path = path
+                if referenced_path is None and isinstance(path, str):
+                    resolved_relative = _resolve_relative_preview_path(decoded_key, path)
+                    if resolved_relative is not None:
+                        resolved_path = resolved_relative
+                        extra_lines = read_transcript_lines_for_preview(
+                            decoded_key,
+                            candidates=(resolved_path,),
+                        )
+                        referenced_path = file_preview_reference(resolved_path, extra_lines)
+                if referenced_path is None and resolved_path == path:
+                    raise
+                payload = _run_preview(resolved_path, referenced_path=referenced_path)
         except WebUIFilePreviewError as e:
             if is_probe and e.status in {400, 403, 404, 415}:
                 return _http_json_response({"available": False})
@@ -2774,7 +2799,7 @@ class GatewayHTTPHandler:
         got: str,
     ) -> Response | None:
         if got == "/api/webui/automations":
-            return self._handle_webui_automations(request)
+            return await self._handle_webui_automations_async(request)
         m = re.match(r"^/api/webui/automations/(enable|disable|delete|run|update)$", got)
         if m:
             return await self._handle_webui_automation_action(request, m.group(1))
@@ -2820,6 +2845,27 @@ class GatewayHTTPHandler:
         except ConfigLoadError:
             return None
         return {name: preset.model for name, preset in config.model_presets.items()}
+
+    async def _handle_webui_automations_async(self, request: WsRequest) -> Response:
+        if not self.check_api_token(request):
+            return _http_error(401, "Unauthorized")
+        pending_job_ids = self._pending_cron_job_ids_for_all()
+        pending_job_ids.update(self._pending_local_trigger_ids_for_all())
+
+        def _build_payload() -> dict[str, Any]:
+            return all_automations_payload(
+                self.cron_service,
+                local_trigger_store=self.local_trigger_store,
+                session_manager=self.session_manager,
+                pending_job_ids=pending_job_ids,
+                model_presets=(
+                    self._automation_model_presets()
+                    if self.cron_service is not None
+                    else None
+                ),
+            )
+
+        return _http_json_response(await asyncio.to_thread(_build_payload))
 
     def _handle_webui_automations(self, request: WsRequest) -> Response:
         if not self.check_api_token(request):
@@ -2980,10 +3026,12 @@ class GatewayHTTPHandler:
 
     # -- Media routes -------------------------------------------------------
 
-    def _dispatch_media_routes(self, request: WsRequest, got: str) -> Response | None:
+    async def _dispatch_media_routes(self, request: WsRequest, got: str) -> Response | None:
         m = re.match(r"^/api/media/([A-Za-z0-9_-]+)/([A-Za-z0-9_-]+)$", got)
         if m:
-            return self._handle_media_fetch(m.group(1), m.group(2), request)
+            return await asyncio.to_thread(
+                self._handle_media_fetch, m.group(1), m.group(2), request,
+            )
         return None
 
     def _handle_media_fetch(
@@ -3080,7 +3128,7 @@ class GatewayHTTPHandler:
         if got == "/api/workspaces/pick-folder":
             return await self._handle_workspace_folder_picker(connection, request)
         if got == "/api/workspaces":
-            return self._handle_workspaces(connection, request)
+            return await asyncio.to_thread(self._handle_workspaces, connection, request)
         if got in {
             "/api/workspaces/grants/upsert",
             "/api/workspaces/grants/revoke",
@@ -3116,14 +3164,18 @@ class GatewayHTTPHandler:
         if got == "/api/webui/skills/delete":
             return self._handle_webui_skill_delete(connection, request)
         if got == "/api/webui/skills":
-            return self._handle_webui_skills(request)
+            return await asyncio.to_thread(self._handle_webui_skills, request)
         m = re.match(r"^/api/webui/skills/([^/]+)$", got)
         if m:
-            return self._handle_webui_skill_detail(request, m.group(1))
+            return await asyncio.to_thread(
+                self._handle_webui_skill_detail, request, m.group(1),
+            )
         if got == "/api/webui/sidebar-state":
-            return self._handle_webui_sidebar_state(request)
+            return await asyncio.to_thread(self._handle_webui_sidebar_state, request)
         if got == "/api/webui/sidebar-state/update":
-            return self._handle_webui_sidebar_state_update(request)
+            return await asyncio.to_thread(
+                self._handle_webui_sidebar_state_update, request,
+            )
         if got == "/api/desktop/notify":
             return await self._handle_desktop_notify(connection, request)
         return None

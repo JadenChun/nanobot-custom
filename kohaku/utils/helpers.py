@@ -112,6 +112,13 @@ def _get_token_encoding(encoding_name: str = "cl100k_base") -> Any:
     return tiktoken.get_encoding(encoding_name)
 
 
+def warm_token_encodings() -> None:
+    """Preload common tiktoken BPE tables off the event loop at gateway startup."""
+    for name in ("cl100k_base", "o200k_base"):
+        with suppress(Exception):
+            _get_token_encoding(name)
+
+
 def _cache_tools_token_count(
     cache_key: tuple[int, str],
     fingerprint: tuple[int, ...],
