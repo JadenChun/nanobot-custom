@@ -141,10 +141,8 @@ def build_mobile_edge(
         key: str,
         query: dict[str, list[str]],
     ) -> tuple[int, dict[str, Any]]:
-        return await asyncio.to_thread(
-            http.mobile_thread_payload,
-            key,
-            query,
+        return await http.read_mobile_thread(
+            key, query,
             owner=bool(getattr(identity, "is_owner", False)),
         )
 
@@ -153,11 +151,7 @@ def build_mobile_edge(
         key: str,
         query: dict[str, list[str]],
     ) -> tuple[int, dict[str, Any]]:
-        return await asyncio.to_thread(
-            http.mobile_delegated_children_payload,
-            key,
-            query,
-        )
+        return await http.mobile_delegated_children_payload(key, query)
 
     async def api_handler(identity: Any, path: str) -> tuple[int, dict[str, Any]]:
         return await http.mobile_api_payload(

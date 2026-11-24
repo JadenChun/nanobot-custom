@@ -29,6 +29,7 @@ import {
 } from "@/lib/session-page-cache";
 import type {
   ChatSummary,
+  ChatHarness,
   DelegatedChildReference,
   FolderAccessRequest,
   PendingPromptReveal,
@@ -346,6 +347,7 @@ export function useSessions(): {
   createChat: (
     workspaceScope?: WorkspaceScopePayload | null,
     modelPreset?: string | null,
+    harness?: ChatHarness,
   ) => Promise<string>;
   forkChat: (sourceChatId: string, beforeUserIndex: number, title?: string) => Promise<string>;
   deleteChat: (
@@ -446,8 +448,11 @@ export function useSessions(): {
   const createChat = useCallback(async (
     workspaceScope?: WorkspaceScopePayload | null,
     modelPreset?: string | null,
+    harness?: ChatHarness,
   ): Promise<string> => {
-    const chatId = await client.newChat(CHAT_CREATE_TIMEOUT_MS, workspaceScope);
+    const chatId = await (harness === "claude_sdk"
+      ? client.newChat(CHAT_CREATE_TIMEOUT_MS, workspaceScope, harness)
+      : client.newChat(CHAT_CREATE_TIMEOUT_MS, workspaceScope));
     const key = `websocket:${chatId}`;
     optimisticKeysRef.current.add(key);
     // Optimistic insert; a subsequent refresh will replace it with the
@@ -462,6 +467,7 @@ export function useSessions(): {
         title: "",
         preview: "",
         modelPreset: modelPreset ?? null,
+        ...(harness === "claude_sdk" ? { harnessBinding: client.getHarnessBinding(chatId) } : {}),
         workspaceScope: workspaceScope ?? null,
       },
       ...prev.filter((s) => s.key !== key),

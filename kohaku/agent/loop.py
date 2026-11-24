@@ -142,6 +142,15 @@ from kohaku.config.schema import AgentDefaults, ModelPresetConfig
 from kohaku.cron.session_turns import cron_trigger
 from kohaku.cron.types import CRON_MODEL_PRESET_UNAVAILABLE, cron_model_preset_unavailable
 from kohaku.events import NO_EVENTS, AgentEvent, EventSink
+from kohaku.harness.backend import (
+    ExternalApprovalRegistry,
+    ExternalApprovalSaveError,
+    ExternalToolPolicy,
+    HarnessCapabilityError,
+)
+from kohaku.harness.claude_sdk import ClaudeSDKBackend
+from kohaku.harness.direct import run_direct_turn, start_bridge
+from kohaku.harness.runner import CLAUDE_TOOL_NAMES, ExternalHarnessRunner
 from kohaku.llm_usage.context import source_from_request
 from kohaku.providers.base import LLMProvider, LLMUsage, ProviderConversationState
 from kohaku.providers.conversation_state import (
@@ -171,6 +180,7 @@ from kohaku.security.workspace_access import (
     WorkspaceScopeError,
     WorkspaceScopeResolver,
     bind_workspace_scope,
+    build_workspace_scope,
     reset_workspace_scope,
 )
 from kohaku.session import turn_continuation
@@ -180,6 +190,7 @@ from kohaku.session.goal_state import (
     goal_state_runtime_lines,
     runner_wall_llm_timeout_s,
 )
+from kohaku.session.harness_binding import external_binding
 from kohaku.session.history_visibility import HIDDEN_HISTORY_META
 from kohaku.session.input_attempt import (
     INPUT_ATTEMPT_METADATA_KEY,
@@ -670,6 +681,7 @@ class _TurnExecutionOptions:
     internal_include_skill_context: bool = True
     internal_tool_policy: ToolPolicy | None = None
     internal_max_iterations: int | None = None
+    external_child: ChildTurnRequest | None = None
     approval_authority_check: Callable[[RunTurnContext], bool] | None = field(
         default=None, repr=False,
     )
@@ -946,6 +958,10 @@ class AgentLoop:
             self.approval_admission.revoke,
         )
         self.run_store = RunStore(workspace, self.sessions)
+        self.external_harness = ExternalHarnessRunner(
+            ClaudeSDKBackend(start_bridge, state_dir=effective_root / ".claude-sdk"),
+            approvals=ExternalApprovalRegistry(self._save_sandbox_exclusion),
+        )
         # One file-read/write tracker per logical session. The tool registry is
         # shared by this loop, so tools resolve the active state via contextvars.
         self._file_state_store = FileStateStore(max_sessions=SESSION_CACHE_MAX_SIZE)
@@ -1443,6 +1459,9 @@ class AgentLoop:
         session = ctx.require_session()
         if not session.policy.persist:
             return
+        binding = external_binding(session.metadata)
+        if binding is not None and binding.locked_workspace is not None:
+            return
         if (
             ctx.msg.workspace_scope is not None
             or WORKSPACE_SCOPE_METADATA_KEY in (ctx.msg.metadata or {})
@@ -1595,6 +1614,17 @@ class AgentLoop:
         followup_records = request.followup_records
         if not followup_records and request.followup_record is not None:
             followup_records = (request.followup_record,)
+        child_workspace_scope = None
+        if admission.harness == "claude_sdk":
+            project = admission.policy_facts.get("workspace")
+            if (
+                not isinstance(project, str) or request.external_policy is None
+                or request.external_authority is None or approval_resume is not None
+            ):
+                raise RuntimeError("The Claude Code child has no current execution authority.")
+            child_workspace_scope = build_workspace_scope(
+                Path(project), "restricted", source_channel="system",
+            )
         initial_record = followup_records[0] if followup_records else None
         assignment = initial_record.content if initial_record is not None else request.assignment
         inbound = InboundMessage(
@@ -1605,6 +1635,7 @@ class AgentLoop:
             media=list(initial_record.media) if initial_record is not None else None,
             metadata=dict(initial_record.metadata) if initial_record is not None else {},
             session_key_override=admission.session_key,
+            workspace_scope=child_workspace_scope,
             input_role="user",
         )
         if initial_record is not None:
@@ -1684,6 +1715,7 @@ class AgentLoop:
                     internal_include_skill_context=request.include_skill_context,
                     internal_tool_policy=request.policy,
                     internal_max_iterations=request.max_iterations,
+                    external_child=request if child_workspace_scope is not None else None,
                     approval_authority_check=approval_authority_check,
                     on_approval_consumed=on_approval_consumed,
                     preserve_workspace_task_reference_on_approval=(
@@ -1720,6 +1752,68 @@ class AgentLoop:
                 self._fork_dependencies.foreground_manager.reconcile_background_results()
             )
         return result
+
+    def _claude_child_workspace_is_authorized(self, child: ChildTurnRequest) -> bool:
+        authority = child.external_authority
+        if authority is None or not authority() or child.external_policy is None:
+            return False
+        project = child.admission.policy_facts.get("workspace")
+        if not isinstance(project, str):
+            return False
+        permissions = self.sessions.desktop_permissions
+        task = child.workspace_task_reference
+        if task is not None and not permissions.is_current_task_reference(task):
+            return False
+        policy = self._fork_dependencies.resource_policy
+        try:
+            path = Path(project)
+            if path.resolve(strict=True) != path:
+                return False
+            policy.validate_path(
+                path, "read", permission_owner=permissions, permission_reference=task,
+            )
+            if child.external_policy.write_scope and "Bash" in (child.external_policy.allowed_tools or ()):
+                policy.validate_path(
+                    path, "exec", permission_owner=permissions, permission_reference=task,
+                )
+                # The SDK shell sandbox can write inside the workspace.
+                policy.validate_path(
+                    path, "write", permission_owner=permissions, permission_reference=task,
+                )
+            for scope in child.external_policy.write_scope or ():
+                policy.validate_path(
+                    scope, "write", permission_owner=permissions, permission_reference=task,
+                )
+        except (OSError, ValueError):
+            return False
+        return True
+
+    def _authorize_claude_child_tool(
+        self, child: ChildTurnRequest, workspace: Path, name: str, arguments: dict[str, object],
+    ) -> bool:
+        native_name = CLAUDE_TOOL_NAMES.get(name)
+        validate_capability = child.external_tool_is_current
+        if native_name is None or validate_capability is None or not validate_capability(native_name):
+            return False
+        policy = self._fork_dependencies.resource_policy
+        if name == "Bash":
+            command = arguments.get("command")
+            return isinstance(command, str) and policy.validate_exec(
+                command, workspace, extra_private_path_checks=[],
+            ) is None
+        path = arguments.get(
+            "path" if name in {"Glob", "Grep"} else "notebook_path" if name == "NotebookEdit" else "file_path",
+        )
+        if not isinstance(path, str):
+            return False
+        try:
+            target = workspace / path
+            policy.validate_path(
+                target, "write" if name in {"Write", "Edit", "NotebookEdit"} else "read",
+            )
+        except (OSError, ValueError):
+            return False
+        return True
 
     async def submit_child_followup(
         self,
@@ -2200,6 +2294,7 @@ class AgentLoop:
                 can_stop=can_stop,
                 owned_work=child.holds_capacity,
                 pending_approval_id=child.pending_approval_id,
+                harness="claude_sdk" if child.harness == "claude_sdk" else None,
                 blocked_run_id=child.blocked_run_id,
                 result_disposition=(
                     child.background_result.state
@@ -4098,6 +4193,84 @@ class AgentLoop:
                 ephemeral=ephemeral,
                 run_extra_hooks_for_ephemeral=run_extra_hooks_for_ephemeral,
             ))
+            binding = external_binding(session.metadata) if session is not None else None
+            if (child := run_context.external_child) is not None:
+                if binding is None or child.external_policy is None or child.external_authority is None:
+                    raise HarnessCapabilityError("The Claude Code child binding is unavailable.")
+                grants = self._fork_dependencies.resource_policy.folder_grants
+                approvals = NO_EVENTS
+                route = child.approval_target
+                if route is not None and route.channel == "websocket" and route.chat_id:
+                    approvals = EventSink(partial(
+                        self.bus.publish_event, channel=route.channel, chat_id=route.chat_id,
+                    ))
+                return await run_direct_turn(
+                    self.external_harness, context=run_context, binding=binding,
+                    scope=effective_scope, prompt=transcript_input.current_message or "",
+                    runtime=runtime, hook=hook, events=events,
+                    permissions=self.sessions.desktop_permissions,
+                    policy=replace(
+                        child.external_policy,
+                        sandbox_allow_local_binding=self.exec_config.sandbox_allow_local_binding,
+                    ),
+                    usage_source=source_from_request(
+                        active_session_key, channel=request_ctx.channel, metadata=request_metadata,
+                    ),
+                    private_roots=grants.sandbox_private_roots if grants is not None else (),
+                    is_closing=self._lifecycle_is_closing,
+                    workspace_is_authorized=partial(self._claude_child_workspace_is_authorized, child),
+                    child=child, approval_events=approvals,
+                    authorize_tool=partial(self._authorize_claude_child_tool, child, effective_scope.project_path),
+                )
+            if binding is not None:
+                if ephemeral or fresh_history or run_context.request is None or (
+                    run_context.request.source not in {TurnSource.GATEWAY, TurnSource.DIRECT, TurnSource.SDK}
+                ):
+                    raise HarnessCapabilityError("Send a message in the Claude Code chat to start a turn.")
+                permissions = self.sessions.desktop_permissions
+                full = (
+                    effective_scope.access_mode == "full"
+                    and permissions.is_current_full_reference(run_context.workspace_full_reference)
+                )
+                policy = self._fork_dependencies.resource_policy
+                grants = policy.folder_grants
+                project = effective_scope.project_path
+                full_reference = run_context.workspace_full_reference if full else None
+
+                def workspace_is_authorized() -> bool:
+                    try:
+                        policy.validate_path(
+                            project, "write", permission_owner=permissions,
+                            permission_reference=full_reference,
+                        )
+                        policy.validate_path(project, "exec")
+                    except (OSError, ValueError):
+                        return False
+                    return True
+
+                if not workspace_is_authorized():
+                    error = "Claude Code requires write and command access to the working folder."
+                    return AgentRunResult(
+                        error, [], stop_reason="error", error=error,
+                        failure_error_kind="harness_unavailable",
+                    )
+                return await run_direct_turn(
+                    self.external_harness, context=run_context, binding=binding,
+                    scope=effective_scope, prompt=transcript_input.current_message or "",
+                    runtime=runtime, hook=hook, events=events, permissions=permissions,
+                    policy=ExternalToolPolicy(
+                        mode="full_access" if full else "sandbox",
+                        sandbox_excluded_commands=tuple(self.exec_config.sandbox_excluded_commands),
+                        sandbox_allow_local_binding=self.exec_config.sandbox_allow_local_binding,
+                        sandbox_allow_unix_sockets=tuple(self.exec_config.sandbox_allow_unix_sockets),
+                    ),
+                    usage_source=source_from_request(
+                        active_session_key, channel=request_ctx.channel, metadata=request_metadata,
+                    ),
+                    private_roots=grants.sandbox_private_roots if grants is not None else (),
+                    is_closing=self._lifecycle_is_closing,
+                    workspace_is_authorized=workspace_is_authorized,
+                )
             source_transcript = None
             if source_writer is not None:
                 if run_context.source_history is None:
@@ -4882,6 +5055,21 @@ class AgentLoop:
         except (TypeError, ValueError):
             await self._reject_webui_admission(msg, "not_admitted", "invalid_approval_decision")
             return True
+        metadata = self.sessions.read_session_metadata(key)
+        try:
+            binding = external_binding(metadata.get("metadata") if metadata is not None else None)
+        except ValueError:
+            await self._reject_webui_admission(msg, "not_admitted", "approval_stale")
+            return True
+        if binding is not None or self.external_harness.approvals.owns(decision.approval_id):
+            try:
+                accepted = self.external_harness.approvals.resolve(decision, control_session_key=key)
+            except ExternalApprovalSaveError:
+                await self._reject_webui_admission(msg, "not_admitted", "approval_save_failed")
+                return True
+            if not accepted:
+                await self._reject_webui_admission(msg, "not_admitted", "approval_stale")
+            return True
         snapshot = await self.approval_admission.snapshot_decision(key, decision)
         pending = snapshot.pending
         if snapshot.action == "invalid_approval_decision":
@@ -5318,10 +5506,12 @@ class AgentLoop:
 
         owned_foreground = getattr(self, "_owned_foreground_manager", None)
         self._owned_foreground_manager = None
+        external = getattr(self, "external_harness", None)
         cleanup_steps = (
             *((owned_foreground.close,) if owned_foreground is not None else ()),
             self.subagents.close,
             self._exec_session_manager.close_all,
+            *((external.shutdown,) if external is not None else ()),
         )
         for cleanup in cleanup_steps:
             try:
@@ -6004,6 +6194,7 @@ class AgentLoop:
             context.internal_include_skill_context = options.internal_include_skill_context
             context.internal_tool_policy = options.internal_tool_policy
             context.internal_max_iterations = options.internal_max_iterations
+            context.external_child = options.external_child
             context.request_boundary_validator = options.request_boundary_validator
             context.followup_boundary_validator = options.followup_boundary_validator
             context.followup_request_acknowledged = acknowledge_followup_request
@@ -7086,12 +7277,20 @@ class AgentLoop:
 
     async def _dispatch_source_command(self, ctx: TurnContext) -> bool:
         assert ctx.run_context is not None and ctx.run_context.source_writer is not None
+        if ctx.run_context.external_child is not None:
+            return False
         raw = normalize_command_text(ctx.msg.content).strip()
         if not raw.startswith('/'):
             return False
         writer = ctx.run_context.source_writer
         command = raw.split(maxsplit=1)[0].lower()
         metadata = dict(ctx.msg.metadata)
+        if raw.lower() == '/new' and external_binding(ctx.require_session().metadata) is not None:
+            ctx.outbound = OutboundMessage(
+                channel=ctx.msg.channel, chat_id=ctx.msg.chat_id,
+                content="Start a new chat to use a new Claude Code session.", metadata=metadata,
+            )
+            return True
         if raw.lower() == '/new':
             admission = self._source_activity_admissions.get(ctx.session_key)
             if admission is not None:
@@ -7556,6 +7755,9 @@ class AgentLoop:
         ctx.delivery.record_stop_reason(
             ctx.stop_reason,
             failure_error_kind=ctx.failure_error_kind,
+            failure_message=(
+                ctx.final_content if ctx.failure_error_kind == "harness_unavailable" else None
+            ),
         )
         if ctx.suppress_response:
             ctx.outbound = None

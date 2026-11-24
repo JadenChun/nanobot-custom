@@ -265,6 +265,7 @@ class TurnDelivery:
     _stream_base_id: str | None = field(init=False, default=None)
     _stream_segment: int = field(init=False, default=0)
     _stream_open: bool = field(init=False, default=False)
+    _failure_message: str | None = field(init=False, default=None)
     _pending_injection_receipts: list[InjectionCommitted] = field(init=False, default_factory=list)
     events: EventSink = field(init=False)
     _routed_events: EventSink = field(init=False)
@@ -401,7 +402,9 @@ class TurnDelivery:
         stop_reason: str,
         *,
         failure_error_kind: str | None = None,
+        failure_message: str | None = None,
     ) -> None:
+        self._failure_message = failure_message
         self._stop_reason = stop_reason
         self._failure_error_kind = failure_error_kind
 
@@ -482,6 +485,7 @@ class TurnDelivery:
                 failure_error_kind=(self._failure_error_kind or (
                     self._retry_status.error_kind if failure_kind == "model" and self._retry_status else None
                 )),
+                failure_message=self._failure_message,
                 failure_attempts=(
                     self._retry_status.attempt if failure_kind == "model" and self._retry_status else None
                 ),

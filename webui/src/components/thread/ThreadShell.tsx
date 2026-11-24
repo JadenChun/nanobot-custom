@@ -36,6 +36,7 @@ import {
   NEW_CHAT_DRAFT_KEY,
 } from "@/lib/composer-drafts";
 import { ThreadComposer } from "@/components/thread/ThreadComposer";
+import { HarnessControl } from "@/components/thread/HarnessControl";
 import type {
   ComposerContextUsage,
   ComposerRoundUsage,
@@ -88,6 +89,8 @@ import {
 import type {
   ApprovalDecisionPayload,
   ChatSummary,
+  ChatHarness,
+  LiveExternalApproval,
   DelegatedChildReference,
   DelegatedChildPayload,
   DelegatedChildSummaryPayload,
@@ -831,7 +834,7 @@ interface ThreadShellProps {
     workspaceScope?: WorkspaceScopePayload | null,
     initialMessage?: string,
     modelPreset?: string | null,
-    options?: { fullAccess?: boolean },
+    options?: { fullAccess?: boolean; harness?: ChatHarness },
   ) => Promise<string | null>;
   onForkChat?: (sourceChatId: string, beforeUserIndex: number) => Promise<string | null>;
   onTurnEnd?: () => void;
@@ -1173,6 +1176,8 @@ export function ThreadShell({
 }: ThreadShellProps) {
   const { t } = useTranslation();
   const chatId = session?.chatId ?? null;
+  const claudeChat = session?.harnessBinding?.harness === "claude_sdk";
+  const workspaceLocked = claudeChat && !!session?.harnessBinding?.locked_workspace;
   // A route can select a read before the sidebar supplies the chat summary.
   // Only the verified/optimistically created session can own a live composer.
   const historyKey = temporary ? null : session?.key ?? routeSessionKey;
@@ -1431,6 +1436,12 @@ export function ThreadShell({
     }
   }, [markWorkspaceAccessRequestStale, pendingRecoveryInvalidationSettled, refreshWorkspaceAccessRequest]);
   const { client, getToken, ingressLimits, modelName, token } = useClient();
+  const [claudeAvailable, setClaudeAvailable] = useState(false);
+  const [draftHarness, setDraftHarness] = useState<ChatHarness>("native");
+  const [externalApprovals, setExternalApprovals] = useState<Record<string, LiveExternalApproval & { childId?: string }>>({});
+  const activeHarness = !temporaryChatEnabled && !temporary && claudeAvailable ? draftHarness : "native";
+
+  useEffect(() => client.onHarnessAvailability?.(setClaudeAvailable), [client]);
   const pickWorkspaceFolder = useCallback(async (): Promise<string | null> => {
     const response = await client.requestMutation<{ path: unknown }>(
       "workspace.pick_folder",
@@ -1627,6 +1638,29 @@ export function ThreadShell({
     historyStopTargetSnapshotAvailable,
     separateControls,
   );
+
+  useEffect(() => {
+    setExternalApprovals({});
+    if (!chatId || temporary) return;
+    return client.onChat(chatId, (event) => {
+      if (event.event === "attached") {
+        setExternalApprovals({});
+      } else if (event.event === "turn_end") {
+        setExternalApprovals((current) => {
+          const entries = Object.entries(current);
+          const children = entries.filter(([, approval]) => approval.childId);
+          return children.length === entries.length ? current : Object.fromEntries(children);
+        });
+      } else if (event.event === "external_approval") {
+        setExternalApprovals((current) => {
+          const next = { ...current };
+          if (event.approval) next[event.approval_id] = { ...event.approval, childId: event.child_id };
+          else delete next[event.approval_id];
+          return next;
+        });
+      }
+    });
+  }, [chatId, client, temporary]);
 
   const admissionRejectedTurn = useMemo(() => {
     if (streamError?.kind !== "turn_rejected" || streamError.detail !== "not_admitted") {
@@ -2011,7 +2045,7 @@ export function ThreadShell({
   const [rootApprovalResetSignal, setRootApprovalResetSignal] = useState(0);
   const [dismissedRootApprovalIds, setDismissedRootApprovalIds] = useState<string[]>([]);
   const riskyApproval = useMemo(() => {
-    if (turnActive || booting) return null;
+    if (claudeChat || turnActive || booting) return null;
     for (let index = displayMessages.length - 1; index >= 0; index -= 1) {
       const message = displayMessages[index];
       if (message.role === "user") return null;
@@ -2024,7 +2058,7 @@ export function ThreadShell({
       }
     }
     return null;
-  }, [booting, dismissedRootApprovalIds, displayMessages, turnActive]);
+  }, [booting, claudeChat, dismissedRootApprovalIds, displayMessages, turnActive]);
   const submitRootApprovalDecision = (decision: ApprovalDecisionPayload["decision"]) => {
     const approvalId = riskyApproval?.approvalId;
     if (!chatId || !approvalId) return;
@@ -3125,13 +3159,16 @@ export function ThreadShell({
       });
       pendingFirstRef.current = { content, images, options };
       setPendingFirstTargetChatId(null);
-      const newId = await onCreateChat?.(workspaceScope, content, localModelPreset);
+      const newId = await (activeHarness === "claude_sdk"
+        ? onCreateChat?.(workspaceScope, content, localModelPreset, { harness: activeHarness })
+        : onCreateChat?.(workspaceScope, content, localModelPreset));
       if (!newId) {
         pendingFirstRef.current = null;
         setPendingFirstTargetChatId(null);
         setBooting(false);
         return false;
       }
+      setDraftHarness("native");
       if (reasoningEffort) {
         try {
           await client.sendSystemCommand(newId, modelReasoningCommand(activeModelPreset, reasoningEffort));
@@ -3150,7 +3187,7 @@ export function ThreadShell({
       setPendingFirstTargetChatId(newId);
       return true;
     },
-    [activeModelPreset, booting, client, draftNamespace, localModelPreset, onCreateChat, reasoningEffort, workspaceScope],
+    [activeHarness, activeModelPreset, booting, client, draftNamespace, localModelPreset, onCreateChat, reasoningEffort, workspaceScope],
   );
 
   const handleDraftFullAccess = useCallback(async (draft: string) => {
@@ -3166,17 +3203,21 @@ export function ThreadShell({
     try {
       const newId = await onCreateChat?.(workspaceScope, draft, localModelPreset, {
         fullAccess: true,
+        ...(activeHarness === "claude_sdk" ? { harness: activeHarness } : {}),
       });
       if (!newId) {
         setFullSetupError(t("workspace.permissionV2.actionFailed", {
           defaultValue: "Access could not be updated. Refresh this chat before retrying.",
         }));
       } else {
+        setDraftHarness("native");
         if (reasoningEffort) {
           setLocalReasoning({ chatId: newId, preset: activeModelPreset, effort: reasoningEffort });
           void client
             .sendSystemCommand(newId, modelReasoningCommand(activeModelPreset, reasoningEffort))
             .catch(() => {});
+        } else if (activeHarness === "claude_sdk" && localModelPreset) {
+          await client.sendSystemCommand(newId, `/model ${localModelPreset}`).catch(() => {});
         }
         handoffComposerDraft(draftNamespace, `websocket:${newId}`, snapshot, draftToTransfer);
         setPendingFullDraft(draftToTransfer ? { chatId: newId, text: draftToTransfer } : null);
@@ -3188,7 +3229,7 @@ export function ThreadShell({
     } finally {
       setPreparingFull(false);
     }
-  }, [activeModelPreset, booting, client, draftNamespace, localModelPreset, onCreateChat, preparingFull, reasoningEffort, t, workspaceScope]);
+  }, [activeHarness, activeModelPreset, booting, client, draftNamespace, localModelPreset, onCreateChat, preparingFull, reasoningEffort, t, workspaceScope]);
 
   const awaitNextTurnSettings = useCallback(async (): Promise<void> => {
     if (!chatId) return;
@@ -3591,6 +3632,35 @@ export function ThreadShell({
       ) : null}
       {session || historyKey ? (
         <>
+        {Object.entries(externalApprovals).map(([approvalId, approval]) => {
+          if (!chatId || (!claudeChat && !approval.childId)
+            || dismissedRootApprovalIds.includes(approvalId)) return null;
+          const child = currentDelegatedChildren.find((row) => row.child_id === approval.childId);
+          const decide = (decision: ApprovalDecisionPayload["decision"]) => {
+            const turnId = client.sendApprovalDecision(chatId, approvalId, decision, {
+              sessionKey: approval.session_key,
+              sessionIncarnation: approval.session_incarnation,
+              runId: approval.run_id,
+              generation: approval.generation,
+              effectId: approval.effect_id,
+            });
+            pendingRootApprovalRef.current = { turnId, approvalId };
+          };
+          return (
+            <ApprovalRequestCard
+              key={approvalId}
+              summary={child?.task_label ? `${child.task_label} — ${approval.summary}` : approval.summary}
+              command={approval.command}
+              approvalId={approvalId}
+              busy={!connectionOpen}
+              resetSignal={rootApprovalResetSignal}
+              saveExclusionCommand={approval.save_exclusion_command ?? undefined}
+              onApprove={() => decide("approve")}
+              onApproveAndSave={() => decide("approve_and_save")}
+              onCancel={() => decide("deny")}
+            />
+          );
+        })}
         {riskyApproval ? (
           <ApprovalRequestCard
             summary={riskyApproval.summary}
@@ -3687,6 +3757,18 @@ export function ThreadShell({
         </>
       )}
       <ThreadComposer
+        aboveInput={!session && !historyKey && !openingConversation
+          && (!isMobileRuntimeActive() || mobileOwnerCapability()) ? (
+          <div className="flex min-w-0 items-center px-1">
+            <HarnessControl
+              value={activeHarness}
+              claudeAvailable={claudeAvailable}
+              temporary={temporaryChatEnabled || temporary}
+              disabled={booting || preparingFull}
+              onChange={setDraftHarness}
+            />
+          </div>
+        ) : null}
         onSend={session || historyKey ? handleThreadSend : handleWelcomeSend}
         onJoinQueuedAttempt={session || historyKey ? joinQueuedAttempt : undefined}
         onConsumeQueuedAttempt={session || historyKey ? consumeQueuedAttempt : undefined}
@@ -3700,7 +3782,7 @@ export function ThreadShell({
             : (openingConversation || booting || preparingFull)
         }
         newTurnBlocked={session || historyKey ? (!chatId || reasoningPending) : false}
-        steerDisabled={session || historyKey ? (!connectionOpen || !canonicalRunTurnId) : false}
+        steerDisabled={session || historyKey ? (claudeChat || !connectionOpen || !canonicalRunTurnId) : false}
         inputAriaLabel={composerInputAriaLabel}
         isStreaming={turnActive}
         queueCompletionTurnId={session || historyKey ? queueCompletionTurnId : null}
@@ -3772,7 +3854,8 @@ export function ThreadShell({
         workspaces={workspaces}
         onRefreshWorkspaces={onRefreshWorkspaces}
         workspaceScopeDisabled={workspaceScopeDisabled || hasUnknownMessageSend}
-        nextWorkspaceScope={nextWorkspaceScope}
+        workspaceLocked={workspaceLocked}
+        nextWorkspaceScope={workspaceLocked ? null : nextWorkspaceScope}
         nextTurnSettingsPending={workspaceNextTurnPending}
         nextTurnSettingsError={nextTurnSettingsError}
         onDismissNextTurnSettingsError={() => setNextTurnSettingsError(null)}
@@ -3988,6 +4071,7 @@ export function ThreadShell({
   const threadHeader = !hideHeader ? (
     <ThreadHeader
       title={title}
+      claude={claudeChat}
       handle={temporary || (hideHeaderTitle && inlineHandle) ? null : session?.handle}
       onToggleSidebar={onToggleSidebar}
       theme={theme}
@@ -4082,7 +4166,7 @@ export function ThreadShell({
               onNeedSessionTurns={handleNeedSessionTurns}
               onJumpToTurn={handleJumpToTurn}
               onOpenFilePreview={historyKey ? handleOpenFilePreview : undefined}
-              onForkFromMessage={onForkChat && !showingOpeningPage ? handleForkFromMessage : undefined}
+              onForkFromMessage={onForkChat && !claudeChat && !showingOpeningPage ? handleForkFromMessage : undefined}
               onOpenChildHistory={handleOpenChildHistory}
               delegatedStatusAvailable={delegatedStatusAvailable}
               onQuoteSelection={session ? handleQuoteSelection : undefined}

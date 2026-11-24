@@ -26,6 +26,7 @@ from kohaku.bus.events import (
     INBOUND_META_USER_SHELL,
 )
 from kohaku.command.builtin import USER_SHELL_COMMAND, builtin_command_starts_agent_turn
+from kohaku.harness.claude_sdk import harness_capabilities
 from kohaku.runtime_context import (
     RUNTIME_CONTEXT_INPUT_META,
     WEBUI_QUOTE_METADATA,
@@ -404,6 +405,12 @@ class WebUICommandRouter:
             or _typed_owner_mobile_identity(connection) is not None
         )
 
+    def _owner_chat_controls_available(self, connection: ServerConnection) -> bool:
+        return (
+            connection in self._webui_connections
+            or _typed_owner_mobile_identity(connection) is not None
+        )
+
     async def send_webui_protocol_error(
         self,
         connection: ServerConnection,
@@ -764,6 +771,31 @@ class WebUICommandRouter:
         if command_type == "webui_request":
             await self.start_webui_request(connection, envelope)
             return
+        if command_type in {"new_chat", "new_temporary_chat"}:
+            harness: object = envelope.get("harness")
+            if harness not in (None, "native", "claude_sdk"):
+                await self._transport.webui_send_event(connection, "error", detail="invalid_harness")
+                return
+            if harness == "claude_sdk":
+                if command_type == "new_temporary_chat" or envelope.get("ephemeral") is True:
+                    await self._transport.webui_send_event(
+                        connection, "error", detail="harness_requires_persistent_session",
+                    )
+                    return
+                if (
+                    not harness_capabilities()["claude_sdk"]["available"]
+                    or self.gateway.session_manager is None
+                    or not self._owner_chat_controls_available(connection)
+                ):
+                    await self._transport.webui_send_event(
+                        connection, "error", detail="harness_unavailable",
+                    )
+                    return
+            elif envelope.get("ephemeral") is True and _typed_mobile_identity(connection) is not None:
+                await self._transport.webui_send_event(
+                    connection, "error", detail="temporary_chat_unavailable",
+                )
+                return
         if command_type == "new_chat":
             new_id = str(uuid.uuid4())
             scope = await self.workspace_scope_or_error(
@@ -775,20 +807,39 @@ class WebUICommandRouter:
             )
             if scope is None:
                 return
-            self._workspaces.stage_scope(new_id, scope)
+            if envelope.get("harness") == "claude_sdk":
+                sessions = self.gateway.session_manager
+                assert sessions is not None
+                try:
+                    await asyncio.to_thread(
+                        sessions.create_external_chat, webui_session_key(new_id), scope.metadata(),
+                    )
+                except Exception:
+                    logger.exception("Could not create a Claude Code session")
+                    await self._transport.webui_send_event(
+                        connection, "error", detail="harness_session_create_failed",
+                    )
+                    return
+            else:
+                self._workspaces.stage_scope(new_id, scope)
             self._transport.webui_attach(connection, new_id)
+            fields = self._session_projection.attach_fields(webui_session_key(new_id))
+            if _typed_mobile_identity(connection) is not None and "harness_capabilities" not in fields:
+                fields["harness_capabilities"] = harness_capabilities()
             await self._transport.webui_send_event(
                 connection,
                 "attached",
                 chat_id=new_id,
-                **self._session_projection.attach_fields(webui_session_key(new_id)),
+                **fields,
             )
+            binding = fields.get("harness_binding")
             await self._transport.webui_send_event(
                 connection,
                 "session_updated",
                 chat_id=new_id,
                 scope="metadata",
                 workspace_scope=self._workspaces.scope_payload(scope),
+                **({"harness_binding": binding} if binding is not None else {}),
             )
             await self._transport.webui_hydrate(new_id)
             return
@@ -876,6 +927,8 @@ class WebUICommandRouter:
                 return
             fields = self._session_projection.attach_fields(webui_session_key(chat_id), source=source)
             fields.update(attempt_fields)
+            if _typed_mobile_identity(connection) is not None and "harness_capabilities" not in fields:
+                fields["harness_capabilities"] = harness_capabilities()
             await self._transport.webui_send_event(connection, "attached", chat_id=chat_id, **fields)
             await self._transport.webui_hydrate(chat_id, connection=connection)
             return
@@ -904,6 +957,9 @@ class WebUICommandRouter:
                 )
                 return
             await self.broadcast_webui_event("sidebar_state_updated", state=saved_state)
+            return
+        if command_type == "set_harness" or "harness" in envelope:
+            await self._transport.webui_send_event(connection, "error", detail="harness_immutable")
             return
         if command_type == "set_workspace_scope":
             chat_id = envelope.get("chat_id")
@@ -1226,7 +1282,7 @@ class WebUICommandRouter:
                 if (
                     is_stop
                     or envelope.get("webui") is not True
-                    or connection not in self._webui_connections
+                    or not self._owner_chat_controls_available(connection)
                     or not turn_id
                     or turn_id == websocket_turn_id(chat_id)
                     or request_intent == "steer"
@@ -1307,7 +1363,12 @@ class WebUICommandRouter:
                 media=None, attachments=None, metadata=metadata, is_dm=False,
                 # Exact pending ownership is resolved before ordinary dispatch.
                 # A valid settled root need not remain in the ephemeral cache.
-                session_key=None, require_existing_session=False, workspace_scope=scope,
+                session_key=(
+                    webui_session_key(chat_id) if self._workspaces.has_external_harness(
+                        webui_session_key(chat_id),
+                    ) else None
+                ),
+                require_existing_session=False, workspace_scope=scope,
             )
             await self._transport.webui_send_event(
                 connection, "message_accepted", chat_id=chat_id, turn_id=turn_id,
@@ -1708,7 +1769,10 @@ class WebUICommandRouter:
                     metadata=metadata,
                     is_dm=False,
                     session_key=(
-                        temporary_policy.session_key if temporary_policy is not None else None
+                        temporary_policy.session_key if temporary_policy is not None else
+                        webui_session_key(chat_id) if self._workspaces.has_external_harness(
+                            webui_session_key(chat_id),
+                        ) else None
                     ),
                     require_existing_session=(
                         temporary_policy.require_existing_session

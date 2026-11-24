@@ -2,14 +2,16 @@
 
 from __future__ import annotations
 
+import json
 import time
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any, Literal, NotRequired, TypeAlias, TypedDict
+from typing import Any, Literal, NotRequired, TypeAlias, TypedDict, cast
 
 from kohaku.bus.outbound_events import (
     ContextCompactionEvent,
     DelegatedChildEvent,
+    ExternalApprovalEvent,
     RecoveryStateEvent,
     RetryStatusEvent,
     StopTargetEvent,
@@ -100,12 +102,54 @@ class DelegatedChildWirePayload(TypedDict):
     pending_approval_id: str | None
     blocked_run_id: str | None
     result_disposition: str | None
+    harness: NotRequired[str]
 
 
 class StopTargetWirePayload(TypedDict):
     event: Literal["stop_target"]
     chat_id: str
     stop_target: dict[str, object] | None
+
+
+class ExternalApprovalPayload(TypedDict):
+    session_key: str
+    session_incarnation: str
+    run_id: str
+    generation: int
+    effect_id: str
+    summary: str
+    command: str | None
+    save_exclusion_command: str | None
+
+
+class ExternalApprovalWirePayload(_ChatWirePayload):
+    event: Literal["external_approval"]
+    approval_id: str
+    approval: ExternalApprovalPayload | None
+    child_id: NotRequired[str]
+
+
+def encode_external_approval(chat_id: str, event: ExternalApprovalEvent) -> ExternalApprovalWirePayload:
+    pending = event.approval
+    approval: ExternalApprovalPayload | None = None
+    if pending is not None:
+        raw: object = json.loads(pending.arguments_json)
+        args = cast(dict[object, object], raw) if isinstance(raw, dict) else {}
+        command = args.get("command")
+        approval = {
+            "session_key": pending.session_key, "session_incarnation": pending.session_incarnation,
+            "run_id": pending.run_id, "generation": pending.runtime_generation,
+            "effect_id": pending.tool_call_id, "summary": pending.reason,
+            "command": command if isinstance(command, str) else None,
+            "save_exclusion_command": pending.save_exclusion_command,
+        }
+    payload: ExternalApprovalWirePayload = {
+        "event": "external_approval", "chat_id": chat_id,
+        "approval_id": event.approval_id, "approval": approval,
+    }
+    if event.child_id is not None:
+        payload["child_id"] = event.child_id
+    return payload
 
 
 WebUIWirePayload: TypeAlias = (
@@ -115,6 +159,7 @@ WebUIWirePayload: TypeAlias = (
     | TurnEndWirePayload
     | DelegatedChildWirePayload
     | StopTargetWirePayload
+    | ExternalApprovalWirePayload
 )
 WebUIWirePersistence: TypeAlias = Literal[
     "transient",
@@ -161,7 +206,7 @@ def encode_delegated_child(
     event: DelegatedChildEvent,
 ) -> DelegatedChildWirePayload:
     """Project one child activity snapshot with explicit nullable facts and counters."""
-    return {
+    payload: DelegatedChildWirePayload = {
         "event": "delegated_child",
         "chat_id": chat_id,
         "parent_session_key": event.parent_session_key,
@@ -198,6 +243,9 @@ def encode_delegated_child(
         "blocked_run_id": event.blocked_run_id,
         "result_disposition": event.result_disposition,
     }
+    if event.harness == "claude_sdk":
+        payload["harness"] = event.harness
+    return payload
 
 
 def encode_stop_target(chat_id: str, event: StopTargetEvent) -> StopTargetWirePayload:

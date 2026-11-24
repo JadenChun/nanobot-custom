@@ -21,7 +21,9 @@ from kohaku.providers.base import ContextUsageSnapshot, LLMUsage
 from kohaku.session.input_attempt import InputAttemptProof
 
 if TYPE_CHECKING:
+    from kohaku.harness.backend import PendingExternalApproval
     from kohaku.security.desktop_permissions import WorkspacePermissionProjection
+    from kohaku.session.harness_binding import HarnessBindingPayload
     from kohaku.workspace_access_recovery import FolderAccessRequest, WorkspaceScopePayload
 
 
@@ -139,6 +141,14 @@ class DelegatedChildEvent(AgentEvent):
     pending_approval_id: str | None = None
     blocked_run_id: str | None = None
     result_disposition: str | None = None
+    harness: str | None = None
+
+
+@dataclass(frozen=True)
+class ExternalApprovalEvent(AgentEvent):
+    approval_id: str
+    approval: PendingExternalApproval | None = None
+    child_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -147,6 +157,7 @@ class SessionUpdatedEvent(AgentEvent):
     workspace_scope: WorkspaceScopePayload | None = None
     workspace_access_request: FolderAccessRequest | None = None
     workspace_permissions: WorkspacePermissionProjection | None = None
+    harness_binding: HarnessBindingPayload | None = None
 
 
 @dataclass(frozen=True)

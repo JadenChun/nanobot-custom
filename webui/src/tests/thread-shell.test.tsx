@@ -1277,7 +1277,8 @@ describe("ThreadShell", () => {
     expect(client.sendApprovalDecision).toHaveBeenCalledTimes(3);
   });
 
-  it("returns from read-only child history with the parent draft, attachment, position and focus", async () => {
+  it.each(["native", "claude_sdk"] as const)(
+    "keeps the parent draft and focus after inspecting %s child history", async (harness) => {
     const client = makeClient();
     const parentKey = "websocket:inspect-parent";
     const rootSource = {
@@ -1293,6 +1294,7 @@ describe("ThreadShell", () => {
       child_session_key: "delegated:inspect-child",
       child_id: "inspect-child",
       profile: "worker",
+      harness,
       state: "completed",
       task_label: "Inspect the migration",
       task_label_truncated: false,
@@ -1401,6 +1403,8 @@ describe("ThreadShell", () => {
     const inspect = await screen.findByRole("button", {
       name: "Inspect Inspect the migration activity",
     });
+    if (harness === "claude_sdk") expect(within(inspect).getByText("Claude")).toBeInTheDocument();
+    else expect(within(inspect).queryByText("Claude")).not.toBeInTheDocument();
     const parentScroller = screen.getByTestId("thread-message-region");
     Object.defineProperty(parentScroller, "scrollHeight", { configurable: true, value: 400 });
     Object.defineProperty(parentScroller, "clientHeight", { configurable: true, value: 100 });
@@ -1411,6 +1415,8 @@ describe("ThreadShell", () => {
     fireEvent.click(inspect);
 
     const dialog = await screen.findByRole("dialog", { name: "Inspect the migration" });
+    if (harness === "claude_sdk") expect(within(dialog).getByText("Claude")).toBeInTheDocument();
+    else expect(within(dialog).queryByText("Claude")).not.toBeInTheDocument();
     expect(within(dialog).getByText("Newest child reply with complete details.")).toBeInTheDocument();
     expect(within(dialog).getByRole("button", { name: "Load earlier activity" })).toBeInTheDocument();
     expect(screen.queryByRole("textbox", { name: "Message input" })).not.toBeInTheDocument();

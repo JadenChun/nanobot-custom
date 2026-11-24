@@ -53,6 +53,7 @@ const CHILD_FACT_KEYS = [
   "pending_approval_id",
   "blocked_run_id",
   "result_disposition",
+  "harness",
   "result_summary",
   "result_summary_truncated",
 ] as const satisfies readonly (keyof DelegatedChildPayload)[];
@@ -179,6 +180,7 @@ export function parseDelegatedChildPayload(value: unknown): DelegatedChildPayloa
     child_session_key: childSessionKey,
     child_id: childId,
     profile,
+    ...(value.harness === "claude_sdk" ? { harness: "claude_sdk" } : {}),
     task_label: taskLabel,
     task_label_truncated: taskLabelTruncated,
     result_summary: resultSummary,
@@ -297,6 +299,7 @@ export function parseDelegatedChildSummaryPayload(
     child_session_key: childSessionKey,
     child_id: childId,
     profile,
+    ...(value.harness === "claude_sdk" ? { harness: "claude_sdk" } : {}),
     state,
     task_label: taskLabel,
     task_label_truncated: taskLabelTruncated,

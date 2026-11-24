@@ -44,6 +44,7 @@ from kohaku.session.checkpoint_dependencies import (
 from kohaku.session.context_checkpoint import validate_context_checkpoint
 from kohaku.session.execution_owner import ExecutionBusyError as ExecutionBusyError
 from kohaku.session.execution_owner import execution_transaction as execution_transaction
+from kohaku.session.harness_binding import external_binding
 from kohaku.session.idle_compaction import IdleCaptureConflictError as IdleCaptureConflictError
 from kohaku.session.idle_compaction import IdleCaptureToken, capture_idle_token
 from kohaku.session.idle_compaction import validate_idle_capture as validate_idle_capture
@@ -501,6 +502,8 @@ class IdleCheckpointCapture:
     ) -> IdleCheckpointCapture | None:
         """Issue one sealed idle capture from a lock-held source snapshot."""
 
+        if external_binding(snapshot.header["metadata"]) is not None:
+            return None
         token = capture_idle_token(snapshot, runtime_checkpoint_present=runtime_checkpoint_present)
         if token is None:
             return None

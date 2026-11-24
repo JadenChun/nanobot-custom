@@ -1,3 +1,4 @@
+import { harnessBadge } from "./harness"
 import { RGBA, type BoxRenderable, type CliRenderer, type TextChunk } from "@opentui/core"
 
 import { PickerMenu, type PickerMenuTheme } from "./picker-menu"
@@ -50,6 +51,7 @@ export class SessionMenu {
       searchText: (session) => [
         sessionLabel(session),
         session.modelPreset || "",
+        harnessBadge(session.harnessBinding?.harness),
         session.preview,
         session.chatId,
         session.workspaceScope?.project_name || "",
@@ -65,12 +67,14 @@ export class SessionMenu {
         ]
           .filter(Boolean)
           .join(" · ")
+        const badge = harnessBadge(session.harnessBinding?.harness)
         const marker = this.marker(session)
         const foreground = this.interrupted(session)
           ? this.theme.warning || this.theme.accent || this.theme.text
           : selected ? this.theme.text : this.theme.muted
         return [
           ...(marker ? [chunk(`${marker.text} `, marker.color)] : []),
+          ...(badge ? [chunk(`${badge} `, this.theme.accent || foreground)] : []),
           chunk(sessionLabel(session), foreground),
           ...(detail ? [chunk(`  ${detail}`, this.theme.muted)] : []),
           ...(age ? [chunk(`  ${age}`, this.theme.muted)] : []),

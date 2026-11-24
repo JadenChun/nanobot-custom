@@ -49,6 +49,7 @@ from kohaku.providers.request_budget import (
     derive_provider_request_limits,
 )
 from kohaku.runtime_context import public_history_messages
+from kohaku.session.harness_binding import external_binding
 from kohaku.session.manager import Session, SessionManager
 from kohaku.session.summary import is_summary_checkpoint, session_summary_from_metadata
 from kohaku.utils.dream_operation import dream_workspace_lock
@@ -1708,6 +1709,8 @@ class Consolidator:
         runtime: LLMRuntime,
     ) -> str | None:
         """Archive one captured session range through the shared Memory path."""
+        if external_binding(session.metadata) is not None:
+            return None
         return await self.archiver.archive_session(
             session,
             archive_end=archive_end,
@@ -1733,6 +1736,8 @@ class Consolidator:
             self.sessions.invalidate(session_key)
             session = self.sessions.get_or_create(session_key)
 
+            if external_binding(session.metadata) is not None:
+                return ""
             archive_start = session.last_archived
             messages_to_archive = list(session.messages[archive_start:])
             has_new_messages = any(

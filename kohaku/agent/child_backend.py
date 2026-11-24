@@ -1,8 +1,7 @@
 """Narrow execution backend for one delegated child generation.
 
-The native backend routes work through the normal runner. External backends are
-not implemented in this cutover and must fail closed through the same admission
-response. Resume requires both the bound backend and its runtime generation.
+Both backends use the canonical child turn executor. They own task lifetime;
+the executor selects the runner from the saved harness.
 """
 
 from __future__ import annotations
@@ -18,6 +17,7 @@ from kohaku.agent.policy import ToolPolicy
 from kohaku.agent.tools.registry import ToolRegistry
 from kohaku.agent.turn import ApprovalDecision, DeliveryTarget, TurnResult
 from kohaku.bus.events import InboundMessage
+from kohaku.harness.backend import ExternalToolPolicy
 from kohaku.security.desktop_permissions import WorkspaceTaskAccessReference
 from kohaku.session.pending_followups import PendingFollowupRecord
 from kohaku.utils.llm_runtime import LLMRuntime
@@ -88,6 +88,10 @@ class ChildTurnRequest:
     request_boundary_validator: Callable[[], bool] | None = None
     followup_boundary_validator: Callable[[], bool] | None = None
     followup_request_acknowledged: Callable[[tuple[str, ...]], None] | None = None
+    external_policy: ExternalToolPolicy | None = None
+    external_authority: Callable[[], bool] | None = None
+    external_tool_is_current: Callable[[str], bool] | None = None
+    prior_external_session_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -230,19 +234,29 @@ class NativeChildBackend:
         await self.interrupt(child_id)
 
 
+class ClaudeChildBackend(NativeChildBackend):
+    """Own Claude child tasks through the same canonical execution lifecycle."""
+
+    backend_name = "external"
+
+
 class ChildBackendRegistry:
-    """Resolve one backend from an admitted profile; external is unsupported."""
+    """Resolve the execution engine independently of the admitted role."""
 
     def __init__(self, native: NativeChildBackend | None = None) -> None:
         self._native = native or NativeChildBackend()
+        self._claude = ClaudeChildBackend()
 
     @property
     def native(self) -> NativeChildBackend:
         return self._native
 
-    def resolve(self, profile: str) -> ChildBackend:
+    def resolve(self, profile: str, harness: str = "native") -> ChildBackend:
         if profile == "delegated":
-            return self._native
+            if harness == "native":
+                return self._native
+            if harness == "claude_sdk":
+                return self._claude
         raise ChildBackendUnavailableError(
             f"child backend for profile {profile!r} is not available"
         )

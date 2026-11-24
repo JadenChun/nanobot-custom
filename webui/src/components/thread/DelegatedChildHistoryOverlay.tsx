@@ -1,3 +1,4 @@
+import { ClaudeBadge } from "@/components/thread/ClaudeBadge";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import { ArrowLeft } from "lucide-react";
@@ -461,6 +462,7 @@ export function DelegatedChildHistoryOverlay({
         <div className="min-w-0 flex-1 py-0.5">
           <Title className="break-words text-sm font-semibold leading-5 sm:text-base">{taskLabel}</Title>
           <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1">
+            {displayedChild.harness === "claude_sdk" ? <ClaudeBadge /> : null}
             <span aria-live="polite">
               <SubagentStatus
                 child={displayedChild}

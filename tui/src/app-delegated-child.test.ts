@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test"
-import { BoxRenderable, TextareaRenderable } from "@opentui/core"
+import { BoxRenderable, TextareaRenderable, TextRenderable } from "@opentui/core"
 import {
   MockTreeSitterClient,
   createTestRenderer,
@@ -14,7 +14,15 @@ import type {
   DelegatedChildSummary,
   StopExpectation,
 } from "./delegated-children"
-import { KohakuClient, type ConnectionStatus, type ConnectionStatusInfo } from "./protocol"
+import {
+  KohakuClient,
+  fetchDelegatedChildren,
+  fetchHistory,
+  fetchSessionList,
+  type ConnectionStatus,
+  type ConnectionStatusInfo,
+  type InboundEvent,
+} from "./protocol"
 import type { Transcript } from "./transcript"
 
 class FakeSocket {
@@ -1138,4 +1146,355 @@ test("child detail is read-only and Escape restores parent draft, image, scroll,
   expect(gateway.setup.captureCharFrame()).toContain("Parent transcript row 0")
   expect(gateway.setup.captureCharFrame()).not.toContain("Child latest answer")
   expect(messageFrames(gateway.socket)).toHaveLength(0)
+})
+
+const claudeAvailable = { claude_sdk: { available: true } }
+const claudeUnavailable = { claude_sdk: { available: false, reason: "sdk_missing" } }
+const claudeBinding = {
+  backend: "external",
+  harness: "claude_sdk",
+  external_session_id: null,
+  locked_workspace: null,
+  runtime_generation: 0,
+} as const
+const nativeBinding = { ...claudeBinding, backend: "native", harness: "native" } as const
+
+function sentFrames(socket: FakeSocket) {
+  return socket.sent.map((frame) => JSON.parse(frame) as Record<string, unknown>)
+}
+
+function submitText(gateway: GatewayApp, text: string): void {
+  gateway.state.composer.setText(text)
+  gateway.state.composer.submit()
+}
+
+async function rendered(gateway: GatewayApp): Promise<string> {
+  await gateway.setup.renderOnce()
+  return gateway.setup.captureCharFrame()
+}
+
+async function waitForText(gateway: GatewayApp, text: string): Promise<string> {
+  const deadline = Date.now() + 1_000
+  let frame = await rendered(gateway)
+  while (!frame.includes(text) && Date.now() < deadline) {
+    await Bun.sleep(5)
+    frame = await rendered(gateway)
+  }
+  expect(frame).toContain(text)
+  return frame
+}
+
+test("parses harness facts across socket, session list, and thread boundaries", async () => {
+  const events: InboundEvent[] = []
+  const diagnostics: string[] = []
+  Object.defineProperty(globalThis, "WebSocket", { configurable: true, value: FakeSocket })
+  const client = new KohakuClient({
+    url: appOptions.wsUrl,
+    reconnect: false,
+    onEvent: (event) => events.push(event),
+    onStatus: (_, detail) => { if (detail) diagnostics.push(detail) },
+  })
+  client.connect()
+  await waitUntil(() => FakeSocket.instances.length === 1)
+  const socket = FakeSocket.instances[0]!
+  socket.open()
+  const saved = {
+    ...claudeBinding, external_session_id: "sdk-session", locked_workspace: "/repo", runtime_generation: 2,
+  }
+  const liveChild = child("wire", { harness: "native" })
+  const ready = { event: "ready", chat_id: "", client_id: "test", harness_capabilities: claudeUnavailable } as const
+  const attached = { event: "attached", chat_id: "chat", harness_binding: claudeBinding, harness_capabilities: claudeAvailable } as const
+  const updated = { event: "session_updated", chat_id: "chat", harness_binding: saved } as const
+  const legacy = { event: "attached", chat_id: "chat", model_preset: "old-preset" } as const
+  try {
+    for (const event of [ready, attached, updated, legacy]) socket.deliver(event)
+    socket.deliver({ ...liveChild, event: "delegated_child", chat_id: "chat" })
+    socket.deliver({ ...attached, harness_binding: { ...saved, runtime_generation: "2" } })
+
+    expect(events.slice(0, 4)).toEqual([ready, attached, updated, legacy])
+    expect(events[4]).toMatchObject({ event: "delegated_child", harness: "native" })
+    expect(events).toHaveLength(5)
+    expect(diagnostics).toContain("gateway sent an invalid event")
+  } finally {
+    client.close()
+  }
+
+  const retained = summary("retained", { harness: "claude_sdk" })
+  globalThis.fetch = (async (input: RequestInfo | URL) => {
+    const url = String(input)
+    if (url.includes("/delegated-children")) return jsonResponse(delegatedChildrenSnapshot([retained]))
+    if (url.includes("webui-thread")) return jsonResponse({
+      ...(url.includes("legacy") ? {} : {
+        harness: "claude_sdk", harness_binding: saved, harness_capabilities: claudeAvailable,
+      }),
+      messages: [{ role: "user", content: "Hello" }],
+    })
+    return jsonResponse({
+      harness_capabilities: claudeAvailable,
+      sessions: [
+        { key: "websocket:claude", harness_binding: saved },
+        { key: "websocket:native", harness_binding: nativeBinding },
+        { key: "websocket:legacy", title: "Legacy chat" },
+      ],
+    })
+  }) as typeof fetch
+
+  const api = "http://nanobot.test"
+  const list = await fetchSessionList(api, "test-token")
+  expect(list.harnessCapabilities).toEqual(claudeAvailable)
+  expect(list.sessions.map((row) => row.harnessBinding)).toEqual([saved, nativeBinding, undefined])
+  expect(list.sessions[2]?.title).toBe("Legacy chat")
+  expect(await fetchHistory(api, "test-token", "child")).toMatchObject({
+    harness: "claude_sdk", harnessCapabilities: claudeAvailable, harnessBinding: saved,
+  })
+  const history = await fetchHistory(api, "test-token", "legacy")
+  expect(history.harness).toBeUndefined()
+  expect(history.harnessBinding).toBeUndefined()
+  expect(history.messages[0]?.content).toBe("Hello")
+  expect((await fetchDelegatedChildren(api, "test-token", "websocket:chat"))?.children[0]?.harness).toBe("claude_sdk")
+})
+
+test("offers a default harness and excludes Claude from unavailable and temporary chats", async () => {
+  const gateway = await mountGateway(undefined)
+  const { socket, setup } = gateway
+  socket.deliver({ event: "attached", chat_id: "chat", harness_capabilities: claudeAvailable })
+  await waitUntil(() => gateway.state.ready)
+
+  submitText(gateway, "/new-chat")
+  const chooser = await waitForText(gateway, "Harness · Kohaku")
+  expect(chooser).toContain("› Harness · Kohaku")
+  expect(chooser).toContain("Claude")
+  setup.mockInput.pressEnter()
+  await waitUntil(() => sentFrames(socket).some((frame) => frame.type === "new_chat"))
+  expect(sentFrames(socket).at(-1)).not.toHaveProperty("harness")
+
+  socket.deliver({ event: "attached", chat_id: "native" })
+  await waitUntil(() => gateway.state.ready)
+  submitText(gateway, "/new-chat")
+  await waitForText(gateway, "Harness · Kohaku")
+  setup.mockInput.pressArrow("down")
+  setup.mockInput.pressEnter()
+  await waitUntil(() => sentFrames(socket).some((frame) => frame.harness === "claude_sdk"))
+  expect(sentFrames(socket).at(-1)).toMatchObject({ type: "new_chat", harness: "claude_sdk" })
+
+  socket.deliver({ event: "error", detail: "harness_unavailable" })
+  await waitForText(gateway, "Claude Code is unavailable on this gateway")
+  socket.deliver({ event: "attached", chat_id: "native", harness_capabilities: claudeUnavailable })
+  await waitUntil(() => gateway.state.ready)
+  submitText(gateway, "/new-chat")
+  await waitForText(gateway, "Claude Agent SDK is missing")
+  const count = socket.sent.length
+  setup.mockInput.pressArrow("down")
+  setup.mockInput.pressEnter()
+  await waitForText(gateway, "Unavailable · Claude Agent SDK is missing.")
+  expect(socket.sent).toHaveLength(count)
+
+  setup.mockInput.pressEscape()
+  await waitForText(gateway, "Ask Kohaku anything")
+  socket.deliver({ event: "attached", chat_id: "native", harness_capabilities: claudeAvailable })
+  await waitUntil(() => gateway.state.ready)
+  submitText(gateway, "/new-temporary-chat")
+  const temporary = await waitForText(gateway, "Claude Code requires a saved chat")
+  expect(temporary).toContain("› Harness · Kohaku")
+  setup.mockInput.pressArrow("down")
+  setup.mockInput.pressEnter()
+  await waitUntil(() => sentFrames(socket).some((frame) => frame.type === "new_temporary_chat"))
+  expect(sentFrames(socket).at(-1)).toEqual({ type: "new_temporary_chat" })
+})
+
+test("projects the Claude badge from saved chat and child harnesses", async () => {
+  const sdkChild = child("sdk", { harness: "claude_sdk", task_label: "SDK work" })
+  const nativeChild = child("native", { harness: "native", task_label: "Native work" })
+  const page = { before_cursor: null, has_more_before: false }
+  let retainedChildren: DelegatedChildActivity[] = []
+  const gateway = await mountGateway(undefined, {
+    apiUrl: "http://nanobot.test", apiToken: "test-token",
+  }, (url) => {
+    if (url.endsWith("/api/sessions")) return jsonResponse({
+      harness_capabilities: claudeAvailable,
+      sessions: [
+        { key: "websocket:chat", title: "SDK session", model_preset: "Other model", harness_binding: claudeBinding },
+        { key: "websocket:native", title: "Native session", model_preset: "Claude preset", harness_binding: nativeBinding },
+      ],
+    })
+    if (url.includes("/delegated-children")) return jsonResponse(delegatedChildrenSnapshot(retainedChildren))
+    if (url.includes("delegated%3Asdk")) return jsonResponse({
+      ...childHistoryPage(sdkChild, [], page), harness: "claude_sdk",
+    })
+    if (url.includes("delegated%3Anative")) return jsonResponse({
+      ...childHistoryPage(nativeChild, [], page), harness: "native",
+    })
+    if (url.includes("webui-thread")) {
+      if (url.includes("websocket%3Anative")) {
+        return jsonResponse({ messages: [], harness_binding: nativeBinding })
+      }
+      return jsonResponse({
+        messages: [{ kind: "delegated_child", delegatedChild: { ...sdkChild, harness: undefined } }],
+        harness_binding: claudeBinding,
+      })
+    }
+    return jsonResponse({})
+  })
+  const { socket, setup } = gateway
+  await waitUntil(() => !gateway.state.childRefreshPending)
+  socket.deliver({ event: "delegated_child", chat_id: "chat", ...sdkChild })
+  socket.deliver({ event: "delegated_child", chat_id: "chat", ...nativeChild })
+  const live = await waitForText(gateway, "[Claude] SDK work")
+  expect(live).toContain("Native work")
+  expect(live).not.toContain("[Claude] Native work")
+
+  retainedChildren = [sdkChild, nativeChild]
+  socket.deliver({ event: "attached", chat_id: "chat", model_preset: "Other model" })
+  const history = await waitForText(gateway, "[Claude] SDK work")
+  expect(history).toContain("[Claude]  Other model")
+  submitText(gateway, "/sessions")
+  const list = await waitForText(gateway, "[Claude] SDK session")
+  expect(list).toContain("Native session")
+  expect(list).not.toContain("[Claude] Native session")
+  setup.mockInput.pressEscape()
+  await waitForText(gateway, "Ask Kohaku anything")
+
+  submitText(gateway, "/child open sdk")
+  expect(await waitForText(gateway, "Read-only canonical child history")).toContain("vtest  [Claude]")
+  setup.mockInput.pressEscape()
+  await waitForText(gateway, "Ask Kohaku anything")
+  socket.deliver({ event: "turn_model_updated", chat_id: "chat", model_name: "Claude model", model_preset: "Claude preset" })
+  submitText(gateway, "/child open native")
+  expect(await waitForText(gateway, "Read-only canonical child history")).not.toContain("vtest  [Claude]")
+  setup.mockInput.pressEscape()
+  await waitForText(gateway, "Ask Kohaku anything")
+  socket.deliver({ event: "attached", chat_id: "native", model_preset: "Claude preset", harness_binding: nativeBinding })
+  await waitUntil(() => gateway.state.ready)
+  expect(await waitForText(gateway, "Claude preset ▾")).not.toContain("[Claude]  Claude preset")
+  socket.deliver({ event: "attached", chat_id: "chat", model_preset: "Other model" })
+  expect(await waitForText(gateway, "[Claude] SDK work")).toContain("[Claude]  Other model")
+})
+
+test("shows the locked workspace and explains lock and steering refusals", async () => {
+  const gateway = await mountGateway(undefined, {
+    apiUrl: "http://nanobot.test", apiToken: "test-token",
+  }, (url) => url.includes("available-models")
+    ? jsonResponse({ models: [], canUseFullAccess: true })
+    : jsonResponse({ sessions: [], messages: [] }))
+  const { socket, setup } = gateway
+  socket.deliver({
+    event: "attached", chat_id: "chat", harness_binding: claudeBinding,
+  })
+  await waitUntil(() => gateway.state.ready)
+  const scope = { project_path: "/chosen/workspace", access_mode: "restricted" }
+  socket.deliver({ event: "session_updated", chat_id: "chat", workspace_scope: scope })
+  expect(await rendered(gateway)).not.toContain("Workspace locked")
+
+  socket.deliver({
+    event: "session_updated", chat_id: "chat",
+    harness_binding: { ...claudeBinding, locked_workspace: scope.project_path, runtime_generation: 1 },
+  })
+  await waitForText(gateway, "Workspace locked · /chosen/workspace")
+  const lock = setup.renderer.root.findDescendantById("kohaku-tui-workspace-lock-text")
+  if (!(lock instanceof TextRenderable)) throw new Error("workspace lock control is missing")
+  await setup.mockMouse.click(lock.x + 5, lock.y)
+  await waitForText(gateway, "Start a new chat to change it")
+
+  socket.deliver({ event: "error", chat_id: "chat", detail: "harness_workspace_locked" })
+  await waitForText(gateway, "Claude Code locks the workspace")
+  socket.deliver({ event: "error", chat_id: "chat", detail: "harness_steering_unavailable" })
+  await waitForText(gateway, "Claude Code cannot change an active turn")
+})
+
+test("asks for a fresh message for each external recovery reason", async () => {
+  const gateway = await mountGateway(undefined)
+  for (const [reason, title] of [
+    ["external_turn_interrupted", "Claude Code turn interrupted"],
+    ["external_tool_state_unknown", "Claude Code tool status is unknown"],
+  ]) {
+    gateway.socket.deliver({
+      event: "recovery_state", chat_id: "chat", status: "awaiting_user", recovery_id: reason,
+      reason, can_continue: false,
+    })
+    const frame = await waitForText(gateway, title!)
+    expect(frame).toContain("Send a fresh message")
+    expect(frame).not.toContain("Continue")
+    submitText(gateway, "/continue")
+    await waitForText(gateway, "Send a fresh message to continue.")
+    expect(sentFrames(gateway.socket).some((request) => request.type === "webui_request")).toBe(false)
+  }
+})
+
+function externalApproval(id: string, item?: DelegatedChildActivity, canSave = false) {
+  return {
+    event: "external_approval",
+    chat_id: "chat",
+    approval_id: id,
+    ...(item ? { child_id: item.child_id } : {}),
+    approval: {
+      session_key: item?.child_session_key ?? "websocket:chat",
+      session_incarnation: item?.child_incarnation ?? "root-inc",
+      run_id: item?.child_run_id ?? "root-run",
+      generation: 2,
+      effect_id: `effect-${id}`,
+      summary: `Review request ${id}`,
+      command: `echo ${id}`,
+      save_exclusion_command: canSave ? "echo" : null,
+    },
+  }
+}
+
+test("sends each external approval decision with only its live identity", async () => {
+  const item = child("worker", { harness: "claude_sdk" })
+  const gateway = await mountGateway(undefined)
+  const { socket } = gateway
+  for (const [id, action, decision, owner, canSave] of [
+    ["a", "allow", "approve", undefined, false],
+    ["b", "save", "approve_and_save", item, true],
+    ["c", "deny", "deny", item, false],
+  ] as const) {
+    const event = externalApproval(id, owner, canSave)
+    socket.deliver(event)
+    const frame = await waitForText(gateway, event.approval.summary)
+    expect(frame).toContain("Allow once")
+    expect(frame).toContain("Deny")
+    expect(frame.includes("Allow & save")).toBe(canSave)
+    submitText(gateway, `/approval ${action} ${id}`)
+    await waitForText(gateway, "Waiting for the gateway to resolve the approval")
+    const { session_key, session_incarnation, run_id, generation, effect_id } = event.approval
+    expect(messageFrames(socket).at(-1)).toMatchObject({
+      chat_id: "chat", content: "approval_decision", webui: true,
+      approval_decision: { approval_id: id, decision, session_key, session_incarnation, run_id, generation, effect_id },
+    })
+    expect(Object.keys(messageFrames(socket).at(-1)!.approval_decision as object).sort()).toEqual(
+      ["approval_id", "decision", "effect_id", "generation", "run_id", "session_incarnation", "session_key"],
+    )
+    socket.deliver({ ...event, approval: null })
+  }
+  expect(new Set(messageFrames(socket).map((frame) => frame.turn_id)).size).toBe(3)
+})
+
+test("keeps child approvals after parent settlement and uses the normal Stop target", async () => {
+  const item = child("worker", { harness: "claude_sdk" })
+  const sibling = child("sibling", { harness: "claude_sdk" })
+  const target = stopTarget([item, sibling], true)
+  const gateway = await mountGateway(target)
+  const { socket, setup } = gateway
+  const direct = externalApproval("direct")
+  const first = externalApproval("first", item)
+  const second = externalApproval("second", sibling)
+  socket.deliver({ event: "goal_status", chat_id: "chat", turn_id: "root-turn", status: "running" })
+  for (const event of [direct, first, second]) socket.deliver(event)
+  expect(await waitForText(gateway, direct.approval.summary)).toContain("(+2 more)")
+  setup.mockInput.pressCtrlC()
+  await waitUntil(() => messageFrames(socket).some((frame) => frame.content === "/stop"))
+  expect(messageFrames(socket).at(-1)).toMatchObject({
+    chat_id: "chat", content: "/stop", stop_expectation: target,
+  })
+
+  socket.deliver({ event: "turn_end", chat_id: "chat", turn_id: "root-turn" })
+  const afterRoot = await waitForText(gateway, first.approval.summary)
+  expect(afterRoot).not.toContain(direct.approval.summary)
+  expect(afterRoot).toContain("(+1 more)")
+  socket.deliver({ ...first, approval: null })
+  expect(await waitForText(gateway, second.approval.summary)).not.toContain(first.approval.summary)
+  socket.deliver({ event: "attached", chat_id: "chat" })
+  expect(await rendered(gateway)).not.toContain(second.approval.summary)
+  socket.deliver(second)
+  expect(await waitForText(gateway, second.approval.summary)).not.toContain("(+1 more)")
 })

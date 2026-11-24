@@ -1,203 +1,198 @@
-# Direct External Coding-Harness Session Design (Claude Agent SDK)
+# Claude Code Harness Design
 
-**Status:** Proposed architecture & engineering specification (implementation deferred until Stage 1 core-harness upgrades land)  
-**Date:** 2026-11-24  
-**Related records:**
-- [`.agent/design.md`](../../.agent/design.md) (small core; extend at the edges; type dynamic boundaries at the edge)
-- [`.agent/security.md`](../../.agent/security.md) (workspace containment, SSRF, sandbox boundaries)
-- [`docs/architecture/a3/future-harness-extension.md`](./a3/future-harness-extension.md) (normal task/coding sessions stay separate from read-only ordinary subagents)
-- [`docs/architecture/a3/decisions.md`](./a3/decisions.md) (A3 D2/D3/D6 authority, delegation, and restart recovery invariants)
-- [`docs/superagent-research-and-session-direction.md`](../superagent-research-and-session-direction.md) (direct user collaboration in task sessions)
+**Status** — Agreed design for `codex/coding-harness-session`. Prerequisites A and B are on `staging` at `1bdf7920`.
+**Date** — 2026-11-24
 
----
+- [Implementation work plan](./coding-harness-session-work-plan.md)
+- [Core design constraints](../../.agent/design.md) and [security boundaries](../../.agent/security.md)
+- [A3 authority and recovery decisions](./a3/decisions.md) and [subagent product contract](./a3/v1-product-contract.md)
+- [Future harness extension](./a3/future-harness-extension.md) and [SuperAgent session direction](../superagent-research-and-session-direction.md)
 
 ## 1. Decision Summary
 
-Kohaku keeps its own **`native` `AgentRunner`** as the core harness for personal-assistant chats, Dream memory, skills, cron, multi-channel routing, and future SuperAgent orchestration.
+Kohaku uses its native `AgentRunner` for personal-assistant chats, Dream memory, skills, cron, and channel routing.
+The Claude Agent SDK adds a harness for repository investigation, technical planning, implementation, and testing.
 
-For dedicated software-engineering work, Kohaku adds an optional **external coding-harness session backend** powered directly by the Python **`claude-agent-sdk`** (`pip install claude-agent-sdk`, which bundles the platform-specific Claude Code CLI binary inside its wheel with no separate Node.js/npm prerequisite on standard Linux/macOS targets).
+| Entry point | Execution owner | User interaction |
+| --- | --- | --- |
+| Direct session | Normal Kohaku session bound to Claude Code | Choose **Claude Code** in the **Harness** dropdown above the new-chat composer. Work directly in that chat. |
+| Delegation from Kohaku | Claude-backed subagent owned by the original chat | Work with Kohaku on the PRD, findings, and plan. Follow Claude Code activity, approvals, and results in the same chat. |
 
-### Agreed Product & Architectural Choices
-
-1. **Direct interactive session first (not a hidden subagent):** A Coding Session is a first-class normal Kohaku session displayed natively in WebUI, TUI, and Android. Users send prompts directly to it, see live streamed text/reasoning/tool calls/`fileEdits`, approve/deny risky actions, and hit Stop — without a parent LLM hop in the middle.
-2. **Any Kohaku model supported:** Coding Sessions can use *any* model preset configured in Kohaku (Anthropic, OpenAI/Responses/Codex, Copilot, Gemini, DeepSeek, OpenRouter, local servers, KeyPool, fallbacks) via a localhost-only Anthropic `/v1/messages` loopback bridge backed by Kohaku's `LLMRuntime`. Compaction and SDK side-calls use the session's selected model (matching Kohaku's current policy).
-3. **Immutable session binding:** A session's backend (`native` vs `external:claude_sdk`) is fixed at creation. No mid-conversation hot-swapping between backends.
-4. **Workspace selection & post-Turn-1 lock:** Before Turn 1, a Coding Session uses the normal chat-page `Working in` folder picker. Once Turn 1 starts, the workspace is locked for that session (switching repos requires a new Coding Session). Kohaku does **not** force Git worktree creation; the coding harness decides when to use branches or worktrees itself.
-5. **Memory separation + on-demand inspection:** External Coding Sessions are excluded from personal-assistant Dream memory consolidation (`SOUL.md`, `USER.md`, `MEMORY.md`). Because Coding Sessions persist normalized history into Kohaku's canonical session store, the main `native` Kohaku assistant can discover and read Coding Sessions on demand via `list_sessions`, `search_sessions`, and `read_session`.
-6. **Honest Sandbox + Full access UX:** In **Sandbox** mode, Claude's OS sandbox (`bwrap` on Linux, Seatbelt on macOS) confines shell commands while Kohaku's `can_use_tool` callback enforces workspace bounds and allows explicit user-approved unsandboxed fallback for tests/tools that require Docker, localhost, or package downloads. In **Full access** mode, the OS sandbox is disabled for frictionless test execution while `can_use_tool` still requires user approval for destructive/external commands.
-7. **Gateway restart recovery (A3 D6):** If the gateway restarts while an external turn is in flight, the turn settles as `interrupted/uncertain` (never auto-replayed), while retaining `external_session_id` so the user can inspect `git status` and continue cleanly via `resume`.
-
----
+Harness selection determines which engine runs the work. Kohaku can use one Claude Code context for a whole task.
+It can also assign a bounded task to an explorer, planner, worker, or reviewer when that helps.
+Each assignment gets the scope that the user authorized. An implementation assignment can include research, edits, and tests.
 
 ## 2. High-Level Architecture
 
 ```mermaid
 flowchart TD
-    UI["Kohaku Clients (WebUI / TUI / Android)"]
-    LOOP["AgentLoop.execute_turn() (kohaku/agent/loop.py)"]
-    WRITER["SourceTurnWriter + AgentHook + WebuiTurnCoordinator"]
+    UI["Kohaku clients"] --> LOOP["AgentLoop"]
+    LOOP -->|"Kohaku harness"| NATIVE["Native AgentRunner"]
+    LOOP -->|"Claude Code harness"| DIRECT["Direct session"]
+    NATIVE -->|"Delegate coding work"| CHILD["Claude-backed ChildBackend"]
 
-    UI <--> LOOP
-    LOOP --> WRITER
+    DIRECT --> ADAPTER["Shared Claude Agent SDK adapter"]
+    CHILD --> ADAPTER
+    ADAPTER --> SDK["Claude Code runtime"]
 
-    LOOP -->|"backend == native"| NATIVE["AgentRunner (personal assistant, Dream, cron, general tasks)"]
-    LOOP -->|"backend == external:claude_sdk"| EXT["ExternalHarnessRunner"]
+    SDK -->|"Files, commands, and tests"| POLICY["Kohaku tool policy and shell sandbox"]
+    POLICY --> REPO["Authorized workspace"]
+    SDK -->|"Model requests"| BRIDGE["Authenticated loopback Messages bridge"]
+    BRIDGE --> RUNTIME["Kohaku LLMRuntime"]
 
-    EXT -->|"can_use_tool"| APPR["PendingExternalApproval (live Future -> Kohaku UI card)"]
-    EXT -->|"ANTHROPIC_BASE_URL (127.0.0.1)"| BRIDGE["Loopback Anthropic /v1/messages Bridge"]
-    BRIDGE -->|"chat_stream() + llm_usage"| LLM["Kohaku LLMRuntime (any provider / local / KeyPool / fallback)"]
-    EXT <-->|"ClaudeSDKClient"| SDK["claude-agent-sdk (bundled Claude Code CLI)"]
+    ADAPTER -->|"Activity, approvals, and results"| HISTORY["Owning session or child timeline"]
 ```
 
-### Core Seam in Kohaku
-
-`AgentLoop` currently routes all canonical turn execution through a single `self.runner.run(AgentRunSpec(...))` call (`kohaku/agent/loop.py:4139`).
-
-- **Native sessions** continue through `AgentRunner` unchanged.
-- **External coding sessions** branch at that same seam into `ExternalHarnessRunner`, which drives the **exact same `AgentHook`** (`kohaku/agent/hook.py`) and **`SourceTurnWriter`** (`kohaku/session/turn_writer.py`).
-- WebUI, TUI, and Android require **no harness-specific timeline rendering** — only:
-  1. A *"New Coding Session"* creation action (binding `backend="external:claude_sdk"`), and
-  2. Locking the `Working in` folder picker once Turn 1 has been admitted.
-
----
+`AgentLoop` dispatches direct Claude Code turns at its existing runner boundary (`kohaku/agent/loop.py`).
+The delegation manager admits Claude-backed subagents through `ChildBackend` and still enters through `AgentLoop.execute_child_turn` into that **same** `ExternalHarnessRunner` boundary.
+Both direct sessions and delegated children therefore share one SDK adapter, one `SourceTurnWriter`, one `AgentHook`, one `PendingExternalApproval` bridge, and one Stop path.
 
 ## 3. Component Design
 
-### 3.1 Session Metadata & Binding (`harness_binding`)
+### 3.1 Direct Session Binding and Controls
 
-Persisted in session metadata at session creation (immutable thereafter):
+The new-chat draft shows a **Harness** dropdown above the composer input container.
+The choices are **Kohaku** (default) and **Claude Code** when the backend is available.
+**Model** is a separate control. Both selections go through the existing session creation flow.
 
-```python
-@dataclass(frozen=True, slots=True)
-class SessionHarnessBinding:
-    backend: Literal["native", "external"] = "native"
-    harness: str | None = None              # e.g. "claude_sdk"
-    external_session_id: str | None = None  # captured after Turn 1 for resume=
-    locked_workspace: str | None = None     # canonical absolute path locked on Turn 1
-    runtime_generation: int = 0
-```
+The gateway validates the harness choice when it creates the session on first submission.
+It saves the backend and harness in `harness_binding` before the first turn.
+Kohaku uses the native backend for existing sessions and create requests without a harness choice.
+Temporary chats do not persist session bindings or resumable SDK state: disable/hide **Claude Code** in the Harness dropdown when Temporary chat is active, and reject `harness="claude_sdk"` for temporary-chat creation at the gateway.
+If the gateway rejects a selection, the client keeps the draft and shows the failure.
 
-- **History ownership split:**
-  - The external SDK owns its internal prompt history, prompt caching, and compaction (resumed across turns via `resume=external_session_id`).
-  - Kohaku owns the **canonical display & audit timeline** (`SourceTurnWriter`: user prompts, streamed assistant text, normalized tool calls/results, `fileEdits`, approvals, usage, and terminal state).
-  - Kohaku never replays its own raw message list back into the SDK on subsequent turns.
+The header and sidebar show a **Claude** badge for a session bound to Claude Code.
+The saved harness is immutable. To select another harness, create a new chat.
+The usual **Working in** picker sets the folder before the first turn.
+When the first Claude Code turn starts, Kohaku locks the folder. Use the selected checkout by default.
+The task can use a Git worktree when it needs an isolated checkout.
 
-### 3.2 Loopback Anthropic `/v1/messages` Bridge
+A direct Claude Code binding uses `backend="external"` and `harness="claude_sdk"`.
+The binding records the canonical folder when Kohaku locks it.
+The runtime stores the SDK session ID once it receives it.
+The generation identifies the current runtime for approval, Stop, and resume.
 
-Allows `claude-agent-sdk` to run on **any** model configured in Kohaku without leaking real provider API keys into the subprocess.
+### 3.2 Kohaku Delegation (Orthogonal Harness × Role Composition)
 
-- **Transport & Auth:** Ephemeral `aiohttp` server bound strictly to `127.0.0.1:0` (loopback only), authenticated via a random per-session bearer token (`ANTHROPIC_AUTH_TOKEN`).
-- **Model mapping:**
-  - Sets `ANTHROPIC_BASE_URL=http://127.0.0.1:<port>`, `ANTHROPIC_MODEL=<session_model>`, and `ANTHROPIC_SMALL_FAST_MODEL=<session_model>` (so compaction and internal SDK side-calls use the same selected model, matching Kohaku's policy).
-  - If the SDK still requests an internal Claude alias (e.g. a Haiku sub-call), the bridge maps it to the session's bound `LLMRuntime` instead of failing with `model not found`.
-- **Protocol translation:**
-  - Inbound Anthropic `/v1/messages` request (`system`, `messages`, `tools`, `tool_choice`, `max_tokens`, `thinking`, `stream`) -> Kohaku's `LLMProvider.chat_stream(...)`.
-  - Outbound `LLMStreamChunk` (text deltas, reasoning/thinking deltas, tool calls, usage, finish reason) -> standard Anthropic SSE events (`message_start`, `content_block_start`, `content_block_delta`, `content_block_stop`, `message_delta`, `message_stop`).
-  - **Native Anthropic fast-path:** When the bound provider is native Anthropic (and not a non-Anthropic model), preserve `cache_control` and extended thinking blocks cleanly; strip Anthropic-only beta headers/fields for non-Anthropic providers.
-  - **Accounting:** Every bridged request records token usage through Kohaku's existing `kohaku/llm_usage/` context so coding sessions appear accurately in usage tracking.
+**Harness** (`native` vs `claude_sdk`) and **Role** (`explore`, `plan_task`, `delegate_task`, `review_work`) are independent, composable axes.
+Selecting `harness="claude_sdk"` changes which execution engine runs the role while strictly preserving that role's capability contract (`explore`, `plan_task`, and `review_work` remain read-only; `delegate_task` receives its declared `write_scope` plus scoped test execution when backed by Claude Code).
 
-### 3.3 Event Normalization (`ClaudeSDKClient` -> `AgentHook` & `SourceTurnWriter`)
+When Claude Code is available, Kohaku's tool guidance states:
 
-`ClaudeSDKClient` runs with `include_partial_messages=True` and streams typed messages:
+> Use Claude Code (`harness="claude_sdk"`) for coding work, including codebase investigation, technical planning, implementation, and testing.
 
-| SDK Event | Kohaku `AgentHook` Call | Canonical Persistence (`SourceTurnWriter`) |
-| --- | --- | --- |
-| Text delta | `hook.on_stream(ctx, delta)` | Accumulated into assistant message (`append_message` / `begin_tool_batch`) |
-| Thinking / reasoning delta | `hook.emit_reasoning(delta)` / `emit_reasoning_end()` | Live UI display only (matches `_persisted_content` non-persisted reasoning policy) |
-| Tool call start (`Read`, `Edit`, `Write`, `Bash`, `Glob`, `Grep`, …) | `hook.before_execute_tool(...)` | Normalized tool intent via `begin_tool_batch(...)` |
-| Tool call result | `hook.after_execute_tool(...)` | `record_tool_result(KnownToolResult(...))` + file-edit extraction for WebUI `fileEdits` cards |
-| Turn complete / error / cancel | `hook.after_run(...)` / `on_error(...)` | Final assistant message + `RunStatus` (`COMPLETED`, `CANCELLED`, `ERROR`) |
+- **Tool surface:** Existing delegation tools (`explore`, `plan_task`, `delegate_task`, `review_work`) accept an optional `harness: "native" | "claude_sdk"` parameter (defaulting to `"native"`).
+- **Continuing Claude context across role transitions without violating A3 immutability:** An existing read-only child (`explore` / `plan_task`) never widens its own admitted scope in place (`followup_child` remains bound to the child's original scope). Instead, `delegate_task` (with `harness="claude_sdk"`) accepts an optional `continue_from_child_id` owned by the same parent chat: Kohaku re-validates current user, chat, and workspace authority, creates a **fresh implementation child admission**, and launches the SDK with `resume=<prior_external_session_id>` and `fork_session=True`. This carries Claude's full codebase investigation context straight into implementation while keeping read-only child records immutable.
+- **Direct plan handoff:** When an implementation plan already exists, Kohaku can call `delegate_task(harness="claude_sdk", ...)` directly with the plan, `write_scope`, and acceptance checks so Claude Code inspects, edits, and runs tests in one assignment.
 
-- **Tool name normalization:** Map SDK tool names (`Read` -> `read_file`, `Write` -> `write_file`, `Edit` -> `edit_file`, `Bash` -> `exec`, `Glob` -> `find_files`, `Grep` -> `grep`) at the adapter boundary for display/diff tracking (`TRACKED_FILE_EDIT_TOOLS`) while preserving raw tool metadata for debugging.
+The existing delegation owner manages the child ID, follow-ups, budgets, and Stop.
+The parent chat shows the child's activity and approvals. It also shows the result when the work settles.
+The child activity item shows a **Claude** badge when the child's admitted harness is Claude Code.
+The child detail header shows the same badge across desktop WebUI, TUI, and Android clients. The child projection uses the saved harness identity.
+The user gives follow-ups and approval decisions in the original chat.
 
-### 3.4 Live Approvals & Sandbox Policy (`can_use_tool` + `sandbox`)
+### 3.3 Loopback Anthropic Messages Bridge
 
-#### Bridging Live In-Flight Approvals
-Unlike Kohaku's native `AgentRunner` (which stops a turn with `RunStatus.APPROVAL_REQUIRED` and resumes in a new turn), `claude-agent-sdk` suspends *in-flight* inside `can_use_tool`.
+The bridge listens on `127.0.0.1` at an ephemeral port. It requires a token for the owning execution context.
+The adapter gives the subprocess the loopback URL and the token. Kohaku retains upstream provider credentials.
 
-- Introduce a lightweight, server-owned **`PendingExternalApproval`** registry keyed by `approval_id`:
-  1. When `can_use_tool` decides user confirmation is required, it registers an `asyncio.Future[ApprovalDecision]` under a new `approval_id`, emits Kohaku's normal approval card event to WebUI/TUI/Android, and awaits the `Future`.
-  2. When `_dispatch_bus_approval_control` (`kohaku/agent/loop.py:4334`) receives the user's decision for that `approval_id`, it resolves the live `Future` directly instead of starting a new turn.
-  3. Clicking **Stop** cancels the active turn task, rejects any pending approval `Future`, and interrupts/closes `ClaudeSDKClient`.
+- Set `ANTHROPIC_BASE_URL` and the bridge token in the subprocess environment.
+- Convert `/v1/messages` requests to the selected Kohaku `LLMRuntime`.
+- Support streaming SSE and non-streaming responses. Support `/v1/messages/count_tokens` for token estimates.
+- Translate text, tool definitions, tool requests and results, images, and supported thinking fields.
+- Route compaction and SDK model aliases to the same selected model preset.
+- Preserve supported Anthropic cache and thinking fields on the Anthropic path.
+- Record usage through Kohaku's existing usage context. Propagate cancellation to the provider.
 
-#### Balancing Security, Autonomy & Test UX (Sandbox vs. Full Access)
+The goal is to support Kohaku model presets through this bridge.
+Anthropic supports Claude models through its documented gateway interface.
+Qualify non-Claude presets with the real SDK before presenting them as compatible.
+[Claude Code gateway support](https://code.claude.com/docs/en/llm-gateway)
 
-Claude Code's built-in sandbox uses `bubblewrap` + `socat` on Linux and Seatbelt (`sandbox-exec`) on macOS. It confines **shell commands (`Bash`)** — restricting writes to the workspace + temp dir and blocking outbound network by default — while **not** confining native file tools (`Read`/`Write`/`Edit`) or MCP servers.
+### 3.4 Event Normalization and History
 
-- **No double-sandboxing:** Do **not** wrap the `ClaudeSDKClient` subprocess inside Kohaku's own `bwrap` (`kohaku/agent/tools/sandbox.py`); nested `bwrap` breaks Linux user namespaces and breaks Claude's internal sandbox/socket routing. Let Claude's OS sandbox own shell confinement while Kohaku's `can_use_tool` enforces file-tool workspace bounds and private-path denials (`~/.kohaku/`, `~/.ssh`, `~/.aws`).
-- **Keeping dev CLIs smooth while Sandbox stays ON:** Expose configurable sandbox pass-through settings in Kohaku's coding-harness config, mapped directly into Claude's `sandbox` options:
-  - `network.allowLocalBinding: true` (default for coding sessions so local dev servers & integration tests work inside Sandbox),
-  - `network.allowUnixSockets` (opt-in, e.g. `/var/run/docker.sock`),
-  - `excludedCommands` (user-managed list of trusted dev CLIs such as `docker`, `uv`, `adb` that bypass OS sandboxing while **still** passing through Kohaku's `can_use_tool` destructive-command check),
-  - `allowUnsandboxedCommands: true` (gated by `can_use_tool`): when a command not yet in `excludedCommands` needs unsandboxed execution, Kohaku shows an approval card with three actions:
-    1. **Allow once** — run this specific command unsandboxed without modifying config.
-    2. **Allow & save `<tool>`** — run it and persist the base command name (e.g. `docker`, `uv`, `adb`) to Kohaku's `excludedCommands` list so future calls run automatically (disabled for generic shells/interpreters such as `sh`, `bash`, `zsh`, `python`, `node`, `env`, `sudo` and for commands matching `RISKY_EXEC_PATTERNS`, so a single click cannot accidentally open the entire sandbox).
-    3. **Deny** — reject the unsandboxed retry and let the agent adapt inside Sandbox.
-    *(When a newly saved command is added to `excludedCommands`, Kohaku updates config immediately and applies it on the next client launch/reload while `can_use_tool` honors it live for the rest of the current session.)*
-- **Mid-session permission switching & subagents:**
-  - Users can toggle **Sandbox** <-> **Full access** at any time on a Coding Session. Because `sandbox.enabled` is a subprocess startup option, toggling it cleanly stops idle/finished turns and restarts `ClaudeSDKClient` with the new `sandbox` config + `resume=external_session_id` (matching A3 D2's immediate fencing rule when returning to Sandbox).
-  - Claude Code's own internal subagents inherit the parent client's `sandbox` config and route tool requests through the same `can_use_tool` callback automatically.
+The SDK owns the model context, compaction, and SDK resume history.
+Kohaku owns the canonical session or child history, with one writer for each execution owner.
+Resume the SDK context through its stored ID. Use the canonical Kohaku history for display and inspection.
 
-| Kohaku Chat Mode | SDK `sandbox` Config | Kohaku `can_use_tool` Policy (reusing `permission_rules.py`) | Practical UX for Autonomous Coding |
-| --- | --- | --- | --- |
-| **Sandbox** *(default: Autonomous Sandbox)* | `enabled=True`, `autoAllowBashIfSandboxed=True`, `failIfUnavailable=True`, `allowLocalBinding=True`, plus configured `excludedCommands` / `allowUnixSockets` and gated `allowUnsandboxedCommands=True` | **Auto-allow:** reads/edits inside `locked_workspace`, safe local commands, and configured `excludedCommands`. **Ask user (high-signal only):** `dangerouslyDisableSandbox=True` retries, destructive/external commands (`git push`, `rm -rf`, `git reset`, `drop table`), out-of-workspace writes. **Hard deny:** Kohaku private state/credentials (`~/.kohaku/`, etc.). | High autonomy for 95%+ of edits, unit tests, local servers, and configured CLIs (`docker`/`uv`/`adb`) with zero prompt fatigue — while retaining OS write containment and high-signal destructive guards. |
-| **Full access** *(explicit volatile toggle per A3 D2)* | `enabled=False` | **Auto-allow:** normal reads/edits and local commands across the machine. **Hard deny:** Kohaku private state writes. **Ask user:** destructive/external patterns (`git push`, `rm -rf`, `git reset`, `drop table`, `kubectl apply`, `npm publish`). | Full system terminal UX for any CLI/socket/device/network workflow — still protected by Kohaku's destructive-command & private-path guardrails (not blind YOLO). |
+| SDK activity | Kohaku result |
+| --- | --- |
+| Text and reasoning deltas | Stream text through `AgentHook`. Keep reasoning in the live display. |
+| Tool request | Record normalized intent and the owning run. |
+| Tool result | Record the result and derive `fileEdits` from actual tool effects. |
+| User approval | Show Kohaku's existing approval card in the owning chat. |
+| Completion, error, or cancellation | Settle the run in its canonical history with the observed outcome. |
 
-- **Note on Linux Sandbox prerequisites:** If `bwrap` or `socat` is missing while Sandbox mode is selected, `failIfUnavailable=True` fails closed with a clear message (matching A3 D2), prompting the user either to install `bubblewrap`/`socat` or explicitly switch the chat to **Full access**.
+Map `Read`, `Write`, and `Edit` to `read_file`, `write_file`, and `edit_file`.
+Map `Bash`, `Glob`, and `Grep` to `exec`, `find_files`, and `grep`.
+Keep tool arguments and results typed at the adapter boundary.
+Exclude direct Claude Code chats and SDK child transcripts from personal Dream consolidation.
+Use `list_sessions`, `search_sessions`, and `read_session` for authorized direct chat inspection.
+Include the session kind, workspace, and status in the metadata view.
+Use the existing child activity and history for delegated work.
 
-### 3.5 Memory Separation & Cross-Session Lookup
+### 3.5 Tool Policy, Approvals, and Tests
 
-- **Dream exclusion:** Dream scanning/consolidation skips sessions where `harness_binding.backend == "external"`.
-- **Personal assistant visibility on demand:** Wire Kohaku's existing read-only session tools (`SearchSessionsTool`, `ReadSessionTool` in `kohaku/agent/tools/sessions.py`, and `ListSessionsTool` in `kohaku/agent/tools/session_messages.py`) into `fork_factories.py` and `MANAGED_WEBUI_TOOL_NAMES` (`kohaku/agent/tools/registry.py`).
-- Enrich `list_sessions` output with lightweight session metadata (`kind: "coding" | "chat"`, `status: "running" | "waiting_approval" | "idle"`, `workspace`) so the main Kohaku assistant can see ongoing/past coding sessions and call `read_session` when the user asks about them.
+The gateway applies current chat authority, the assigned workspace and scope, and the tool policy.
+It checks authority before an effect and when an approval is applied.
+Some SDK tool calls are approved before `can_use_tool` runs.
+Use SDK tool restrictions and pre-tool checks to enforce workspace, private-path, and capability limits.
+Use `can_use_tool` for calls that require a live user decision.
+Apply the same effective limits to any SDK subagents or additional tools that the adapter enables.
+[SDK permission order](https://code.claude.com/docs/en/agent-sdk/permissions)
 
----
+**Sandbox** is the default. Claude Code's sandbox confines its shell commands.
+Kohaku checks file tools and controls which MCP tools the SDK can use.
+Use one shell confinement layer per command.
+Reuse Stage 1B settings for exclusions, local bindings, and Unix sockets where they fit the admitted scope.
+Enforce fail-closed Sandbox availability before launching the SDK (on Linux, verify `managed_bwrap_available()` and `socat` before admission; `SandboxSettings` in `claude-agent-sdk 0.2.188` does not expose a `failIfUnavailable` key). If the shell sandbox is unavailable, fail closed and show the configuration failure.
+Use `HookMatcher(on_failure="block")` for Kohaku's `PreToolUse` enforcement hook so hook errors fail closed, and return `permissionDecision="ask"` from `PreToolUse` to escalate risky or unsandboxed commands into `can_use_tool` even when `autoAllowBashIfSandboxed=True`.
+A user can select **Full access** through the direct chat permissions control.
+A change that reduces authority fences active work and admissions under the old permissions.
+If the SDK needs a process restart, reapply the current policy before resuming.
+A child receives the scope admitted by Kohaku, including when its parent has Full access.
+[Claude Code shell sandbox](https://code.claude.com/docs/en/sandboxing)
 
-## 4. Packaging & Runtime Lifecycle
+The owner binds a pending approval to the run, generation, and exact tool effect.
+The existing card offers **Allow once**, **Allow & save `<tool>`** for an eligible executable, and **Deny**.
+Kohaku decides eligibility with `permission_rules.py`.
+On **Allow & save**, the gateway owns and saves the exact eligible executable.
+Apply the saved exclusion through live policy and update the SDK settings on process refresh.
+Approvals and saved exceptions must respect the child's admitted scope.
+Stop cancels pending approval requests and reaches the owned process tree.
 
-- **Dependency:** Add `claude-agent-sdk` as an optional extra (e.g. `coding-sdk`) or core dependency in `pyproject.toml`. Standard PyPI wheels bundle the native Claude Code binary — no external Node.js/npm installation required.
-- **Process lifecycle:** Spawn `ClaudeSDKClient` lazily on turn admission, reuse the process across turns within an active coding session (with an idle teardown timer, e.g. 10–15 minutes of inactivity, resuming seamlessly via `resume=external_session_id` on the next prompt), and guarantee cleanup on session delete, Stop, or gateway shutdown.
-- **Restart recovery (A3 D6):** On gateway restart, any coding session with an unsettled active run is reconciled as `interrupted/uncertain` (no automatic command/edit replay), while preserving `external_session_id` and `locked_workspace` for user-directed continuation.
+Claude Code runs the relevant tests for an implementation assignment.
+- **Direct sessions & workspace-scoped tasks:** Use Claude Code's native `Bash` tool under Claude's OS sandbox (`bwrap` / Seatbelt), which isolates shell writes to the authorized workspace root and temp directories.
+- **Narrow `write_scope` delegated workers:** Enforce `write_scope` strictly on all SDK file tools (`Write`, `Edit`, `NotebookEdit`) via `PreToolUse` hooks, while allowing sandboxed `Bash` inside the workspace root for running tests (still gated by `permission_rules.py` and `can_use_tool` for risky/destructive commands and unsandboxed exceptions).
+- The agent runs routine tests under the current policy, fixes failures within its `write_scope`, and returns the diff, test commands and outcomes, and any remaining failures to Kohaku.
+- Kohaku checks the result against the agreed scope and acceptance checks.
 
----
+## 4. Packaging and Recovery
 
-## 5. Prerequisites & Phased Implementation Plan
+Bundle `claude-agent-sdk` (and `aiohttp` for the loopback bridge) in Kohaku's core dependencies, while still lazy-importing the SDK only when a Claude Code run starts so startup stays fast and missing-runtime failures degrade cleanly.
+Use the SDK and bundled Claude Code versions qualified by the implementation smoke tests.
+Launch the subprocess with a controlled environment and explicit settings sources.
 
-### Prerequisite A — Stage 1A: Core Harness Hygiene *(in separate session)*
-- Wire `find_files` + `grep` (`fork_factories.py`, `MANAGED_WEBUI_TOOL_NAMES`, `context.py`).
-- Re-enable safe parallel read-only tool batching (`execution.py`).
-- Make ordinary tool-error recovery resilient without weakening safety/doom-loop stops (`runner.py`).
+The adapter starts on admission and closes its process when the owner stops or releases it.
+It can release idle processes and resume a valid SDK context on a new admitted turn.
+After a gateway restart, mark unfinished work interrupted or uncertain.
+Retain the owner, SDK session ID, workspace, and available evidence.
+Resume through a fresh admission after the work's effects are reconciled.
 
-### Prerequisite B — Stage 1B: Shared Kohaku Sandbox Exception Policy & 3-Choice Approval UX *(build in Kohaku core first)*
-Before implementing `claude-agent-sdk`, standardize the Sandbox escape-hatch and progressive-trust approval flow across Kohaku itself so both `native` `ExecTool` chats and `external` Coding Sessions share **one** config, **one** safety classifier, and **one** UI approval card:
+## 5. Implementation Phases
 
-1. **Shared config fields** (`kohaku/config/schema.py` / `ExecToolConfig`):
-   - `sandbox_excluded_commands: list[str]` (trusted dev CLIs such as `docker`, `uv`, `adb`)
-   - `sandbox_allow_local_binding: bool = True`
-   - `sandbox_allow_unix_sockets: list[str]` (e.g. `/var/run/docker.sock`)
-2. **Server-owned save-eligibility guard** (`kohaku/agent/permission_rules.py`):
-   - Extract a single concrete executable name only when the command has no shell chaining/subshells, is not a generic shell/interpreter (`sh`, `bash`, `zsh`, `python`, `node`, `env`, `sudo`), and does not match `RISKY_EXEC_PATTERNS`. Only eligible commands expose *"Allow & save `<tool>`"*.
-3. **Extended `ApprovalDecision` & client UI card** (`kohaku/agent/turn.py` + WebUI/TUI/Android):
-   - Extend `ApprovalDecision` (currently `{"approve", "deny"}`) to support an explicit server-owned *"Allow & save"* action (client sends `approval_id` + action; server owns the exact executable name persisted to config, matching A3 D2).
-4. **Native `ExecTool` Sandbox support** (`kohaku/agent/tools/shell.py`):
-   - Honor `sandbox_excluded_commands` in native Sandbox mode (still gated by `RISKY_EXEC_PATTERNS`), and support the same 3-choice *"Allow once / Allow & save `<tool>` / Deny"* card when a command requires unsandboxed execution.
-5. **Cross-session read tools** (`fork_factories.py` + `MANAGED_WEBUI_TOOL_NAMES`):
-   - Wire existing `list_sessions` (enriched with kind/status/workspace), `search_sessions`, and `read_session` so the main Kohaku assistant already has on-demand cross-session lookup ready.
+Stage 1A tool discovery and recovery are on `staging`.
+Stage 1B added shared sandbox settings, the three-choice approval card, and read-only session lookup.
+The [work plan](./coding-harness-session-work-plan.md) records these prerequisites and the verification commands.
 
-### Claude SDK Implementation Phases (after Prerequisites A & B)
+| Phase | Outcome |
+| --- | --- |
+| 1. Model bridge | Qualify Anthropic Messages translation with the real SDK on Claude and a representative non-Claude preset. |
+| 2. Shared SDK adapter | Normalize events and implement scope enforcement, live approvals, workspace-sandboxed test execution, cancellation, and resume/fork. |
+| 3. Direct sessions (Gateway + WebUI) | Bind the harness selected above the composer (excluding temporary chats). Show the **Claude** badge and support direct workspace locking and recovery. |
+| 4. Kohaku delegation (Orthogonal Harness × Role) | Add optional `harness="claude_sdk"` to existing role tools + `continue_from_child_id` (`fork_session=True`), routing through the shared `AgentLoop` runner seam. Show the child **Claude** badge and report edits and tests in the parent chat. |
+| 5. TUI & Android UI parity | Expose the **Harness** selector (new chat) and **Claude** badge (direct chats + delegated children) consistently in TUI and Android clients. |
 
-| Phase | Scope | Verification Gate |
-| --- | --- | --- |
-| **Phase 1: Loopback Anthropic `/v1/messages` Bridge** | `kohaku/harness/anthropic_bridge.py` (`127.0.0.1:0`, bearer auth, SSE + tool_use + thinking translation, `SMALL_FAST_MODEL` mapping, `llm_usage` recording) | Unit tests with scripted `LLMProvider` (text, thinking, tool calls, errors, cancellation) + smoke test against Anthropic, OpenAI-compat, and local model presets |
-| **Phase 2: `ExternalHarnessRunner` + `ClaudeSdkAdapter`** | `kohaku/harness/backend.py`, `kohaku/harness/claude_sdk.py`, `PendingExternalApproval` live bridge, `can_use_tool` reusing Prerequisite B's `permission_rules.py` + `sandbox_excluded_commands` + 3-choice approval card, event normalizer into `AgentHook` + `SourceTurnWriter` | Fake-SDK unit tests covering streaming, `fileEdits`, live 3-choice approval allow/save/deny, Stop cancellation, `resume`, and `failIfUnavailable` Sandbox refusal |
-| **Phase 3: Direct Coding Session in `AgentLoop` & UI** | Immutable `SessionHarnessBinding`, single dispatch seam at `loop.py:4139`, Dream exclusion, WebUI/TUI/Android *"New Coding Session"* action + post-Turn-1 `Working in` lock, restart reconciliation | Integration tests across `AgentLoop` + WebUI WebSocket attach/stream/approve/stop + workspace-lock UI tests + `basedpyright` (`introduced: 0`) |
-| **Phase 4: Personal Assistant Handoff** | Optional `open_coding_session` / `send_session_message` handoff from main chat into Coding Sessions (building on Prerequisite B's `list_sessions`/`search_sessions`/`read_session`) | Tests proving main `native` assistant can start, inspect, and hand off to Coding Sessions without Dream cross-contamination |
-
----
-
-## 6. Deferred / Out of Scope for v1
-
-- **Additional harnesses behind the same `SessionHarnessBackend` protocol:** ACP (`opencode acp`, `codex-acp`) and `google-antigravity` Python SDK can be added later as additional adapters without changing `AgentLoop`, `SourceTurnWriter`, or client UIs.
-- **Forced Git worktree orchestration:** Deferred; Claude Code handles git branches/worktrees organically when needed.
-- **Claude `plan` mode UI toggle:** Can be added as a lightweight session-local toggle on Coding Sessions in a follow-up once Phase 3 is live.
-- **Exposing Kohaku tools (`save_knowledge`, `repository_catalog`) back into Claude Code via local MCP:** Clean Phase 5 enhancement once the base coding session is stable.
+The release includes direct sessions, parent-owned delegation, and cross-client **Claude** badges across WebUI, TUI, and Android.
+Support for additional harnesses, standalone task sessions created by the assistant, a Claude Plan mode control,
+and Kohaku tools exposed to the SDK can follow as separate work.

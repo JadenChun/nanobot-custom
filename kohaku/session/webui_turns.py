@@ -1046,6 +1046,7 @@ class WebuiTurnCoordinator:
             failure_kind=event.failure_kind,
             failure_error_kind=event.failure_error_kind,
             failure_attempts=event.failure_attempts,
+            failure_message=event.failure_message,
         )
         if self.recovery is not None:
             await self.recovery.turn_completed(event.context.session_key)
@@ -1094,6 +1095,7 @@ class WebuiTurnCoordinator:
         failure_kind: str | None = None,
         failure_error_kind: str | None = None,
         failure_attempts: int | None = None,
+        failure_message: str | None = None,
     ) -> None:
         if msg.channel != "websocket":
             return
@@ -1114,7 +1116,7 @@ class WebuiTurnCoordinator:
                     failure_kind=failure_kind,
                     failure_error_kind=failure_error_kind,
                     failure_attempts=failure_attempts,
-                    failure_message=(
+                    failure_message=failure_message or (
                         CONTEXT_BUDGET_ERROR_MESSAGE
                         if failure_kind == "model" and failure_error_kind == "context_length"
                         else "Model provider request failed. Check the provider configuration or "

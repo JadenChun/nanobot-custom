@@ -6,6 +6,8 @@ from typing import TYPE_CHECKING, Any
 
 from kohaku.agent.tools.base import Tool
 from kohaku.agent.turn import ToolOutcome, TurnContext
+from kohaku.harness.claude_sdk import child_harness_parameter
+from kohaku.session.harness_binding import ChatHarness
 
 if TYPE_CHECKING:
     from kohaku.agent.delegation import ForegroundAgentManager
@@ -15,6 +17,7 @@ class _ForegroundTool(Tool):
     _tool_name: str
     _tool_description: str
     _tool_parameters: dict[str, Any]
+    _has_harness = True
 
     def __init__(self, manager: "ForegroundAgentManager") -> None:
         self._manager = manager
@@ -29,7 +32,14 @@ class _ForegroundTool(Tool):
 
     @property
     def parameters(self) -> dict[str, Any]:
-        return self._tool_parameters
+        if not self._has_harness:
+            return self._tool_parameters
+        return {
+            **self._tool_parameters,
+            "properties": {
+                **self._tool_parameters["properties"], "harness": child_harness_parameter(),
+            },
+        }
 
     @property
     def supports_parallel_calls(self) -> bool:
@@ -71,6 +81,7 @@ class PlanTaskTool(_ForegroundTool):
         context: str = "",
         turn_context: TurnContext | None = None,
         artifact_references: list[str] | None = None,
+        harness: ChatHarness = "native",
         **_: Any,
     ) -> str | ToolOutcome:
         return await self._manager.run_plan(
@@ -78,6 +89,7 @@ class PlanTaskTool(_ForegroundTool):
             context=context,
             turn_context=turn_context,
             artifact_references=artifact_references,
+            harness=harness,
         )
 
     async def execute_with_context(self, turn_context: TurnContext, /, **kwargs: Any) -> str | ToolOutcome:
@@ -106,6 +118,11 @@ class DelegateTaskTool(_ForegroundTool):
                 "minItems": 1,
             },
             "artifact_references": _ARTIFACT_REFERENCES,
+            "continue_from_child_id": {
+                "type": "string",
+                "minLength": 1,
+                "description": "Fork a completed Claude Code child from this chat into a new worker.",
+            },
             "background": {
                 "type": "boolean",
                 "description": (
@@ -125,7 +142,9 @@ class DelegateTaskTool(_ForegroundTool):
         write_scope: list[str],
         turn_context: TurnContext | None = None,
         artifact_references: list[str] | None = None,
+        harness: ChatHarness = "native",
         background: bool = False,
+        continue_from_child_id: str | None = None,
         **_: Any,
     ) -> str | ToolOutcome:
         return await self._manager.run_worker(
@@ -133,7 +152,9 @@ class DelegateTaskTool(_ForegroundTool):
             write_scope=write_scope,
             turn_context=turn_context,
             artifact_references=artifact_references,
+            harness=harness,
             background=background,
+            continue_from_child_id=continue_from_child_id,
         )
 
     async def execute_with_context(self, context: TurnContext, /, **kwargs: Any) -> str | ToolOutcome:
@@ -141,6 +162,7 @@ class DelegateTaskTool(_ForegroundTool):
 
 
 class FollowupChildTool(_ForegroundTool):
+    _has_harness = False
     _tool_name = "followup_child"
     _tool_description = (
         "Send an ordered follow-up to one canonical child owned by this chat. "
@@ -204,6 +226,7 @@ class ReviewWorkTool(_ForegroundTool):
         relevant_paths: list[str] | None = None,
         turn_context: TurnContext | None = None,
         artifact_references: list[str] | None = None,
+        harness: ChatHarness = "native",
         **_: Any,
     ) -> str | ToolOutcome:
         return await self._manager.run_review(
@@ -213,6 +236,7 @@ class ReviewWorkTool(_ForegroundTool):
             relevant_paths=relevant_paths,
             turn_context=turn_context,
             artifact_references=artifact_references,
+            harness=harness,
         )
 
     async def execute_with_context(self, context: TurnContext, /, **kwargs: Any) -> str | ToolOutcome:

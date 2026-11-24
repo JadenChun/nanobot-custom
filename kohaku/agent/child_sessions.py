@@ -27,6 +27,12 @@ from typing import Any, Literal, Mapping, cast
 
 from loguru import logger
 
+from kohaku.session.harness_binding import (
+    HARNESS_BINDING_KEY,
+    ChatHarness,
+    SessionHarnessBinding,
+    external_binding,
+)
 from kohaku.session.manager import Session, SessionManager
 from kohaku.session.pending_followups import (
     PendingBackgroundResult,
@@ -194,6 +200,7 @@ class ChildAdmission:
     assignment_digest: str
     policy_facts: dict[str, Any]
     runtime_generation: int
+    harness: ChatHarness = "native"
     assignment: str = ""
     task_label: str = ""
     task_label_truncated: bool = False
@@ -236,6 +243,7 @@ class ChildAdmission:
             "parent_incarnation": self.parent_incarnation,
             "root_key": self.root_key,
             "profile": self.profile,
+            **({"harness": self.harness} if self.harness != "native" else {}),
             "depth": self.depth,
             "attempt_id": self.attempt_id,
             "assignment_digest": self.assignment_digest,
@@ -423,6 +431,9 @@ def _parse_child_admission(key: str, data: Mapping[str, object]) -> ChildAdmissi
     parent_incarnation = text("parent_incarnation")
     root_key = text("root_key")
     profile = text("profile")
+    harness = data.get("harness", "native")
+    if harness != "native" and harness != "claude_sdk":
+        raise ValueError("The child harness is invalid.")
     if (
         key != session_key
         or session_key != f"{CHILD_SESSION_PREFIX}{child_id}"
@@ -538,6 +549,7 @@ def _parse_child_admission(key: str, data: Mapping[str, object]) -> ChildAdmissi
         attempt_id=text("attempt_id"),
         assignment_digest=digest,
         policy_facts=dict(cast(Mapping[str, Any], facts)),
+        harness="claude_sdk" if harness == "claude_sdk" else "native",
         runtime_generation=counter("runtime_generation"),
         assignment=assignment,
         task_label=task_label,
@@ -676,6 +688,11 @@ class DelegationTree:
                     raise ValueError("delegated child record is missing")
                 data = cast(Mapping[str, object], payload)
                 admission = _parse_child_admission(key, data)
+                binding = external_binding(typed_metadata)
+                if (admission.harness == "claude_sdk") != (binding is not None) or (
+                    binding is not None and binding.locked_workspace != admission.policy_facts.get("workspace")
+                ):
+                    raise ValueError("The child harness does not match its saved binding.")
             except Exception:
                 if data is not None and _historical_terminal_child(data):
                     logger.info("Retired historical delegated child {}", key)
@@ -1448,6 +1465,7 @@ class DelegationTree:
         runtime_generation: int = 0,
         expected_parent_source_state: SourceState | None = None,
         background_delivery: BackgroundDeliveryIntent | None = None,
+        harness: ChatHarness = "native",
     ) -> ChildAdmission | ChildRefusal:
         """Reserve one child slot before launch, or return an existing attempt."""
         if profile not in SUPPORTED_CHILD_PROFILES:
@@ -1583,6 +1601,7 @@ class DelegationTree:
                 attempt_id=attempt_id,
                 assignment_digest=digest,
                 policy_facts=facts,
+                harness=harness,
                 runtime_generation=runtime_generation,
                 assignment=assignment,
                 task_label=task_label,
@@ -2262,11 +2281,11 @@ class DelegationTree:
         try:
             runtime = RuntimeSessionMetadata(
                 profile=admission.profile,
-                execution_kind="native",
+                execution_kind="external" if admission.harness == "claude_sdk" else "native",
                 delegation_depth=admission.depth,
                 parent_key=admission.parent_key,
                 parent_incarnation=admission.parent_incarnation,
-                backend_binding="native-runner",
+                backend_binding="claude_sdk" if admission.harness == "claude_sdk" else "native-runner",
                 runtime_generation=admission.runtime_generation,
                 recovery_disposition=self._recovery_disposition(admission),
             )
@@ -2286,12 +2305,25 @@ class DelegationTree:
                         f"child source lifetime changed: {admission.session_key}"
                     )
                     return False
+                harness_metadata: dict[str, object] = {}
+                if admission.harness == "claude_sdk":
+                    workspace = admission.policy_facts.get("workspace")
+                    if not isinstance(workspace, str):
+                        return False
+                    saved = external_binding(snapshot.header["metadata"])
+                    if saved is None:
+                        harness_metadata[HARNESS_BINDING_KEY] = SessionHarnessBinding(
+                            "external", "claude_sdk", None, workspace, admission.runtime_generation,
+                        ).payload()
+                    elif saved.locked_workspace != workspace:
+                        return False
                 persisted = self.sessions.upsert_session_metadata(
                     admission.session_key,
                     {
                         DELEGATION_CHILD_METADATA_KEY: admission.metadata(),
                         RUNTIME_SESSION_METADATA_KEY: runtime.payload(),
                         "delegation_root_key": admission.root_key,
+                        **harness_metadata,
                     },
                     create_if_absent=False,
                 )

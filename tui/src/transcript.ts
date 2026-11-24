@@ -1,3 +1,4 @@
+import { harnessBadge, type ChatHarness } from "./harness"
 import { acceptsCompactionPhase } from "../../packages/client-events/notifications"
 import {
   BoxRenderable,
@@ -37,6 +38,7 @@ export interface TranscriptTheme {
 }
 
 export interface TranscriptHeader {
+  harness?: ChatHarness
   model: string
   workspace: string
   version: string
@@ -220,7 +222,8 @@ export class Transcript {
       paddingLeft: 1,
       paddingRight: 1,
     })
-    const title = this.createText(`>_  Kohaku  v${options.version}`, "text", true)
+    const badge = harnessBadge(options.harness)
+    const title = this.createText(`>_  Kohaku  v${options.version}${badge ? `  ${badge}` : ""}`, "text", true)
     const context = this.createText([
       "",
       `${options.model}     ${options.access}`,
@@ -821,12 +824,14 @@ function formatDelegatedChild(
     : child.state === "uncertain" || child.result_disposition === "uncertain"
       ? "needs reconciliation"
       : child.state.replace(/_/gu, " ")
-  const lines = [`  ◈ ${label} · ${status}`]
+  const badge = harnessBadge(child.harness)
+  const lines = [`  ◈ ${badge ? `${badge} ` : ""}${label} · ${status}`]
   if (child.outcome && child.outcome !== child.state) lines.push(`     Outcome: ${child.outcome}`)
   if (child.result_summary) {
     lines.push(`     ${child.result_summary}${child.result_summary_truncated ? "…" : ""}`)
   }
-  if (child.history_kind !== "summary"
+  if (child.harness !== "claude_sdk"
+    && child.history_kind !== "summary"
     && child.state === "waiting_approval"
     && child.pending_approval_id) {
     lines.push(`     Approval required · /child approvals`)

@@ -7,6 +7,7 @@ import type { ApprovalDecisionPayload } from "@/lib/types";
 
 export interface ApprovalRequestCardProps {
   summary: string;
+  command?: string | null;
   approvalId?: string | null;
   contextLabel?: string;
   requestLabel?: string;
@@ -26,6 +27,7 @@ export interface ApprovalRequestCardProps {
  */
 export function ApprovalRequestCard({
   summary,
+  command,
   approvalId = null,
   contextLabel,
   requestLabel,
@@ -81,7 +83,12 @@ export function ApprovalRequestCard({
         <span className="font-medium">
           {t("approval.plannedAction", { defaultValue: "Planned action" })}:{" "}
         </span>
-        <span className="break-words">{summary}</span>
+        <div className="min-w-0 break-words">
+          {summary}
+          {command ? (
+            <code className="mt-1 block max-h-32 overflow-auto whitespace-pre-wrap break-all">{command}</code>
+          ) : null}
+        </div>
       </div>
       <div className="flex flex-wrap justify-end gap-2">
         <Button
@@ -102,7 +109,12 @@ export function ApprovalRequestCard({
           {canSave ? t("approval.allowOnce", { defaultValue: "Allow once" }) : t("approval.approve", { defaultValue: "Approve and continue" })}
         </Button>
         {canSave ? (
-          <Button type="button" disabled={disabled} onClick={() => submit("approve_and_save")}>
+          <Button
+            type="button"
+            className="h-auto min-h-10 max-w-full whitespace-normal [overflow-wrap:anywhere]"
+            disabled={disabled}
+            onClick={() => submit("approve_and_save")}
+          >
             {pending === "approve_and_save" ? (
               <Loader2 className="mr-2 size-4 animate-spin" aria-hidden />
             ) : null}

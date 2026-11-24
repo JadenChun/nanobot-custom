@@ -20,6 +20,7 @@ from loguru import logger
 
 from kohaku.config.paths import get_webui_dir
 from kohaku.security.workspace_access import WORKSPACE_SCOPE_METADATA_KEY
+from kohaku.session.harness_binding import external_binding
 from kohaku.session.history_visibility import is_hidden_history_message
 from kohaku.session.manager import (
     _PROVIDER_STATE_RECORD_TYPE,  # pyright: ignore[reportPrivateUsage]
@@ -48,7 +49,7 @@ from kohaku.webui.session_identity import (
     webui_session_key,
 )
 
-_INDEX_VERSION = 10
+_INDEX_VERSION = 11
 _MODEL_PRESET_FIELD = "model_preset"
 _ROW_SOURCE_FIELD = "_source"
 _SESSION_SOURCE = "session"
@@ -293,6 +294,8 @@ def _public_row(sessions_dir: Path, webui_dir: Path, row: dict[str, Any]) -> dic
         _WORKSPACE_SCOPE_VALUE_FIELD: row.get(_WORKSPACE_SCOPE_VALUE_FIELD),
         "path": str(path),
     }
+    if (binding := external_binding(row)) is not None:
+        public["harness_binding"] = binding.payload()
     name = stored_session_handle_name(row)
     if isinstance(key, str) and is_webui_session_key(key) and name is not None:
         public["handle"] = session_handle_for_name(key, name).public_payload()
@@ -538,6 +541,8 @@ def _indexed_row_for_session(session: Session, path: Path, webui_dir: Path) -> d
         "recovery_state": recovery_state_from_metadata(session.metadata),
         SESSION_HANDLE_METADATA_KEY: stored_session_handle_name(session.metadata),
         **_indexed_workspace_scope_fields(session.metadata),
+        **({"harness_binding": binding.payload()}
+           if (binding := external_binding(session.metadata)) is not None else {}),
         _ROW_SOURCE_FIELD: _SESSION_SOURCE,
         "file": path.name,
         "mtime_ns": signature["mtime_ns"],
@@ -746,6 +751,8 @@ def _scan_session_row(
                 "recovery_state": recovery_state_from_metadata(metadata),
                 SESSION_HANDLE_METADATA_KEY: stored_session_handle_name(metadata),
                 **_indexed_workspace_scope_fields(metadata),
+                **({"harness_binding": binding.payload()}
+                   if (binding := external_binding(metadata)) is not None else {}),
                 _ROW_SOURCE_FIELD: _SESSION_SOURCE,
                 "file": path.name,
                 "mtime_ns": signature["mtime_ns"],

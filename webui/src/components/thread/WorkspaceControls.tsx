@@ -12,6 +12,7 @@ import {
   Folder,
   FolderOpen,
   Loader2,
+  LockKeyhole,
   Monitor,
   ShieldCheck,
   X,
@@ -90,6 +91,7 @@ export function WorkspaceProjectPicker({
   isHero = false,
   connected = false,
   disabled,
+  locked = false,
   scope,
   defaultScope,
   controls,
@@ -109,6 +111,7 @@ export function WorkspaceProjectPicker({
   isHero?: boolean;
   connected?: boolean;
   disabled?: boolean;
+  locked?: boolean;
   ownerKey?: string | null;
   scope: WorkspaceScopePayload | null;
   defaultScope: WorkspaceScopePayload | null;
@@ -192,9 +195,10 @@ export function WorkspaceProjectPicker({
   const selectedRepository = selectedScope && readableRepositories.find(
     (repository) => sameWorkspacePath(repository.path, selectedScope.project_path),
   );
-  const folderName = selectedScope
-    ? selectedRepository?.name.trim() || selectedScope.project_name?.trim()
-      || projectNameFromPath(selectedScope.project_path)
+  const namedScope = locked ? displayedScope : selectedScope;
+  const folderName = namedScope
+    ? selectedRepository?.name.trim() || namedScope.project_name?.trim()
+      || projectNameFromPath(namedScope.project_path)
     : "";
   // With no project chosen, the trigger is only a folder icon so the idle
   // composer does not repeat the picker prompt.
@@ -209,7 +213,10 @@ export function WorkspaceProjectPicker({
         defaultValue: "The running turn keeps its folder. This choice applies to the next turn.",
       })
     : null;
-  const triggerTitle = [triggerAccessibleLabel, selectedScope?.project_path, nextTurnHint]
+  const lockedHint = locked
+    ? t("thread.harness.workspaceLocked", { defaultValue: "Claude Code locked this working folder." })
+    : null;
+  const triggerTitle = [triggerAccessibleLabel, namedScope?.project_path, nextTurnHint, lockedHint]
     .filter(Boolean).join("\n");
   const effectiveAccess = activeScope?.effective_access;
   const currentAccess = effectiveAccess
@@ -261,7 +268,7 @@ export function WorkspaceProjectPicker({
               ref={triggerRef}
               type="button"
               disabled={disabled || !canChangeFocus}
-              aria-label={triggerAccessibleLabel}
+              aria-label={lockedHint ? `${triggerAccessibleLabel}. ${lockedHint}` : triggerAccessibleLabel}
               title={triggerTitle}
               className={cn(
                 "transition-colors disabled:pointer-events-none disabled:opacity-55",
@@ -302,7 +309,9 @@ export function WorkspaceProjectPicker({
                   {folderName}
                 </span>
               ) : null}
-              {!compact && showTriggerLabel ? (
+              {locked ? (
+                <LockKeyhole className="h-3 w-3 shrink-0 text-muted-foreground" aria-hidden />
+              ) : !compact && showTriggerLabel ? (
                 <ChevronDown className="h-3 w-3 shrink-0 text-muted-foreground" aria-hidden />
               ) : null}
             </button>

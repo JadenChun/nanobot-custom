@@ -10,6 +10,10 @@ import {
 
 import type { RecoveryState } from "./protocol"
 
+export function isExternalRecovery(state: RecoveryState): boolean {
+  return state.reason === "external_turn_interrupted" || state.reason === "external_tool_state_unknown"
+}
+
 export interface RecoveryNoticeTheme {
   text: string
   muted: string
@@ -147,9 +151,17 @@ export class RecoveryNotice {
   private render(): void {
     if (!this.state) return
     const failed = this.state.status === "failed"
-    const contextUnavailable = this.state.can_continue === false
-    const title = failed ? "Recovery failed" : "Task interrupted"
-    const detail = failed
+    const external = isExternalRecovery(this.state)
+    const contextUnavailable = external || this.state.can_continue === false
+    const uncertain = this.state.reason === "external_tool_state_unknown"
+    const title = external
+      ? uncertain ? "Claude Code tool status is unknown" : "Claude Code turn interrupted"
+      : failed ? "Recovery failed" : "Task interrupted"
+    const detail = external
+      ? uncertain
+        ? "Check the workspace. Send a fresh message when ready."
+        : "Send a fresh message to continue."
+      : failed
       ? "Review the saved task before continuing."
       : contextUnavailable
         ? "This task can’t be resumed safely. Dismiss to start a new message."
@@ -159,6 +171,7 @@ export class RecoveryNotice {
       chunk(title, this.theme.text, true),
     ])
     this.detail.content = new StyledText([chunk(`  ${detail}`, this.theme.muted)])
+    this.dismiss.visible = !external
     this.dismiss.fg = RGBA.fromHex(this.busy ? this.theme.muted : this.theme.text)
     this.resume.visible = !contextUnavailable
     this.resume.fg = RGBA.fromHex(this.busy ? this.theme.muted : this.theme.accent)

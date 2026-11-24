@@ -25,6 +25,11 @@ from kohaku.bus.outbound_events import (
 )
 from kohaku.bus.queue import MessageBus
 from kohaku.session import turn_continuation
+from kohaku.session.harness_binding import (
+    EXTERNAL_ACTIVE_RUN_KEY,
+    EXTERNAL_RECOVERY_KEY,
+    external_binding,
+)
 from kohaku.session.keys import UNIFIED_SESSION_KEY, last_channel_from_metadata
 from kohaku.session.manager import Session, SessionManager
 from kohaku.session.pending_followups import decode_pending_followups
@@ -430,7 +435,10 @@ def append_recovery_interruption(session: Session, *, superseded: bool = False) 
 
 def recovery_state_from_metadata(metadata: Mapping[str, Any] | None) -> dict[str, Any] | None:
     """Return a sanitized recovery state suitable for the WebSocket wire."""
-    value = metadata.get(RECOVERY_METADATA_KEY) if metadata else None
+    value = (
+        metadata.get(EXTERNAL_RECOVERY_KEY, metadata.get(RECOVERY_METADATA_KEY))
+        if metadata else None
+    )
     if not isinstance(value, dict):
         return None
     state = cast(dict[str, Any], value)
@@ -497,6 +505,15 @@ class RecoveryCoordinator:
             route = self._websocket_route_for(key, metadata)
             if route is None:
                 continue
+            try:
+                binding = external_binding(metadata)
+            except ValueError:
+                logger.warning("Invalid Claude Code binding for {}", key)
+                continue
+            if binding is not None:
+                if isinstance(run_id := metadata.get(EXTERNAL_ACTIVE_RUN_KEY), str):
+                    await self._recover_external_run(key, route[1], run_id)
+                continue
             if not self._needs_recovery(metadata) and not self._has_unfinished_webui_transcript(key):
                 continue
             session = self.sessions.get_or_create(key)
@@ -521,6 +538,63 @@ class RecoveryCoordinator:
                 )
                 self.sessions.save(session)
                 await self._publish(route[1], failed)
+
+    async def _recover_external_run(self, key: str, chat_id: str, run_id: str) -> None:
+        from kohaku.agent.run_store import RunStore
+        from kohaku.agent.turn import RunStatus
+        from kohaku.session.execution_owner import ExecutionBusyError, acquire_execution
+
+        backend = self.sessions.source_backend(key)
+        if backend is None:
+            return
+        try:
+            async with acquire_execution(
+                backend, key, run_id=run_id, wait_for_lock=False, reconcile_stale=True,
+            ) as owner:
+                snapshot = owner.read_snapshot()
+                if snapshot.header["metadata"].get(EXTERNAL_ACTIVE_RUN_KEY) != run_id:
+                    return
+                terminal = next((
+                    event.get("_external_outcome") for event in reversed(snapshot.events)
+                    if event.get("_run_id") == run_id and "_external_outcome" in event
+                ), None)
+                updates: dict[str, Any] = {}
+                if terminal is None or owner.unresolved_executions:
+                    updates[EXTERNAL_RECOVERY_KEY] = {
+                        "status": "awaiting_user", "recovery_id": run_id, "attempts": 0,
+                        "reason": (
+                            "external_tool_state_unknown" if owner.unresolved_executions
+                            else "external_turn_interrupted"
+                        ),
+                        "can_continue": False,
+                    }
+                runs = RunStore(self.sessions.workspace, self.sessions)
+                record = runs.load(run_id)
+                if (
+                    record is not None and record.session_key == key
+                    and record.status is RunStatus.RUNNING
+                ):
+                    record.status = (
+                        RunStatus.COMPLETED if terminal == "completed"
+                        else RunStatus.CANCELLED if terminal == "cancelled" else RunStatus.ERROR
+                    )
+                    record.stop_reason = (
+                        str(terminal) if terminal in ("completed", "cancelled", "failed")
+                        else "interrupted"
+                    )
+                    if owner.unresolved_executions:
+                        record.status = RunStatus.ERROR
+                        record.stop_reason = "tool_state_unknown"
+                    record.completed_at = datetime.now()
+                    runs.save(record)
+                backend.source.update_metadata(key, updates, removals=(EXTERNAL_ACTIVE_RUN_KEY,))
+                self.sessions.invalidate(key)
+            if (state := recovery_state_from_metadata(updates)) is not None:
+                await self._publish(chat_id, state)
+        except ExecutionBusyError:
+            return
+        except Exception:
+            logger.exception("Could not reconcile interrupted Claude Code turn for {}", key)
 
     def _recovery_candidates(self) -> list[str]:
         """Discover canonical and transcript-only WebUI sessions cheaply."""
@@ -561,6 +635,9 @@ class RecoveryCoordinator:
 
     async def admit(self, message: InboundMessage) -> bool:
         """Reject stale queued recoveries and let new user input supersede them."""
+        metadata = self.sessions.read_session_metadata(message.session_key)
+        if external_binding(metadata.get("metadata") if metadata is not None else None) is not None:
+            return RECOVERY_INBOUND_METADATA_KEY not in message.metadata
         recovery_id = message.metadata.get(RECOVERY_INBOUND_METADATA_KEY)
         if isinstance(recovery_id, str):
             session = self.sessions.get_or_create(message.session_key)
@@ -618,6 +695,8 @@ class RecoveryCoordinator:
         if not isinstance(recovery_id, str) or not recovery_id:
             raise RecoveryActionError("missing recovery_id")
         session = self.sessions.get_or_create(self._session_key(chat_id))
+        if external_binding(session.metadata) is not None:
+            raise RecoveryActionError("Claude Code recovery requires a fresh message.", status=409)
         state = recovery_state_from_metadata(session.metadata)
         if not state or state["recovery_id"] != recovery_id:
             raise RecoveryActionError("recovery state is stale", status=409)

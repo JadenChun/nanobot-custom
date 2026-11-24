@@ -32,6 +32,7 @@ import type {
   SessionDeleteResult,
   SessionGeneratedAssetsPayload,
   SessionHandle,
+  HarnessBinding,
   SessionAutomationsPayload,
   SessionTurnIndexPayload,
   SettingsPayload,
@@ -741,6 +742,7 @@ export async function listSessions(
     reasoning_effort?: string | null;
     run_started_at?: number | null;
     recovery_state?: RecoveryState | null;
+    harness_binding?: HarnessBinding;
     workspace_scope?: WorkspaceScopePayload | null;
     handle?: SessionHandle | null;
   };
@@ -763,6 +765,7 @@ export async function listSessions(
       ...(typeof s.reasoning_effort === "string" ? { reasoningEffort: s.reasoning_effort } : {}),
       runStartedAt: s.run_started_at ?? null,
       recoveryState: s.recovery_state ?? null,
+      ...(s.harness_binding ? { harnessBinding: s.harness_binding } : {}),
       workspaceScope: s.workspace_scope ?? null,
       handle,
     };

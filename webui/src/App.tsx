@@ -49,6 +49,7 @@ import { ClientProvider, useClient } from "@/providers/ClientProvider";
 import type {
   BootstrapResponse,
   ChatSummary,
+  ChatHarness,
   ConnectionStatus,
   RuntimeSurface,
   PairingRequestInfo,
@@ -1430,7 +1431,9 @@ function Shell({
     return client.onError((error) => {
       if (error.kind !== "workspace_scope_rejected") return;
       if (error.chatId && error.chatId !== activeChatIdRef.current) return;
-      setWorkspaceError(t("errors.workspaceScopeRejected.body"));
+      setWorkspaceError(error.reason === "harness_workspace_locked"
+        ? t("thread.harness.workspaceLocked", { defaultValue: "Claude Code locked this working folder." })
+        : t("errors.workspaceScopeRejected.body"));
       void refreshWorkspaces();
     });
   }, [client, refreshWorkspaces, t]);
@@ -1556,11 +1559,13 @@ function Shell({
     workspaceScope?: WorkspaceScopePayload | null,
     _initialMessage?: string,
     modelPreset?: string | null,
-    options?: { fullAccess?: boolean },
+    options?: { fullAccess?: boolean; harness?: ChatHarness },
   ) => {
     try {
       const scope = workspaceScope ?? activeWorkspaceScope;
-      const chatId = await createChat(scope, modelPreset);
+      const chatId = await (options?.harness === "claude_sdk"
+        ? createChat(scope, modelPreset, options.harness)
+        : createChat(scope, modelPreset));
       const key = `websocket:${chatId}`;
       if (options?.fullAccess) {
         const prepared = await prepareWorkspaceFullAccess(client, chatId);
@@ -1601,6 +1606,10 @@ function Shell({
           ? normalizeWorkspaceScope(workspaces.default_scope)
           : null);
         setWorkspaceError(t("errors.workspaceScopeRejected.body"));
+      } else if (e instanceof Error && e.message.startsWith("harness_")) {
+        setWorkspaceError(e.message === "harness_unavailable"
+          ? t("thread.harness.unavailable", { defaultValue: "Claude Code requires the Claude Agent SDK." })
+          : t("thread.harness.createFailed", { defaultValue: "Claude Code could not open this chat. Try again." }));
       } else if (options?.fullAccess) {
         setWorkspaceError(t("workspace.permissionV2.actionFailed", {
           defaultValue: "Access could not be updated. Refresh this chat before retrying.",
@@ -2497,7 +2506,7 @@ function Shell({
                 temporaryChatIds={temporaryChatIds}
                 temporaryChatEnabled={temporaryChatEnabled}
                 onTemporaryChatEnabledChange={
-                  !activeKey ? onTemporaryChatEnabledChange : undefined
+                  !activeKey && !isMobileRuntimeActive() ? onTemporaryChatEnabledChange : undefined
                 }
                 onToggleSidebar={toggleSidebar}
                 onNewChat={onNewChat}

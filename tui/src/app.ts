@@ -29,9 +29,12 @@ import {
   fetchGatewayConnection,
   fetchMentionCandidates,
   fetchSessionContext,
+  fetchSessionList,
   fetchSessions,
   fetchSlashCommands,
   type ApiReauthenticator,
+  type ApprovalDecision,
+  type ExternalApprovalEvent,
   type ConnectionStatus,
   type ConnectionStatusInfo,
   type FileEditEvent,
@@ -96,7 +99,16 @@ import {
 } from "./skill-menu"
 import { PromptQueue, type QueuedPrompt } from "./prompt-queue"
 import { QueuePreview, type QueuePreviewTheme } from "./queue-preview"
-import { RecoveryNotice, type RecoveryNoticeTheme } from "./recovery-notice"
+import { RecoveryNotice, isExternalRecovery, type RecoveryNoticeTheme } from "./recovery-notice"
+import { ExternalApprovalNotice } from "./external-approval-notice"
+import {
+  harnessBadge,
+  harnessErrorMessage,
+  TEMPORARY_HARNESS_HINT,
+  type ChatHarness,
+  type HarnessBinding,
+  type HarnessCapabilities,
+} from "./harness"
 import { RuntimeControls } from "./runtime-controls"
 import {
   contextualFooterHints,
@@ -132,7 +144,8 @@ interface ChatClient {
   close(): void
   send(content: string, options?: MessageOptions): string
   attach(chatId: string): void
-  newChat(scope?: WorkspaceScopePayload): void
+  newChat(scope?: WorkspaceScopePayload, harness?: ChatHarness): void
+  newTemporaryChat?(): void
   forkChat?(sourceChatId: string, beforeUserIndex: number, title?: string): void
   setWorkspaceScope(scope: WorkspaceScopePayload): void
   updateRecovery(
@@ -203,7 +216,7 @@ function approvalPromptSummary(content: string, approvalId: string): string | nu
 }
 
 function isPendingChildApproval(child: DelegatedChildActivity): boolean {
-  return child.state === "waiting_approval"
+  return child.harness !== "claude_sdk" && child.state === "waiting_approval"
     && Boolean(child.pending_approval_id)
     && Boolean(child.blocked_run_id)
     && child.blocked_run_id === child.child_run_id
@@ -340,6 +353,18 @@ const LOCAL_COMMANDS: TuiCommand[] = [
     title: "New saved chat",
     description: "Keep this conversation and start another",
     action: "new-chat",
+  },
+  {
+    command: "/new-temporary-chat",
+    title: "New temporary chat",
+    description: "Start a chat without saved history",
+    action: "new-temporary-chat",
+  },
+  {
+    command: "/approval",
+    title: "Claude Code approvals",
+    description: "Review and decide live approval requests",
+    action: "approval",
   },
   {
     command: "/context",
@@ -615,6 +640,7 @@ export class KohakuTui {
   private readonly diffViewer: DiffViewer
   private readonly queuePreview: QueuePreview
   private readonly recoveryNotice: RecoveryNotice
+  private readonly externalApprovalNotice: ExternalApprovalNotice
   private readonly client: ChatClient
   private readonly shell: BoxRenderable
   private readonly title: BoxRenderable
@@ -627,6 +653,10 @@ export class KohakuTui {
   private readonly draft = new ComposerDraft()
   private readonly promptQueues = new Map<string, PromptQueue>()
   private currentChatId = ""
+  private temporaryChat = false
+  private newChatPending = false
+  private harnessCapabilities: HarnessCapabilities | undefined
+  private harnessBinding: HarnessBinding | undefined
   private palette: Palette
   private activeThemeMode: ThemeMode
   private backgroundKnown: boolean
@@ -643,6 +673,7 @@ export class KohakuTui {
   private childRefreshPending = false
   private childRefreshRequestedAgain = false
   private connectionRevision = 0
+  private readonly externalApprovals = new Map<string, ExternalApprovalEvent>()
   private readonly pendingApprovalTurns = new Map<string, string>()
   private readonly pendingApprovalIds = new Set<string>()
   private readonly refusedApprovalIds = new Set<string>()
@@ -775,6 +806,11 @@ export class KohakuTui {
       treeSitterClient,
     )
     this.queuePreview = new QueuePreview(renderer, queuePreviewTheme(this.palette))
+    this.externalApprovalNotice = new ExternalApprovalNotice(
+      renderer,
+      commandMenuTheme(this.palette),
+      (id, decision) => this.submitExternalApproval(id, decision),
+    )
     this.recoveryNotice = new RecoveryNotice(
       renderer,
       recoveryNoticeTheme(this.palette),
@@ -882,6 +918,10 @@ export class KohakuTui {
         refreshScope: () => this.refreshSessionMetadata(this.client.activeChatId),
         onModel: (preset) => this.sendGatewayCommand(`/model ${preset}`, "side_channel", true),
         onAccess: (scope) => {
+          if (this.temporaryChat) {
+            this.status.content = "Start a saved chat to change workspace access."
+            return
+          }
           try {
             this.client.setWorkspaceScope(scope)
             this.status.content = "Changing access…"
@@ -889,6 +929,7 @@ export class KohakuTui {
             this.status.content = error instanceof Error ? error.message : String(error)
           }
         },
+        onHarness: (harness, temporary) => this.createNewChat(harness, temporary),
         onStatus: (message) => { this.status.content = message },
         onVisibilityChange: (visible) => {
           this.updateMeta()
@@ -896,8 +937,10 @@ export class KohakuTui {
         },
       },
     )
+    this.title.add(this.runtimeControls.harnessText)
     this.title.add(this.runtimeControls.modelText)
     this.title.add(this.runtimeControls.accessText)
+    this.title.add(this.runtimeControls.workspaceLockText)
     this.title.add(this.runtimeControls.contextText)
     const composerSurface = this.composerSurface()
     this.composerFrame = new BoxRenderable(renderer, {
@@ -998,6 +1041,7 @@ export class KohakuTui {
     this.shell.add(this.title)
     this.shell.add(this.queuePreview.root)
     this.shell.add(this.recoveryNotice.root)
+    this.shell.add(this.externalApprovalNotice.root)
     this.shell.add(this.composerFrame)
     this.shell.add(statusRow)
     this.shell.add(this.diffViewer.root)
@@ -1132,6 +1176,10 @@ export class KohakuTui {
       this.requestStop()
       return
     }
+    if (/^\/approval(?:\s|$)/iu.test(visibleContent)) {
+      this.handleExternalApprovalCommand(visibleContent)
+      return
+    }
     if (visibleContent.toLowerCase() === "/child" || visibleContent.toLowerCase().startsWith("/child ")) {
       void this.handleChildCommand(visibleContent)
       return
@@ -1165,7 +1213,8 @@ export class KohakuTui {
       else if (command.command.action === "branch") void this.openBranch()
       else if (command.command.action === "detach") this.quit(true)
       else if (command.command.action === "exit") this.quit()
-      else this.startNewChat()
+      else if (command.command.action === "new-temporary-chat") this.startNewChat(true)
+      else if (command.command.action === "new-chat") this.startNewChat(false)
       return
     }
     if (command?.source === "gateway") {
@@ -1184,7 +1233,8 @@ export class KohakuTui {
     const prompt = this.composerPrompt()
     if (!this.canSendPrompt(prompt)) return
     if (this.activeTurn) {
-      this.sendPrompt(prompt, true)
+      if (this.harnessBinding?.harness === "claude_sdk") this.queueFollowUp()
+      else this.sendPrompt(prompt, true)
       return
     }
     this.sendPrompt(prompt)
@@ -1203,7 +1253,8 @@ export class KohakuTui {
       }
       for (const child of this.delegatedChildren.references) {
         const outcome = child.outcome ? ` (${child.outcome})` : ""
-        this.transcript.notice(`${child.task_label || child.profile || "Delegated task"}`
+        const badge = harnessBadge(child.harness)
+        this.transcript.notice(`${badge ? `${badge} ` : ""}${child.task_label || child.profile || "Delegated task"}`
           + ` · ${child.state}${outcome}`
           + (child.history_kind === "summary" ? " · summary only" : ""))
       }
@@ -1214,9 +1265,14 @@ export class KohakuTui {
       return
     }
     if (sub === "approvals") {
+      for (const event of this.externalApprovals.values()) {
+        if (event.child_id) this.describeExternalApproval(event)
+      }
       const candidates = this.delegatedChildren.rows.filter(isPendingChildApproval)
       if (candidates.length === 0) {
-        this.transcript.notice("No pending delegated child approvals")
+        if (![...this.externalApprovals.values()].some((event) => event.child_id)) {
+          this.transcript.notice("No pending delegated child approvals")
+        }
         return
       }
       await Promise.all(candidates.map((child) => this.ensureApprovalDetails(child, true)))
@@ -1246,7 +1302,11 @@ export class KohakuTui {
         this.transcript.notice(`Usage: /child ${sub} <approval-id>`, true)
         return
       }
-      this.submitApprovalDecision(childId, sub === "approve" ? "approve" : "deny")
+      if (this.externalApprovals.get(childId)?.child_id) {
+        this.submitExternalApproval(childId, sub === "approve" ? "approve" : "deny")
+      } else {
+        this.submitApprovalDecision(childId, sub === "approve" ? "approve" : "deny")
+      }
       return
     }
     if (sub === "wait" || sub === "stop" || sub === "steer") {
@@ -1265,6 +1325,110 @@ export class KohakuTui {
       return
     }
     await this.openChildDetail(childId)
+  }
+
+  private handleExternalApprovalCommand(content: string): void {
+    const [, action, id] = content.split(/\s+/u)
+    this.clearComposer()
+    this.commandMenu.hide()
+    if (!action) {
+      if (!this.externalApprovals.size) this.transcript.notice("No live Claude Code approvals.")
+      for (const event of this.externalApprovals.values()) this.describeExternalApproval(event)
+      return
+    }
+    const decision = action === "allow" ? "approve"
+      : action === "save" ? "approve_and_save"
+      : action === "deny" ? "deny"
+      : null
+    if (!decision || (!id && this.externalApprovals.size !== 1)) {
+      this.transcript.notice("Use /approval allow, save, or deny, followed by the approval ID.", true)
+      return
+    }
+    const approvalId = id ?? this.externalApprovals.keys().next().value
+    if (approvalId) this.submitExternalApproval(approvalId, decision)
+  }
+
+  private describeExternalApproval(event: ExternalApprovalEvent): void {
+    if (!event.approval) return
+    const { summary, command, save_exclusion_command: saveCommand } = event.approval
+    const id = event.approval_id
+    this.transcript.notice(
+      [
+        `${this.externalApprovalOwner(event)} approval ${id} · ${summary}`,
+        command,
+        `Allow once with /approval allow ${id}`,
+        saveCommand ? `Allow & save ${saveCommand} with /approval save ${id}` : null,
+        `Deny with /approval deny ${id}`,
+      ].filter(Boolean).join("\n"),
+    )
+  }
+
+  private externalApprovalOwner(event: ExternalApprovalEvent): string {
+    if (!event.child_id) return "Claude Code"
+    const child = this.delegatedChildren.getReference(event.child_id)
+    return `[Claude] ${child?.task_label || event.child_id}`
+  }
+
+  private submitExternalApproval(id: string, decision: ApprovalDecision["decision"]): void {
+    const event = this.externalApprovals.get(id)
+    const approval = event?.approval
+    if (!this.connected || !this.ready || !approval || event.chat_id !== this.client.activeChatId) {
+      this.transcript.notice("That Claude Code approval is unavailable.", true)
+      return
+    }
+    if (this.pendingApprovalIds.has(id)) {
+      this.transcript.notice("The gateway is still resolving that approval.", true)
+      return
+    }
+    if (decision === "approve_and_save" && !approval.save_exclusion_command) {
+      this.transcript.notice("The gateway cannot save an exclusion for this approval.", true)
+      return
+    }
+    try {
+      const turnId = this.client.send("approval_decision", {
+        approvalDecision: {
+          approval_id: id,
+          decision,
+          session_key: approval.session_key,
+          session_incarnation: approval.session_incarnation,
+          run_id: approval.run_id,
+          effect_id: approval.effect_id,
+          generation: approval.generation,
+        },
+      })
+      this.pendingApprovalIds.add(id)
+      this.pendingApprovalTurns.set(id, turnId)
+      this.syncExternalApprovals()
+    } catch {
+      this.transcript.notice("The approval decision could not be sent. Check the connection.", true)
+    }
+  }
+
+  private clearExternalApproval(id: string): void {
+    if (this.externalApprovals.delete(id)) this.clearApprovalControl(id)
+  }
+
+  private clearExternalApprovals(includeChildren: boolean): void {
+    for (const [id, event] of this.externalApprovals) {
+      if (includeChildren || !event.child_id) this.clearExternalApproval(id)
+    }
+    this.syncExternalApprovals()
+  }
+
+  private syncExternalApprovals(): void {
+    const events = [...this.externalApprovals.values()]
+    const event = events.find((item) => !this.pendingApprovalIds.has(item.approval_id)) ?? events[0]
+    if (!event?.approval) {
+      this.externalApprovalNotice.hide()
+      return
+    }
+    this.externalApprovalNotice.show(
+      event.approval_id,
+      event.approval,
+      this.externalApprovalOwner(event),
+      this.pendingApprovalIds.has(event.approval_id),
+      events.length - 1,
+    )
   }
 
   private async ensureApprovalDetails(
@@ -1411,6 +1575,7 @@ export class KohakuTui {
       this.connected && this.delegatedStatusAvailable,
       this.connected,
     )
+    this.syncExternalApprovals()
     this.updateMeta()
   }
 
@@ -1444,7 +1609,7 @@ export class KohakuTui {
   }
 
   private requestDelegatedChildRefresh(chatId: string): void {
-    if (!chatId || chatId !== this.currentChatId) return
+    if (this.quitting || !chatId || chatId !== this.currentChatId) return
     if (this.childRefreshPending) {
       this.childRefreshRequestedAgain = true
       return
@@ -1462,7 +1627,7 @@ export class KohakuTui {
       rootKey,
       this.apiReauthenticator,
     ).then((snapshot) => {
-      if (chatId !== this.currentChatId || !snapshot) return
+      if (this.quitting || chatId !== this.currentChatId || !snapshot) return
       if (
         startedTargetRevision !== this.stopTargetRevision
         || !sameStopTargetSource(startedTargetSource, this.stopTarget?.source ?? null)
@@ -1498,7 +1663,7 @@ export class KohakuTui {
         this.status.content = "Conflicting child status retained · waiting for a newer canonical update"
       }
     }).catch(() => {
-      if (chatId !== this.currentChatId) return
+      if (this.quitting || chatId !== this.currentChatId) return
       this.syncDelegatedChildren()
     }).finally(() => {
       this.childRefreshPending = false
@@ -1530,7 +1695,7 @@ export class KohakuTui {
   }
 
   private hasOwnedWork(): boolean {
-    return this.stopTarget !== null || this.delegatedChildren.rows.some((child) => (
+    return this.stopTarget !== null || this.externalApprovals.size > 0 || this.delegatedChildren.rows.some((child) => (
       child.owned_work
       || child.holds_capacity
       || ["reserved", "joining", "waiting_approval", "stopping", "uncertain"]
@@ -1641,6 +1806,7 @@ export class KohakuTui {
         "kohaku-tui-child-detail",
       )
       detail.header({
+        harness: history.harness ?? current.harness,
         model: this.modelName || this.modelPreset,
         workspace: this.options.workspace,
         version: this.options.version,
@@ -1806,6 +1972,14 @@ export class KohakuTui {
     if (!approvalId) return false
     if (event.event === "error") {
       this.clearApprovalControl(approvalId)
+      if (this.externalApprovals.has(approvalId)) {
+        if (event.reason === "approval_stale") this.clearExternalApproval(approvalId)
+        this.syncExternalApprovals()
+        this.transcript.notice(event.reason === "approval_save_failed"
+          ? "The gateway could not save the exclusion. Review the approval and try again."
+          : "The gateway refused the Claude Code approval.", true)
+        return true
+      }
       this.refusedApprovalIds.add(approvalId)
       this.transcript.notice(
         `Approval ${approvalId} was refused · refresh canonical child status before deciding again`,
@@ -1815,6 +1989,7 @@ export class KohakuTui {
       return true
     }
     if (event.event === "turn_end") {
+      if (this.externalApprovals.has(approvalId)) return true
       this.clearApprovalControl(approvalId)
       this.status.content = `Approval ${approvalId} finished · confirming child status`
       this.requestDelegatedChildRefresh(this.currentChatId)
@@ -1829,7 +2004,29 @@ export class KohakuTui {
   }
 
   accept(event: InboundEvent): void {
+    if (event.event === "ready") {
+      this.harnessCapabilities = event.harness_capabilities
+      return
+    }
     if (event.event === "attached") {
+      this.clearExternalApprovals(true)
+      this.runtimeControls.hide()
+      if (event.harness_capabilities) this.harnessCapabilities = event.harness_capabilities
+      this.applyHarnessBinding(event.harness_binding, true)
+      this.temporaryChat = event.temporary === true
+      if (this.newChatPending) {
+        this.clearRecoveryState()
+        this.clearPromptQueue()
+        this.contextRequestId += 1
+        this.host.reportTitle("")
+        this.sessionTitle = this.temporaryChat ? "Temporary chat" : "New chat"
+        this.applyModelPreset(null)
+        this.updateTitle()
+        this.contextTokens = null
+        this.lastUsage = null
+        this.readyDetail = ""
+        this.newChatPending = false
+      }
       const previousChatId = this.currentChatId
       if (previousChatId && previousChatId !== event.chat_id) {
         this.closeChildDetail()
@@ -1860,8 +2057,8 @@ export class KohakuTui {
       this.delegatedStatusAvailable = false
       this.syncDelegatedChildren()
       if (event.usage) this.lastUsage = event.usage
-      if (event.model_preset !== undefined) {
-        this.applyModelPreset(event.model_preset)
+      if (event.model_preset !== undefined || this.temporaryChat) {
+        this.applyModelPreset(event.model_preset ?? null)
         this.updateTitle()
       }
       this.commandTurns.clear()
@@ -1903,6 +2100,12 @@ export class KohakuTui {
     if (this.handleClientControlEvent(event)) return
 
     switch (event.event) {
+      case "external_approval":
+        if (event.chat_id !== this.currentChatId) return
+        if (event.approval) this.externalApprovals.set(event.approval_id, event)
+        else this.clearExternalApproval(event.approval_id)
+        this.syncExternalApprovals()
+        return
       case "context_compaction":
         this.transcript.compaction({ id: event.compaction_id, phase: event.phase })
         return
@@ -2021,6 +2224,7 @@ export class KohakuTui {
         return
       case "turn_end":
         if (event.turn_id && this.activeTurnId && event.turn_id !== this.activeTurnId) return
+        this.clearExternalApprovals(false)
         if (
           this.stopInFlight
           && event.turn_id
@@ -2095,6 +2299,13 @@ export class KohakuTui {
         this.setDefaultModel(event.model_name, event.model_preset)
         return
       case "session_updated":
+        if (event.harness_binding) {
+          if (this.recoveryState && isExternalRecovery(this.recoveryState)
+            && event.harness_binding.runtime_generation > (this.harnessBinding?.runtime_generation ?? 0)) {
+            this.clearRecoveryState()
+          }
+          this.applyHarnessBinding(event.harness_binding)
+        }
         if (event.workspace_scope) this.applyWorkspaceScope(event.workspace_scope)
         if (
           !this.sessionTitle
@@ -2105,7 +2316,19 @@ export class KohakuTui {
           void this.refreshSessionMetadata(event.chat_id)
         }
         return
-      case "error":
+      case "error": {
+        const harnessMessage = harnessErrorMessage(event.reason) || harnessErrorMessage(event.detail)
+        if (this.newChatPending && !event.turn_id) {
+          this.newChatPending = false
+          this.ready = true
+          this.status.content = harnessMessage || event.reason || event.detail || "The gateway could not create the chat."
+          return
+        }
+        if (harnessMessage) {
+          this.transcript.notice(harnessMessage, true)
+          this.status.content = harnessMessage
+          return
+        }
         if (this.pendingFollowUp && event.turn_id === this.pendingFollowUp.turnId) {
           this.pendingFollowUp = null
         }
@@ -2131,6 +2354,7 @@ export class KohakuTui {
         this.restoreQueuedPrompts()
         this.setActive(false)
         return
+      }
     }
   }
 
@@ -2151,7 +2375,7 @@ export class KohakuTui {
           access: this.options.access,
         })
       }
-      if (restoring || (!this.historyLoaded && this.options.chatId)) {
+      if (!this.temporaryChat && (restoring || (!this.historyLoaded && this.options.chatId))) {
         this.historyLoaded = true
         const history = await fetchHistory(
           this.options.apiUrl,
@@ -2161,6 +2385,9 @@ export class KohakuTui {
           this.apiReauthenticator,
         )
         if (hydrationId !== this.hydrationId) return
+        if (history.harnessCapabilities) this.harnessCapabilities = history.harnessCapabilities
+        if (history.harnessBinding) this.applyHarnessBinding(history.harnessBinding)
+        if (history.workspaceScope) this.applyWorkspaceScope(history.workspaceScope)
         this.historyBeforeCursor = history.beforeCursor
         this.historyHasMore = history.hasMoreBefore
         if (history.stopTargetSnapshotAvailable) {
@@ -2228,7 +2455,9 @@ export class KohakuTui {
       this.activeTurnId = null
       this.setActive(false)
       this.recoveryNotice.show(state)
-      this.status.content = state.can_continue === false
+      this.status.content = isExternalRecovery(state)
+        ? "Interrupted · send a fresh message"
+        : state.can_continue === false
         ? "Interrupted · dismiss to start a new message"
         : "Interrupted · continue or dismiss"
       this.composer.focus()
@@ -2242,6 +2471,10 @@ export class KohakuTui {
 
   private async updateRecovery(action: "continue" | "dismiss"): Promise<void> {
     const state = this.recoveryState
+    if (state && isExternalRecovery(state)) {
+      this.status.content = "Send a fresh message to continue."
+      return
+    }
     if (
       !state
       || (state.status !== "awaiting_user" && state.status !== "failed")
@@ -2333,6 +2566,8 @@ export class KohakuTui {
     }
     if (["starting", "connecting", "reconnecting", "unavailable"].includes(status)) {
       this.recoverUnacknowledgedApprovals()
+      this.clearExternalApprovals(true)
+      this.newChatPending = false
       this.connected = false
       this.delegatedStatusAvailable = false
       this.ready = false
@@ -2344,6 +2579,8 @@ export class KohakuTui {
     if (status === "error") {
       if (info) {
         this.recoverUnacknowledgedApprovals()
+        this.clearExternalApprovals(true)
+        this.newChatPending = false
         this.connected = false
         this.delegatedStatusAvailable = false
         this.ready = false
@@ -2355,6 +2592,8 @@ export class KohakuTui {
     }
     if (!this.quitting) {
       this.recoverUnacknowledgedApprovals()
+      this.clearExternalApprovals(true)
+      this.newChatPending = false
       this.connected = false
       this.delegatedStatusAvailable = false
       this.ready = false
@@ -2429,12 +2668,14 @@ export class KohakuTui {
         ? "New output · Ctrl+End latest"
         : "History · Ctrl+End latest"
     }
+    if (this.temporaryChat) return detail ? `Temporary chat · ${detail}` : "Temporary chat"
     if (detail) return `Ready · ${detail}`
     return this.historyHasMore ? "Ready · PageUp for earlier history" : "Ready"
   }
 
   private sendNextFollowUp(): void {
-    if (!this.ready || this.activeTurn || this.quitting) return
+    if (!this.ready || this.activeTurn || this.quitting
+      || (this.recoveryState && isExternalRecovery(this.recoveryState))) return
     // Peek now, commit only after the session owner confirms admission.
     // A sent but unconfirmed item must not be submitted twice.
     if (this.pendingFollowUp) return
@@ -2908,6 +3149,7 @@ export class KohakuTui {
     this.diffViewer.setTheme(diffViewerTheme(this.palette, this.backgroundKnown))
     this.queuePreview.setTheme(queuePreviewTheme(this.palette))
     this.recoveryNotice.setTheme(recoveryNoticeTheme(this.palette))
+    this.externalApprovalNotice.setTheme(commandMenuTheme(this.palette))
     this.updateComposerAppearance()
     this.composer.textColor = this.palette.text
     this.composer.focusedTextColor = this.palette.text
@@ -2984,7 +3226,16 @@ export class KohakuTui {
   }
 
   private applySessionScope(session: SessionSummary): void {
+    if (session.harnessBinding) this.applyHarnessBinding(session.harnessBinding)
     if (session.workspaceScope) this.applyWorkspaceScope(session.workspaceScope)
+  }
+
+  private applyHarnessBinding(binding: HarnessBinding | undefined, attached = false): void {
+    if (!attached && binding && this.harnessBinding
+      && binding.runtime_generation < this.harnessBinding.runtime_generation) return
+    this.harnessBinding = binding
+    this.runtimeControls.updateHarness(binding)
+    this.syncComposerPlaceholder()
   }
 
   private applyModelPreset(preset: string | null): void {
@@ -3037,7 +3288,9 @@ export class KohakuTui {
     // OpenTUI normally suppresses placeholder glyphs while the editor is not
     // empty. Explicitly removing them also invalidates their old cells, which
     // prevents stale placeholder text in differential/embedded terminals.
-    const activePlaceholder = this.renderer.width >= 40
+    const activePlaceholder = this.harnessBinding?.harness === "claude_sdk"
+      ? "Enter send next · Ctrl+C stop"
+      : this.renderer.width >= 40
       ? ACTIVE_COMPOSER_PLACEHOLDER
       : COMPACT_ACTIVE_COMPOSER_PLACEHOLDER
     const placeholder = this.composer.plainText
@@ -3051,7 +3304,7 @@ export class KohakuTui {
   }
 
   private syncCommandMenu(): void {
-    const limit = this.renderer.height >= 20 ? 7 : 3
+    const limit = this.renderer.height >= 22 ? 9 : this.renderer.height >= 20 ? 7 : 3
     this.commandMenu.update(this.composer.plainText, limit)
     this.updateMeta()
   }
@@ -3152,7 +3405,7 @@ export class KohakuTui {
     this.syncComposerImageHighlights(value)
     const clearedUnsent = this.unsentSubmit && !value.trim()
     if (clearedUnsent) this.unsentSubmit = false
-    this.runtimeControls.hide()
+    if (value || !this.runtimeControls.choosingHarness) this.runtimeControls.hide()
     if (this.contextPanel.visible && value) this.contextPanel.hide()
     this.syncComposerPlaceholder()
     if (this.sessionMenu.visible) this.syncSessionMenu()
@@ -3421,12 +3674,13 @@ export class KohakuTui {
     const loadId = ++this.sessionLoadId
     this.status.content = "Loading sessions…"
     try {
-      const sessions = await fetchSessions(
+      const { sessions, harnessCapabilities } = await fetchSessionList(
         this.options.apiUrl,
         this.options.apiToken,
         this.apiReauthenticator,
       )
       if (this.quitting || loadId !== this.sessionLoadId) return
+      if (harnessCapabilities) this.harnessCapabilities = harnessCapabilities
       this.sessionLoading = false
       const current = sessions.find((session) => session.chatId === this.client.activeChatId)
       if (current) {
@@ -3482,6 +3736,7 @@ export class KohakuTui {
       this.host.reportTitle("")
       this.sessionTitle = sessionLabel(session)
       this.applySessionModel(session)
+      this.applyHarnessBinding(undefined)
       this.applySessionScope(session)
       this.contextTokens = null
       this.lastUsage = null
@@ -3494,7 +3749,7 @@ export class KohakuTui {
     }
   }
 
-  private startNewChat(): void {
+  private startNewChat(temporary: boolean): void {
     if (this.activeTurn) {
       this.status.content = "Wait for the current turn or press Ctrl+C"
       return
@@ -3503,30 +3758,38 @@ export class KohakuTui {
       this.status.content = "Preparing chat…"
       return
     }
-    this.commandMenu.hide()
-    this.hideSessionMenu()
-    this.mentionMenu.hide()
-    this.skillMenu.hide()
-    this.branchMenu.hide()
-    this.contextPanel.hide()
     this.clearComposer()
+    this.closeTransientMenus()
+    this.runtimeControls.openHarness(temporary, this.harnessUnavailableHint())
+  }
+
+  private harnessUnavailableHint(): string | undefined {
+    const claude = this.harnessCapabilities?.claude_sdk
+    if (claude?.available) return undefined
+    return claude?.reason === "sdk_missing"
+      ? "Unavailable · Claude Agent SDK is missing."
+      : "Unavailable on this gateway."
+  }
+
+  private createNewChat(harness: ChatHarness, temporary: boolean): void {
+    if (!this.ready || this.activeTurn) return
+    if (harness === "claude_sdk") {
+      const unavailable = temporary ? TEMPORARY_HARNESS_HINT : this.harnessUnavailableHint()
+      if (unavailable) {
+        this.status.content = `Claude Code · ${unavailable}`
+        return
+      }
+    }
     try {
+      if (temporary) {
+        if (!this.client.newTemporaryChat) throw new Error("Temporary chat is unavailable.")
+        this.client.newTemporaryChat()
+      } else {
+        this.client.newChat(this.runtimeControls.workspaceScope, harness)
+      }
+      this.newChatPending = true
       this.ready = false
-      this.clearRecoveryState()
-      this.clearPromptQueue()
-      this.sessionMetadataId += 1
-      this.contextRequestId += 1
-      this.host.reportTitle("")
-      this.sessionTitle = "New chat"
-      this.sessionModelPreset = null
-      this.modelName = this.defaultModelName
-      this.modelPreset = this.defaultModelPreset
-      this.contextTokens = null
-      this.lastUsage = null
-      this.readyDetail = ""
-      this.updateTitle()
-      this.status.content = "Starting a new chat…"
-      this.client.newChat(this.runtimeControls.workspaceScope)
+      this.status.content = temporary ? "Starting a temporary chat…" : "Starting a new chat…"
     } catch (error) {
       this.status.content = error instanceof Error ? error.message : String(error)
     }
@@ -3713,7 +3976,7 @@ export class KohakuTui {
     if (!this.options.apiUrl || !this.options.apiToken) return
     const requestId = ++this.sessionMetadataId
     try {
-      const sessions = await fetchSessions(
+      const { sessions, harnessCapabilities } = await fetchSessionList(
         this.options.apiUrl,
         this.options.apiToken,
         this.apiReauthenticator,
@@ -3722,6 +3985,7 @@ export class KohakuTui {
         requestId !== this.sessionMetadataId
         || chatId !== this.client.activeChatId
       ) return
+      if (harnessCapabilities) this.harnessCapabilities = harnessCapabilities
       const session = sessions.find((candidate) => candidate.chatId === chatId)
       if (!session) return
       this.sessionTitle = sessionLabel(session)
@@ -3823,7 +4087,7 @@ export class KohakuTui {
     this.host.release()
     this.client.close()
     this.renderer.destroy()
-    const chatId = this.client.activeChatId || this.options.chatId
+    const chatId = this.temporaryChat ? undefined : this.client.activeChatId || this.options.chatId
     if (detach) this.options.onDetach?.(chatId)
     else if (chatId) this.options.onExit?.(chatId)
   }

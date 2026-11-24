@@ -1,0 +1,1 @@
+"""External coding harness adapters."""

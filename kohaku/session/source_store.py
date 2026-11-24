@@ -30,6 +30,7 @@ from kohaku.session.canonical_event_index import (
     read_canonical_events_by_ids as _read_canonical_events_by_ids,
 )
 from kohaku.session.context_checkpoint import validate_context_checkpoint
+from kohaku.session.harness_binding import validate_harness_update
 from kohaku.session.idle_compaction import (
     LAST_USER_ACTIVITY_AT_KEY,
     USER_ACTIVITY_REVISION_KEY,
@@ -2012,6 +2013,7 @@ class SourceSessionStore:
             self._check(header, self._state(header))
             accepted = accepted_metadata_updates(updates, source=True)
             metadata = header["metadata"]
+            validate_harness_update(metadata, accepted, removals)
             previous_scope = metadata.get("workspace_scope")
             scope_removed = "workspace_scope" in removals and "workspace_scope" in metadata
             scope_changed = (
@@ -2116,6 +2118,7 @@ class SourceSessionStore:
             self._check(header, self._state(header))
             accepted = accepted_metadata_updates(updates, source=True)
             metadata = header["metadata"]
+            validate_harness_update(metadata, accepted, removals)
             previous_scope = metadata.get("workspace_scope")
             scope_removed = "workspace_scope" in removals and "workspace_scope" in metadata
             scope_changed = (

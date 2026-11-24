@@ -6,6 +6,8 @@ from typing import TYPE_CHECKING, Any
 
 from kohaku.agent.tools.base import Tool
 from kohaku.agent.turn import ToolOutcome, TurnContext
+from kohaku.harness.claude_sdk import child_harness_parameter
+from kohaku.session.harness_binding import ChatHarness
 
 if TYPE_CHECKING:
     from kohaku.agent.delegation import ForegroundAgentManager
@@ -24,7 +26,10 @@ class ExploreTool(Tool):
 
     @property
     def parameters(self) -> dict[str, Any]:
-        return self._parameters
+        return {
+            **self._parameters,
+            "properties": {**self._parameters["properties"], "harness": child_harness_parameter()},
+        }
 
     _description = (
         "Launch a foreground read-only exploration role for broad or repeated investigation "
@@ -65,6 +70,7 @@ class ExploreTool(Tool):
         task: str,
         thoroughness: str = "medium",
         artifact_references: list[str] | None = None,
+        harness: ChatHarness = "native",
         **_: Any,
     ) -> str | ToolOutcome:
         result = await self._manager.run_explore(
@@ -72,6 +78,7 @@ class ExploreTool(Tool):
             thoroughness=thoroughness,
             max_iterations=self._max_iterations,
             artifact_references=artifact_references,
+            harness=harness,
         )
 
         if isinstance(result, ToolOutcome):
@@ -86,6 +93,7 @@ class ExploreTool(Tool):
             max_iterations=self._max_iterations,
             turn_context=context,
             artifact_references=kwargs.get("artifact_references"),
+            harness=kwargs.get("harness", "native"),
         )
         if isinstance(result, ToolOutcome):
             return result
@@ -96,6 +104,8 @@ class ExploreTool(Tool):
         """Render normal exploration findings for the outer model."""
 
         lines: list[str] = ["[Explore Findings]"]
+        if child_id := result.get("child_id"):
+            lines.append(f"Claude Code child {child_id}")
         if result.get("partial"):
             reason = result.get("stop_reason") or "loop guard"
             lines.append(f"Status: partial ({reason})")

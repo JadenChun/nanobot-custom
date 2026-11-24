@@ -3777,7 +3777,12 @@ class SessionManager:
         count copies the full session prefix. WebUI assistant-reply forks pass
         the next user index so the selected completed assistant turn is included.
         """
+        from kohaku.session.harness_binding import external_binding
+
         if before_user_index < 0:
+            return None
+        payload = self.read_session_metadata(source_key)
+        if external_binding(payload.get("metadata") if payload is not None else None) is not None:
             return None
         if self._mode_resolver is not None:
             source_resolved = self._mode_resolver.resolve(source_key)
@@ -3950,6 +3955,32 @@ class SessionManager:
             "incarnation": snapshot.state.incarnation,
             "generation": snapshot.state.generation,
         }
+
+    def create_external_chat(self, key: str, workspace_metadata: dict[str, str]) -> None:
+        """Create the durable source before acknowledging an external chat."""
+        from kohaku.session.harness_binding import HARNESS_BINDING_KEY, SessionHarnessBinding
+
+        if self._store is not self._jsonl_store:
+            raise RuntimeError("Claude Code requires a durable session store.")
+        updates = {
+            "webui": True,
+            "workspace_scope": workspace_metadata,
+            HARNESS_BINDING_KEY: SessionHarnessBinding(
+                "external", "claude_sdk", None, None, 0,
+            ).payload(),
+        }
+        with self.locked_session_files():
+            if self.read_session_metadata(key) is not None:
+                raise SessionWriteConflict()
+        if not self.upsert_session_metadata(key, updates, create_if_absent=True, fsync=True):
+            raise SessionWriteConflict()
+        if not self.has_managed_authority:
+            session = self.get_or_create(key)
+            self._jsonl_store.source.upgrade_source_session(
+                key, expected_revision=session.revision, expected_generation=session.generation,
+                expected_incarnation=session.incarnation,
+            )
+            self.invalidate(key)
 
     def upsert_session_metadata(
         self,

@@ -267,6 +267,7 @@ interface ThreadComposerProps {
   skills?: SkillSummary[];
   onStop?: () => void;
   surfaceRef?: Ref<HTMLDivElement>;
+  aboveInput?: React.ReactNode;
   onTranscribeAudio?: (dataUrl: string, options?: { durationMs?: number }) => Promise<string>;
   /** Sustained objective for this chat (WebSocket ``goal_state``). */
   goalState?: GoalStateWsPayload;
@@ -277,6 +278,7 @@ interface ThreadComposerProps {
   workspaces?: WorkspacesPayload | null;
   onRefreshWorkspaces?: () => Promise<void>;
   workspaceScopeDisabled?: boolean;
+  workspaceLocked?: boolean;
   /** Detached working-folder choice for the next turn while one is running. */
   nextWorkspaceScope?: WorkspaceScopePayload | null;
   /** A next-turn setting change is awaiting its acknowledgement. */
@@ -1074,6 +1076,7 @@ export function ThreadComposer({
   skills = [],
   onStop,
   surfaceRef,
+  aboveInput,
   onTranscribeAudio,
   goalState,
   workspaceScope = null,
@@ -1083,6 +1086,7 @@ export function ThreadComposer({
   workspaces = null,
   onRefreshWorkspaces,
   workspaceScopeDisabled = false,
+  workspaceLocked = false,
   nextWorkspaceScope = null,
   nextTurnSettingsPending = false,
   nextTurnSettingsError = null,
@@ -2830,7 +2834,8 @@ export function ThreadComposer({
       inline
       isHero={isHero}
       ownerKey={pendingQueueKey}
-      disabled={interactionDisabled || workspaceScopeDisabled || workspaceControlsHidden}
+      disabled={interactionDisabled || workspaceScopeDisabled || workspaceControlsHidden || workspaceLocked}
+      locked={workspaceLocked}
       scope={workspaceScope}
       defaultScope={workspaceDefaultScope}
       controls={workspaceControls}
@@ -2849,7 +2854,8 @@ export function ThreadComposer({
     <WorkspaceProjectPicker
       line
       ownerKey={pendingQueueKey}
-      disabled={interactionDisabled || workspaceScopeDisabled || workspaceControlsHidden}
+      disabled={interactionDisabled || workspaceScopeDisabled || workspaceControlsHidden || workspaceLocked}
+      locked={workspaceLocked}
       scope={workspaceScope}
       defaultScope={workspaceDefaultScope}
       controls={workspaceControls}
@@ -3047,6 +3053,9 @@ export function ThreadComposer({
             if (dragId) moveQueuedPrompt(dragId, targetId);
           }}
         />
+      ) : null}
+      {aboveInput ? (
+        <div className="mx-auto mb-2 w-full max-w-[58rem]">{aboveInput}</div>
       ) : null}
       <div
         ref={surfaceRef}
