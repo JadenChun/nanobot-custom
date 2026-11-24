@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Callable, Sequence
+from contextlib import nullcontext
 from copy import deepcopy
 from dataclasses import dataclass
+from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
@@ -142,6 +144,36 @@ def strip_retry_hint(payload: str) -> str:
     return payload
 
 
+def _merge_batch_terminal(
+    current: ToolOutcome | None,
+    candidate: ToolOutcome,
+) -> ToolOutcome:
+    """Select the highest-priority terminal outcome from a concurrent batch."""
+    if current is None:
+        return candidate
+    if (
+        current.stop_reason == "folder_access_required"
+        and candidate.stop_reason != "folder_access_required"
+    ):
+        return candidate
+    if current.stop_reason == "tool_error" and candidate.stop_reason not in {
+        "tool_error",
+        "folder_access_required",
+    }:
+        return candidate
+    return current
+
+
+async def _dispatch_post_hook(
+    deferred_hooks: list[Callable[[], Awaitable[None]]] | None,
+    callback: Callable[[], Awaitable[None]],
+) -> None:
+    if deferred_hooks is not None:
+        deferred_hooks.append(callback)
+    else:
+        await callback()
+
+
 async def execute_tool_calls(
     tools: ToolRegistry,
     tool_calls: list[ToolCallRequest],
@@ -170,38 +202,92 @@ async def execute_tool_calls(
             terminal = ToolOutcome(decision.response, decision.stop_reason or "policy_blocked",
                                    decision.metadata)
     tool_results: list[tuple[Any, dict[str, Any]]] = []
-    # Contextual delegates require strict stop propagation across the batch.
-    concurrent = (concurrent and turn_context is None and tool_policy is None
-                  and not fail_on_tool_error and tool_result_callback is None)
 
     ordinal = 0
     for batch in _partition_tool_batches(tools, tool_calls, concurrent=concurrent):
         if concurrent and len(batch) > 1 and terminal is None:
-            batch_results = await asyncio.gather(*(
-                _execute_tool_call(
-                    tools,
-                    tool_call,
-                    external_lookup_counts,
-                    workspace_violation_counts,
-                    hook,
-                    context,
-                    turn_context,
-                    tool_policy=tool_policy,
-                    tool_intent_binding=(
-                        tool_intent_bindings[ordinal + index]
-                        if tool_intent_bindings is not None
-                        and ordinal + index < len(tool_intent_bindings)
-                        else None
-                    ),
-                )
-                for index, tool_call in enumerate(batch)
-            ))
-            terminal = next((value for value, _ in batch_results
-                             if isinstance(value, ToolOutcome) and value.stop_reason
-                             and value.stop_reason != "tool_error"), None)
-            tool_results.extend((value.content if isinstance(value, ToolOutcome)
-                                 and value.stop_reason == "tool_error" else value, event)
-                                for value, event in batch_results)
+            batch_start = ordinal
+            pending_records: list[list[KnownToolResult]] = [[] for _ in batch]
+            pending_hooks: list[list[Callable[[], Awaitable[None]]]] = [[] for _ in batch]
+
+            def _capture_record(index: int) -> ToolResultCallback:
+                async def _capture(record: KnownToolResult) -> None:
+                    pending_records[index].append(record)
+
+                return _capture
+
+            tasks: list[asyncio.Task[tuple[Any, dict[str, Any]]]] = []
+            owner = turn_context.execution_owner if turn_context is not None else None
+            try:
+                for index, tool_call in enumerate(batch):
+                    task = asyncio.create_task(
+                        _execute_tool_call(
+                            tools,
+                            tool_call,
+                            external_lookup_counts,
+                            workspace_violation_counts,
+                            hook,
+                            context,
+                            turn_context,
+                            _capture_record(index) if tool_result_callback is not None else None,
+                            batch_start + index,
+                            tool_policy=tool_policy,
+                            tool_intent_binding=(
+                                tool_intent_bindings[batch_start + index]
+                                if tool_intent_bindings is not None
+                                and batch_start + index < len(tool_intent_bindings)
+                                else None
+                            ),
+                            deferred_hooks=pending_hooks[index],
+                        )
+                    )
+                    tasks.append(task)
+                    if owner is not None:
+                        owner.track_task(cast(asyncio.Task[object], task))
+            except BaseException:
+                for task in tasks:
+                    task.cancel()
+                if tasks:
+                    await asyncio.gather(*tasks, return_exceptions=True)
+                raise
+            batch_raw = await asyncio.gather(*tasks, return_exceptions=True)
+            first_exception: BaseException | None = None
+            reconciliation_required = False
+            for index, raw_item in enumerate(batch_raw):
+                if tool_result_callback is not None:
+                    for record in pending_records[index]:
+                        await tool_result_callback(record)
+                        if any(
+                            fact.reconciliation_required
+                            for fact in record.filesystem_effects or ()
+                        ):
+                            reconciliation_required = True
+                if isinstance(raw_item, BaseException):
+                    if first_exception is None:
+                        first_exception = raw_item
+                    continue
+                if first_exception is None:
+                    for hook_cb in pending_hooks[index]:
+                        await hook_cb()
+                outcome, event = raw_item
+                result_item: tuple[Any, dict[str, Any]] = (outcome, event)
+                if isinstance(outcome, ToolOutcome):
+                    if outcome.stop_reason and (
+                        outcome.stop_reason != "tool_error" or fail_on_tool_error
+                    ):
+                        terminal = _merge_batch_terminal(terminal, outcome)
+                    else:
+                        result_item = (outcome.content, event)
+                elif fail_on_tool_error and event.get("status") == "error":
+                    wrapped = ToolOutcome(outcome, "tool_error")
+                    terminal = _merge_batch_terminal(terminal, wrapped)
+                    result_item = (wrapped, event)
+                tool_results.append(result_item)
+            ordinal += len(batch)
+            if first_exception is not None:
+                raise first_exception
+            if reconciliation_required:
+                raise FilesystemEffectReconciliationRequiredError()
         else:
             for tool_call in batch:
                 if terminal is not None:
@@ -309,6 +395,7 @@ async def _execute_tool_call(
     ordinal: int = 0,
     tool_policy: ToolPolicy | None = None,
     tool_intent_binding: SourceToolIntentBinding | None = None,
+    deferred_hooks: list[Callable[[], Awaitable[None]]] | None = None,
 ) -> tuple[Any, dict[str, Any]]:
     lookup_error = repeated_external_lookup_error(
         tool_call.name,
@@ -402,7 +489,10 @@ async def _execute_tool_call(
                 payload, event = handled
             await _record_result(tool_result_callback, ordinal, tool_call,
                                  target_error, payload, event, dispatched=False)
-            await hook.on_execute_tool_error(context, tool_call, tool, params, target_error)
+            await _dispatch_post_hook(
+                deferred_hooks,
+                partial(hook.on_execute_tool_error, context, tool_call, tool, params, target_error),
+            )
             return payload, event
     preflight_result: str | ToolOutcome | None = None
     edit_binding: EditContentBinding | None = None
@@ -445,13 +535,12 @@ async def _execute_tool_call(
         progress_sink = hook.tool_progress_sink(tool_call) if dispatched else None
         try:
             binding_token = set_assessed_write_target(assessed_write_target, edit_binding)
-            previous_intent = (
-                turn_context.active_tool_intent_binding if turn_context is not None else None
-            )
-            if turn_context is not None:
-                turn_context.active_tool_intent_binding = tool_intent_binding
             try:
-                with bind_approved_exec_cwd(exec_cwd), bind_tool_progress_sink(progress_sink):
+                with (
+                    turn_context.bind_tool_intent(tool_intent_binding)
+                    if turn_context is not None
+                    else nullcontext()
+                ), bind_approved_exec_cwd(exec_cwd), bind_tool_progress_sink(progress_sink):
                     if preflight_result is not None:
                         result = preflight_result
                     elif tool is not None:
@@ -459,8 +548,6 @@ async def _execute_tool_call(
                     else:
                         result = await tools.execute(tool_call.name, params)
             finally:
-                if turn_context is not None:
-                    turn_context.active_tool_intent_binding = previous_intent
                 reset_assessed_write_target(binding_token)
         except FilesystemEffectCancelled as exc:
             raw = ToolOutcome(
@@ -497,7 +584,10 @@ async def _execute_tool_call(
             await _record_result(tool_result_callback, ordinal, tool_call,
                                  {"exception_type": type(exc).__name__, "message": str(exc)},
                                  payload, event, dispatched=True)
-            await hook.on_execute_tool_error(context, tool_call, tool, params, exc)
+            await _dispatch_post_hook(
+                deferred_hooks,
+                partial(hook.on_execute_tool_error, context, tool_call, tool, params, exc),
+            )
             return payload, event
 
     raw_result = result
@@ -521,7 +611,10 @@ async def _execute_tool_call(
                 event,
                 dispatched=True,
             )
-            await hook.after_execute_tool(context, tool_call, tool, params, outcome.content)
+            await _dispatch_post_hook(
+                deferred_hooks,
+                partial(hook.after_execute_tool, context, tool_call, tool, params, outcome.content),
+            )
             return outcome, event
         # A plugin or generic registry result cannot mint the Comfy settlement.
         outcome = ToolOutcome(content=outcome.content, media_artifacts=outcome.media_artifacts)
@@ -533,7 +626,10 @@ async def _execute_tool_call(
             _attach_media_artifacts(event, outcome)
             await _record_result(tool_result_callback, ordinal, tool_call, raw_result,
                                  outcome, event, dispatched=dispatched)
-            await hook.after_execute_tool(context, tool_call, tool, params, result)
+            await _dispatch_post_hook(
+                deferred_hooks,
+                partial(hook.after_execute_tool, context, tool_call, tool, params, result),
+            )
             return outcome, event
 
     if is_tool_error_result(result) or (outcome is not None and outcome.stop_reason == "tool_error"):
@@ -565,7 +661,10 @@ async def _execute_tool_call(
         _attach_media_artifacts(event, classified)
         await _record_result(tool_result_callback, ordinal, tool_call, raw_result,
                              classified, event, dispatched=dispatched)
-        await hook.on_execute_tool_error(context, tool_call, tool, params, result)
+        await _dispatch_post_hook(
+            deferred_hooks,
+            partial(hook.on_execute_tool_error, context, tool_call, tool, params, result),
+        )
         return classified, event
 
     detail = "" if result is None else str(result)
@@ -581,7 +680,10 @@ async def _execute_tool_call(
                          producer_receipt=outcome.producer_receipt if outcome else None,
                          retrieval_receipt=outcome.retrieval_receipt if outcome else None,
                          handoff_receipt=outcome.handoff_receipt if outcome else None)
-    await hook.after_execute_tool(context, tool_call, tool, params, result)
+    await _dispatch_post_hook(
+        deferred_hooks,
+        partial(hook.after_execute_tool, context, tool_call, tool, params, result),
+    )
     return result, event
 
 
@@ -680,7 +782,7 @@ def _partition_tool_batches(
     for tool_call in tool_calls:
         get_tool = cast(Callable[[str], Any] | None, getattr(tools, "get", None))
         tool = get_tool(tool_call.name) if callable(get_tool) else None
-        can_batch = bool(tool and tool.concurrency_safe)
+        can_batch = isinstance(tool, Tool) and tool.concurrency_safe is True
         if can_batch:
             current.append(tool_call)
             continue

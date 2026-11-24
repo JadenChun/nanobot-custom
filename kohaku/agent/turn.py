@@ -8,9 +8,11 @@ being migrated.
 
 from __future__ import annotations
 
+import contextvars
 import re
 from asyncio import Lock
-from collections.abc import Awaitable, Callable, Iterable, Mapping
+from collections.abc import Awaitable, Callable, Generator, Iterable, Mapping
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import StrEnum
@@ -569,7 +571,17 @@ class TurnContext:
     internal_tool_policy: ToolPolicy | None = field(default=None, repr=False)
     internal_max_iterations: int | None = field(default=None, repr=False)
     active_tool_bindings: CapturedToolBindings | None = field(default=None, repr=False)
-    active_tool_intent_binding: SourceToolIntentBinding | None = field(default=None, repr=False)
+    _active_tool_intent_binding_var: contextvars.ContextVar[
+        SourceToolIntentBinding | None
+    ] = field(
+        default_factory=lambda: contextvars.ContextVar(
+            "turn_active_tool_intent_binding",
+            default=None,
+        ),
+        init=False,
+        repr=False,
+        compare=False,
+    )
     request_boundary_validator: Callable[[], bool] | None = field(default=None, repr=False)
     followup_boundary_validator: Callable[[], bool] | None = field(default=None, repr=False)
     followup_request_acknowledged: Callable[[tuple[str, ...]], None] | None = field(
@@ -609,6 +621,25 @@ class TurnContext:
     @property
     def source(self) -> TurnSource | None:
         return self.request.source if self.request is not None else None
+
+    @property
+    def active_tool_intent_binding(self) -> SourceToolIntentBinding | None:
+        return self._active_tool_intent_binding_var.get()
+
+    @active_tool_intent_binding.setter
+    def active_tool_intent_binding(self, value: SourceToolIntentBinding | None) -> None:
+        self._active_tool_intent_binding_var.set(value)
+
+    @contextmanager
+    def bind_tool_intent(
+        self,
+        binding: SourceToolIntentBinding | None,
+    ) -> Generator[None]:
+        token = self._active_tool_intent_binding_var.set(binding)
+        try:
+            yield
+        finally:
+            self._active_tool_intent_binding_var.reset(token)
 
 
 @dataclass(frozen=True, slots=True)

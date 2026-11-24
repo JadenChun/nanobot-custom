@@ -23,6 +23,7 @@ from kohaku.agent.tools.image_generation import ImageGenerationTool
 from kohaku.agent.tools.long_task import CreateGoalTool, UpdateGoalTool
 from kohaku.agent.tools.message import MessageTool
 from kohaku.agent.tools.repositories import RepositoryCatalogTool, SaveKnowledgeTool
+from kohaku.agent.tools.search import FindFilesTool, GrepTool
 from kohaku.agent.tools.self import MyTool
 from kohaku.agent.tools.shell import ExecTool
 from kohaku.agent.tools.web import WebFetchTool, WebSearchTool
@@ -50,6 +51,7 @@ def construct_core_tools(ctx: ToolContext) -> list[Tool]:
 
     for name, cls in (("read_file", ReadFileTool), ("write_file", WriteFileTool),
                       ("edit_file", EditFileTool), ("list_dir", ListDirTool),
+                      ("find_files", FindFilesTool), ("grep", GrepTool),
                       ("exec", ExecTool), ("exec_session", ExecSessionTool),
                       ("list_exec_sessions", ListExecSessionsTool), ("web_search", WebSearchTool),
                       ("web_fetch", WebFetchTool), ("message", MessageTool),

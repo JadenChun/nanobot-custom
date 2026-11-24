@@ -651,3 +651,130 @@ async def test_runner_blocks_repeated_external_fetches():
         if msg.get("role") == "tool" and msg.get("tool_call_id") == "call_3"
     ][0]
     assert "repeated external lookup blocked" in blocked_tool_message["content"]
+
+
+@pytest.mark.asyncio
+async def test_concurrent_read_only_batch_with_turn_context_policy_and_ordered_recording():
+    from kohaku.agent.policy import ToolPolicy
+    from kohaku.agent.tools.execution import KnownToolResult
+
+    read_b_started = asyncio.Event()
+    read_b_finished = asyncio.Event()
+    observed_intents: dict[str, object] = {}
+    mutating_ran: list[str] = []
+
+    class _BarrierReadTool(Tool):
+        def __init__(self, tool_name: str, *, wait_for_sibling: bool, fail: bool = False) -> None:
+            self._name = tool_name
+            self._wait_for_sibling = wait_for_sibling
+            self._fail = fail
+
+        @property
+        def name(self) -> str:
+            return self._name
+
+        @property
+        def description(self) -> str:
+            return self._name
+
+        @property
+        def parameters(self) -> dict[str, Any]:
+            return {"type": "object", "properties": {}, "required": []}
+
+        @property
+        def read_only(self) -> bool:
+            return True
+
+        async def execute(self, **kwargs: Any) -> Any:
+            return self._name
+
+        async def execute_with_context(self, context: Any, **kwargs: Any) -> Any:
+            if self._wait_for_sibling:
+                # Proves genuine concurrency: read_a cannot finish until read_b starts and finishes.
+                await asyncio.wait_for(read_b_started.wait(), timeout=1.0)
+                await asyncio.wait_for(read_b_finished.wait(), timeout=1.0)
+                observed_intents[self._name] = context.active_tool_intent_binding
+                return "read_a_ok"
+            read_b_started.set()
+            observed_intents[self._name] = context.active_tool_intent_binding
+            read_b_finished.set()
+            if self._fail:
+                return ToolResult.error("Error: read_b failed")
+            return "read_b_ok"
+
+    class _WriteTool(Tool):
+        @property
+        def name(self) -> str:
+            return "write_a"
+
+        @property
+        def description(self) -> str:
+            return "write_a"
+
+        @property
+        def parameters(self) -> dict[str, Any]:
+            return {"type": "object", "properties": {}, "required": []}
+
+        async def execute(self, **kwargs: Any) -> str:
+            mutating_ran.append("write_a")
+            return "written"
+
+    tools = ToolRegistry()
+    tools.register(_BarrierReadTool("read_a", wait_for_sibling=True))
+    tools.register(_BarrierReadTool("read_b", wait_for_sibling=False, fail=True))
+    tools.register(_WriteTool())
+
+    recorded: list[KnownToolResult] = []
+    hook_order: list[tuple[str, str]] = []
+
+    class _OrderHook(AgentHook):
+        async def after_execute_tool(self, context, tool_call, tool, params, result) -> None:
+            hook_order.append(("after", tool_call.id))
+
+        async def on_execute_tool_error(self, context, tool_call, tool, params, error) -> None:
+            hook_order.append(("error", tool_call.id))
+
+    async def on_result(record: KnownToolResult) -> None:
+        recorded.append(record)
+
+    turn_context = TurnContext(run_id="concurrent-run")
+    intent_0 = object()
+    intent_1 = object()
+    intent_2 = object()
+
+    results, events = await execute_tool_calls(
+        tools,
+        [
+            ToolCallRequest(id="c0", name="read_a", arguments={}),
+            ToolCallRequest(id="c1", name="read_b", arguments={}),
+            ToolCallRequest(id="c2", name="write_a", arguments={}),
+        ],
+        concurrent=True,
+        external_lookup_counts={},
+        workspace_violation_counts={},
+        hook=_OrderHook(),
+        context=AgentHookContext(iteration=0, messages=[]),
+        tool_policy=ToolPolicy(),
+        turn_context=turn_context,
+        fail_on_tool_error=True,
+        tool_result_callback=on_result,
+        tool_intent_bindings=(intent_0, intent_1, intent_2),  # type: ignore[arg-type]
+    )
+
+    # Both read-only calls ran concurrently and saw isolated task-local intent bindings.
+    assert observed_intents == {"read_a": intent_0, "read_b": intent_1}
+    assert turn_context.active_tool_intent_binding is None
+    # Recording and post-execution hooks flushed in strict ordinal order despite read_b finishing first.
+    assert [(r.ordinal, r.tool_call_id, r.dispatched) for r in recorded] == [
+        (0, "c0", True),
+        (1, "c1", True),
+        (2, "c2", False),
+    ]
+    assert hook_order == [("after", "c0"), ("error", "c1")]
+    # Error in concurrent read-only batch 1 skipped mutating batch 2.
+    assert mutating_ran == []
+    assert results[0] == "read_a_ok"
+    assert isinstance(results[1], ToolOutcome)
+    assert results[1].stop_reason == "tool_error"
+    assert "Skipped" in str(results[2])
+    assert [e["status"] for e in events] == ["ok", "error", "skipped"]

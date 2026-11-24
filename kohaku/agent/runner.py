@@ -163,6 +163,8 @@ _NO_PROGRESS_STOP_NOTE = (
 )
 _MAX_NO_PROGRESS_REPEATS = 3
 _MAX_NO_PROGRESS_LIMIT = 5
+_DEFAULT_MAX_TOOL_ERROR_RECOVERIES = 8
+_MAX_CONSECUTIVE_TOOL_ERROR_RECOVERIES = 3
 _MAX_EMPTY_RETRIES = 2
 _MAX_LENGTH_RECOVERIES = 3
 _MAX_INJECTIONS_PER_TURN = 3
@@ -297,9 +299,10 @@ class AgentRunSpec:
     tool_policy: ToolPolicy | None = None
     turn_context: TurnContext | None = None
     fail_on_tool_error: bool = False
-    # Bounded continuation after ordinary tool errors. Policy/security denials
-    # and repeated identical failures stay terminal.
-    max_tool_error_recoveries: int = 2
+    # Bounded continuation after ordinary tool errors. Consecutive errors are
+    # additionally capped per streak and reset on fresh successful tool progress.
+    # Policy/security denials and repeated identical failures stay terminal.
+    max_tool_error_recoveries: int = _DEFAULT_MAX_TOOL_ERROR_RECOVERIES
     transcript_input: TranscriptInput | None = None
     transcript_builder: TranscriptBuilder | None = None
     hook: AgentHook | None = None
@@ -955,6 +958,7 @@ class AgentRunner:
         context_repo_exec_recovery_attempted = False
         pre_dispatch_denial_recovery_attempted = False
         tool_error_recoveries = 0
+        consecutive_tool_error_recoveries = 0
         tool_error_signatures: set[str] = set()
         # A successful call that returns identical output is a no-op cycle, not
         # an error. Track the run length of identical batches so the turn can
@@ -1192,6 +1196,11 @@ class AgentRunner:
                     and not pre_dispatch_denial_recovery_attempted
                     and iteration + 1 < spec.max_iterations
                 )
+                max_total_recoveries = max(0, spec.max_tool_error_recoveries)
+                max_streak_recoveries = min(
+                    _MAX_CONSECUTIVE_TOOL_ERROR_RECOVERIES,
+                    max_total_recoveries,
+                )
                 recoverable_tool_error = (
                     terminal is not None
                     and spec.fail_on_tool_error
@@ -1199,7 +1208,8 @@ class AgentRunner:
                     and terminal.recovery_kind is None
                     and not repeated_tool_error
                     and tool_error_signature is not None
-                    and tool_error_recoveries < max(0, spec.max_tool_error_recoveries)
+                    and tool_error_recoveries < max_total_recoveries
+                    and consecutive_tool_error_recoveries < max_streak_recoveries
                     and iteration + 1 < spec.max_iterations
                     and not any(
                         event.get("_prepare_error_kind") is not None
@@ -1293,6 +1303,12 @@ class AgentRunner:
                         ),
                     },
                 )
+                if (
+                    terminal is None
+                    and no_progress_repeats == 0
+                    and any(event.get("status") == "ok" for event in new_events)
+                ):
+                    consecutive_tool_error_recoveries = 0
                 if recoverable_skill_read:
                     missing_skill_recovery_attempted = True
                     terminal = None
@@ -1326,11 +1342,14 @@ class AgentRunner:
                     )
                 if recoverable_tool_error and terminal is not None:
                     tool_error_recoveries += 1
+                    consecutive_tool_error_recoveries += 1
                     detail = " ".join(str(terminal.content or "").split())[:160]
                     logger.info(
-                        "Recovering from tool error ({}/{}): {}",
+                        "Recovering from tool error (total {}/{}, streak {}/{}): {}",
                         tool_error_recoveries,
-                        spec.max_tool_error_recoveries,
+                        max_total_recoveries,
+                        consecutive_tool_error_recoveries,
+                        max_streak_recoveries,
                         detail,
                     )
                     terminal = None

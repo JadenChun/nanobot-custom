@@ -472,7 +472,7 @@ def test_loader_registers_the_foreground_manifest_with_config_gates(loader_conte
     registered = loader.load(ctx, registry)
 
     expected = {
-        "read_file", "write_file", "edit_file", "list_dir",
+        "read_file", "write_file", "edit_file", "list_dir", "find_files", "grep",
         "exec", "exec_session", "list_exec_sessions",
         "web_search", "web_fetch",
         "message", "cron", "plan_task", "delegate_task", "review_work", "explore",
@@ -486,7 +486,7 @@ def test_loader_registers_the_foreground_manifest_with_config_gates(loader_conte
     assert expected <= actual, f"Missing tools: {expected - actual}"
     assert actual == expected
     assert set(registry.tool_names) == expected
-    assert not actual & {"find_files", "grep", "spawn", "spawn_pipeline"}
+    assert not actual & {"search_files", "apply_patch", "spawn", "spawn_pipeline"}
 
 
 def test_non_core_loader_scope_stays_closed_without_registry_mutation():

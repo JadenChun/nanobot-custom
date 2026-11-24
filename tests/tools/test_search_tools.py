@@ -739,8 +739,10 @@ async def test_agent_exposes_explicit_manifest_and_delegated_search(tmp_path: Pa
         )
 
     loop = await admitted_async(tmp_path, build)
-    assert {"read_file", "list_dir", "explore", "delegate_task"} <= set(loop.tools.tool_names)
-    assert {"find_files", "grep", "spawn"}.isdisjoint(loop.tools.tool_names)
+    assert {"read_file", "list_dir", "find_files", "grep", "explore", "delegate_task"} <= set(
+        loop.tools.tool_names
+    )
+    assert {"search_files", "apply_patch", "spawn"}.isdisjoint(loop.tools.tool_names)
     # The accepted foreground explorer owns bounded search, not package discovery.
     tools = loop._fork_dependencies.foreground_manager._tools_for_role("explorer")
     search = tools.get("search_files")
@@ -803,3 +805,100 @@ def test_subagent_prompt_respects_disabled_skills(tmp_path: Path) -> None:
 
     assert "alpha" not in prompt
     assert "beta" in prompt
+
+
+@pytest.mark.asyncio
+async def test_find_files_and_grep_work_through_agent_loop_in_managed_folder_mode(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from kohaku.agent.tools.registry import ToolRegistry
+    from kohaku.agent.turn import TurnRequest
+    from kohaku.providers.base import LLMResponse, ToolCallRequest
+    from kohaku.security.folder_grants import FolderGrantStore
+    from tests.agent.test_migration_engine import (
+        ScriptedProvider,
+    )
+    from tests.agent.test_migration_engine import (
+        engine_config as engine_config_factory,
+    )
+
+    config = engine_config_factory.__wrapped__(tmp_path, monkeypatch)
+    granted = tmp_path / "granted-project"
+    granted.mkdir()
+    (granted / "src").mkdir()
+    (granted / "src" / "alpha.py").write_text("TOKEN = 'managed-needle'\n", encoding="utf-8")
+    outside = tmp_path / "ungranted-project"
+    outside.mkdir()
+    (outside / "secret.txt").write_text("TOKEN = 'outside-secret'\n", encoding="utf-8")
+
+    provider = ScriptedProvider([
+        LLMResponse(
+            content=None,
+            tool_calls=[
+                ToolCallRequest(
+                    id="find-1",
+                    name="find_files",
+                    arguments={"path": str(granted), "type": "py"},
+                ),
+                ToolCallRequest(
+                    id="grep-1",
+                    name="grep",
+                    arguments={"path": str(granted), "pattern": "managed-needle"},
+                ),
+            ],
+        ),
+        LLMResponse(content="Found alpha.py and matched managed-needle."),
+        LLMResponse(
+            content=None,
+            tool_calls=[
+                ToolCallRequest(
+                    id="find-outside",
+                    name="find_files",
+                    arguments={"path": str(outside)},
+                ),
+            ],
+        ),
+    ])
+    loop = AgentLoop.from_config(config, tool_registry=ToolRegistry(), provider=provider)
+    try:
+        grants = FolderGrantStore.for_workspace(
+            loop.workspace,
+            sessions_root=loop.sessions.sessions_root,
+        )
+        grants.upsert(
+            {"path": str(granted), "file_access": "read_only", "commands": False},
+            expected_revision=0,
+        )
+        assert grants.view.is_managed is True
+
+        allowed = await loop.execute_turn(
+            TurnRequest(
+                content="Find and grep files in the granted project.",
+                session_key="websocket:managed-search",
+            )
+        )
+        assert allowed.stop_reason == "completed"
+        assert allowed.content == "Found alpha.py and matched managed-needle."
+        advertised = {
+            item["function"]["name"] for item in provider.calls[0][1]
+        }
+        assert {"find_files", "grep"} <= advertised
+        tool_messages = {
+            msg["tool_call_id"]: str(msg["content"])
+            for msg in provider.calls[1][0]
+            if msg.get("role") == "tool"
+        }
+        assert "alpha.py" in tool_messages["find-1"]
+        assert "managed-needle" in tool_messages["grep-1"]
+
+        blocked = await loop.execute_turn(
+            TurnRequest(
+                content="Find files in the outside project.",
+                session_key="cli:workspace-scoped",
+            )
+        )
+        assert blocked.stop_reason == "folder_access_required"
+        assert "outside-secret" not in str(blocked.content or "")
+    finally:
+        await loop.aclose()

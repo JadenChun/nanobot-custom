@@ -129,8 +129,8 @@ def test_exact_default_main_tools_and_dependency_handoff(context, monkeypatch):
     monkeypatch.delenv('KOHAKU_TREND_VPN_TOOLS_ENABLED', raising=False)
     monkeypatch.setattr('kohaku.extensions.optional_tools.vpn_tools_enabled', lambda: False)
     names, registry = load(context, monkeypatch)
-    assert set(names) == {'read_file', 'write_file', 'edit_file', 'list_dir', 'exec',
-                          'exec_session', 'list_exec_sessions', 'web_search',
+    assert set(names) == {'read_file', 'write_file', 'edit_file', 'list_dir', 'find_files', 'grep',
+                          'exec', 'exec_session', 'list_exec_sessions', 'web_search',
                           'web_fetch', 'message', 'plan_task', 'delegate_task', 'review_work',
                           'followup_child',
                           'explore', 'agent_browser', 'agent_device', 'generate_image',

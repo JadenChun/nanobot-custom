@@ -429,6 +429,7 @@ async def test_runner_limits_distinct_tool_error_recoveries():
         failing_call("call_1", "/tmp/missing-1.txt"),
         failing_call("call_2", "/tmp/missing-2.txt"),
         failing_call("call_3", "/tmp/missing-3.txt"),
+        failing_call("call_4", "/tmp/missing-4.txt"),
     ])
     tools = MagicMock()
     tools.get_definitions.return_value = []
@@ -436,6 +437,7 @@ async def test_runner_limits_distinct_tool_error_recoveries():
         ToolResult.error("Error: File not found: /tmp/missing-1.txt"),
         ToolResult.error("Error: File not found: /tmp/missing-2.txt"),
         ToolResult.error("Error: File not found: /tmp/missing-3.txt"),
+        ToolResult.error("Error: File not found: /tmp/missing-4.txt"),
     ])
 
     result = await AgentRunner().run(make_run_spec(
@@ -443,13 +445,131 @@ async def test_runner_limits_distinct_tool_error_recoveries():
         initial_messages=[{"role": "user", "content": "read it"}],
         tools=tools,
         model="test-model",
-        max_iterations=5,
+        max_iterations=6,
         max_tool_result_chars=_MAX_TOOL_RESULT_CHARS,
         fail_on_tool_error=True,
     ))
 
+    # Consecutive ordinary-error streak caps at 3 recoveries; the 4th consecutive failure stops.
+    assert provider.chat_with_retry.await_count == 4
+    assert result.stop_reason == "tool_error"
+
+
+@pytest.mark.asyncio
+async def test_runner_resets_error_streak_on_progress_up_to_turn_ceiling():
+    from kohaku.agent.runner import AgentRunner
+
+    responses: list[LLMResponse] = []
+    tool_outputs: list[object] = []
+    # 8 interleaved distinct errors + successful progress steps all recover; the 9th stops.
+    for index in range(1, 9):
+        responses.append(LLMResponse(
+            content=None,
+            tool_calls=[ToolCallRequest(
+                id=f"err_{index}",
+                name="read_file",
+                arguments={"path": f"/tmp/missing-{index}.txt"},
+            )],
+            usage=None,
+        ))
+        tool_outputs.append(ToolResult.error(f"Error: File not found: /tmp/missing-{index}.txt"))
+        responses.append(LLMResponse(
+            content=None,
+            tool_calls=[ToolCallRequest(
+                id=f"ok_{index}",
+                name="read_file",
+                arguments={"path": f"/tmp/present-{index}.txt"},
+            )],
+            usage=None,
+        ))
+        tool_outputs.append(f"content-{index}")
+    responses.append(LLMResponse(
+        content=None,
+        tool_calls=[ToolCallRequest(
+            id="err_9",
+            name="read_file",
+            arguments={"path": "/tmp/missing-9.txt"},
+        )],
+        usage=None,
+    ))
+    tool_outputs.append(ToolResult.error("Error: File not found: /tmp/missing-9.txt"))
+
+    provider = MagicMock(spec=LLMProvider)
+    provider.chat_with_retry = AsyncMock(side_effect=responses)
+    tools = MagicMock()
+    tools.get_definitions.return_value = []
+    tools.execute = AsyncMock(side_effect=tool_outputs)
+
+    result = await AgentRunner().run(make_run_spec(
+        provider,
+        initial_messages=[{"role": "user", "content": "long task"}],
+        tools=tools,
+        model="test-model",
+        max_iterations=25,
+        max_tool_result_chars=_MAX_TOOL_RESULT_CHARS,
+        fail_on_tool_error=True,
+    ))
+
+    assert provider.chat_with_retry.await_count == 17
+    assert result.stop_reason == "tool_error"
+
+
+@pytest.mark.asyncio
+async def test_runner_respects_explicit_max_tool_error_recoveries_and_dream_terminal():
+    from kohaku.agent.runner import AgentRunner
+
+    provider = MagicMock(spec=LLMProvider)
+    provider.chat_with_retry = AsyncMock(side_effect=[
+        LLMResponse(
+            content=None,
+            tool_calls=[ToolCallRequest(id=f"c{i}", name="read_file", arguments={"path": f"p{i}"})],
+            usage=None,
+        )
+        for i in range(1, 4)
+    ])
+    tools = MagicMock()
+    tools.get_definitions.return_value = []
+    tools.execute = AsyncMock(side_effect=[
+        ToolResult.error(f"Error: File not found: p{i}") for i in range(1, 4)
+    ])
+
+    result = await AgentRunner().run(make_run_spec(
+        provider,
+        initial_messages=[{"role": "user", "content": "bounded"}],
+        tools=tools,
+        model="test-model",
+        max_iterations=5,
+        max_tool_result_chars=_MAX_TOOL_RESULT_CHARS,
+        fail_on_tool_error=True,
+        max_tool_error_recoveries=2,
+    ))
+
     assert provider.chat_with_retry.await_count == 3
     assert result.stop_reason == "tool_error"
+
+    dream_provider = MagicMock(spec=LLMProvider)
+    dream_provider.chat_with_retry = AsyncMock(return_value=LLMResponse(
+        content=None,
+        tool_calls=[ToolCallRequest(id="dream_1", name="edit_file", arguments={"path": "MEMORY.md"})],
+        usage=None,
+    ))
+    dream_tools = MagicMock()
+    dream_tools.get_definitions.return_value = []
+    dream_tools.execute = AsyncMock(return_value=ToolResult.error("Error: snippet not found"))
+
+    dream_result = await AgentRunner().run(make_run_spec(
+        dream_provider,
+        initial_messages=[{"role": "user", "content": "consolidate"}],
+        tools=dream_tools,
+        model="test-model",
+        max_iterations=5,
+        max_tool_result_chars=_MAX_TOOL_RESULT_CHARS,
+        fail_on_tool_error=True,
+        session_key="dream:consolidation",
+    ))
+
+    assert dream_provider.chat_with_retry.await_count == 1
+    assert dream_result.stop_reason == "tool_error"
 
 
 @pytest.mark.asyncio

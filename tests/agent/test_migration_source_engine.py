@@ -1310,10 +1310,8 @@ async def test_engine_offloads_attested_single_file_grep_with_configured_store(e
             return LLMResponse(content='grep complete')
 
     provider = GrepProvider([])
-    registry = ToolRegistry()
-    registry.register(GrepTool(workspace=engine_config.workspace_path,
-                               allowed_dir=engine_config.workspace_path))
-    loop = AgentLoop.from_config(engine_config, tool_registry=registry, provider=provider)
+    loop = AgentLoop.from_config(engine_config, tool_registry=ToolRegistry(), provider=provider)
+    assert isinstance(loop.tools.get('grep'), GrepTool)
     backend = upgrade(loop, key)
     try:
         result = await loop.execute_turn(TurnRequest(content='grep and retrieve', session_key=key))

@@ -18,8 +18,9 @@
 
 ## Discovery and Reading
 
-- Use `list_dir` for uncertain paths and `read_file` for a known path. Use a registered discovery or search tool when the request needs content search or file discovery.
-- Use the registered search tool's documented options for context, path-only, count, literal, and paging modes.
+- Use `list_dir` for uncertain paths and `read_file` for a known path.
+- Use `find_files` for file discovery by path, glob, or file type.
+- Use `grep` for content search, using its options for context, path-only, count, literal, and paging modes.
 - Search tools enforce binary and file-size limits and report skipped files in the result.
 
 ## File and Coding Workflows

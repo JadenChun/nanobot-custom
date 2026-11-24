@@ -33,7 +33,7 @@ if TYPE_CHECKING:
 
 
 MANAGED_WEBUI_TOOL_NAMES = frozenset({
-    "read_file", "write_file", "edit_file", "list_dir", "exec",
+    "read_file", "write_file", "edit_file", "list_dir", "find_files", "grep", "exec",
     "exec_session", "list_exec_sessions", "web_search", "web_fetch",
     "message", "cron", "generate_image", "repository_catalog",
     "save_knowledge", "select_workspace", "plan_task", "delegate_task",

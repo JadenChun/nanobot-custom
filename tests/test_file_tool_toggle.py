@@ -50,7 +50,14 @@ async def test_file_tool_loader_obeys_flag_in_acquired_graph(tmp_path, admitted_
     loop = await admitted_async(tmp_path, build, config=config)
     names = set(loop.tools.tool_names)
     if enabled:
-        assert FILE_TOOL_NAMES & names == {"read_file", "write_file", "edit_file", "list_dir"}
+        assert FILE_TOOL_NAMES & names == {
+            "read_file",
+            "write_file",
+            "edit_file",
+            "list_dir",
+            "find_files",
+            "grep",
+        }
     else:
         assert FILE_TOOL_NAMES.isdisjoint(names)
     assert {"message", "delegate_task", "review_work", "explore"} <= names
