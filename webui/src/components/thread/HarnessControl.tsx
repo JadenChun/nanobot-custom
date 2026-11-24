@@ -14,11 +14,11 @@ import type { ChatHarness } from "@/lib/types";
 function KohakuIcon({ className }: { className?: string }) {
   return (
     <img
-      src="/brand/kohaku_icon_192.png"
+      src="/brand/kohaku_icon_transparent.png"
       alt=""
       aria-hidden
       draggable={false}
-      className={cn("select-none rounded-[4px] object-contain", className)}
+      className={cn("select-none object-contain", className)}
     />
   );
 }
