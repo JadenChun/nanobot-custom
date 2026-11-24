@@ -66,6 +66,7 @@ from kohaku.webui.outbound_wire import (
 from kohaku.webui.session_identity import is_valid_webui_chat_id, webui_session_key
 from kohaku.webui.transcript import WEBUI_TRANSCRIPT_INCOMPLETE_KEY
 from kohaku.webui.websocket_logging import websockets_server_logger
+from kohaku.webui.ws_http import attached_mobile_identity
 
 if TYPE_CHECKING:
     from kohaku.bus.events import CommittedUserInput
@@ -389,6 +390,7 @@ class _OutboundFrame:
     raw: str
     utf8_bytes: int
     label: str
+    mobile_owner_only: bool
 
 
 @dataclass(slots=True)
@@ -616,9 +618,13 @@ class WebSocketChannel(BaseChannel):
         await self._outbound.hydrate(chat_id)
         if connection is None:
             return
-        for approval in tuple(self._external_approvals.get(chat_id, {}).values()):
+        for approval_id in tuple(self._external_approvals.get(chat_id, ())):
+            approval = self._external_approvals.get(chat_id, {}).get(approval_id)
+            if approval is None:
+                continue
             await self._safe_send_to(
                 connection, json.dumps(approval, ensure_ascii=False), label=" external_approval ",
+                mobile_owner_only=True,
             )
         # Replay any in-flight reasoning/answer stream buffers only to the
         # newly attaching connection so other already-attached tabs never get
@@ -1121,6 +1127,13 @@ class WebSocketChannel(BaseChannel):
                             close_reason="mobile access is no longer current",
                         )
                         return
+                    if frame.mobile_owner_only:
+                        identity = attached_mobile_identity(connection)
+                        if identity is not None:
+                            from kohaku.remote.edge import AccessIdentity
+
+                            if not isinstance(identity, AccessIdentity) or not identity.is_owner:
+                                continue
                     async with asyncio.timeout(_OUTBOUND_SEND_TIMEOUT_S):
                         await connection.send(frame.raw)
                 except asyncio.CancelledError:
@@ -1220,6 +1233,7 @@ class WebSocketChannel(BaseChannel):
         raw: str,
         *,
         label: str = "",
+        mobile_owner_only: bool = False,
     ) -> None:
         """Queue one frame without letting this connection block other clients."""
         state = self._connection_outbound.get(connection)
@@ -1243,7 +1257,7 @@ class WebSocketChannel(BaseChannel):
             await asyncio.sleep(0)
             return
         try:
-            state.queue.put_nowait(_OutboundFrame(raw, utf8_bytes, label))
+            state.queue.put_nowait(_OutboundFrame(raw, utf8_bytes, label, mobile_owner_only))
         except asyncio.QueueFull:
             self._schedule_connection_retirement(
                 connection,
@@ -1646,7 +1660,10 @@ class WebSocketChannel(BaseChannel):
         if not conns:
             return
         for connection in conns:
-            await self._safe_send_to(connection, raw, label=f" {body['event']} ")
+            await self._safe_send_to(
+                connection, raw, label=f" {body['event']} ",
+                mobile_owner_only=payload["event"] == "external_approval",
+            )
 
     async def send_goal_state(self, chat_id: str, blob: dict[str, Any]) -> None:
         """Push persisted goal-state snapshot for *chat_id* (multi-chat isolation)."""

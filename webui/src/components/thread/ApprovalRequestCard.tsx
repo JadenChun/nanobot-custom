@@ -109,7 +109,12 @@ export function ApprovalRequestCard({
           {canSave ? t("approval.allowOnce", { defaultValue: "Allow once" }) : t("approval.approve", { defaultValue: "Approve and continue" })}
         </Button>
         {canSave ? (
-          <Button type="button" disabled={disabled} onClick={() => submit("approve_and_save")}>
+          <Button
+            type="button"
+            className="h-auto min-h-10 max-w-full whitespace-normal [overflow-wrap:anywhere]"
+            disabled={disabled}
+            onClick={() => submit("approve_and_save")}
+          >
             {pending === "approve_and_save" ? (
               <Loader2 className="mr-2 size-4 animate-spin" aria-hidden />
             ) : null}

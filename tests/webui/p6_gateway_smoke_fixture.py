@@ -36,7 +36,12 @@ from kohaku.harness.backend import (
 )
 from kohaku.harness.claude_sdk import ClaudeSDKBackend
 from kohaku.providers.unconfigured_provider import UnconfiguredProvider
-from kohaku.utils.file_edit_events import FileEditTracker, build_file_edit_end_event, read_file_snapshot
+from kohaku.remote.composition import owner_socket_path
+from kohaku.utils.file_edit_events import (
+    FileEditTracker,
+    build_file_edit_end_event,
+    read_file_snapshot,
+)
 
 
 def main() -> None:
@@ -54,6 +59,10 @@ def main() -> None:
     assert websocket.host == "127.0.0.1"
     assert config.gateway.host == "127.0.0.1"
     endpoints = {("127.0.0.1", websocket.port), ("127.0.0.1", config.gateway.port)}
+    owner_socket = (
+        str(owner_socket_path(config.remote_access, instance_root=path.parent))
+        if config.remote_access.enabled else None
+    )
 
     # Preflight the real Sandbox before installing the exact-effect audit hook.
     # Only its fixed printf command is admitted below; model calls stay forbidden.
@@ -92,6 +101,8 @@ def main() -> None:
     def audit(event, args):
         if event in {"socket.bind", "socket.connect"}:
             stream, address = args
+            if event == "socket.connect" and stream.family == socket.AF_UNIX and address == owner_socket:
+                return
             if stream.family != socket.AF_INET or address not in endpoints:
                 raise PermissionError(errno.EPERM, "smoke fixture network effect denied")
         if event == "subprocess.Popen":

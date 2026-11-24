@@ -405,6 +405,12 @@ class WebUICommandRouter:
             or _typed_owner_mobile_identity(connection) is not None
         )
 
+    def _owner_chat_controls_available(self, connection: ServerConnection) -> bool:
+        return (
+            connection in self._webui_connections
+            or _typed_owner_mobile_identity(connection) is not None
+        )
+
     async def send_webui_protocol_error(
         self,
         connection: ServerConnection,
@@ -779,12 +785,17 @@ class WebUICommandRouter:
                 if (
                     not harness_capabilities()["claude_sdk"]["available"]
                     or self.gateway.session_manager is None
-                    or connection not in self._webui_connections
+                    or not self._owner_chat_controls_available(connection)
                 ):
                     await self._transport.webui_send_event(
                         connection, "error", detail="harness_unavailable",
                     )
                     return
+            elif envelope.get("ephemeral") is True and _typed_mobile_identity(connection) is not None:
+                await self._transport.webui_send_event(
+                    connection, "error", detail="temporary_chat_unavailable",
+                )
+                return
         if command_type == "new_chat":
             new_id = str(uuid.uuid4())
             scope = await self.workspace_scope_or_error(
@@ -812,18 +823,23 @@ class WebUICommandRouter:
             else:
                 self._workspaces.stage_scope(new_id, scope)
             self._transport.webui_attach(connection, new_id)
+            fields = self._session_projection.attach_fields(webui_session_key(new_id))
+            if _typed_mobile_identity(connection) is not None and "harness_capabilities" not in fields:
+                fields["harness_capabilities"] = harness_capabilities()
             await self._transport.webui_send_event(
                 connection,
                 "attached",
                 chat_id=new_id,
-                **self._session_projection.attach_fields(webui_session_key(new_id)),
+                **fields,
             )
+            binding = fields.get("harness_binding")
             await self._transport.webui_send_event(
                 connection,
                 "session_updated",
                 chat_id=new_id,
                 scope="metadata",
                 workspace_scope=self._workspaces.scope_payload(scope),
+                **({"harness_binding": binding} if binding is not None else {}),
             )
             await self._transport.webui_hydrate(new_id)
             return
@@ -911,6 +927,8 @@ class WebUICommandRouter:
                 return
             fields = self._session_projection.attach_fields(webui_session_key(chat_id), source=source)
             fields.update(attempt_fields)
+            if _typed_mobile_identity(connection) is not None and "harness_capabilities" not in fields:
+                fields["harness_capabilities"] = harness_capabilities()
             await self._transport.webui_send_event(connection, "attached", chat_id=chat_id, **fields)
             await self._transport.webui_hydrate(chat_id, connection=connection)
             return
@@ -1264,7 +1282,7 @@ class WebUICommandRouter:
                 if (
                     is_stop
                     or envelope.get("webui") is not True
-                    or connection not in self._webui_connections
+                    or not self._owner_chat_controls_available(connection)
                     or not turn_id
                     or turn_id == websocket_turn_id(chat_id)
                     or request_intent == "steer"

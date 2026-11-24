@@ -57,6 +57,8 @@ def mobile_frame_allowed(scopes: Collection[str], envelope: Mapping[str, object]
     if "chat.write" not in scopes:
         return False
     if kind == "message":
+        if "approval_decision" in envelope and "owner" not in scopes:
+            return False
         if (envelope.get("media") or envelope.get("attachments")) and "attachment.write" not in scopes:
             return False
         return True

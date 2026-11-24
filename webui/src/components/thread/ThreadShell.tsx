@@ -3756,12 +3756,13 @@ export function ThreadShell({
         </>
       )}
       <ThreadComposer
-        aboveInput={!session && !historyKey && !openingConversation ? (
-          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-2 text-xs">
-            <label className="flex shrink-0 items-center gap-2 font-medium text-muted-foreground">
+        aboveInput={!session && !historyKey && !openingConversation
+          && (!isMobileRuntimeActive() || mobileOwnerCapability()) ? (
+          <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 px-2 text-xs">
+            <label className="flex min-w-0 max-w-full items-center gap-2 font-medium text-muted-foreground">
               {t("thread.harness.label", { defaultValue: "Harness" })}
               <select
-                className="rounded-control border border-border bg-background px-2 py-1 text-foreground"
+                className="min-w-0 rounded-control border border-border bg-background px-2 py-1 text-foreground"
                 value={activeHarness}
                 disabled={booting || preparingFull}
                 onChange={(event) => setDraftHarness(event.target.value === "claude_sdk" ? "claude_sdk" : "native")}

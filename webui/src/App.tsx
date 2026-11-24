@@ -1431,7 +1431,9 @@ function Shell({
     return client.onError((error) => {
       if (error.kind !== "workspace_scope_rejected") return;
       if (error.chatId && error.chatId !== activeChatIdRef.current) return;
-      setWorkspaceError(t("errors.workspaceScopeRejected.body"));
+      setWorkspaceError(error.reason === "harness_workspace_locked"
+        ? t("thread.harness.workspaceLocked", { defaultValue: "Claude Code locked this working folder." })
+        : t("errors.workspaceScopeRejected.body"));
       void refreshWorkspaces();
     });
   }, [client, refreshWorkspaces, t]);
@@ -2504,7 +2506,7 @@ function Shell({
                 temporaryChatIds={temporaryChatIds}
                 temporaryChatEnabled={temporaryChatEnabled}
                 onTemporaryChatEnabledChange={
-                  !activeKey ? onTemporaryChatEnabledChange : undefined
+                  !activeKey && !isMobileRuntimeActive() ? onTemporaryChatEnabledChange : undefined
                 }
                 onToggleSidebar={toggleSidebar}
                 onNewChat={onNewChat}

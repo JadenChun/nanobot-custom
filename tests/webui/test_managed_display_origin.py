@@ -621,6 +621,7 @@ async def test_delegated_child_activity_carries_root_origin_and_drops_after_repl
             session_key="delegated:child-1",
             child_id="child-1",
             profile="delegated",
+            harness="native",
             state="running",
             outcome=None,
             runtime_generation=1,

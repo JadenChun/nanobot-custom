@@ -1218,7 +1218,7 @@ async def test_permission_projection_is_attached_only_to_local_owning_thread_rea
     handler.workspace_controls_available = lambda _connection: True
     handler.check_api_token = lambda _request: True
     handler.session_manager = SimpleNamespace(
-        read_existing_canonical_source=lambda _key: (object(), object()),
+        read_existing_canonical_source=lambda _key: (object(), SimpleNamespace(header={"metadata": {}})),
         read_session_file=lambda _key: {"messages": []},
     )
     handler.workspaces = SimpleNamespace(

@@ -58,8 +58,8 @@ from kohaku.security.folder_grants import (
 from kohaku.security.folder_locations import FolderEditIncompleteError
 from kohaku.security.workspace_access import WorkspaceScope
 from kohaku.session.harness_binding import external_binding
-from kohaku.session.manager import JsonlSessionStore, SessionManager
-from kohaku.session.recovery import RecoveryActionError
+from kohaku.session.manager import JsonlSessionStore, SessionManager, SessionWriteConflict
+from kohaku.session.recovery import RecoveryActionError, recovery_state_from_metadata
 from kohaku.session.source_store import SavedSourceMetadata, SourceSnapshot, SourceState
 from kohaku.triggers.local_types import LocalTrigger
 from kohaku.webui.file_preview import (
@@ -362,6 +362,19 @@ def attached_mobile_identity(connection: object) -> object | None:
     except TypeError:
         return None
     return attributes.get("mobile_identity")
+
+
+def _add_thread_harness_fields(
+    data: dict[str, Any], snapshot: SourceSnapshot | None,
+) -> None:
+    data["harness_capabilities"] = harness_capabilities()
+    if snapshot is None:
+        return
+    metadata = snapshot.header["metadata"]
+    if (binding := external_binding(metadata)) is not None:
+        data["harness_binding"] = binding.payload()
+        if (recovery := recovery_state_from_metadata(metadata)) is not None:
+            data["recovery_state"] = recovery
 
 
 def _typed_owner_identity(connection: Any) -> Any | None:
@@ -826,12 +839,38 @@ class GatewayHTTPHandler:
             return 413, {"error": "response_too_large"}
         return response.status_code, cast(dict[str, Any], body)
 
+    async def read_mobile_thread(
+        self,
+        key: str,
+        query: dict[str, list[str]],
+        *,
+        owner: bool,
+    ) -> tuple[int, dict[str, Any]]:
+        """Project the thread in a worker and read its Stop target on the owning loop."""
+        snapshot: SourceSnapshot | None = None
+
+        def defer_stop_target(
+            _key: str, *, source_snapshot: SourceSnapshot | None = None,
+        ) -> None:
+            nonlocal snapshot
+            snapshot = source_snapshot
+
+        read_stop_target = self.stop_target_for_key
+        status, payload = await asyncio.to_thread(
+            self.mobile_thread_payload, key, query, owner=owner,
+            stop_target_reader=defer_stop_target if read_stop_target is not None else None,
+        )
+        if status == 200 and snapshot is not None and read_stop_target is not None:
+            payload["stop_target"] = read_stop_target(snapshot.state.session_key, source_snapshot=snapshot)
+        return status, payload
+
     def mobile_thread_payload(
         self,
         key: str,
         query: dict[str, list[str]],
         *,
         owner: bool = False,
+        stop_target_reader: StopTargetReader | None = None,
     ) -> tuple[int, dict[str, Any]]:
         """Project the requested thread view after the mobile edge checks scope."""
         suffix = f"?{urlencode(query, doseq=True)}" if query else ""
@@ -843,6 +882,7 @@ class GatewayHTTPHandler:
             key,
             allow_remote_permissions=True,
             remote_owner=owner,
+            stop_target_reader=stop_target_reader,
         )
         try:
             body = json.loads(response.body)
@@ -856,7 +896,7 @@ class GatewayHTTPHandler:
             return 502, {"error": "invalid_thread_payload"}
         return response.status_code, cast(dict[str, Any], body)
 
-    def mobile_delegated_children_payload(
+    async def mobile_delegated_children_payload(
         self,
         key: str,
         query: dict[str, list[str]],
@@ -866,7 +906,9 @@ class GatewayHTTPHandler:
         path = f"/api/sessions/{quote(key, safe='')}/delegated-children{suffix}"
         request = WsRequest(path, Headers())
         setattr(request, "_nanobot_trusted_proxy_authenticated", True)
-        response = self._handle_delegated_children_get(request, key)
+        response = await asyncio.to_thread(
+            self._build_delegated_children_response, request, key, self._live_stop_target(key),
+        )
         try:
             body = json.loads(response.body)
         except (UnicodeDecodeError, json.JSONDecodeError):
@@ -1619,16 +1661,6 @@ class GatewayHTTPHandler:
             cleaned.append(row)
         return {"sessions": cleaned, "harness_capabilities": harness_capabilities()}
 
-    def _handle_delegated_children_get(
-        self,
-        request: WsRequest,
-        key: str,
-    ) -> Response:
-        """Return durable child references for one WebSocket parent chat."""
-        return self._build_delegated_children_response(
-            request, key, self._live_stop_target(key)
-        )
-
     def _live_stop_target(self, key: str) -> dict[str, object] | None:
         """Resolve the live Stop target on the event loop that owns the run."""
         decoded_key = _decode_api_key(key)
@@ -1774,6 +1806,7 @@ class GatewayHTTPHandler:
         connection: Any | None = None,
         allow_remote_permissions: bool = False,
         remote_owner: bool = False,
+        stop_target_reader: StopTargetReader | None = None,
     ) -> Response:
         if not self.check_api_token(request):
             return _http_error(401, "Unauthorized")
@@ -1900,6 +1933,7 @@ class GatewayHTTPHandler:
                 request, decoded_key, {"view": "controls", "sessionKey": decoded_key},
                 snapshot=snapshot, scope=scope, connection=connection,
                 allow_remote_permissions=allow_remote_permissions, remote_owner=remote_owner,
+                stop_target_reader=stop_target_reader,
             )
         allow_folder_grants = self.workspaces.folder_grants_allowed_for_session(scope_key)
         if (
@@ -2088,6 +2122,24 @@ class GatewayHTTPHandler:
             data["view"] = "history"
             if source_state is not None:
                 data["source"] = _source_origin_payload(source_state)
+            if remote_owner:
+                if snapshot is None and source_state is not None and sessions is not None:
+                    try:
+                        source = sessions.read_existing_canonical_source(
+                            decoded_key,
+                            header_only=True,
+                            expected_binding={
+                                "store_identity": source_state.store_identity,
+                                "incarnation": source_state.incarnation,
+                                "generation": source_state.generation,
+                            },
+                        )
+                    except SessionWriteConflict:
+                        return _http_error(409, "source_changed")
+                    except (OSError, ValueError):
+                        return _http_error(503, "session_read_unavailable")
+                    snapshot = source[1] if source is not None else None
+                _add_thread_harness_fields(data, snapshot)
             return _http_json_response(
                 data,
                 accept_encoding=_combined_list_header(request.headers, "Accept-Encoding"),
@@ -2096,6 +2148,7 @@ class GatewayHTTPHandler:
             request, decoded_key, data,
             snapshot=snapshot, scope=scope, connection=connection,
             allow_remote_permissions=allow_remote_permissions, remote_owner=remote_owner,
+            stop_target_reader=stop_target_reader,
         )
 
     def _read_saved_history_source(
@@ -2155,6 +2208,7 @@ class GatewayHTTPHandler:
         connection: Any,
         allow_remote_permissions: bool,
         remote_owner: bool,
+        stop_target_reader: StopTargetReader | None,
     ) -> Response:
         """Read current control state, without using any display transcript facts."""
         # Emit the key only for a session whose Stop target this gateway can
@@ -2162,14 +2216,13 @@ class GatewayHTTPHandler:
         # canonical source has no such authority, and an explicit null would tell
         # the client that modern Stop exists and is empty, permanently disabling
         # the legacy Stop path it still needs.
-        if snapshot is not None and self.stop_target_for_key is not None:
-            data["stop_target"] = self.stop_target_for_key(
+        read_stop_target = stop_target_reader or self.stop_target_for_key
+        if snapshot is not None and read_stop_target is not None:
+            data["stop_target"] = read_stop_target(
                 decoded_key, source_snapshot=snapshot,
             )
         data["workspace_scope"] = self.workspaces.scope_payload(scope)
-        data["harness_capabilities"] = harness_capabilities()
-        if snapshot is not None and (binding := external_binding(snapshot.header["metadata"])) is not None:
-            data["harness_binding"] = binding.payload()
+        _add_thread_harness_fields(data, snapshot)
         next_scope_fn = getattr(self.workspaces, "next_scope_for_session_key", None)
         next_scope = next_scope_fn(decoded_key) if callable(next_scope_fn) else None
         if isinstance(next_scope, WorkspaceScope):
