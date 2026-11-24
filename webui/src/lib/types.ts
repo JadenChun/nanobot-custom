@@ -128,6 +128,7 @@ export interface DelegatedChildPayload {
   child_session_key: string;
   child_id: string;
   profile: string;
+  harness?: ChatHarness;
   state: string;
   task_label?: string;
   task_label_truncated?: boolean;
@@ -166,6 +167,7 @@ export interface DelegatedChildSummaryPayload {
   child_session_key: string;
   child_id: string;
   profile: string;
+  harness?: ChatHarness;
   state: string;
   task_label: string | null;
   task_label_truncated: boolean;
@@ -1867,7 +1869,13 @@ interface InboundTurnMetadata {
 
 export type InboundEvent =
   | { event: "ready"; chat_id: string; client_id: string; harness_capabilities?: HarnessCapabilities }
-  | { event: "external_approval"; chat_id: string; approval_id: string; approval: LiveExternalApproval | null }
+  | {
+      event: "external_approval";
+      chat_id: string;
+      approval_id: string;
+      approval: LiveExternalApproval | null;
+      child_id?: string;
+    }
   | {
       event: "attached";
       chat_id: string;
@@ -1915,6 +1923,7 @@ export type InboundEvent =
       child_session_key: string;
       child_id: string;
       profile: string;
+      harness?: ChatHarness;
       state: string;
       task_label: string;
       task_label_truncated: boolean;
@@ -2280,6 +2289,7 @@ export interface WebuiThreadPersistedPayload {
   stop_target?: StopExpectation | null;
   read_only?: boolean;
   history_kind?: "canonical" | "summary";
+  harness?: ChatHarness;
   harness_binding?: HarnessBinding;
   harness_capabilities?: HarnessCapabilities;
   parent_session_key?: string;

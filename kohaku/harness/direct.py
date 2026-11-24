@@ -9,9 +9,11 @@ from typing import TYPE_CHECKING
 
 from kohaku.agent.runner import AgentRunResult
 from kohaku.bus.outbound_events import ExternalApprovalEvent, SessionUpdatedEvent
+from kohaku.events import NO_EVENTS
 from kohaku.harness.anthropic_bridge import LoopbackAnthropicBridge
 from kohaku.harness.backend import (
     ExternalToolPolicy,
+    ExternalTurnOutcome,
     ExternalTurnRequest,
     HarnessCapabilityError,
     PendingExternalApproval,
@@ -28,6 +30,7 @@ from kohaku.session.source import validate_execution_links
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from kohaku.agent.child_backend import ChildTurnRequest
     from kohaku.agent.hook import AgentHook
     from kohaku.agent.turn import TurnContext
     from kohaku.events import EventSink
@@ -62,6 +65,10 @@ async def run_direct_turn(
     private_roots: tuple[Path, ...],
     is_closing: Callable[[], bool],
     workspace_is_authorized: Callable[[], bool],
+    child: ChildTurnRequest | None = None,
+    approval_events: EventSink | None = None,
+    authorize_tool: Callable[[str, dict[str, object]], bool] | None = None,
+
 ) -> AgentRunResult:
     writer = context.source_writer
     if writer is None or context.session_key is None:
@@ -81,11 +88,16 @@ async def run_direct_turn(
             and workspace_is_authorized()
         )
 
+    approvals = events if approval_events is None else approval_events
+    child_id = child.admission.child_id if child is not None else None
+
     async def approval_requested(approval: PendingExternalApproval) -> None:
-        await events.emit(ExternalApprovalEvent(approval_id=approval.approval_id, approval=approval))
+        await approvals.emit(ExternalApprovalEvent(
+            approval_id=approval.approval_id, approval=approval, child_id=child_id,
+        ))
 
     async def approval_closed(approval_id: str) -> None:
-        await events.emit(ExternalApprovalEvent(approval_id=approval_id))
+        await approvals.emit(ExternalApprovalEvent(approval_id=approval_id, child_id=child_id))
 
     first_turn = binding.locked_workspace is None
     binding = replace(
@@ -102,23 +114,49 @@ async def run_direct_turn(
         return True
 
     try:
-        await events.emit(SessionUpdatedEvent(scope="metadata", harness_binding=binding.payload()))
+        if child is None:
+            await events.emit(SessionUpdatedEvent(scope="metadata", harness_binding=binding.payload()))
+        if not is_authorized():
+            raise HarnessCapabilityError("The Claude Code turn no longer has working folder access.")
         if full is not None:
             launched = permissions.register_native_stdin(
                 full, task, revoke_full, lambda: (int(active), 0),
             )
             if not launched:
                 raise HarnessCapabilityError("Full access is no longer available for this chat.")
+        if child is not None:
+            prompt = f"{child.instructions}\n\n## Assignment\n{prompt}"
         outcome = await runner.run(ExternalTurnRequest(
             context.session_key, writer.run_id, binding, workspace, prompt, runtime, hook, writer,
             is_authorized, policy=policy, usage_source=usage_source,
-            on_approval=approval_requested, events=events, private_roots=private_roots,
+            on_approval=approval_requested if approvals is not NO_EVENTS else None,
+            events=events, private_roots=private_roots,
+            max_turns=child.max_iterations if child is not None else None,
+            authorize_tool=authorize_tool,
+            approval_session_key=child.admission.root_key if child is not None else None,
+            prior_external_session_id=child.prior_external_session_id if child is not None else None,
             on_approval_closed=approval_closed, retain_process=False,
         ))
+        acknowledge = context.followup_request_acknowledged
+        if child is not None and outcome.status == "completed" and acknowledge is not None:
+            acknowledge(tuple(context.pending_followup_acknowledgments))
+            context.pending_followup_acknowledgments.clear()
+        content = outcome.content or outcome.error
+        details: dict[str, object] = {}
+        if child is not None and child.role == "worker":
+            evidence, summary = _worker_evidence(outcome)
+            details["implementation"] = evidence
+            content = f"{content or ''}\n\n{summary}".strip()
         return AgentRunResult(
-            outcome.content or outcome.error,
+            content,
             writer.committed_events,
-            stop_reason="error" if outcome.status == "failed" else outcome.status,
+            stop_reason=(
+                "external_effect_uncertain"
+                if child is not None and validate_execution_links(writer.owner.read_snapshot().events)
+                else "error" if outcome.status == "failed" else outcome.status
+            ),
+            tools_used=list(outcome.tools_used),
+            policy_metadata=details,
             error=outcome.error,
         )
     except HarnessCapabilityError as exc:
@@ -136,5 +174,23 @@ async def run_direct_turn(
         if not writer.failed and not validate_execution_links(snapshot.events):
             writer.store.update_metadata(context.session_key, {}, removals=(EXTERNAL_ACTIVE_RUN_KEY,))
         saved = external_binding(snapshot.header["metadata"])
-        if saved is not None and saved != binding:
+        if child is None and saved is not None and saved != binding:
             await events.emit(SessionUpdatedEvent(scope="metadata", harness_binding=saved.payload()))
+
+
+def _worker_evidence(outcome: ExternalTurnOutcome) -> tuple[dict[str, object], str]:
+    files = sorted({path for edit in outcome.file_edits if isinstance(path := edit.get("path"), str)})
+    commands = [{"command": command, "outcome": status} for command, status in outcome.commands]
+    failures = [row["command"] for row in commands if row["outcome"] == "error"]
+    details: dict[str, object] = {
+        "changed_files": files, "commands": commands, "failed_commands": failures,
+    }
+    lines = ["### Observed changed files", *(f"- {path}" for path in files)]
+    if not files:
+        lines.append("- No file edits reported.")
+    lines.append("### Shell commands and outcomes")
+    if commands:
+        lines.extend(f"- {row['outcome']}: {row['command']}" for row in commands)
+    else:
+        lines.append("- No shell commands ran.")
+    return details, "\n".join(lines)

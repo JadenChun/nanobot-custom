@@ -6,6 +6,8 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Literal, TypedDict, cast
 
+ChatHarness = Literal["native", "claude_sdk"]
+
 HARNESS_BINDING_KEY = "harness_binding"
 EXTERNAL_ACTIVE_RUN_KEY = "_external_active_run"
 EXTERNAL_RECOVERY_KEY = "_external_recovery"

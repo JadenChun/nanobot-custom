@@ -31,7 +31,7 @@ from kohaku.harness.backend import (
     SessionHarnessBackend,
 )
 
-_TOOL_NAMES = {
+CLAUDE_TOOL_NAMES = {
     "Read": "read_file", "Write": "write_file", "Edit": "edit_file",
     "NotebookEdit": "edit_file", "Bash": "exec", "Glob": "find_files", "Grep": "grep",
 }
@@ -43,7 +43,7 @@ def normalize_tool_call(call: ExternalToolCall) -> ExternalToolCall:
                      ("old_string", "old_text"), ("new_string", "new_text")):
         if old in arguments:
             arguments[new] = arguments.pop(old)
-    return ExternalToolCall(call.id, _TOOL_NAMES.get(call.name, call.name), arguments)
+    return ExternalToolCall(call.id, CLAUDE_TOOL_NAMES.get(call.name, call.name), arguments)
 
 
 @dataclass(slots=True)
@@ -236,6 +236,7 @@ class _Turn:
     active_calls: dict[str, tuple[int, ExternalToolCall]] = field(default_factory=dict)
     results: dict[str, ExternalToolResult] = field(default_factory=dict)
     edits: list[dict[str, object]] = field(default_factory=list)
+    commands: list[tuple[str, str]] = field(default_factory=list)
     status: Literal["completed", "failed", "cancelled"] = "failed"
     error: str | None = None
     reasoning: bool = False
@@ -350,6 +351,9 @@ class _Turn:
                 result = self.results.pop(call_id)
                 ordinal, call = self.active_calls.pop(call_id)
                 status = "error" if result.is_error else "ok"
+                command = call.arguments.get("command")
+                if call.name == "exec" and isinstance(command, str):
+                    self.commands.append((command, status if result.dispatched else "not_run"))
                 await self.request.writer.record_tool_result(KnownToolResult(
                     ordinal, call.id, call.name, result.content, result.content,
                     {"status": status}, result.dispatched,
@@ -397,6 +401,7 @@ class _Turn:
             return ExternalTurnOutcome(
                 replace(self.request.binding, external_session_id=session_id),
                 content, self.status, self.error,
+                tuple(self.run_context.tools_used), tuple(self.edits), tuple(self.commands),
             )
         finally:
             await hook.on_finally(self.run_context)

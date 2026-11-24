@@ -141,12 +141,14 @@ class DelegatedChildEvent(AgentEvent):
     pending_approval_id: str | None = None
     blocked_run_id: str | None = None
     result_disposition: str | None = None
+    harness: str | None = None
 
 
 @dataclass(frozen=True)
 class ExternalApprovalEvent(AgentEvent):
     approval_id: str
     approval: PendingExternalApproval | None = None
+    child_id: str | None = None
 
 
 @dataclass(frozen=True)

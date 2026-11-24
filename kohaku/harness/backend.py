@@ -43,6 +43,8 @@ class ExternalToolPolicy:
     sandbox_excluded_commands: tuple[str, ...] = ()
     sandbox_allow_local_binding: bool = True
     sandbox_allow_unix_sockets: tuple[str, ...] = ()
+    exact_write_paths: frozenset[Path] = frozenset()
+    allowed_tools: frozenset[str] | None = None
 
     @property
     def sandboxed(self) -> bool:
@@ -69,6 +71,9 @@ class ExternalTurnRequest:
     private_roots: tuple[Path, ...] = ()
     on_approval_closed: Callable[[str], Awaitable[None]] | None = None
     retain_process: bool = True
+    max_turns: int | None = None
+    approval_session_key: str | None = None
+    authorize_tool: Callable[[str, dict[str, object]], bool] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -77,6 +82,9 @@ class ExternalTurnOutcome:
     content: str
     status: Literal["completed", "failed", "cancelled"]
     error: str | None = None
+    tools_used: tuple[str, ...] = ()
+    file_edits: tuple[dict[str, object], ...] = ()
+    commands: tuple[tuple[str, str], ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -177,6 +185,7 @@ class _ApprovalWaiter:
     approval: PendingExternalApproval
     future: asyncio.Future[ExternalApprovalAction]
     is_authorized: Callable[[], bool]
+    control_session_key: str
 
 
 class ExternalApprovalRegistry:
@@ -205,7 +214,7 @@ class ExternalApprovalRegistry:
         )
         future: asyncio.Future[ExternalApprovalAction] = asyncio.get_running_loop().create_future()
         self._pending[approval.approval_id] = _ApprovalWaiter(
-            approval, future, request.is_authorized,
+            approval, future, request.is_authorized, request.approval_session_key or request.session_key,
         )
         try:
             await request.on_approval(approval)
@@ -217,15 +226,20 @@ class ExternalApprovalRegistry:
             if request.on_approval_closed is not None:
                 await request.on_approval_closed(approval.approval_id)
 
+    def owns(self, approval_id: str) -> bool:
+        return approval_id in self._pending
+
     def resolve(
         self, decision: ApprovalDecision, *, save_exclusion_command: str | None = None,
+        control_session_key: str | None = None,
     ) -> bool:
         waiter = self._pending.get(decision.approval_id)
         if waiter is None or waiter.future.done():
             return False
         approval = waiter.approval
         if (
-            decision.session_key != approval.session_key or decision.run_id != approval.run_id
+            (control_session_key or decision.session_key) != waiter.control_session_key
+            or decision.session_key != approval.session_key or decision.run_id != approval.run_id
             or decision.generation != approval.runtime_generation
             or (decision.session_incarnation is not None
                 and decision.session_incarnation != approval.session_incarnation)

@@ -99,6 +99,9 @@ from kohaku.config.schema import (
     MCPServerConfig,
 )
 from kohaku.context_repo import ContextRepoManager, ResourceAccessPolicy
+from kohaku.harness.backend import ExternalToolPolicy
+from kohaku.harness.claude_sdk import claude_sdk_available
+from kohaku.harness.runner import CLAUDE_TOOL_NAMES
 from kohaku.providers.base import LLMProvider, ToolCallRequest
 from kohaku.security.folder_grants import FolderGrantView
 from kohaku.security.workspace_access import current_tool_workspace
@@ -107,6 +110,7 @@ from kohaku.session.execution_owner import (
     ExecutionOwnershipError,
     acquire_execution,
 )
+from kohaku.session.harness_binding import ChatHarness, external_binding
 from kohaku.session.manager import SessionManager, SessionWriteConflict
 from kohaku.session.pending_followups import (
     BACKGROUND_RESULT_INBOUND_METADATA_KEY,
@@ -1018,7 +1022,7 @@ class ForegroundAgentManager:
             }
         if action == "steer":
             try:
-                backend = self._child_backends.resolve(child.profile)
+                backend = self._child_backends.resolve(child.profile, child.harness)
                 await backend.steer(child_id, content or "")
             except ChildBackendUnavailableError as exc:
                 return {"ok": False, "reason": str(exc)}
@@ -1399,12 +1403,15 @@ class ForegroundAgentManager:
         allowed_names: set[str],
         owned_names: frozenset[str] = frozenset(),
         read_only_mcp_names: tuple[str, ...],
+        additional_borrowed_names: set[str] | None = None,
     ) -> tuple[ToolRegistry, CapturedToolBindings]:
         """Intersect role tools with the parent binding and explicit role-owned tools."""
         effective_names = set(allowed_names) & (
             set(parent_bindings.tool_names) | set(owned_names)
         )
-        borrowed = parent_bindings.borrow_filtered(tuple(sorted(effective_names)))
+        borrowed = parent_bindings.borrow_filtered(tuple(sorted(
+            effective_names | (additional_borrowed_names or set[str]())
+        )))
         scoped = borrowed.filtered(list(read_only_mcp_names)) if read_only_mcp_names else ToolRegistry()
         for tool in role_tools.iter_tools():
             if tool.name in effective_names:
@@ -1484,6 +1491,72 @@ class ForegroundAgentManager:
             and not tree.is_stopping(current.child_id)
         )
 
+    def _claude_workspace(self) -> Path:
+        access = current_tool_workspace(self.workspace, restrict_to_workspace=self.restrict_to_workspace)
+        return (access.project_path or self.workspace).resolve(strict=True)
+
+    def _claude_fork_id(
+        self, tree: DelegationTree, child_id: str, parent: SourceState, workspace: Path,
+    ) -> str | None:
+        prior = tree.child(child_id)
+        if (
+            prior is None or prior.parent_key != parent.session_key
+            or prior.parent_source_state is None or not prior.parent_source_state.same_origin(parent)
+            or prior.harness != "claude_sdk" or prior.state != "completed"
+            or prior.holds_capacity or tree.is_stopping(prior.child_id)
+            or not self._source_is_current(prior.root_key, prior.root_source_state)
+        ):
+            return None
+        backend = tree.sessions.source_backend(prior.session_key)
+        if backend is None or prior.source_state is None:
+            return None
+        try:
+            snapshot = backend.source.load_source_snapshot(prior.session_key)
+            metadata = snapshot.header["metadata"]
+            binding = external_binding(metadata)
+            if (
+                not snapshot.state.same_origin(prior.source_state)
+                or binding is None or binding.locked_workspace != str(workspace)
+                or "execution_lease" in metadata or "execution_recovery_required" in metadata
+                or validate_execution_links(snapshot.events)
+            ):
+                return None
+        except Exception:
+            return None
+        return binding.external_session_id
+
+    @staticmethod
+    def _claude_policy(
+        scopes: tuple[WriteScope, ...], parent_bindings: CapturedToolBindings,
+        task_reference: WorkspaceTaskAccessReference | None, workspace: Path,
+    ) -> ExternalToolPolicy:
+        allowed = {
+            tool for tool, native in CLAUDE_TOOL_NAMES.items()
+            if parent_bindings.get(native) is not None
+            and parent_bindings.dispatch_error(native) is None
+            and (scopes or tool in {"Read", "Glob", "Grep"})
+        }
+        if task_reference is not None:
+            applicable = [root for root in task_reference.roots if workspace.is_relative_to(root.path)]
+            if applicable and not max(applicable, key=lambda root: len(Path(root.path).parts)).commands:
+                allowed.discard("Bash")
+        return ExternalToolPolicy(
+            allowed_tools=frozenset(allowed),
+            write_scope=tuple(scope.path for scope in scopes),
+            exact_write_paths=(
+                frozenset(scope.path for scope in scopes if not scope.recursive)
+                - frozenset(scope.path for scope in scopes if scope.recursive)
+            ),
+        )
+
+    def _claude_authority_is_current(
+        self, admission: ChildAdmission, run_id: str, parent_bindings: CapturedToolBindings,
+    ) -> bool:
+        return (
+            self._child_followup_boundary_is_current(admission.child_id, run_id)
+            and all(parent_bindings.dispatch_error(name) is None for name in parent_bindings.tool_names)
+        )
+
     async def _run_role(
         self,
         *,
@@ -1503,9 +1576,25 @@ class ForegroundAgentManager:
         background: bool = False,
         system_prompt: str | None = None,
         include_skill_context: bool = True,
+        harness: ChatHarness = "native",
+        continue_from_child_id: str | None = None,
+        write_scopes: tuple[WriteScope, ...] = (),
     ) -> AgentRunResult:
         from kohaku.session.artifact_grants import CanonicalChildArtifactInput
         from kohaku.session.artifact_reader import ArtifactReader
+
+        def refuse(message: str) -> AgentRunResult:
+            return AgentRunResult(
+                final_content=f"Error: {message}", messages=[], stop_reason="policy_blocked",
+                policy_metadata={"delegation_refused": True},
+            )
+
+        if harness not in ("native", "claude_sdk"):
+            return refuse("Choose native or claude_sdk for the child harness.")
+        if continue_from_child_id is not None and (harness != "claude_sdk" or role != "worker"):
+            return refuse("Context carryover requires a Claude Code implementation child.")
+        if harness == "claude_sdk" and not claude_sdk_available():
+            return refuse("Claude Code requires the optional Claude Agent SDK.")
 
         call_id = str(uuid.uuid4())[:8]
         logger.info("Foreground {} [{}] started", role, call_id)
@@ -1608,6 +1697,32 @@ class ForegroundAgentManager:
                 stop_reason="policy_blocked",
                 policy_metadata={"delegation_refused": True},
             )
+        claude_workspace: Path | None = None
+        prior_external_session_id: str | None = None
+        if harness == "claude_sdk":
+            try:
+                claude_workspace = self._claude_workspace()
+                self.resource_policy.validate_path(claude_workspace, "read")
+                for scope in write_scopes:
+                    self.resource_policy.validate_path(scope.path, "write")
+            except (OSError, ValueError):
+                return refuse("The current working folder or write scope is unavailable.")
+            if continue_from_child_id is not None:
+                prior_external_session_id = self._claude_fork_id(
+                    tree, continue_from_child_id, expected_parent_source_state, claude_workspace,
+                )
+                if prior_external_session_id is None:
+                    return refuse("Choose a completed Claude Code child from this chat and working folder.")
+            if artifact_references and parent_artifact_reader is not None:
+                try:
+                    evidence = [
+                        f"Reference {reference}\n"
+                        f"{parent_artifact_reader.read(reference, max_bytes=8192).text}"
+                        for reference in artifact_references
+                    ]
+                except (OSError, ValueError):
+                    return refuse("A supplied artifact reference is unavailable.")
+                prompt += "\n\n## Supplied evidence\n" + "\n\n".join(evidence)
         background_delivery: BackgroundDeliveryIntent | None = None
         if background:
             binding = turn_context.active_tool_intent_binding
@@ -1665,6 +1780,11 @@ class ForegroundAgentManager:
             "authority": dict(authority or {}),
             "background": background,
         }
+        if claude_workspace is not None:
+            policy_facts.update(
+                harness=harness, workspace=str(claude_workspace),
+                continue_from_child_id=continue_from_child_id,
+            )
         reserved = await tree.reserve(
             parent=parent,
             parent_key=parent_key,
@@ -1674,6 +1794,7 @@ class ForegroundAgentManager:
             policy_facts=policy_facts,
             expected_parent_source_state=expected_parent_source_state,
             background_delivery=background_delivery,
+            harness=harness,
         )
         if isinstance(reserved, ChildRefusal):
             return AgentRunResult(
@@ -1694,7 +1815,7 @@ class ForegroundAgentManager:
             )
 
         launch_fence = tree.begin_launch(admission.child_id)
-        backend = self._child_backends.resolve(admission.profile)
+        backend = self._child_backends.resolve(admission.profile, admission.harness)
         child_authority_bindings: CapturedToolBindings | None = None
         child_task_reference = turn_context.workspace_task_reference
         permission_owner = getattr(tree.sessions, "desktop_permissions", None)
@@ -1734,24 +1855,31 @@ class ForegroundAgentManager:
                     policy_metadata={"delegation_refused": True},
                 )
             admission = registered
-            if artifact_references or (
-                role == "worker" and parent_artifact_reader is not None
+            if harness == "native" and (
+                artifact_references or (role == "worker" and parent_artifact_reader is not None)
             ):
                 artifact_input = CanonicalChildArtifactInput(
                     admission=admission,
                     parent_reader=cast(ArtifactReader, parent_artifact_reader),
                     references=tuple(artifact_references or ()),
                 )
+            external_policy = (
+                self._claude_policy(write_scopes, parent_bindings, child_task_reference, claude_workspace)
+                if claude_workspace is not None else None
+            )
             tools, child_authority_bindings = self._scope_child_tools(
                 parent_bindings,
                 tools,
                 allowed_names=effective_tool_names,
                 owned_names=role_profile.owned_tools,
                 read_only_mcp_names=read_only_mcp_names,
+                additional_borrowed_names={
+                    CLAUDE_TOOL_NAMES[name] for name in (external_policy.allowed_tools or ())
+                } if external_policy is not None else None,
             )
             await self._emit_child(admission)
 
-            if role in DELEGATED_READ_ONLY_ROLES:
+            if role in DELEGATED_READ_ONLY_ROLES and harness == "native":
                 profile = role_capabilities(role)
                 prompt += (
                     "\n\n## Enforced capability boundary\n"
@@ -1795,6 +1923,9 @@ class ForegroundAgentManager:
                 if len(child_policies) == 1
                 else cast(ToolPolicy, CompositeToolPolicy(tuple(child_policies)))
             )
+            def claude_authority() -> bool:
+                return self._claude_authority_is_current(admission, run_id, child_authority_bindings)
+
             turn_request = ChildTurnRequest(
                 admission=admission,
                 run_id=run_id,
@@ -1812,6 +1943,12 @@ class ForegroundAgentManager:
                 workspace_task_reference=child_task_reference,
                 artifact_input=artifact_input,
                 background_delivery=background_delivery,
+                external_policy=external_policy,
+                external_tool_is_current=(
+                    lambda name: child_authority_bindings.dispatch_error(name) is None
+                ) if external_policy is not None else None,
+                external_authority=claude_authority if claude_workspace is not None else None,
+                prior_external_session_id=prior_external_session_id,
                 request_boundary_validator=lambda child_id=admission.child_id, active_run=run_id: (
                     self._child_request_is_current(child_id, active_run)
                 ),
@@ -1945,12 +2082,21 @@ class ForegroundAgentManager:
                     },
                 )
 
+            if continue_from_child_id is not None and (
+                claude_workspace is None or self._claude_fork_id(
+                    tree, continue_from_child_id, expected_parent_source_state, claude_workspace,
+                ) != prior_external_session_id
+            ):
+                await tree.release(admission.child_id, reason="claude_context_stale")
+                return refuse("The source Claude Code context changed before launch.")
+
             handle = await backend.start(
                 admission,
                 run_and_finalize,
                 ChildBackendBinding(
                     runtime_generation=admission.runtime_generation,
                     proof="canonical-turn",
+                    backend="external" if harness == "claude_sdk" else "native",
                 ),
                 track=track_child_task,
             )
@@ -2649,7 +2795,7 @@ class ForegroundAgentManager:
             return "completed", "completed"
         if result.stop_reason == "cancelled":
             return "stopped", "cancelled"
-        if result.stop_reason in {"approval_required", "approval_stale"}:
+        if result.stop_reason in {"approval_required", "approval_stale", "external_effect_uncertain"}:
             return "uncertain", result.stop_reason
         return "failed", result.stop_reason or "failed"
 
@@ -2674,6 +2820,11 @@ class ForegroundAgentManager:
     ) -> str | ToolOutcome:
         """Keep nested terminal metadata attached for contextual outer turns."""
         content = cls._result_text(result, role)
+        child = result.policy_metadata.get("delegated_child")
+        if isinstance(child, dict):
+            facts = cast(dict[str, object], child)
+            if facts.get("harness") == "claude_sdk" and isinstance(child_id := facts.get("child_id"), str):
+                content = f"Claude Code child {child_id}\n\n{content}"
         if turn_context is not None and result.stop_reason == "approval_required":
             approval_id = result.policy_metadata.get("approval_id")
             child = result.policy_metadata.get("delegated_child")
@@ -2768,6 +2919,12 @@ class ForegroundAgentManager:
             return self._followup_disposition("refused")
         child = tree.child(child_id)
         if (
+            child is not None and child.harness == "claude_sdk" and child.live
+            and child.parent_key == parent_key and child.parent_incarnation == parent_state.incarnation
+        ):
+            await self._await_child_settlement(child_id)
+            child = tree.child(child_id)
+        if (
             child is None
             or child.parent_key != parent_key
             or child.parent_incarnation != parent_state.incarnation
@@ -2787,6 +2944,18 @@ class ForegroundAgentManager:
             logger.debug("Child follow-up source read failed: {}", exc)
             return self._followup_disposition("refused")
         child_state = child_snapshot.state
+        if child.harness == "claude_sdk":
+            if not claude_sdk_available():
+                return "Error: Claude Code requires the optional Claude Agent SDK."
+            try:
+                sdk_binding = external_binding(child_snapshot.header["metadata"])
+                if (
+                    sdk_binding is None or not sdk_binding.external_session_id
+                    or sdk_binding.locked_workspace != str(self._claude_workspace())
+                ):
+                    return self._followup_disposition("refused")
+            except (OSError, ValueError):
+                return self._followup_disposition("refused")
         if (
             not child_state.same_origin(child.source_state)
             or child_state.store_identity != child.source_state.store_identity
@@ -3160,12 +3329,20 @@ class ForegroundAgentManager:
                 and is_read_only_mcp_tool(tool)
             )
             effective_names.update(read_only_mcp_names)
+            external_policy = (
+                self._claude_policy(
+                    scopes, parent_bindings, context.workspace_task_reference, self._claude_workspace(),
+                ) if child.harness == "claude_sdk" else None
+            )
             role_tools, child_bindings = self._scope_child_tools(
                 parent_bindings,
                 role_tools,
                 allowed_names=effective_names,
                 owned_names=role_profile.owned_tools,
                 read_only_mcp_names=read_only_mcp_names,
+                additional_borrowed_names={
+                    CLAUDE_TOOL_NAMES[name] for name in (external_policy.allowed_tools or ())
+                } if external_policy is not None else None,
             )
             if role == "worker":
                 allowed = "\n".join(f"- {scope.describe()}" for scope in scopes)
@@ -3177,13 +3354,17 @@ You may modify only these admitted targets:
 {allowed}
 
 Continue the original assignment in the source history. Keep every write inside these targets.
-Use no shell, browser, device, or external delegation tool."""
+Use no browser, device, or external delegation tool."""
+                if child.harness == "claude_sdk":
+                    instructions += "\nRun relevant tests in the workspace sandbox."
+                else:
+                    instructions += "\nUse no shell tool."
             else:
                 instructions = self._base_prompt(f"{role.title()} Role") + f"""
 
 Continue the original {role} assignment in the source history. Preserve the role's admitted
 capability boundary and report the work that the follow-up changes."""
-            if role in DELEGATED_READ_ONLY_ROLES:
+            if role in DELEGATED_READ_ONLY_ROLES and child.harness == "native":
                 instructions += (
                     "\n\n## Enforced capability boundary\n"
                     f"Role {role!r} may call only these tools: "
@@ -3314,8 +3495,18 @@ capability boundary and report the work that the follow-up changes."""
                 self._child_followup_boundary_is_current(child_id, active_run)
             ),
             followup_request_acknowledged=acknowledge_request,
+            external_policy=external_policy,
+            external_tool_is_current=(
+                lambda name: child_bindings.dispatch_error(name) is None
+            ) if external_policy is not None else None,
+            workspace_task_reference=(
+                context.workspace_task_reference if child.harness == "claude_sdk" else None
+            ),
+            external_authority=(
+                lambda: self._claude_authority_is_current(child, run_id, child_bindings)
+            ) if child.harness == "claude_sdk" else None,
         )
-        backend = self._child_backends.resolve(child.profile)
+        backend = self._child_backends.resolve(child.profile, child.harness)
 
         async def run_and_finalize() -> TurnResult:
             try:
@@ -3394,6 +3585,7 @@ capability boundary and report the work that the follow-up changes."""
                 ChildBackendBinding(
                     runtime_generation=child.runtime_generation,
                     proof="ordered-followup",
+                    backend="external" if child.harness == "claude_sdk" else "native",
                 ),
                 track=track_child_task,
             )
@@ -3485,6 +3677,7 @@ capability boundary and report the work that the follow-up changes."""
         context: str = "",
         turn_context: TurnContext | None = None,
         artifact_references: list[str] | None = None,
+        harness: ChatHarness = "native",
     ) -> str | ToolOutcome:
         turn_context = turn_context or current_turn_context()
         if error := self._consume_call("planner", turn_context):
@@ -3506,6 +3699,7 @@ Do not include internal system state or pretend unverified assumptions are facts
             max_iterations=12,
             turn_context=turn_context,
             artifact_references=artifact_references,
+            harness=harness,
         )
         return self._role_result(result, "planner", turn_context)
 
@@ -3516,7 +3710,9 @@ Do not include internal system state or pretend unverified assumptions are facts
         write_scope: list[str],
         turn_context: TurnContext | None = None,
         artifact_references: list[str] | None = None,
+        harness: ChatHarness = "native",
         background: bool = False,
+        continue_from_child_id: str | None = None,
     ) -> str | ToolOutcome:
         turn_context = turn_context or current_turn_context()
         if error := self._consume_call("worker", turn_context):
@@ -3532,6 +3728,12 @@ Do not include internal system state or pretend unverified assumptions are facts
             return f"Error: {exc}"
         call_id = str(uuid.uuid4())[:8]
         allowed = "\n".join(f"- {scope.describe()}" for scope in scopes)
+        validation = (
+            "Run the relevant tests in the workspace sandbox. Report exact commands, outcomes, "
+            "and remaining failures."
+            if harness == "claude_sdk"
+            else "This worker has no shell tool. Return validation commands for the main agent to run."
+        )
         prompt = self._base_prompt("Worker Role") + f"""
 
 ## Write access
@@ -3542,8 +3744,8 @@ You may modify only these declared targets:
 ## Role
 
 Execute the supplied Markdown task contract. Inspect current behavior, make the smallest complete
-change, and validate it. Do not broaden scope. This worker has no shell tool; return validation
-commands for the main orchestrator to run. If the contract conflicts with repository reality,
+change, and validate it. Do not broaden scope. {validation}
+If the contract conflicts with repository reality,
 stop and report the conflict instead of inventing a product decision.
 
 Return concise Markdown with: result (`complete`, `blocked`, or `failed`), summary, acceptance
@@ -3556,6 +3758,7 @@ evidence, exact files modified, exact tests and outcomes, assumptions, and remai
             max_iterations=30,
             turn_context=turn_context,
             artifact_references=artifact_references,
+            harness=harness,
             authority={
                 "write_scope": list(write_scope),
                 "write_scope_project": str(scope_project),
@@ -3565,6 +3768,8 @@ evidence, exact files modified, exact tests and outcomes, assumptions, and remai
                 ],
             },
             background=background,
+            continue_from_child_id=continue_from_child_id,
+            write_scopes=scopes,
         )
         return self._role_result(result, "worker", turn_context)
 
@@ -3577,6 +3782,7 @@ evidence, exact files modified, exact tests and outcomes, assumptions, and remai
         relevant_paths: list[str] | None = None,
         turn_context: TurnContext | None = None,
         artifact_references: list[str] | None = None,
+        harness: ChatHarness = "native",
     ) -> str | ToolOutcome:
         turn_context = turn_context or current_turn_context()
         if error := self._consume_call("reviewer", turn_context):
@@ -3603,6 +3809,7 @@ system prompts or internal harness state."""
             max_iterations=15,
             turn_context=turn_context,
             artifact_references=artifact_references,
+            harness=harness,
         )
         return self._role_result(result, "reviewer", turn_context)
 
@@ -3614,6 +3821,7 @@ system prompts or internal harness state."""
         max_iterations: int,
         turn_context: TurnContext | None = None,
         artifact_references: list[str] | None = None,
+        harness: ChatHarness = "native",
     ) -> dict[str, Any] | ToolOutcome:
         turn_context = turn_context or current_turn_context()
         if error := self._consume_call("explorer", turn_context):
@@ -3647,12 +3855,17 @@ End with exactly:
                 max_iterations=max_iterations,
                 turn_context=turn_context,
                 artifact_references=artifact_references,
+            harness=harness,
             )
         nested = self._role_result(result, "explorer", turn_context)
         if isinstance(nested, ToolOutcome):
             return nested
         text = nested
+        child = result.policy_metadata.get("delegated_child")
+        child_facts = cast(dict[str, object], child) if isinstance(child, dict) else {}
+        child_id = child_facts.get("child_id")
         empty: dict[str, str | bool | list[str]] = {
+            **({"child_id": child_id} if harness == "claude_sdk" and isinstance(child_id, str) else {}),
             "summary": text[:500],
             "findings": [],
             "references": [],

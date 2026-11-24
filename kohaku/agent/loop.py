@@ -150,7 +150,7 @@ from kohaku.harness.backend import (
 )
 from kohaku.harness.claude_sdk import ClaudeSDKBackend
 from kohaku.harness.direct import run_direct_turn, start_bridge
-from kohaku.harness.runner import ExternalHarnessRunner
+from kohaku.harness.runner import CLAUDE_TOOL_NAMES, ExternalHarnessRunner
 from kohaku.llm_usage.context import source_from_request
 from kohaku.providers.base import LLMProvider, LLMUsage, ProviderConversationState
 from kohaku.providers.conversation_state import (
@@ -180,6 +180,7 @@ from kohaku.security.workspace_access import (
     WorkspaceScopeError,
     WorkspaceScopeResolver,
     bind_workspace_scope,
+    build_workspace_scope,
     reset_workspace_scope,
 )
 from kohaku.session import turn_continuation
@@ -680,6 +681,7 @@ class _TurnExecutionOptions:
     internal_include_skill_context: bool = True
     internal_tool_policy: ToolPolicy | None = None
     internal_max_iterations: int | None = None
+    external_child: ChildTurnRequest | None = None
     approval_authority_check: Callable[[RunTurnContext], bool] | None = field(
         default=None, repr=False,
     )
@@ -1612,6 +1614,17 @@ class AgentLoop:
         followup_records = request.followup_records
         if not followup_records and request.followup_record is not None:
             followup_records = (request.followup_record,)
+        child_workspace_scope = None
+        if admission.harness == "claude_sdk":
+            project = admission.policy_facts.get("workspace")
+            if (
+                not isinstance(project, str) or request.external_policy is None
+                or request.external_authority is None or approval_resume is not None
+            ):
+                raise RuntimeError("The Claude Code child has no current execution authority.")
+            child_workspace_scope = build_workspace_scope(
+                Path(project), "restricted", source_channel="system",
+            )
         initial_record = followup_records[0] if followup_records else None
         assignment = initial_record.content if initial_record is not None else request.assignment
         inbound = InboundMessage(
@@ -1622,6 +1635,7 @@ class AgentLoop:
             media=list(initial_record.media) if initial_record is not None else None,
             metadata=dict(initial_record.metadata) if initial_record is not None else {},
             session_key_override=admission.session_key,
+            workspace_scope=child_workspace_scope,
             input_role="user",
         )
         if initial_record is not None:
@@ -1701,6 +1715,7 @@ class AgentLoop:
                     internal_include_skill_context=request.include_skill_context,
                     internal_tool_policy=request.policy,
                     internal_max_iterations=request.max_iterations,
+                    external_child=request if child_workspace_scope is not None else None,
                     approval_authority_check=approval_authority_check,
                     on_approval_consumed=on_approval_consumed,
                     preserve_workspace_task_reference_on_approval=(
@@ -1737,6 +1752,68 @@ class AgentLoop:
                 self._fork_dependencies.foreground_manager.reconcile_background_results()
             )
         return result
+
+    def _claude_child_workspace_is_authorized(self, child: ChildTurnRequest) -> bool:
+        authority = child.external_authority
+        if authority is None or not authority() or child.external_policy is None:
+            return False
+        project = child.admission.policy_facts.get("workspace")
+        if not isinstance(project, str):
+            return False
+        permissions = self.sessions.desktop_permissions
+        task = child.workspace_task_reference
+        if task is not None and not permissions.is_current_task_reference(task):
+            return False
+        policy = self._fork_dependencies.resource_policy
+        try:
+            path = Path(project)
+            if path.resolve(strict=True) != path:
+                return False
+            policy.validate_path(
+                path, "read", permission_owner=permissions, permission_reference=task,
+            )
+            if child.external_policy.write_scope and "Bash" in (child.external_policy.allowed_tools or ()):
+                policy.validate_path(
+                    path, "exec", permission_owner=permissions, permission_reference=task,
+                )
+                # The SDK shell sandbox can write inside the workspace.
+                policy.validate_path(
+                    path, "write", permission_owner=permissions, permission_reference=task,
+                )
+            for scope in child.external_policy.write_scope or ():
+                policy.validate_path(
+                    scope, "write", permission_owner=permissions, permission_reference=task,
+                )
+        except (OSError, ValueError):
+            return False
+        return True
+
+    def _authorize_claude_child_tool(
+        self, child: ChildTurnRequest, workspace: Path, name: str, arguments: dict[str, object],
+    ) -> bool:
+        native_name = CLAUDE_TOOL_NAMES.get(name)
+        validate_capability = child.external_tool_is_current
+        if native_name is None or validate_capability is None or not validate_capability(native_name):
+            return False
+        policy = self._fork_dependencies.resource_policy
+        if name == "Bash":
+            command = arguments.get("command")
+            return isinstance(command, str) and policy.validate_exec(
+                command, workspace, extra_private_path_checks=[],
+            ) is None
+        path = arguments.get(
+            "path" if name in {"Glob", "Grep"} else "notebook_path" if name == "NotebookEdit" else "file_path",
+        )
+        if not isinstance(path, str):
+            return False
+        try:
+            target = workspace / path
+            policy.validate_path(
+                target, "write" if name in {"Write", "Edit", "NotebookEdit"} else "read",
+            )
+        except (OSError, ValueError):
+            return False
+        return True
 
     async def submit_child_followup(
         self,
@@ -2217,6 +2294,7 @@ class AgentLoop:
                 can_stop=can_stop,
                 owned_work=child.holds_capacity,
                 pending_approval_id=child.pending_approval_id,
+                harness="claude_sdk" if child.harness == "claude_sdk" else None,
                 blocked_run_id=child.blocked_run_id,
                 result_disposition=(
                     child.background_result.state
@@ -4116,6 +4194,34 @@ class AgentLoop:
                 run_extra_hooks_for_ephemeral=run_extra_hooks_for_ephemeral,
             ))
             binding = external_binding(session.metadata) if session is not None else None
+            if (child := run_context.external_child) is not None:
+                if binding is None or child.external_policy is None or child.external_authority is None:
+                    raise HarnessCapabilityError("The Claude Code child binding is unavailable.")
+                grants = self._fork_dependencies.resource_policy.folder_grants
+                approvals = NO_EVENTS
+                route = child.approval_target
+                if route is not None and route.channel == "websocket" and route.chat_id:
+                    approvals = EventSink(partial(
+                        self.bus.publish_event, channel=route.channel, chat_id=route.chat_id,
+                    ))
+                return await run_direct_turn(
+                    self.external_harness, context=run_context, binding=binding,
+                    scope=effective_scope, prompt=transcript_input.current_message or "",
+                    runtime=runtime, hook=hook, events=events,
+                    permissions=self.sessions.desktop_permissions,
+                    policy=replace(
+                        child.external_policy,
+                        sandbox_allow_local_binding=self.exec_config.sandbox_allow_local_binding,
+                    ),
+                    usage_source=source_from_request(
+                        active_session_key, channel=request_ctx.channel, metadata=request_metadata,
+                    ),
+                    private_roots=grants.sandbox_private_roots if grants is not None else (),
+                    is_closing=self._lifecycle_is_closing,
+                    workspace_is_authorized=partial(self._claude_child_workspace_is_authorized, child),
+                    child=child, approval_events=approvals,
+                    authorize_tool=partial(self._authorize_claude_child_tool, child, effective_scope.project_path),
+                )
             if binding is not None:
                 if ephemeral or fresh_history or run_context.request is None or (
                     run_context.request.source not in {TurnSource.GATEWAY, TurnSource.DIRECT, TurnSource.SDK}
@@ -4955,9 +5061,9 @@ class AgentLoop:
         except ValueError:
             await self._reject_webui_admission(msg, "not_admitted", "approval_stale")
             return True
-        if binding is not None:
+        if binding is not None or self.external_harness.approvals.owns(decision.approval_id):
             try:
-                accepted = decision.session_key == key and self.external_harness.approvals.resolve(decision)
+                accepted = self.external_harness.approvals.resolve(decision, control_session_key=key)
             except ExternalApprovalSaveError:
                 await self._reject_webui_admission(msg, "not_admitted", "approval_save_failed")
                 return True
@@ -6088,6 +6194,7 @@ class AgentLoop:
             context.internal_include_skill_context = options.internal_include_skill_context
             context.internal_tool_policy = options.internal_tool_policy
             context.internal_max_iterations = options.internal_max_iterations
+            context.external_child = options.external_child
             context.request_boundary_validator = options.request_boundary_validator
             context.followup_boundary_validator = options.followup_boundary_validator
             context.followup_request_acknowledged = acknowledge_followup_request
@@ -7170,6 +7277,8 @@ class AgentLoop:
 
     async def _dispatch_source_command(self, ctx: TurnContext) -> bool:
         assert ctx.run_context is not None and ctx.run_context.source_writer is not None
+        if ctx.run_context.external_child is not None:
+            return False
         raw = normalize_command_text(ctx.msg.content).strip()
         if not raw.startswith('/'):
             return False

@@ -1437,26 +1437,10 @@ export function ThreadShell({
   const { client, getToken, ingressLimits, modelName, token } = useClient();
   const [claudeAvailable, setClaudeAvailable] = useState(false);
   const [draftHarness, setDraftHarness] = useState<ChatHarness>("native");
-  const [externalApprovals, setExternalApprovals] = useState<Record<string, LiveExternalApproval>>({});
+  const [externalApprovals, setExternalApprovals] = useState<Record<string, LiveExternalApproval & { childId?: string }>>({});
   const activeHarness = !temporaryChatEnabled && !temporary && claudeAvailable ? draftHarness : "native";
 
   useEffect(() => client.onHarnessAvailability?.(setClaudeAvailable), [client]);
-  useEffect(() => {
-    setExternalApprovals({});
-    if (!chatId || !claudeChat) return;
-    return client.onChat(chatId, (event) => {
-      if (event.event === "attached" || event.event === "turn_end") {
-        setExternalApprovals({});
-      } else if (event.event === "external_approval") {
-        setExternalApprovals((current) => {
-          const next = { ...current };
-          if (event.approval) next[event.approval_id] = event.approval;
-          else delete next[event.approval_id];
-          return next;
-        });
-      }
-    });
-  }, [chatId, claudeChat, client]);
   const pickWorkspaceFolder = useCallback(async (): Promise<string | null> => {
     const response = await client.requestMutation<{ path: unknown }>(
       "workspace.pick_folder",
@@ -1653,6 +1637,29 @@ export function ThreadShell({
     historyStopTargetSnapshotAvailable,
     separateControls,
   );
+
+  useEffect(() => {
+    setExternalApprovals({});
+    if (!chatId || temporary) return;
+    return client.onChat(chatId, (event) => {
+      if (event.event === "attached") {
+        setExternalApprovals({});
+      } else if (event.event === "turn_end") {
+        setExternalApprovals((current) => {
+          const entries = Object.entries(current);
+          const children = entries.filter(([, approval]) => approval.childId);
+          return children.length === entries.length ? current : Object.fromEntries(children);
+        });
+      } else if (event.event === "external_approval") {
+        setExternalApprovals((current) => {
+          const next = { ...current };
+          if (event.approval) next[event.approval_id] = { ...event.approval, childId: event.child_id };
+          else delete next[event.approval_id];
+          return next;
+        });
+      }
+    });
+  }, [chatId, client, temporary]);
 
   const admissionRejectedTurn = useMemo(() => {
     if (streamError?.kind !== "turn_rejected" || streamError.detail !== "not_admitted") {
@@ -3625,7 +3632,9 @@ export function ThreadShell({
       {session || historyKey ? (
         <>
         {Object.entries(externalApprovals).map(([approvalId, approval]) => {
-          if (!chatId || !claudeChat || dismissedRootApprovalIds.includes(approvalId)) return null;
+          if (!chatId || (!claudeChat && !approval.childId)
+            || dismissedRootApprovalIds.includes(approvalId)) return null;
+          const child = currentDelegatedChildren.find((row) => row.child_id === approval.childId);
           const decide = (decision: ApprovalDecisionPayload["decision"]) => {
             const turnId = client.sendApprovalDecision(chatId, approvalId, decision, {
               sessionKey: approval.session_key,
@@ -3639,7 +3648,7 @@ export function ThreadShell({
           return (
             <ApprovalRequestCard
               key={approvalId}
-              summary={approval.summary}
+              summary={child?.task_label ? `${child.task_label} — ${approval.summary}` : approval.summary}
               command={approval.command}
               approvalId={approvalId}
               busy={!connectionOpen}

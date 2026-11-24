@@ -421,6 +421,7 @@ _DELEGATED_CHILD_CANONICAL_FIELDS = (
     "pending_approval_id",
     "blocked_run_id",
     "result_disposition",
+    "harness",
 )
 
 
@@ -4013,6 +4014,7 @@ def replay_transcript_to_ui_messages(
                     else None
                 ),
                 "profile": profile,
+                **({"harness": "claude_sdk"} if rec.get("harness") == "claude_sdk" else {}),
                 "state": state,
                 "runtime_generation": generation,
                 "task_label": task_label,

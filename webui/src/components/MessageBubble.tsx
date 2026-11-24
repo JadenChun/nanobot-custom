@@ -1,3 +1,4 @@
+import { ClaudeBadge } from "@/components/thread/ClaudeBadge";
 import {
   useCallback,
   useEffect,
@@ -116,7 +117,10 @@ function DelegatedChildRow({
         })}
       >
         <span className="min-w-0 flex-1 space-y-0.5">
-          <span className="block break-words font-medium leading-snug text-foreground">{taskLabel}</span>
+          <span className="flex flex-wrap items-center gap-2 break-words font-medium leading-snug text-foreground">
+            {taskLabel}
+            {child.harness === "claude_sdk" ? <ClaudeBadge /> : null}
+          </span>
           <SubagentStatus child={child} available={statusAvailable} />
           {child.result_summary ? (
             <span className="line-clamp-2 whitespace-pre-wrap break-words leading-snug text-muted-foreground">

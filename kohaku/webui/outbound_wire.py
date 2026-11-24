@@ -102,6 +102,7 @@ class DelegatedChildWirePayload(TypedDict):
     pending_approval_id: str | None
     blocked_run_id: str | None
     result_disposition: str | None
+    harness: NotRequired[str]
 
 
 class StopTargetWirePayload(TypedDict):
@@ -125,6 +126,7 @@ class ExternalApprovalWirePayload(_ChatWirePayload):
     event: Literal["external_approval"]
     approval_id: str
     approval: ExternalApprovalPayload | None
+    child_id: NotRequired[str]
 
 
 def encode_external_approval(chat_id: str, event: ExternalApprovalEvent) -> ExternalApprovalWirePayload:
@@ -141,10 +143,13 @@ def encode_external_approval(chat_id: str, event: ExternalApprovalEvent) -> Exte
             "command": command if isinstance(command, str) else None,
             "save_exclusion_command": pending.save_exclusion_command,
         }
-    return {
+    payload: ExternalApprovalWirePayload = {
         "event": "external_approval", "chat_id": chat_id,
         "approval_id": event.approval_id, "approval": approval,
     }
+    if event.child_id is not None:
+        payload["child_id"] = event.child_id
+    return payload
 
 
 WebUIWirePayload: TypeAlias = (
@@ -201,7 +206,7 @@ def encode_delegated_child(
     event: DelegatedChildEvent,
 ) -> DelegatedChildWirePayload:
     """Project one child activity snapshot with explicit nullable facts and counters."""
-    return {
+    payload: DelegatedChildWirePayload = {
         "event": "delegated_child",
         "chat_id": chat_id,
         "parent_session_key": event.parent_session_key,
@@ -238,6 +243,9 @@ def encode_delegated_child(
         "blocked_run_id": event.blocked_run_id,
         "result_disposition": event.result_disposition,
     }
+    if event.harness == "claude_sdk":
+        payload["harness"] = event.harness
+    return payload
 
 
 def encode_stop_target(chat_id: str, event: StopTargetEvent) -> StopTargetWirePayload:

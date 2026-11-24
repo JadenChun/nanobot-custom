@@ -2324,7 +2324,11 @@ export class KohakuClient {
           if (approvals?.size === 0) this.externalApprovals.delete(chatId);
         }
       } else if (parsed.event === "turn_end" && !this.isSupersededRunCompletion(chatId, parsed)) {
-        this.externalApprovals.delete(chatId);
+        const approvals = this.externalApprovals.get(chatId);
+        for (const [id, event] of approvals ?? []) {
+          if (!event.child_id) approvals?.delete(id);
+        }
+        if (approvals?.size === 0) this.externalApprovals.delete(chatId);
       }
       if (this.isCanonicalCompletedTurnEvent(chatId, parsed)) return;
       const supersededRunCompletion = this.isSupersededRunCompletion(chatId, parsed);

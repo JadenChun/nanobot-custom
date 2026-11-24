@@ -1605,7 +1605,13 @@ class WebSocketChannel(BaseChannel):
                 if not pending:
                     self._external_approvals.pop(chat_id, None)
         elif payload["event"] == "turn_end":
-            self._external_approvals.pop(chat_id, None)
+            pending = self._external_approvals.get(chat_id)
+            if pending is not None:
+                for approval_id, approval in tuple(pending.items()):
+                    if "child_id" not in approval:
+                        pending.pop(approval_id, None)
+                if not pending:
+                    self._external_approvals.pop(chat_id, None)
         if persistence == "turn_activity":
             self._persist_turn_transcript_event(
                 chat_id,

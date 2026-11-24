@@ -81,6 +81,17 @@ def harness_capabilities() -> dict[str, dict[str, bool | str]]:
     }}
 
 
+def child_harness_parameter() -> dict[str, object]:
+    guidance = (
+        ' Use claude_sdk for codebase investigation, technical planning, implementation, and testing.'
+        if claude_sdk_available() else ""
+    )
+    return {
+        "type": "string", "enum": ["native", "claude_sdk"], "default": "native",
+        "description": "Execution harness for this role." + guidance,
+    }
+
+
 def _load_sdk() -> ModuleType:
     try:
         return import_module("claude_agent_sdk")
@@ -102,7 +113,8 @@ class ClaudeSDKBackend:
     ) -> _ClaudeProcess:
         sdk = _load_sdk()
         sandboxed = request.policy.sandboxed
-        if sandboxed:
+        allowed = request.policy.allowed_tools
+        if sandboxed and request.policy.write_scope != () and (allowed is None or "Bash" in allowed):
             if sys.platform.startswith("linux"):
                 if not await asyncio.to_thread(managed_bwrap_available) or shutil.which("socat") is None:
                     raise HarnessCapabilityError(
@@ -128,6 +140,8 @@ class _Policy:
     scope: tuple[Path, ...] | None
     sandboxed: bool
     exclusions: tuple[str, ...]
+    exact_write_paths: frozenset[Path]
+    allowed_tools: frozenset[str] | None
 
     def path(self, value: object) -> Path | None:
         if not isinstance(value, str) or not value or "\0" in value:
@@ -146,6 +160,8 @@ class _Policy:
     def check(
         self, name: str, arguments: dict[str, object],
     ) -> tuple[Literal["allow", "deny", "ask"], str, dict[str, object]]:
+        if self.allowed_tools is not None and name not in self.allowed_tools:
+            return "deny", "This tool is outside the admitted scope.", arguments
         if name in _READ_TOOLS or name in _EDIT_TOOLS:
             search = name in {"Glob", "Grep"}
             path_key = "path" if search else "notebook_path" if name == "NotebookEdit" else "file_path"
@@ -153,7 +169,8 @@ class _Policy:
             if target is None or (search and any(root.is_relative_to(target) for root in self.private)):
                 return "deny", "The tool path is outside the admitted read scope.", arguments
             if name in _EDIT_TOOLS and self.scope is not None and not any(
-                target.is_relative_to(root) for root in self.scope
+                target == root or (root not in self.exact_write_paths and target.is_relative_to(root))
+                for root in self.scope
             ):
                 return "deny", "The file is outside the admitted write scope.", arguments
             if name == "Glob":
@@ -207,13 +224,20 @@ class _ClaudeProcess:
         private = tuple(dict.fromkeys((*private, *(root.resolve() for root in private))))
         self._policy = _Policy(
             self._workspace, private,
-            None if scope is None else tuple((self._workspace / root).resolve() for root in scope),
+            None if scope is None else tuple(
+                root if root.is_absolute() else (self._workspace / root).resolve()
+                for root in scope
+            ),
             request.policy.sandboxed,
             request.policy.sandbox_excluded_commands if scope is None else (),
+            request.policy.exact_write_paths,
+            request.policy.allowed_tools,
         )
         tools: list[str] = list(_READ_TOOLS)
         if scope != ():
             tools.extend((*_EDIT_TOOLS, "Bash"))
+        if self._policy.allowed_tools is not None:
+            tools = [name for name in tools if name in self._policy.allowed_tools]
         env = {key: value for key, value in os.environ.items() if key.upper() in _SAFE_ENV}
         env.update({
             "ANTHROPIC_BASE_URL": bridge.base_url,
@@ -229,7 +253,7 @@ class _ClaudeProcess:
             "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
         })
         sandbox = {
-            "enabled": self._policy.sandboxed and scope != (),
+            "enabled": self._policy.sandboxed and "Bash" in tools,
             "autoAllowBashIfSandboxed": True,
             "allowUnsandboxedCommands": scope is None,
             "network": {
@@ -245,6 +269,7 @@ class _ClaudeProcess:
         # Apply saved exclusions in PreToolUse after the complete command matches.
         options: Any = sdk.ClaudeAgentOptions(
             cwd=self._workspace, model=request.runtime.model, env=env, resume=resume,
+            max_turns=request.max_turns,
             fork_session=fork_session, setting_sources=[], strict_mcp_config=True,
             include_partial_messages=True, tools=tools, verbatim_prompts=True,
             system_prompt={"type": "preset", "preset": "claude_code"},
@@ -285,6 +310,9 @@ class _ClaudeProcess:
             decision, reason, arguments = "deny", "The turn has no current permission to run.", {}
         else:
             decision, reason, arguments = self._policy.check(name, _object(input_data.get("tool_input")))
+            authorize = active.request.authorize_tool
+            if decision != "deny" and authorize is not None and not authorize(name, arguments):
+                decision, reason = "deny", "The child tool no longer has access."
             if decision == "deny":
                 active.denied.add(call_id)
             if decision == "allow" and name in _EDIT_TOOLS:
@@ -323,6 +351,9 @@ class _ClaudeProcess:
             return self._sdk.PermissionResultDeny(message="The turn has no current permission to run.")
         arguments = _object(raw)
         decision, reason, args = self._policy.check(name, arguments)
+        authorize = active.request.authorize_tool
+        if decision != "deny" and authorize is not None and not authorize(name, args):
+            decision, reason = "deny", "The child tool no longer has access."
         if decision == "ask":
             allow_save = (
                 self._policy.sandboxed and self._policy.scope is None
@@ -336,7 +367,10 @@ class _ClaudeProcess:
                 saved = extract_saveable_sandbox_command(_string(arguments.get("command")))
                 if saved and saved not in self._policy.exclusions:
                     self._policy.exclusions += (saved,)
-        if decision == "allow" and self._active is active and active.request.is_authorized():
+        if (
+            decision == "allow" and self._active is active and active.request.is_authorized()
+            and (authorize is None or authorize(name, args))
+        ):
             return self._sdk.PermissionResultAllow(updated_input=args)
         active.denied.add(call_id)
         return self._sdk.PermissionResultDeny(message=reason or "The tool request was denied.")

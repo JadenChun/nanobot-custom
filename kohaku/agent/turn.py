@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING, Any, TypeAlias, cast
 from kohaku.attachments.models import AttachmentRecord
 
 if TYPE_CHECKING:
+    from kohaku.agent.child_backend import ChildTurnRequest
     from kohaku.agent.policy import ToolPolicy
     from kohaku.agent.tools.artifact import ArtifactRetrievalReceipt
     from kohaku.agent.tools.base import ToolDenialKind
@@ -576,6 +577,7 @@ class TurnContext:
     internal_include_skill_context: bool = True
     internal_tool_policy: ToolPolicy | None = field(default=None, repr=False)
     internal_max_iterations: int | None = field(default=None, repr=False)
+    external_child: ChildTurnRequest | None = field(default=None, repr=False)
     active_tool_bindings: CapturedToolBindings | None = field(default=None, repr=False)
     _active_tool_intent_binding_var: contextvars.ContextVar[
         SourceToolIntentBinding | None
