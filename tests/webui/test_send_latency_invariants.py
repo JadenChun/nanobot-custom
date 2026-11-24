@@ -574,3 +574,68 @@ def test_cancelled_turn_does_not_schedule_background_title_generation() -> None:
     )
     coordinator._schedule_title_update_from_event(event)  # pyright: ignore[reportPrivateUsage]
     assert scheduled == []
+
+
+async def test_session_mode_caches_settled_terminal_journals_and_detects_tamper(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from kohaku.session.mode_storage import SessionModeError
+    from kohaku.session.runtime_authority import DurableSessionAuthority
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    sessions_root = tmp_path / "sessions"
+    lease = await DurableSessionAuthority(workspace, sessions_root=sessions_root).acquire()
+    try:
+        manager = lease.manager
+        manager.admit_persistent_write("websocket:chat-a")
+        manager.admit_persistent_write("websocket:chat-b")
+        resolver = manager._mode_resolver  # pyright: ignore[reportPrivateUsage]
+        assert resolver is not None
+
+        # Wait past the 100ms coarse-clock settle guard so settled terminal
+        # journals can be served from the stat-validated cache.
+        await asyncio.sleep(0.12)
+        resolved = manager.resolve_session_mode("websocket:chat-a")
+        assert resolved.state == "active"
+
+        journal_reads: list[str] = []
+        original_read = resolver._journal_records  # pyright: ignore[reportPrivateUsage]
+
+        def counted_read(operation_id: str) -> list[dict[str, object]]:
+            journal_reads.append(operation_id)
+            return original_read(operation_id)
+
+        monkeypatch.setattr(resolver, "_journal_records", counted_read)
+
+        # Unmodified settled terminal journals for other sessions must not be
+        # re-parsed on resolve (O(1) instead of O(N_journals)).
+        chat_b_record = next(
+            json.loads(p.read_bytes())
+            for p in (manager.sessions_dir / ".session-mode" / "records").glob("*.json")
+            if json.loads(p.read_bytes()).get("session_key") == "websocket:chat-b"
+        )
+        chat_b_op = str(chat_b_record["committed_operation_id"])
+        manager.resolve_session_mode("websocket:chat-a")
+        manager.read_saved_source_metadata("websocket:chat-a")
+        assert chat_b_op not in journal_reads
+
+        # Tampering with a settled terminal journal on disk must immediately
+        # invalidate the stat-validated cache and fail closed.
+        complete_file = (
+            manager.sessions_dir
+            / ".session-mode"
+            / "journals"
+            / chat_b_op
+            / "0004-complete.json"
+        )
+        payload = json.loads(complete_file.read_bytes())
+        payload["schema_version"] = True
+        complete_file.write_bytes(json.dumps(payload).encode("utf-8"))
+
+        with pytest.raises(SessionModeError, match="offline recovery"):
+            manager.resolve_session_mode("websocket:chat-a")
+        assert chat_b_op in journal_reads
+    finally:
+        await lease.close()

@@ -239,7 +239,8 @@ describe("MessageBubble", () => {
 
     const { rerender } = render(<MessageBubble message={message} />);
 
-    expect(screen.getByRole("status")).toHaveTextContent("Sending…");
+    // Normal fast sends must not reserve space or flash a "Sending…" label.
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
 
     rerender(<MessageBubble message={{ ...message, deliveryStatus: "accepted" }} />);
     expect(screen.queryByRole("status")).not.toBeInTheDocument();
@@ -273,6 +274,37 @@ describe("MessageBubble", () => {
       "The server rejected your last message because it exceeded the size limit.",
     );
     expect(screen.getByRole("alert")).toHaveClass("sr-only");
+  });
+
+  it("mounts the Sending status only after a genuine send stall without reserving blank space", () => {
+    vi.useFakeTimers();
+    try {
+      const message: UIMessage = {
+        id: "u-stalled-send",
+        role: "user",
+        content: "hello",
+        createdAt: Date.now(),
+        deliveryStatus: "sending",
+      };
+
+      const { rerender } = render(<MessageBubble message={message} />);
+      expect(screen.queryByRole("status")).not.toBeInTheDocument();
+
+      act(() => {
+        vi.advanceTimersByTime(1_400);
+      });
+      expect(screen.queryByRole("status")).not.toBeInTheDocument();
+
+      act(() => {
+        vi.advanceTimersByTime(150);
+      });
+      expect(screen.getByRole("status")).toHaveTextContent("Sending…");
+
+      rerender(<MessageBubble message={{ ...message, deliveryStatus: "accepted" }} />);
+      expect(screen.queryByRole("status")).not.toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("renders uncertain delivery neutrally with truthful disconnect details", async () => {

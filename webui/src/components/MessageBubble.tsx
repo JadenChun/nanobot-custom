@@ -281,6 +281,8 @@ function deliveryErrorCopy(
   }
 }
 
+const SENDING_STATUS_DELAY_MS = 1_500;
+
 function UserDeliveryStatus({
   status,
   errorKind,
@@ -290,12 +292,28 @@ function UserDeliveryStatus({
 }) {
   const { t } = useTranslation();
   const finePointer = useMediaQuery("(hover: hover) and (pointer: fine)", true);
+  const [showStalledSending, setShowStalledSending] = useState(false);
+
+  useEffect(() => {
+    if (status !== "sending") {
+      setShowStalledSending(false);
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      setShowStalledSending(true);
+    }, SENDING_STATUS_DELAY_MS);
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [status]);
+
   if (status !== "sending" && status !== "failed" && status !== "unknown") return null;
   if (status === "sending") {
+    if (!showStalledSending) return null;
     return (
       <span
         role="status"
-        className="sending-status-delayed inline-flex items-center gap-1 text-[12px] leading-none text-muted-foreground"
+        className="inline-flex items-center gap-1 text-[12px] leading-none text-muted-foreground"
       >
         <Clock3 className="h-3.5 w-3.5" aria-hidden />
         {t("message.delivery.sending")}

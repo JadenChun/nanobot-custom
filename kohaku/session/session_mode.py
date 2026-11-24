@@ -34,6 +34,7 @@ import os
 import secrets
 import stat
 import threading
+import time
 from contextlib import ExitStack, contextmanager
 from copy import deepcopy
 from dataclasses import dataclass
@@ -661,6 +662,14 @@ class SessionModeResolver:
         self._journal_epoch = 0
         self._resolution_index: dict[
             str, tuple[str | None, int, str, ResolvedSessionMode]
+        ] = {}
+        self._verified_terminal_journals: dict[
+            str,
+            tuple[
+                tuple[int, int],
+                tuple[tuple[str, mode_storage.PrivateFileVersion], ...],
+                str,
+            ],
         ] = {}
 
     def _reject_files_held(self) -> None:
@@ -2394,28 +2403,64 @@ class SessionModeResolver:
                 output_digest=cast(str | None, last["output_digest"]), output_size=cast(int | None, last["output_size"]),
                 rollback_name=cast(str | None, last["rollback_name"]))
 
+    _TERMINAL_JOURNAL_CACHE_SETTLE_NS = 100_000_000
+
     def _assert_no_incomplete(
         self, key: str, registry: dict[str, object], *, read_only: bool = False,
     ) -> None:
-        operations = (
-            self.storage.list(".session-mode/journals")
-            if read_only else self._journal_operation_ids()
+        try:
+            scanned = self.storage.scan_journal_versions()
+        except SessionModeError:
+            if read_only:
+                raise
+            self._roll_completed_journals()
+            scanned = self.storage.scan_journal_versions()
+        registry_id = cast(str, registry["registry_id"])
+        now_ns = time.time_ns()
+        live_ids: set[str] | None = (
+            set() if len(self._verified_terminal_journals) > len(scanned) else None
         )
-        for operation_id in operations:
+        for operation_id, dir_identity, file_versions in scanned:
+            if live_ids is not None:
+                live_ids.add(operation_id)
             if not self._hex32(operation_id):
                 raise _fail()
+            if dir_identity is not None and file_versions:
+                cached = self._verified_terminal_journals.get(operation_id)
+                if (
+                    cached is not None
+                    and cached[0] == dir_identity
+                    and cached[1] == file_versions
+                    and cached[2] == registry_id
+                ):
+                    latest_ns = max(
+                        max(ver.modified_ns, ver.changed_ns)
+                        for _, ver in file_versions
+                    )
+                    if now_ns - latest_ns > self._TERMINAL_JOURNAL_CACHE_SETTLE_NS:
+                        continue
             journal = self._journal_records(operation_id)
-            if any(entry["registry_id"] != registry["registry_id"] for entry in journal):
+            if any(entry["registry_id"] != registry_id for entry in journal):
                 raise _fail()
             last = journal[-1]
+            if last["phase"] in {"complete", "aborted"}:
+                if dir_identity is not None and file_versions:
+                    self._verified_terminal_journals[operation_id] = (
+                        dir_identity,
+                        file_versions,
+                        registry_id,
+                    )
+                continue
+            self._verified_terminal_journals.pop(operation_id, None)
             if (
-                last["phase"] not in {"complete", "aborted"}
-                and (
-                    key in {last.get("source_key"), last.get("target_key")}
-                    or (last.get("source_key") is None and last.get("target_key") is None)
-                )
+                key in {last.get("source_key"), last.get("target_key")}
+                or (last.get("source_key") is None and last.get("target_key") is None)
             ):
                 raise _fail()
+        if live_ids is not None:
+            for stale_id in list(self._verified_terminal_journals):
+                if stale_id not in live_ids:
+                    self._verified_terminal_journals.pop(stale_id, None)
 
     def _finish_postcommit_journal(self, record: dict[str, object]) -> None:
         operation_id = cast(str, record["committed_operation_id"])

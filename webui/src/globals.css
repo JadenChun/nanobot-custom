@@ -333,20 +333,6 @@
     --cjk-line-height: 1.625;
   }
 
-  /* Keep the transient "Sending…" label visually hidden during normal fast
-     local/LAN sends (<350ms ACK) while fading in cleanly on real stalls. */
-  @keyframes sending-status-reveal {
-    from {
-      opacity: 0;
-    }
-    to {
-      opacity: 1;
-    }
-  }
-  .sending-status-delayed {
-    animation: sending-status-reveal 150ms ease 350ms both;
-  }
-
   /* L→R sheen clipped to live activity labels. The highlight lives inside
      the glyphs, not in the row background, so dark mode stays quiet. */
   @keyframes streaming-text-sheen-ltr {
