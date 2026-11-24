@@ -7,7 +7,9 @@ other P6 fixtures, while retaining receipt checks and durable session leases.
 
 from __future__ import annotations
 
+import asyncio
 import errno
+import json
 import os
 import shutil
 import socket
@@ -22,11 +24,24 @@ from kohaku.agent.tools.shell import ExecTool
 from kohaku.channels.websocket.runtime import WebSocketConfig
 from kohaku.cli.gateway_runtime import _run_gateway
 from kohaku.config.loader import load_config, set_config_path
+from kohaku.harness.backend import (
+    ExternalReasoning,
+    ExternalSessionStarted,
+    ExternalText,
+    ExternalToolBatchReady,
+    ExternalToolCall,
+    ExternalToolIntent,
+    ExternalToolResult,
+    ExternalTurnFinished,
+)
+from kohaku.harness.claude_sdk import ClaudeSDKBackend
 from kohaku.providers.unconfigured_provider import UnconfiguredProvider
+from kohaku.utils.file_edit_events import FileEditTracker, build_file_edit_end_event, read_file_snapshot
 
 
 def main() -> None:
     path = Path(sys.argv[1])
+    claude_fixture = sys.argv[2] if len(sys.argv) == 3 else None
     config = load_config(path)
     set_config_path(path)
     assert config.runtime_data_dir == path.parent
@@ -114,6 +129,64 @@ def main() -> None:
 
         patches.setattr("kohaku.migration_guard.require_runtime_ready", lambda: None)
         patches.setattr(UnconfiguredProvider, "chat", no_model_call)
+        if claude_fixture is not None:
+            patches.setattr(
+                "kohaku.harness.claude_sdk.claude_sdk_available",
+                lambda: claude_fixture == "fake-claude",
+            )
+        if claude_fixture == "fake-claude":
+            class FakeClaudeProcess:
+                async def run(self, request, _approve):
+                    yield ExternalSessionStarted("test-sdk-session")
+                    with (path.parent / "claude-calls.jsonl").open("a", encoding="utf-8") as output:
+                        output.write(json.dumps({
+                            "prompt": request.prompt, "workspace": str(request.workspace),
+                            "resume": self.resume,
+                        }) + "\n")
+                    if request.prompt == "interrupt this SDK turn":
+                        await asyncio.Event().wait()
+                    if request.prompt.startswith("request approval"):
+                        yield ExternalReasoning("Checking the Sandbox policy.")
+                        yield ExternalReasoning(None)
+                        call = ExternalToolCall("bash-tool", "Bash", {
+                            "command": "printf phase-three", "dangerouslyDisableSandbox": True,
+                        })
+                        yield ExternalToolIntent(call)
+                        yield ExternalToolBatchReady()
+                        action = await _approve(call, "Allow this command outside Sandbox?", True)
+                        yield ExternalToolResult(
+                            call.id, action, is_error=action == "deny", dispatched=action != "deny",
+                        )
+                        yield ExternalText(f"Approval decision: {action}")
+                    elif request.prompt == "first request":
+                        edited = request.workspace / "hello.txt"
+                        call = ExternalToolCall("write-tool", "Write", {
+                            "file_path": str(edited), "content": "hello",
+                        })
+                        yield ExternalToolIntent(call)
+                        yield ExternalToolBatchReady()
+                        tracker = FileEditTracker(
+                            call.id, "write_file", edited, "hello.txt", read_file_snapshot(edited),
+                        )
+                        edited.write_text("hello", encoding="utf-8")
+                        yield ExternalToolResult(
+                            call.id, "Written.", file_edit=build_file_edit_end_event(tracker),
+                        )
+                        yield ExternalText("Claude reply to first request")
+                    else:
+                        yield ExternalText(f"Claude reply to {request.prompt}")
+                    yield ExternalTurnFinished()
+
+                async def close(self):
+                    pass
+
+            async def start_fake_claude(_backend, _request, *, resume, fork_session):
+                assert not fork_session
+                process = FakeClaudeProcess()
+                process.resume = resume
+                return process
+
+            patches.setattr(ClaudeSDKBackend, "start", start_fake_claude)
         patches.setattr(ExecTool, "execute", execute_expected_smoke_command)
         # Memory Git history is independent of transport/recovery; do not run
         # its optional hook subprocesses in this exact-effect smoke fixture.

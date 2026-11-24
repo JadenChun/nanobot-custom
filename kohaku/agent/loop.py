@@ -142,6 +142,15 @@ from kohaku.config.schema import AgentDefaults, ModelPresetConfig
 from kohaku.cron.session_turns import cron_trigger
 from kohaku.cron.types import CRON_MODEL_PRESET_UNAVAILABLE, cron_model_preset_unavailable
 from kohaku.events import NO_EVENTS, AgentEvent, EventSink
+from kohaku.harness.backend import (
+    ExternalApprovalRegistry,
+    ExternalApprovalSaveError,
+    ExternalToolPolicy,
+    HarnessCapabilityError,
+)
+from kohaku.harness.claude_sdk import ClaudeSDKBackend
+from kohaku.harness.direct import run_direct_turn, start_bridge
+from kohaku.harness.runner import ExternalHarnessRunner
 from kohaku.llm_usage.context import source_from_request
 from kohaku.providers.base import LLMProvider, LLMUsage, ProviderConversationState
 from kohaku.providers.conversation_state import (
@@ -180,6 +189,7 @@ from kohaku.session.goal_state import (
     goal_state_runtime_lines,
     runner_wall_llm_timeout_s,
 )
+from kohaku.session.harness_binding import external_binding
 from kohaku.session.history_visibility import HIDDEN_HISTORY_META
 from kohaku.session.input_attempt import (
     INPUT_ATTEMPT_METADATA_KEY,
@@ -946,6 +956,10 @@ class AgentLoop:
             self.approval_admission.revoke,
         )
         self.run_store = RunStore(workspace, self.sessions)
+        self.external_harness = ExternalHarnessRunner(
+            ClaudeSDKBackend(start_bridge, state_dir=effective_root / ".claude-sdk"),
+            approvals=ExternalApprovalRegistry(self._save_sandbox_exclusion),
+        )
         # One file-read/write tracker per logical session. The tool registry is
         # shared by this loop, so tools resolve the active state via contextvars.
         self._file_state_store = FileStateStore(max_sessions=SESSION_CACHE_MAX_SIZE)
@@ -1442,6 +1456,9 @@ class AgentLoop:
             return
         session = ctx.require_session()
         if not session.policy.persist:
+            return
+        binding = external_binding(session.metadata)
+        if binding is not None and binding.locked_workspace is not None:
             return
         if (
             ctx.msg.workspace_scope is not None
@@ -4098,6 +4115,56 @@ class AgentLoop:
                 ephemeral=ephemeral,
                 run_extra_hooks_for_ephemeral=run_extra_hooks_for_ephemeral,
             ))
+            binding = external_binding(session.metadata) if session is not None else None
+            if binding is not None:
+                if ephemeral or fresh_history or run_context.request is None or (
+                    run_context.request.source not in {TurnSource.GATEWAY, TurnSource.DIRECT, TurnSource.SDK}
+                ):
+                    raise HarnessCapabilityError("Send a message in the Claude Code chat to start a turn.")
+                permissions = self.sessions.desktop_permissions
+                full = (
+                    effective_scope.access_mode == "full"
+                    and permissions.is_current_full_reference(run_context.workspace_full_reference)
+                )
+                policy = self._fork_dependencies.resource_policy
+                grants = policy.folder_grants
+                project = effective_scope.project_path
+                full_reference = run_context.workspace_full_reference if full else None
+
+                def workspace_is_authorized() -> bool:
+                    try:
+                        policy.validate_path(
+                            project, "write", permission_owner=permissions,
+                            permission_reference=full_reference,
+                        )
+                        policy.validate_path(project, "exec")
+                    except (OSError, ValueError):
+                        return False
+                    return True
+
+                if not workspace_is_authorized():
+                    error = "Claude Code requires write and command access to the working folder."
+                    return AgentRunResult(
+                        error, [], stop_reason="error", error=error,
+                        failure_error_kind="harness_unavailable",
+                    )
+                return await run_direct_turn(
+                    self.external_harness, context=run_context, binding=binding,
+                    scope=effective_scope, prompt=transcript_input.current_message or "",
+                    runtime=runtime, hook=hook, events=events, permissions=permissions,
+                    policy=ExternalToolPolicy(
+                        mode="full_access" if full else "sandbox",
+                        sandbox_excluded_commands=tuple(self.exec_config.sandbox_excluded_commands),
+                        sandbox_allow_local_binding=self.exec_config.sandbox_allow_local_binding,
+                        sandbox_allow_unix_sockets=tuple(self.exec_config.sandbox_allow_unix_sockets),
+                    ),
+                    usage_source=source_from_request(
+                        active_session_key, channel=request_ctx.channel, metadata=request_metadata,
+                    ),
+                    private_roots=grants.sandbox_private_roots if grants is not None else (),
+                    is_closing=self._lifecycle_is_closing,
+                    workspace_is_authorized=workspace_is_authorized,
+                )
             source_transcript = None
             if source_writer is not None:
                 if run_context.source_history is None:
@@ -4882,6 +4949,21 @@ class AgentLoop:
         except (TypeError, ValueError):
             await self._reject_webui_admission(msg, "not_admitted", "invalid_approval_decision")
             return True
+        metadata = self.sessions.read_session_metadata(key)
+        try:
+            binding = external_binding(metadata.get("metadata") if metadata is not None else None)
+        except ValueError:
+            await self._reject_webui_admission(msg, "not_admitted", "approval_stale")
+            return True
+        if binding is not None:
+            try:
+                accepted = decision.session_key == key and self.external_harness.approvals.resolve(decision)
+            except ExternalApprovalSaveError:
+                await self._reject_webui_admission(msg, "not_admitted", "approval_save_failed")
+                return True
+            if not accepted:
+                await self._reject_webui_admission(msg, "not_admitted", "approval_stale")
+            return True
         snapshot = await self.approval_admission.snapshot_decision(key, decision)
         pending = snapshot.pending
         if snapshot.action == "invalid_approval_decision":
@@ -5318,10 +5400,12 @@ class AgentLoop:
 
         owned_foreground = getattr(self, "_owned_foreground_manager", None)
         self._owned_foreground_manager = None
+        external = getattr(self, "external_harness", None)
         cleanup_steps = (
             *((owned_foreground.close,) if owned_foreground is not None else ()),
             self.subagents.close,
             self._exec_session_manager.close_all,
+            *((external.shutdown,) if external is not None else ()),
         )
         for cleanup in cleanup_steps:
             try:
@@ -7092,6 +7176,12 @@ class AgentLoop:
         writer = ctx.run_context.source_writer
         command = raw.split(maxsplit=1)[0].lower()
         metadata = dict(ctx.msg.metadata)
+        if raw.lower() == '/new' and external_binding(ctx.require_session().metadata) is not None:
+            ctx.outbound = OutboundMessage(
+                channel=ctx.msg.channel, chat_id=ctx.msg.chat_id,
+                content="Start a new chat to use a new Claude Code session.", metadata=metadata,
+            )
+            return True
         if raw.lower() == '/new':
             admission = self._source_activity_admissions.get(ctx.session_key)
             if admission is not None:
@@ -7556,6 +7646,9 @@ class AgentLoop:
         ctx.delivery.record_stop_reason(
             ctx.stop_reason,
             failure_error_kind=ctx.failure_error_kind,
+            failure_message=(
+                ctx.final_content if ctx.failure_error_kind == "harness_unavailable" else None
+            ),
         )
         if ctx.suppress_response:
             ctx.outbound = None

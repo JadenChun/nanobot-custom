@@ -1,3 +1,4 @@
+import { ClaudeBadge } from "@/components/thread/ClaudeBadge";
 import {
   memo,
   useCallback,
@@ -619,7 +620,8 @@ export const ChatList = memo(function ChatList({
                                       <span className="min-w-0 flex-1 truncate font-medium leading-5">
                                         {title}
                                       </span>
-                                      {isPinned ? <PinnedChatIndicator /> : null}
+                                      {s.harnessBinding?.harness === "claude_sdk" ? <ClaudeBadge /> : null}
+                                    {isPinned ? <PinnedChatIndicator /> : null}
                                     {timestamp ? (
                                       <span className="shrink-0 text-[11.5px] font-medium text-muted-foreground/58">
                                         {timestamp}
@@ -633,6 +635,7 @@ export const ChatList = memo(function ChatList({
                                     <span className="min-w-0 flex-1 truncate font-medium leading-5">
                                       {title}
                                     </span>
+                                    {s.harnessBinding?.harness === "claude_sdk" ? <ClaudeBadge /> : null}
                                     {isPinned ? <PinnedChatIndicator /> : null}
                                     <SidebarSelectionTrack active={topicActive} handle={s.handle} />
                                   </span>

@@ -91,6 +91,7 @@ class TurnCompleted(AgentEvent):
     failure_kind: str | None = None
     failure_error_kind: str | None = None
     failure_attempts: int | None = None
+    failure_message: str | None = None
     context_usage: ContextUsageSnapshot | None = None
 
 
@@ -341,6 +342,7 @@ class RuntimeEventPublisher:
         failure_kind: str | None = None,
         failure_error_kind: str | None = None,
         failure_attempts: int | None = None,
+        failure_message: str | None = None,
     ) -> None:
         await self.bus.publish(
             TurnCompleted(
@@ -359,6 +361,7 @@ class RuntimeEventPublisher:
                 failure_kind=failure_kind,
                 failure_error_kind=failure_error_kind,
                 failure_attempts=failure_attempts,
+                failure_message=failure_message,
             )
         )
 

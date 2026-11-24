@@ -33,7 +33,13 @@ export function RecoveryNotice({ state, onContinue, onDismiss }: RecoveryNoticeP
     : waiting
       ? t("recovery.interrupted", { defaultValue: "Task interrupted" })
       : t("recovery.resuming", { defaultValue: "Restoring interrupted task…" });
-  const detail = state.status === "failed" || contextUnavailable
+  const claudeInterrupted = state.reason === "external_turn_interrupted";
+  const claudeUncertain = state.reason === "external_tool_state_unknown";
+  const detail = claudeInterrupted
+    ? t("thread.harness.interrupted", { defaultValue: "Claude Code stopped before this turn ended. Send a new message to continue." })
+    : claudeUncertain
+      ? t("thread.harness.uncertain", { defaultValue: "Claude Code stopped during a tool call. Check the working folder before you start a new chat." })
+      : state.status === "failed" || contextUnavailable
     ? t("recovery.failedHelp", {
         defaultValue: "The saved task could not be restored safely. Review it before continuing.",
       })
@@ -78,7 +84,7 @@ export function RecoveryNotice({ state, onContinue, onDismiss }: RecoveryNoticeP
           {error ?? detail}
         </p>
       </div>
-      {waiting ? (
+      {waiting && !claudeInterrupted && !claudeUncertain ? (
         <div className="flex shrink-0 items-center gap-1.5">
           <Button
             type="button"

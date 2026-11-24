@@ -10,6 +10,7 @@ from kohaku.bus.events import CommittedUserInput, OutboundMessage
 from kohaku.bus.outbound_events import (
     ContextCompactionEvent,
     DelegatedChildEvent,
+    ExternalApprovalEvent,
     GoalStateSyncEvent,
     GoalStatusEvent,
     MessageAdmittedEvent,
@@ -36,6 +37,7 @@ from kohaku.webui.outbound_wire import (
     WebUIWirePayload,
     WebUIWirePersistence,
     encode_delegated_child,
+    encode_external_approval,
     encode_stop_target,
     encode_turn_end,
     project_notification,
@@ -48,6 +50,7 @@ if TYPE_CHECKING:
     from websockets.asyncio.server import ServerConnection
 
     from kohaku.security.desktop_permissions import WorkspacePermissionProjection
+    from kohaku.session.harness_binding import HarnessBindingPayload
 
 class WebUIOutboundTransport(Protocol):
     """Wire operations required by the outbound application projector."""
@@ -127,6 +130,7 @@ class WebUIOutboundTransport(Protocol):
         next_turn_revision: int | None = None,
         workspace_access_request: FolderAccessRequest | None = None,
         workspace_permissions: WorkspacePermissionProjection | None = None,
+        harness_binding: HarnessBindingPayload | None = None,
     ) -> None: ...
 
     async def send_file_edit_events(
@@ -401,6 +405,11 @@ class WebUIOutboundProjector:
             )
             await self._transport.send_session_updated(msg.chat_id, scope=session_update_scope)
             return
+        if isinstance(event, ExternalApprovalEvent):
+            await self._transport.send_payload(
+                msg.chat_id, encode_external_approval(msg.chat_id, event), persistence="transient",
+            )
+            return
         if isinstance(event, SessionUpdatedEvent):
             if conns:
                 await self._transport.send_session_updated(
@@ -409,6 +418,8 @@ class WebUIOutboundProjector:
                     workspace_scope=event.workspace_scope,
                     workspace_access_request=event.workspace_access_request,
                     workspace_permissions=event.workspace_permissions,
+                    harness_binding=event.harness_binding,
+
                 )
             return
         if progress_event and progress_event.file_edit_events:

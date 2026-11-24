@@ -44,6 +44,7 @@ from kohaku.security.workspace_access import (
     build_workspace_scope,
     validate_workspace_scope_payload,
 )
+from kohaku.session.harness_binding import SessionHarnessBinding, external_binding
 from kohaku.session.workspace_focus import WorkspaceFocusOwner
 from kohaku.webui.session_identity import webui_session_key
 
@@ -626,6 +627,17 @@ class WebUIWorkspaceController:
             raise FolderGrantsUnavailableError("folder grants are unavailable")
         return self.focus_owner.discover(path, trusted_ui=trusted_ui)
 
+    def _external_binding(self, session_key: str) -> SessionHarnessBinding | None:
+        payload = self._sessions.read_session_metadata(session_key) if self._sessions is not None else None
+        return external_binding(payload.get("metadata") if payload is not None else None)
+
+    def has_external_harness(self, session_key: str) -> bool:
+        return self._external_binding(session_key) is not None
+
+    def locked_harness_workspace(self, session_key: str) -> Path | None:
+        binding = self._external_binding(session_key)
+        return Path(binding.locked_workspace) if binding is not None and binding.locked_workspace else None
+
     def _scope_from_request(
         self,
         raw: Any,
@@ -644,6 +656,11 @@ class WebUIWorkspaceController:
                 default_restrict_to_workspace=self._default_restrict_to_workspace,
                 source_channel=_WEBUI_SCOPE_CHANNEL,
             )
+            if session_key is not None and (
+                (locked := self.locked_harness_workspace(session_key)) is not None
+                and scope.project_path != locked
+            ):
+                raise WorkspaceScopeError("harness_workspace_locked", status=409)
             # An explicit restricted request is Sandbox even when the chat has a
             # current Full grant. Only the explicit mode action may raise a request
             # to Full; a chat label or remembered preference never promotes it.
@@ -1725,6 +1742,8 @@ class WebUIWorkspaceController:
         # explicit control mutation, never a property of a chat message.
         session_key = webui_session_key(chat_id)
         is_steer = envelope.get("request_intent") == "steer"
+        if is_steer and self.has_external_harness(session_key):
+            raise WorkspaceScopeError("harness_steering_unavailable", status=409)
         content = envelope.get("content")
         stripped = content.strip() if isinstance(content, str) else ""
         is_stop = stripped == "/stop" and not envelope.get("media")
@@ -1746,7 +1765,10 @@ class WebUIWorkspaceController:
                 if isinstance(turn_scope, dict) and turn_scope.get("access_mode") == "restricted":
                     return self.clamp_effective_scope(scope)
             return scope
-        if not chat_running and self._sessions is not None:
+        if (
+            not chat_running and self._sessions is not None
+            and self.locked_harness_workspace(session_key) is None
+        ):
             prefs = self._sessions.read_next_turn_preferences(session_key)
             if prefs is not None and isinstance(next_raw := prefs.get("workspace_scope"), dict):
                 self.retire_once_tasks_for_new_turn(chat_id)
@@ -1776,6 +1798,9 @@ class WebUIWorkspaceController:
                 or metadata.get("webui") is not True
                 or metadata.get(WORKSPACE_SCOPE_METADATA_KEY) != scope_meta
             )
+            binding = external_binding(metadata)
+            if binding is not None and binding.locked_workspace not in (None, str(scope.project_path)):
+                raise WorkspaceScopeError("harness_workspace_locked", status=409)
             if needs_upsert:
                 self._sessions.upsert_session_metadata(
                     session_key,

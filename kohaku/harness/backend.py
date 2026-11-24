@@ -13,6 +13,7 @@ from uuid import uuid4
 from kohaku.agent.permission_rules import extract_saveable_sandbox_command
 from kohaku.agent.turn import ApprovalDecision
 from kohaku.events import NO_EVENTS, EventSink
+from kohaku.session.harness_binding import SessionHarnessBinding as SessionHarnessBinding
 
 if TYPE_CHECKING:
     from kohaku.agent.hook import AgentHook
@@ -32,15 +33,6 @@ class LoopbackBridgeHandle(Protocol):
 
 
 BridgeFactory = Callable[["LLMRuntime", "LLMUsageSource | None"], Awaitable[LoopbackBridgeHandle]]
-
-
-@dataclass(frozen=True, slots=True)
-class SessionHarnessBinding:
-    backend: Literal["native", "external"]
-    harness: str | None
-    external_session_id: str | None
-    locked_workspace: str | None
-    runtime_generation: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -71,9 +63,12 @@ class ExternalTurnRequest:
     policy: ExternalToolPolicy = field(default_factory=ExternalToolPolicy)
     usage_source: LLMUsageSource | None = None
     prior_external_session_id: str | None = None
-    on_session_id: Callable[[str], None] | None = None
+    on_session_id: Callable[[str], bool | None] | None = None
     on_approval: Callable[[PendingExternalApproval], Awaitable[None]] | None = None
     events: EventSink = NO_EVENTS
+    private_roots: tuple[Path, ...] = ()
+    on_approval_closed: Callable[[str], Awaitable[None]] | None = None
+    retain_process: bool = True
 
 
 @dataclass(frozen=True, slots=True)
@@ -155,6 +150,10 @@ class SessionHarnessBackend(Protocol):
     ) -> ExternalHarnessProcess: ...
 
 
+class ExternalApprovalSaveError(RuntimeError):
+    """The owner could not persist the approved exclusion."""
+
+
 class HarnessCapabilityError(RuntimeError):
     """The external harness is unavailable in this installation."""
 
@@ -183,7 +182,7 @@ class _ApprovalWaiter:
 class ExternalApprovalRegistry:
     """Own live approvals and settle each server-issued ID once."""
 
-    def __init__(self, save_exclusion: Callable[[str], None] | None = None) -> None:
+    def __init__(self, save_exclusion: Callable[[str], bool | None] | None = None) -> None:
         self._pending: dict[str, _ApprovalWaiter] = {}
         self._save_exclusion = save_exclusion
 
@@ -215,6 +214,8 @@ class ExternalApprovalRegistry:
         finally:
             self._pending.pop(approval.approval_id, None)
             future.cancel()
+            if request.on_approval_closed is not None:
+                await request.on_approval_closed(approval.approval_id)
 
     def resolve(
         self, decision: ApprovalDecision, *, save_exclusion_command: str | None = None,
@@ -237,7 +238,8 @@ class ExternalApprovalRegistry:
             save = self._save_exclusion
             if command is None or save is None or save_exclusion_command not in (None, command):
                 return False
-            save(command)
+            if save(command) is False:
+                raise ExternalApprovalSaveError("Kohaku could not save the Sandbox exclusion.")
         elif save_exclusion_command is not None:
             return False
         self._pending.pop(approval.approval_id)
@@ -247,6 +249,12 @@ class ExternalApprovalRegistry:
         )
         waiter.future.set_result(action)
         return True
+
+    def pending_tool_calls(self, run_id: str) -> frozenset[str]:
+        return frozenset(
+            waiter.approval.tool_call_id for waiter in self._pending.values()
+            if waiter.approval.run_id == run_id and not waiter.future.done()
+        )
 
     def cancel_for_run(self, run_id: str) -> None:
         self._cancel(lambda approval: approval.run_id == run_id)

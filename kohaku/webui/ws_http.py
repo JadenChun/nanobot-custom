@@ -48,6 +48,7 @@ from kohaku.cron.service import (
 )
 from kohaku.cron.session_turns import is_bound_cron_job
 from kohaku.cron.types import CronJob, CronSchedule, cron_model_preset_unavailable
+from kohaku.harness.claude_sdk import harness_capabilities
 from kohaku.security.folder_grants import (
     FolderGrantsUnavailableError,
     GrantRevisionConflictError,
@@ -56,6 +57,7 @@ from kohaku.security.folder_grants import (
 )
 from kohaku.security.folder_locations import FolderEditIncompleteError
 from kohaku.security.workspace_access import WorkspaceScope
+from kohaku.session.harness_binding import external_binding
 from kohaku.session.manager import JsonlSessionStore, SessionManager
 from kohaku.session.recovery import RecoveryActionError
 from kohaku.session.source_store import SavedSourceMetadata, SourceSnapshot, SourceState
@@ -1615,7 +1617,7 @@ class GatewayHTTPHandler:
             )
             row["workspace_scope"] = self.workspaces.scope_payload(scope)
             cleaned.append(row)
-        return {"sessions": cleaned}
+        return {"sessions": cleaned, "harness_capabilities": harness_capabilities()}
 
     def _handle_delegated_children_get(
         self,
@@ -2165,6 +2167,9 @@ class GatewayHTTPHandler:
                 decoded_key, source_snapshot=snapshot,
             )
         data["workspace_scope"] = self.workspaces.scope_payload(scope)
+        data["harness_capabilities"] = harness_capabilities()
+        if snapshot is not None and (binding := external_binding(snapshot.header["metadata"])) is not None:
+            data["harness_binding"] = binding.payload()
         next_scope_fn = getattr(self.workspaces, "next_scope_for_session_key", None)
         next_scope = next_scope_fn(decoded_key) if callable(next_scope_fn) else None
         if isinstance(next_scope, WorkspaceScope):

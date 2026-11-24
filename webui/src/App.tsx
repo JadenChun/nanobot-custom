@@ -49,6 +49,7 @@ import { ClientProvider, useClient } from "@/providers/ClientProvider";
 import type {
   BootstrapResponse,
   ChatSummary,
+  ChatHarness,
   ConnectionStatus,
   RuntimeSurface,
   PairingRequestInfo,
@@ -1556,11 +1557,13 @@ function Shell({
     workspaceScope?: WorkspaceScopePayload | null,
     _initialMessage?: string,
     modelPreset?: string | null,
-    options?: { fullAccess?: boolean },
+    options?: { fullAccess?: boolean; harness?: ChatHarness },
   ) => {
     try {
       const scope = workspaceScope ?? activeWorkspaceScope;
-      const chatId = await createChat(scope, modelPreset);
+      const chatId = await (options?.harness === "claude_sdk"
+        ? createChat(scope, modelPreset, options.harness)
+        : createChat(scope, modelPreset));
       const key = `websocket:${chatId}`;
       if (options?.fullAccess) {
         const prepared = await prepareWorkspaceFullAccess(client, chatId);
@@ -1601,6 +1604,10 @@ function Shell({
           ? normalizeWorkspaceScope(workspaces.default_scope)
           : null);
         setWorkspaceError(t("errors.workspaceScopeRejected.body"));
+      } else if (e instanceof Error && e.message.startsWith("harness_")) {
+        setWorkspaceError(e.message === "harness_unavailable"
+          ? t("thread.harness.unavailable", { defaultValue: "Claude Code requires the optional Claude Agent SDK." })
+          : t("thread.harness.createFailed", { defaultValue: "Claude Code could not open this chat. Try again." }));
       } else if (options?.fullAccess) {
         setWorkspaceError(t("workspace.permissionV2.actionFailed", {
           defaultValue: "Access could not be updated. Refresh this chat before retrying.",

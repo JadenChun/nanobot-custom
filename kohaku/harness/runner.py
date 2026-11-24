@@ -6,7 +6,7 @@ import asyncio
 import json
 from collections.abc import AsyncGenerator
 from contextlib import aclosing
-from dataclasses import asdict, dataclass, field, replace
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Literal
 
@@ -27,6 +27,7 @@ from kohaku.harness.backend import (
     ExternalToolResult,
     ExternalTurnOutcome,
     ExternalTurnRequest,
+    HarnessCapabilityError,
     SessionHarnessBackend,
 )
 
@@ -132,7 +133,11 @@ class ExternalHarnessRunner:
         async def approve(
             call: ExternalToolCall, reason: str, allow_save: bool,
         ) -> ExternalApprovalAction:
-            return await self.approvals.request(request, normalize_tool_call(call), reason, allow_save)
+            try:
+                return await self.approvals.request(request, normalize_tool_call(call), reason, allow_save)
+            except asyncio.CancelledError:
+                turn.record_unapproved_call(call.id)
+                raise
 
         try:
             if session.incarnation != incarnation:
@@ -163,15 +168,21 @@ class ExternalHarnessRunner:
             await request.hook.before_run(turn.run_context)
             await turn.consume(session, session.process.run(request, approve))
             outcome = await turn.finish(session.session_id)
-            reusable = outcome.status == "completed" and session.session_id is not None
+            reusable = (
+                request.retain_process and outcome.status == "completed" and session.session_id is not None
+            )
             return outcome
         except asyncio.CancelledError:
             session.stopping = True
             turn.status = "cancelled"
+            for call_id in self.approvals.pending_tool_calls(request.run_id):
+                turn.record_unapproved_call(call_id)
             raise
         except Exception as exc:
             turn.status = "failed"
             turn.run_context.exception = exc
+            if isinstance(exc, HarnessCapabilityError):
+                turn.error = str(exc)
             raise
         finally:
             self.approvals.cancel_for_run(request.run_id)
@@ -184,6 +195,8 @@ class ExternalHarnessRunner:
             finally:
                 session.active = None
                 done.set_result(None)
+                if not request.retain_process:
+                    self._sessions.pop(request.session_key, None)
                 if reusable and session.process is not None:
                     session.idle_timer = asyncio.get_running_loop().call_later(
                         self._idle_timeout, session.close_process,
@@ -234,7 +247,7 @@ class _Turn:
     def persist_binding(self, session_id: str | None) -> None:
         binding = replace(self.request.binding, external_session_id=session_id)
         writer = self.request.writer
-        payload = asdict(binding)
+        payload = binding.payload()
         if writer.owner.read_snapshot().header["metadata"].get("harness_binding") != payload:
             writer.store.update_metadata(self.request.session_key, {"harness_binding": payload})
 
@@ -316,6 +329,12 @@ class _Turn:
         })
         await self.end_segment(entry["_event_id"], resuming=True)
 
+    def record_unapproved_call(self, call_id: str) -> None:
+        if call_id in self.active_calls or call_id in self.queued_calls:
+            self.results[call_id] = ExternalToolResult(
+                call_id, "The turn stopped before approval.", is_error=True, dispatched=False,
+            )
+
     async def flush_tools(self) -> None:
         # SourceTurnWriter accepts results for one batch at a time. Buffer SDK
         # results that arrive for a later batch while the current batch settles.
@@ -360,9 +379,9 @@ class _Turn:
             if self.queued_calls:
                 # Leave unresolved intents for source recovery after interruption.
                 await self.write_batch()
-                await self.flush_tools()
+            await self.flush_tools()
             entry = self.request.writer.append_message({
-                "role": "assistant", "content": "".join(self.segment),
+                "role": "assistant", "content": "".join(self.segment) or self.error or "",
                 "_external_outcome": self.status, "_external_error": self.error,
                 "fileEdits": self.edits,
             })

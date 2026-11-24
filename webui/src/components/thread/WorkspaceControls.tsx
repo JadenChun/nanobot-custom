@@ -90,6 +90,7 @@ export function WorkspaceProjectPicker({
   isHero = false,
   connected = false,
   disabled,
+  locked = false,
   scope,
   defaultScope,
   controls,
@@ -109,6 +110,7 @@ export function WorkspaceProjectPicker({
   isHero?: boolean;
   connected?: boolean;
   disabled?: boolean;
+  locked?: boolean;
   ownerKey?: string | null;
   scope: WorkspaceScopePayload | null;
   defaultScope: WorkspaceScopePayload | null;
@@ -209,7 +211,10 @@ export function WorkspaceProjectPicker({
         defaultValue: "The running turn keeps its folder. This choice applies to the next turn.",
       })
     : null;
-  const triggerTitle = [triggerAccessibleLabel, selectedScope?.project_path, nextTurnHint]
+  const lockedHint = locked
+    ? t("thread.harness.workspaceLocked", { defaultValue: "Claude Code locked this working folder." })
+    : null;
+  const triggerTitle = [triggerAccessibleLabel, selectedScope?.project_path, nextTurnHint, lockedHint]
     .filter(Boolean).join("\n");
   const effectiveAccess = activeScope?.effective_access;
   const currentAccess = effectiveAccess

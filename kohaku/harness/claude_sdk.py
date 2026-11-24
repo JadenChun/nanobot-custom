@@ -13,6 +13,7 @@ from collections.abc import AsyncGenerator, AsyncIterator
 from contextlib import suppress
 from dataclasses import dataclass, field
 from importlib import import_module
+from importlib.util import find_spec
 from pathlib import Path
 from types import ModuleType
 from typing import Any, Literal, cast
@@ -65,6 +66,19 @@ def _object(value: object) -> dict[str, object]:
 
 def _string(value: object) -> str:
     return value if isinstance(value, str) else ""
+
+
+def claude_sdk_available() -> bool:
+    """Check whether the optional SDK is installed without loading it."""
+    return find_spec("claude_agent_sdk") is not None
+
+
+def harness_capabilities() -> dict[str, dict[str, bool | str]]:
+    available = claude_sdk_available()
+    return {"claude_sdk": {
+        "available": available,
+        **({} if available else {"reason": "sdk_missing"}),
+    }}
 
 
 def _load_sdk() -> ModuleType:
@@ -123,7 +137,7 @@ class _Policy:
             target = lexical.resolve()
         except (OSError, ValueError, RuntimeError):
             return None
-        if not target.is_relative_to(self.workspace) or any(
+        if ((self.sandboxed or self.scope is not None) and not target.is_relative_to(self.workspace)) or any(
             lexical.is_relative_to(root) or target.is_relative_to(root) for root in self.private
         ):
             return None
@@ -186,7 +200,10 @@ class _ClaudeProcess:
         self._active: _SDKTurn | None = None
         self._workspace = request.workspace.resolve()
         scope = request.policy.write_scope
-        private = tuple(Path.home() / name for name in (".kohaku", ".ssh", ".aws")) + (state_dir,)
+        private = (
+            *(Path.home() / name for name in (".kohaku", ".ssh", ".aws")),
+            state_dir, *request.private_roots,
+        )
         private = tuple(dict.fromkeys((*private, *(root.resolve() for root in private))))
         self._policy = _Policy(
             self._workspace, private,

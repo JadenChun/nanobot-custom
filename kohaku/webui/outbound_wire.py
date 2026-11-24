@@ -2,14 +2,16 @@
 
 from __future__ import annotations
 
+import json
 import time
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any, Literal, NotRequired, TypeAlias, TypedDict
+from typing import Any, Literal, NotRequired, TypeAlias, TypedDict, cast
 
 from kohaku.bus.outbound_events import (
     ContextCompactionEvent,
     DelegatedChildEvent,
+    ExternalApprovalEvent,
     RecoveryStateEvent,
     RetryStatusEvent,
     StopTargetEvent,
@@ -108,6 +110,43 @@ class StopTargetWirePayload(TypedDict):
     stop_target: dict[str, object] | None
 
 
+class ExternalApprovalPayload(TypedDict):
+    session_key: str
+    session_incarnation: str
+    run_id: str
+    generation: int
+    effect_id: str
+    summary: str
+    command: str | None
+    save_exclusion_command: str | None
+
+
+class ExternalApprovalWirePayload(_ChatWirePayload):
+    event: Literal["external_approval"]
+    approval_id: str
+    approval: ExternalApprovalPayload | None
+
+
+def encode_external_approval(chat_id: str, event: ExternalApprovalEvent) -> ExternalApprovalWirePayload:
+    pending = event.approval
+    approval: ExternalApprovalPayload | None = None
+    if pending is not None:
+        raw: object = json.loads(pending.arguments_json)
+        args = cast(dict[object, object], raw) if isinstance(raw, dict) else {}
+        command = args.get("command")
+        approval = {
+            "session_key": pending.session_key, "session_incarnation": pending.session_incarnation,
+            "run_id": pending.run_id, "generation": pending.runtime_generation,
+            "effect_id": pending.tool_call_id, "summary": pending.reason,
+            "command": command if isinstance(command, str) else None,
+            "save_exclusion_command": pending.save_exclusion_command,
+        }
+    return {
+        "event": "external_approval", "chat_id": chat_id,
+        "approval_id": event.approval_id, "approval": approval,
+    }
+
+
 WebUIWirePayload: TypeAlias = (
     RetryStatusWirePayload
     | ContextCompactionWirePayload
@@ -115,6 +154,7 @@ WebUIWirePayload: TypeAlias = (
     | TurnEndWirePayload
     | DelegatedChildWirePayload
     | StopTargetWirePayload
+    | ExternalApprovalWirePayload
 )
 WebUIWirePersistence: TypeAlias = Literal[
     "transient",

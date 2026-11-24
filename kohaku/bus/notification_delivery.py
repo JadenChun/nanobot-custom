@@ -3,9 +3,11 @@
 from typing import Literal
 
 from kohaku.bus.outbound_events import (
+    ExternalApprovalEvent,
     FileEditEvent,
     ProgressEvent,
     RetryStatusEvent,
+    SessionUpdatedEvent,
     StreamDeltaEvent,
     StreamEndEvent,
 )
@@ -22,6 +24,8 @@ NOTIFICATION_AUDIENCES: dict[type[AgentEvent], NotificationAudience] = {
     RetryWaitEvent: "lifecycle",
     RecoveryStateEvent: "interactive",
     RetryStatusEvent: "interactive",
+    ExternalApprovalEvent: "interactive",
+    SessionUpdatedEvent: "interactive",
 }
 
 
@@ -36,6 +40,7 @@ def notification_is_deliverable(
         return publish_lifecycle
     if audience == "interactive":
         return channel == "websocket" and (
-            event_type is not RetryStatusEvent or publish_lifecycle
+            event_type not in {RetryStatusEvent, ExternalApprovalEvent, SessionUpdatedEvent}
+            or publish_lifecycle
         )
     return True

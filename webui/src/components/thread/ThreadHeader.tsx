@@ -2,6 +2,7 @@ import { Menu, MessageCircleDashed, Moon, Sun } from "lucide-react";
 import { type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 
+import { ClaudeBadge } from "@/components/thread/ClaudeBadge";
 import { Button } from "@/components/ui/button";
 import { SessionHandleLabel } from "@/components/SessionHandleLabel";
 import {
@@ -15,6 +16,7 @@ import type { SessionHandle } from "@/lib/types";
 
 interface ThreadHeaderProps {
   title: string;
+  claude?: boolean;
   handle?: SessionHandle | null;
   onToggleSidebar: () => void;
   theme: "light" | "dark";
@@ -35,6 +37,7 @@ interface ThreadHeaderProps {
 
 export function ThreadHeader({
   title,
+  claude = false,
   handle = null,
   onToggleSidebar,
   theme,
@@ -84,6 +87,7 @@ export function ThreadHeader({
             <span className="max-w-[min(60vw,32rem)] truncate">{title}</span>
           </div>
         ) : null}
+        {claude ? <ClaudeBadge /> : null}
         {handle ? (
           <span
             className="min-w-0 truncate rounded-md px-1.5 py-1 text-[12px] font-medium sm:shrink-0"

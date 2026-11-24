@@ -7,8 +7,10 @@ from typing import TYPE_CHECKING, Any, Protocol, cast
 
 from loguru import logger as default_logger
 
+from kohaku.harness.claude_sdk import harness_capabilities
 from kohaku.providers.base import LLMUsage
 from kohaku.session.goal_state import goal_state_ws_blob
+from kohaku.session.harness_binding import external_binding
 from kohaku.session.model_selection import (
     model_preset_from_metadata,
     reasoning_effort_from_metadata,
@@ -59,6 +61,9 @@ class WebUISessionProjection:
         metadata = cast(dict[str, object], raw_metadata) if isinstance(raw_metadata, dict) else None
 
         fields: dict[str, Any] = {}
+        if (binding := external_binding(metadata)) is not None:
+            fields["harness_binding"] = binding.payload()
+            fields["harness_capabilities"] = harness_capabilities()
         fields["stop_target"] = (
             self._stop_target_for_key(session_key)
             if self._stop_target_for_key is not None else None

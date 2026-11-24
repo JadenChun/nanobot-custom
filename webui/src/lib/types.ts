@@ -610,6 +610,31 @@ export interface UIFileEdit {
   diff?: UIFileDiff;
 }
 
+export type ChatHarness = "native" | "claude_sdk";
+
+export interface HarnessCapabilities {
+  claude_sdk?: { available: boolean; reason?: string };
+}
+
+export interface HarnessBinding {
+  backend: "external" | "native";
+  harness: ChatHarness | null;
+  external_session_id: string | null;
+  locked_workspace: string | null;
+  runtime_generation: number;
+}
+
+export interface LiveExternalApproval {
+  session_key: string;
+  session_incarnation: string;
+  run_id: string;
+  generation: number;
+  effect_id: string;
+  summary: string;
+  command: string | null;
+  save_exclusion_command: string | null;
+}
+
 export interface ChatSummary {
   /** Server-side session key, e.g. ``websocket:abcd-...``. */
   key: string;
@@ -629,6 +654,7 @@ export interface ChatSummary {
   /** Durable recovery state that needs attention after an interrupted turn. */
   recoveryState?: RecoveryState | null;
   workspaceScope?: WorkspaceScopePayload | null;
+  harnessBinding?: HarnessBinding | null;
   /** Stable, server-owned @handle for this session. */
   handle?: SessionHandle | null;
 }
@@ -1840,10 +1866,13 @@ interface InboundTurnMetadata {
 }
 
 export type InboundEvent =
-  | { event: "ready"; chat_id: string; client_id: string }
+  | { event: "ready"; chat_id: string; client_id: string; harness_capabilities?: HarnessCapabilities }
+  | { event: "external_approval"; chat_id: string; approval_id: string; approval: LiveExternalApproval | null }
   | {
       event: "attached";
       chat_id: string;
+      harness_binding?: HarnessBinding;
+      harness_capabilities?: HarnessCapabilities;
       input_attempt_source?: InputAttemptCapability;
       input_attempt_result?: InputAttemptResult;
       temporary?: boolean;
@@ -2036,6 +2065,7 @@ export type InboundEvent =
       event: "session_updated";
       chat_id: string;
       scope?: "metadata" | "thread" | string;
+      harness_binding?: HarnessBinding;
       workspace_scope?: WorkspaceScopePayload;
       /** Pending next-turn scope; the active turn keeps `workspace_scope`. */
       next_workspace_scope?: WorkspaceScopePayload | null;
@@ -2250,6 +2280,8 @@ export interface WebuiThreadPersistedPayload {
   stop_target?: StopExpectation | null;
   read_only?: boolean;
   history_kind?: "canonical" | "summary";
+  harness_binding?: HarnessBinding;
+  harness_capabilities?: HarnessCapabilities;
   parent_session_key?: string;
   root_key?: string;
   source?: WebuiThreadSourcePayload | null;
@@ -2326,7 +2358,7 @@ export interface ApprovalDecisionPayload {
 }
 
 export type Outbound =
-  | { type: "new_chat"; workspace_scope?: WorkspaceScopePayload }
+  | { type: "new_chat"; workspace_scope?: WorkspaceScopePayload; harness?: ChatHarness }
   | { type: "new_temporary_chat" }
   | {
       type: "webui_request";

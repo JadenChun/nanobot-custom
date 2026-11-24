@@ -31,7 +31,9 @@ from kohaku.bus.events import (
 from kohaku.bus.queue import MessageBus
 from kohaku.channels.base import BaseChannel
 from kohaku.config.schema import Base
+from kohaku.harness.claude_sdk import harness_capabilities
 from kohaku.security.desktop_permissions import attach_full_permission_to_message
+from kohaku.session.harness_binding import HarnessBindingPayload
 from kohaku.session.webui_turns import (
     clear_websocket_turn_if_current,
     mark_websocket_turn_transcript_persistence_failed,
@@ -56,7 +58,11 @@ from kohaku.webui.metadata import (
     WEBUI_TURN_METADATA_KEY,
 )
 from kohaku.webui.outbound_projection import WebUIOutboundProjector
-from kohaku.webui.outbound_wire import WebUIWirePayload, WebUIWirePersistence
+from kohaku.webui.outbound_wire import (
+    ExternalApprovalWirePayload,
+    WebUIWirePayload,
+    WebUIWirePersistence,
+)
 from kohaku.webui.session_identity import is_valid_webui_chat_id, webui_session_key
 from kohaku.webui.transcript import WEBUI_TRANSCRIPT_INCOMPLETE_KEY
 from kohaku.webui.websocket_logging import websockets_server_logger
@@ -436,6 +442,7 @@ class WebSocketChannel(BaseChannel):
         self._webui_request_locks = self._commands.request_locks
         self._outbound = WebUIOutboundProjector(self, self._session_projection)
 
+        self._external_approvals: dict[str, dict[str, ExternalApprovalWirePayload]] = {}
         self._stream_text_buffers: dict[tuple[str, str], list[str]] = {}
         self._reasoning_text_buffers: dict[tuple[str, str], list[str]] = {}
 
@@ -609,6 +616,10 @@ class WebSocketChannel(BaseChannel):
         await self._outbound.hydrate(chat_id)
         if connection is None:
             return
+        for approval in tuple(self._external_approvals.get(chat_id, {}).values()):
+            await self._safe_send_to(
+                connection, json.dumps(approval, ensure_ascii=False), label=" external_approval ",
+            )
         # Replay any in-flight reasoning/answer stream buffers only to the
         # newly attaching connection so other already-attached tabs never get
         # duplicate deltas.
@@ -949,6 +960,7 @@ class WebSocketChannel(BaseChannel):
                         "event": "ready",
                         "chat_id": default_chat_id,
                         "client_id": client_id,
+                        "harness_capabilities": harness_capabilities(),
                         **({"terminal": {
                             "protocolVersion": 1, "gatewayId": self.gateway.tokens.instance_id,
                         }} if _query_first(query, "terminal_protocol") == "1" else {}),
@@ -1584,6 +1596,16 @@ class WebSocketChannel(BaseChannel):
         """Persist as requested, frame, and fan out one encoded WebUI payload."""
         conns = list(self._subs.get(chat_id, ()))
         body: dict[str, Any] = dict(payload)
+        if payload["event"] == "external_approval":
+            pending = self._external_approvals.setdefault(chat_id, {})
+            if payload["approval"] is not None:
+                pending[payload["approval_id"]] = payload
+            else:
+                pending.pop(payload["approval_id"], None)
+                if not pending:
+                    self._external_approvals.pop(chat_id, None)
+        elif payload["event"] == "turn_end":
+            self._external_approvals.pop(chat_id, None)
         if persistence == "turn_activity":
             self._persist_turn_transcript_event(
                 chat_id,
@@ -1665,6 +1687,7 @@ class WebSocketChannel(BaseChannel):
         next_turn_revision: int | None = None,
         workspace_access_request: FolderAccessRequest | None = None,
         workspace_permissions: WorkspacePermissionProjection | None = None,
+        harness_binding: HarnessBindingPayload | None = None,
     ) -> None:
         """Notify WebUI clients that a session row should refresh."""
         conns = list(self._conn_chats)
@@ -1673,6 +1696,8 @@ class WebSocketChannel(BaseChannel):
         body: dict[str, Any] = {"event": "session_updated", "chat_id": chat_id}
         if scope:
             body["scope"] = scope
+        if harness_binding is not None:
+            body["harness_binding"] = harness_binding
         if workspace_scope is not None:
             body["workspace_scope"] = workspace_scope
         if next_workspace_scope is not None:

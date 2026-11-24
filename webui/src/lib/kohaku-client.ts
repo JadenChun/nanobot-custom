@@ -1,6 +1,8 @@
 import { decodeNotification } from "../../../packages/client-events/notifications";
 import type {
   ApprovalDecisionPayload,
+  ChatHarness,
+  HarnessBinding,
   ConnectionStatus,
   InboundEvent,
   MessageDeliveryErrorKind,
@@ -419,6 +421,11 @@ export class KohakuClient {
   private currentUrl: string;
   private status_: ConnectionStatus = "idle";
   private readyChatId: string | null = null;
+  private claudeAvailable = false;
+  private harnessAvailabilityHandlers = new Set<(available: boolean) => void>();
+  private externalApprovals = new Map<string, Map<string, Extract<InboundEvent, { event: "external_approval" }>>>();
+  private harnessBindings = new Map<string, HarnessBinding>();
+
   // Set by ``close()`` so the onclose handler knows the drop was intentional
   // and must not schedule a reconnect or flip status back to "reconnecting".
   private intentionallyClosed = false;
@@ -453,6 +460,16 @@ export class KohakuClient {
     return () => {
       this.statusHandlers.delete(handler);
     };
+  }
+
+  onHarnessAvailability(handler: (available: boolean) => void): Unsubscribe {
+    this.harnessAvailabilityHandlers.add(handler);
+    handler(this.claudeAvailable);
+    return () => { this.harnessAvailabilityHandlers.delete(handler); };
+  }
+
+  getHarnessBinding(chatId: string): HarnessBinding | undefined {
+    return this.harnessBindings.get(chatId);
   }
 
   onRuntimeModelUpdate(handler: RuntimeModelHandler): Unsubscribe {
@@ -1317,6 +1334,9 @@ export class KohakuClient {
         else handler(event);
       }
     }
+    for (const approval of this.externalApprovals.get(chatId)?.values() ?? []) {
+      handler(approval);
+    }
     // The socket subscribes to the chat, not to each local listener.
     if (firstListener) this.attach(chatId);
     return () => {
@@ -1405,7 +1425,9 @@ export class KohakuClient {
   }
 
   /** Ask the server to provision a new chat_id; resolves with the assigned id. */
-  newChat(timeoutMs: number = 5_000, workspaceScope?: WorkspaceScopePayload | null): Promise<string> {
+  newChat(
+    timeoutMs: number = 5_000, workspaceScope?: WorkspaceScopePayload | null, harness?: ChatHarness,
+  ): Promise<string> {
     if (this.pendingNewChat) {
       return Promise.reject(new Error("newChat already in flight"));
     }
@@ -1417,6 +1439,7 @@ export class KohakuClient {
       this.pendingNewChat = { resolve, reject, timer, temporary: false };
       this.queueSend({
         type: "new_chat",
+        ...(harness === "claude_sdk" ? { harness } : {}),
         ...(workspaceScope ? { workspace_scope: workspaceScope } : {}),
       });
     });
@@ -2168,12 +2191,16 @@ export class KohakuClient {
     }
 
     if (parsed.event === "ready") {
+      this.claudeAvailable = parsed.harness_capabilities?.claude_sdk?.available === true;
+      for (const handler of this.harnessAvailabilityHandlers) handler(this.claudeAvailable);
       this.readyChatId = parsed.chat_id;
       this.knownChats.add(parsed.chat_id);
       return;
     }
 
     if (parsed.event === "attached") {
+      this.externalApprovals.delete(parsed.chat_id);
+      if (parsed.harness_binding) this.harnessBindings.set(parsed.chat_id, parsed.harness_binding);
       const capability = parseAttemptCapability(parsed.input_attempt_source, parsed.chat_id);
       if (capability && parsed.temporary !== true) this.inputAttemptSources.set(parsed.chat_id, capability);
       else this.inputAttemptSources.delete(parsed.chat_id);
@@ -2230,6 +2257,7 @@ export class KohakuClient {
     }
 
     if (parsed.event === "session_updated") {
+      if (parsed.harness_binding) this.harnessBindings.set(parsed.chat_id, parsed.harness_binding);
       const nextTurn = this.applyNextTurnSessionUpdate(parsed);
       this.emitSessionUpdate(
         parsed.chat_id,
@@ -2285,6 +2313,19 @@ export class KohakuClient {
 
     const chatId = (parsed as { chat_id?: string }).chat_id;
     if (chatId) {
+      if (parsed.event === "external_approval") {
+        if (parsed.approval) {
+          const approvals = this.externalApprovals.get(chatId) ?? new Map();
+          approvals.set(parsed.approval_id, parsed);
+          this.externalApprovals.set(chatId, approvals);
+        } else {
+          const approvals = this.externalApprovals.get(chatId);
+          approvals?.delete(parsed.approval_id);
+          if (approvals?.size === 0) this.externalApprovals.delete(chatId);
+        }
+      } else if (parsed.event === "turn_end" && !this.isSupersededRunCompletion(chatId, parsed)) {
+        this.externalApprovals.delete(chatId);
+      }
       if (this.isCanonicalCompletedTurnEvent(chatId, parsed)) return;
       const supersededRunCompletion = this.isSupersededRunCompletion(chatId, parsed);
       // Check before consuming the running state. A legacy synthesized ID,
@@ -2715,6 +2756,8 @@ export class KohakuClient {
     this.temporaryChatIds.delete(chatId);
     this.knownChats.delete(chatId);
     this.chatHandlers.delete(chatId);
+    this.externalApprovals.delete(chatId);
+    this.harnessBindings.delete(chatId);
     this.pendingInboundByChat.delete(chatId);
     const wasRunning = this.runStartedAtByChatId.delete(chatId);
     const hadOwnedRun = this.hasOwnedRun(chatId);

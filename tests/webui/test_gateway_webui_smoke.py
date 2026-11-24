@@ -73,7 +73,9 @@ def _write_smoke_config(path: Path, *, workspace: Path, ws_port: int, gateway_po
     path.write_text(json.dumps(config), encoding="utf-8")
 
 
-def _start_gateway(config_path: Path, log_path: Path) -> subprocess.Popen[bytes]:
+def _start_gateway(
+    config_path: Path, log_path: Path, *, claude_fixture: str | None = None,
+) -> subprocess.Popen[bytes]:
     log_file = log_path.open("wb")
     try:
         process = subprocess.Popen(
@@ -82,6 +84,7 @@ def _start_gateway(config_path: Path, log_path: Path) -> subprocess.Popen[bytes]
                 "-m",
                 "tests.webui.p6_gateway_smoke_fixture",
                 str(config_path),
+                *([claude_fixture] if claude_fixture is not None else []),
             ],
             cwd=Path(__file__).resolve().parents[2],
             stdout=log_file,
