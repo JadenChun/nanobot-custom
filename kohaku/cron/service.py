@@ -1147,6 +1147,7 @@ class CronService:
         channel: str | None | EllipsisType = ...,
         to: str | None | EllipsisType = ...,
         delete_after_run: bool | None = None,
+        model_preset: str | None | EllipsisType = ...,
         job_instance_id: str | None = None,
         definition_revision: str | None = None,
         expected_job_instance_id: str | None = None,
@@ -1183,6 +1184,10 @@ class CronService:
         payload = changed["payload"]
         if message is not None:
             payload["message"] = message
+        if model_preset is None:
+            payload.pop("modelPreset", None)
+        elif model_preset is not ...:
+            payload["modelPreset"] = model_preset
         if deliver is not None:
             payload["deliver"] = deliver
         if channel is not ...:

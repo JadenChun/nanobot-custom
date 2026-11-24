@@ -18,6 +18,7 @@ from kohaku.bus.events import OutboundMessage
 from kohaku.channels.base import BaseChannel
 from kohaku.channels.websocket.runtime import WebSocketChannel, WebSocketConfig
 from kohaku.config.loader import load_config, save_config
+from kohaku.config.schema import Config, ModelPresetConfig
 from kohaku.cron.service import CRON_DEFINITION_ONLY_DIAGNOSTIC, CronService
 from kohaku.cron.types import CronJob, CronPayload, CronSchedule
 from kohaku.optional_features import InstallResult
@@ -70,6 +71,7 @@ def _make_handler(
     session_manager: SessionManager | None = None,
     static_dist_path: Path | None = None,
     workspace_path: Path | None = None,
+    config_path: Path | None = None,
     runtime_model_name: Any | None = None,
     cron_service: CronService | None = None,
     local_trigger_store: LocalTriggerStore | None = None,
@@ -88,6 +90,7 @@ def _make_handler(
         session_manager=session_manager,
         static_dist_path=static_dist_path,
         workspace_path=workspace,
+        config_path=config_path,
         default_restrict_to_workspace=False,
         runtime_model_name=runtime_model_name,
         runtime_surface="browser",
@@ -109,6 +112,7 @@ def _ch(
     session_manager: SessionManager | None = None,
     static_dist_path: Path | None = None,
     workspace_path: Path | None = None,
+    config_path: Path | None = None,
     port: int = _PORT,
     runtime_model_name: Any | None = None,
     cron_service: CronService | None = None,
@@ -135,6 +139,7 @@ def _ch(
         session_manager=session_manager,
         static_dist_path=static_dist_path,
         workspace_path=workspace_path,
+        config_path=config_path,
         runtime_model_name=runtime_model_name,
         cron_service=cron_service,
         local_trigger_store=local_trigger_store,
@@ -2878,6 +2883,56 @@ async def test_webui_automations_route_lists_all_jobs_and_allows_user_actions(
     finally:
         await channel.stop()
         await server_task
+
+
+@pytest.mark.asyncio
+async def test_automation_model_presets_are_validated_projected_and_cleared(bus, tmp_path):
+    config_path = tmp_path / "config.json"
+    config = Config(model_presets={"fast": ModelPresetConfig(model="small-model")})
+    save_config(config, config_path)
+    cron = CronService(tmp_path / "cron" / "jobs.json")
+    job = cron.add_job("Daily report", CronSchedule(kind="every", every_ms=60_000), "Report")
+    other = cron.add_job("Other report", CronSchedule(kind="every", every_ms=60_000), "Other")
+    triggers = LocalTriggerStore(tmp_path)
+    trigger = triggers.create(
+        name="Trigger", channel="websocket", chat_id="abc", session_key="websocket:abc",
+    )
+    channel = _ch(bus, workspace_path=tmp_path, config_path=config_path,
+                  cron_service=cron, local_trigger_store=triggers)
+
+    async def update(job_id, **values):
+        return await _webui_mutate(channel, "automation.update", {"id": job_id, "values": values})
+
+    for invalid in ("missing", "", 42, "default"):
+        response = await update(job.id, model_preset=invalid)
+        assert response.status_code == 400
+        assert cron.get_job(job.id).definition_revision == job.definition_revision
+    assert (await update(trigger.id, model_preset="fast")).status_code == 400
+
+    pinned = await update(job.id, model_preset="fast")
+    assert pinned.status_code == 200, pinned.text
+    assert pinned.json()["model_presets"] == [{"name": "fast", "model": "small-model"}]
+    by_id = {item["id"]: item for item in pinned.json()["jobs"]}
+    assert by_id[job.id]["payload"]["model_preset"] == "fast"
+    assert "model_preset" not in by_id[other.id]["payload"]
+
+    config.model_presets.clear()
+    save_config(config, config_path)
+    renamed = await update(job.id, name="Renamed report")
+    assert renamed.status_code == 200
+    by_id = {item["id"]: item for item in renamed.json()["jobs"]}
+    assert by_id[job.id]["payload"]["model_preset"] == "fast"
+    assert by_id[job.id]["execution"]["model_preset_missing"] is True
+    assert by_id[job.id]["execution"]["manual_run_supported"] is False
+    run = await _webui_mutate(channel, "automation.run", {"id": job.id})
+    assert run.status_code == 409
+    assert "unavailable" in run.text
+
+    cleared = await update(job.id, model_preset=None)
+    assert cleared.status_code == 200
+    by_id = {item["id"]: item for item in cleared.json()["jobs"]}
+    assert "model_preset" not in by_id[job.id]["payload"]
+    assert "model_preset_missing" not in by_id[job.id]["execution"]
 
 
 @pytest.mark.asyncio

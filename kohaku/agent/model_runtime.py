@@ -159,9 +159,15 @@ class ModelRuntimeResolver:
         )
         return runtime
 
-    def resolve_preset(self, name: str | None) -> LLMRuntime:
-        """Resolve a named preset without changing the selected default."""
+    def resolve_preset(self, name: str | None, *, exact: bool = False) -> LLMRuntime:
+        """Resolve a named preset without changing the selected default.
+
+        Stored, owner-selected names can require an exact match; interactive
+        selections may still use the normal case-insensitive lookup.
+        """
         self._refresh_preset_catalog()
+        if exact and name not in self._model_presets:
+            raise KeyError(name)
         normalized = preset_helpers.normalize_preset_name(name, self._model_presets)
         cached = self._resolved_presets.get(normalized)
         if cached is not None:

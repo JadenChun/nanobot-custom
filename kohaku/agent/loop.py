@@ -140,6 +140,7 @@ from kohaku.command.builtin import USER_SHELL_COMMAND
 from kohaku.command.router import normalize_command_text
 from kohaku.config.schema import AgentDefaults, ModelPresetConfig
 from kohaku.cron.session_turns import cron_trigger
+from kohaku.cron.types import CRON_MODEL_PRESET_UNAVAILABLE, cron_model_preset_unavailable
 from kohaku.events import NO_EVENTS, AgentEvent, EventSink
 from kohaku.llm_usage.context import source_from_request
 from kohaku.providers.base import LLMProvider, LLMUsage, ProviderConversationState
@@ -6556,6 +6557,16 @@ class AgentLoop:
             ))
         ):
             raise ValueError("silent cron execution cannot accept delivery callbacks or tool overrides")
+        runtime = None
+        if request.cron_model_preset is not None:
+            try:
+                runtime = self.runtime_resolver.resolve_preset(request.cron_model_preset, exact=True)
+            except KeyError:
+                return TurnResult(
+                    run_id=request.run_id, status=RunStatus.POLICY_BLOCKED,
+                    stop_reason=CRON_MODEL_PRESET_UNAVAILABLE,
+                    error=cron_model_preset_unavailable(request.cron_model_preset),
+                )
         # A scheduled model can produce a text result but cannot use a direct
         # MessageTool send to bypass the durable occurrence/outbox receipts.
         safe_request = dataclasses.replace(
@@ -6567,7 +6578,7 @@ class AgentLoop:
             self.runtime_event_publisher.clear_turn(key)
 
         return await self.execute_turn(safe_request, _options=_TurnExecutionOptions(
-            silent_output=True, persist_approval_request=False,
+            silent_output=True, persist_approval_request=False, runtime=runtime,
             raise_errors=True, on_admission_end=clear_runtime,
         ))
 

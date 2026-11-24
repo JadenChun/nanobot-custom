@@ -528,6 +528,11 @@ function AutomationDetailPanel({
             >
               {schedule}
             </AutomationDetail>
+            {!localTrigger && !job.protected ? (
+              <AutomationDetail label={tx("settings.automations.fields.modelPreset", "Model preset")}>
+                {job.payload.model_preset || tx("settings.automations.modelPresetDefault", "Use gateway default")}
+              </AutomationDetail>
+            ) : null}
             <div className="rounded-floating bg-background/55 p-3">
               <div className="grid gap-3">
                 {created ? (
@@ -704,6 +709,7 @@ type AutomationEveryUnit = "second" | "minute" | "hour" | "day";
 type AutomationEditDraft = {
   name: string;
   message: string;
+  modelPreset: string;
   scheduleKind: "at" | "every" | "cron";
   everyValue: string;
   everyUnit: AutomationEveryUnit;
@@ -722,11 +728,13 @@ const AUTOMATION_EVERY_UNITS: Array<{ value: AutomationEveryUnit; ms: number }> 
 
 export function AutomationEditDialog({
   job,
+  modelPresets,
   saving,
   onOpenChange,
   onSave,
 }: {
   job: SessionAutomationJob | null;
+  modelPresets?: AutomationsPayload["model_presets"];
   saving: boolean;
   onOpenChange: (open: boolean) => void;
   onSave: (job: SessionAutomationJob, values: AutomationUpdatePayload) => void | Promise<void>;
@@ -766,7 +774,7 @@ export function AutomationEditDialog({
       {job ? (
         <DialogContent
           aria-describedby={undefined}
-          className="w-[min(calc(100vw-2rem),34rem)]"
+          className="max-h-[calc(100dvh-2rem)] w-[min(calc(100vw-2rem),34rem)] overflow-y-auto"
         >
           <form className="space-y-5" onSubmit={submit}>
             <DialogHeader>
@@ -794,6 +802,37 @@ export function AutomationEditDialog({
                     onChange={(event) => setDraft((prev) => ({ ...prev, message: event.target.value }))}
                     className="min-h-[160px] resize-none text-[13px] leading-5"
                   />
+                </label>
+              ) : null}
+
+              {!localTrigger && (modelPresets || job.payload.model_preset) ? (
+                <label className="block space-y-1.5">
+                  <span className="text-[12px] font-medium text-muted-foreground">
+                    {tx("settings.automations.fields.modelPreset", "Model preset")}
+                  </span>
+                  <select
+                    value={draft.modelPreset}
+                    onChange={(event) =>
+                      setDraft((prev) => ({ ...prev, modelPreset: event.target.value }))}
+                    className={cn(
+                      "h-10 w-full rounded-control border border-input bg-background px-3 text-[13px] text-foreground transition-colors",
+                      formControlFocusClassName,
+                    )}
+                  >
+                    <option value="">
+                      {tx("settings.automations.modelPresetDefault", "Use gateway default")}
+                    </option>
+                    {draft.modelPreset && !modelPresets?.some((preset) => preset.name === draft.modelPreset) ? (
+                      <option value={draft.modelPreset} disabled>
+                        {tx("settings.automations.modelPresetUnavailable", "{{name}} (unavailable)", { name: draft.modelPreset })}
+                      </option>
+                    ) : null}
+                    {modelPresets?.map((preset) => (
+                      <option key={preset.name} value={preset.name}>
+                        {preset.name} — {preset.model}
+                      </option>
+                    ))}
+                  </select>
                 </label>
               ) : null}
 
@@ -1006,15 +1045,16 @@ function automationDetailText(
 }
 
 function automationNeedsAttention(job: SessionAutomationJob): boolean {
-  return job.state.last_status === "error";
+  return job.state.last_status === "error" || job.execution?.model_preset_missing === true;
 }
 
 function automationStatusKey(
   job: SessionAutomationJob,
-): "active" | "running" | "paused" | "failed" | "system" | "completed" | "idle" {
+): "active" | "running" | "paused" | "failed" | "system" | "completed" | "idle" | "needs_attention" {
   if (job.protected) return "system";
   if (job.state.pending) return "running";
   if (!job.enabled) return "paused";
+  if (job.execution?.model_preset_missing) return "needs_attention";
   if (job.state.last_status === "error") return "failed";
   if (isLocalTriggerAutomation(job)) return "active";
   if (job.delete_after_run && !job.state.next_run_at_ms && job.state.last_status === "ok") {
@@ -1049,6 +1089,7 @@ function automationDraftFromJob(job: SessionAutomationJob | null): AutomationEdi
   return {
     name: job?.name ?? "",
     message: job?.payload.message ?? "",
+    modelPreset: job?.payload.model_preset ?? "",
     scheduleKind,
     everyValue: every.value,
     everyUnit: every.unit,
@@ -1117,6 +1158,9 @@ function automationUpdatePayloadFromDraft(
   const message = draft.message.trim();
   if (!name || !message) return "invalid";
   const payload: AutomationUpdatePayload = { name, message };
+  if (draft.modelPreset !== (job?.payload.model_preset ?? "")) {
+    payload.model_preset = draft.modelPreset || null;
+  }
   const schedule = automationSchedulePayloadFromDraft(draft);
   if (typeof schedule === "string") return schedule;
   if (automationScheduleChanged(draft, job, schedule)) {
@@ -1353,6 +1397,9 @@ function automationStatus(
     return { label: tx("settings.automations.status.running", "Running now"), tone: "warning" };
   }
   if (status === "paused") return { label: tx("settings.automations.status.paused", "Paused"), tone: "neutral" };
+  if (status === "needs_attention") {
+    return { label: tx("settings.automations.filters.failed", "Needs attention"), tone: "warning" };
+  }
   if (status === "failed") {
     return { label: tx("settings.automations.status.failed", "Failed"), tone: "warning" };
   }
@@ -1500,7 +1547,7 @@ function formatAutomationNextTitle(
 function automationStatusDotClass(job: SessionAutomationJob): string {
   const status = automationStatusKey(job);
   if (status === "active" || status === "running") return "bg-orange-500";
-  if (status === "failed") return "bg-amber-500";
+  if (status === "failed" || status === "needs_attention") return "bg-amber-500";
   return "bg-muted-foreground/45";
 }
 

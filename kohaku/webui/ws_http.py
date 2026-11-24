@@ -34,6 +34,7 @@ from websockets.http11 import Response
 
 from kohaku.bus.outbound_events import SessionUpdatedEvent
 from kohaku.command.builtin import builtin_command_palette
+from kohaku.config.errors import ConfigLoadError
 from kohaku.config.paths import get_media_dir, get_webui_dir
 from kohaku.context_repo.catalog import CatalogRevisionConflictError
 from kohaku.context_repo.manager import ContextRepoManager
@@ -46,7 +47,7 @@ from kohaku.cron.service import (
     CronDefinitionTokenRequiredError,
 )
 from kohaku.cron.session_turns import is_bound_cron_job
-from kohaku.cron.types import CronJob, CronSchedule
+from kohaku.cron.types import CronJob, CronSchedule, cron_model_preset_unavailable
 from kohaku.security.folder_grants import (
     FolderGrantsUnavailableError,
     GrantRevisionConflictError,
@@ -2627,6 +2628,15 @@ class GatewayHTTPHandler:
             pending.update(self.local_trigger_pending_ids(session_key))
         return pending
 
+    def _automation_model_presets(self) -> dict[str, str] | None:
+        from kohaku.config.loader import load_config
+
+        try:
+            config = self.settings.read(load_config, apply_network_policy=False)
+        except ConfigLoadError:
+            return None
+        return {name: preset.model for name, preset in config.model_presets.items()}
+
     def _handle_webui_automations(self, request: WsRequest) -> Response:
         if not self.check_api_token(request):
             return _http_error(401, "Unauthorized")
@@ -2638,6 +2648,7 @@ class GatewayHTTPHandler:
                 local_trigger_store=self.local_trigger_store,
                 session_manager=self.session_manager,
                 pending_job_ids=pending_job_ids,
+                model_presets=self._automation_model_presets() if self.cron_service is not None else None,
             )
         )
 
@@ -2667,6 +2678,9 @@ class GatewayHTTPHandler:
         if job.payload.kind == "system_event":
             return _http_error(403, "system automation is protected")
         if action == "run":
+            preset = job.payload.model_preset
+            if preset is not None and preset not in (self._automation_model_presets() or {}):
+                return _http_error(409, cron_model_preset_unavailable(preset))
             diagnostic = self.cron_service.admission_diagnostic(job)
             if diagnostic:
                 return _http_error(409, diagnostic)
@@ -2714,6 +2728,9 @@ class GatewayHTTPHandler:
                 parsed = _parse_automation_update(values, current_job=job)
                 if isinstance(parsed, str):
                     return _http_error(400, parsed)
+                preset = parsed.get("model_preset")
+                if isinstance(preset, str) and preset not in (self._automation_model_presets() or {}):
+                    return _http_error(400, cron_model_preset_unavailable(preset))
                 try:
                     result = self.cron_service.update_job(
                         job_id,
@@ -3784,6 +3801,13 @@ def _parse_automation_update(
         if not message:
             return "message cannot be empty"
         update["message"] = message
+    if "model_preset" in values:
+        preset = values["model_preset"]
+        if preset is not None and (
+            not isinstance(preset, str) or not preset or preset != preset.strip()
+        ):
+            return "model_preset must be a non-empty preset name or null"
+        update["model_preset"] = preset
     if "schedule" in values:
         raw_schedule = values.get("schedule")
         if not isinstance(raw_schedule, dict):
@@ -3811,7 +3835,7 @@ def _parse_local_trigger_update(values: dict[str, Any]) -> dict[str, Any] | str:
         if not name:
             return "name cannot be empty"
         update["name"] = name
-    forbidden = [key for key in ("message", "schedule") if key in values]
+    forbidden = [key for key in ("message", "schedule", "model_preset") if key in values]
     if forbidden:
         return "local trigger updates only support name"
     return update

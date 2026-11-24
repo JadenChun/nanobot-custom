@@ -481,4 +481,78 @@ describe("Settings system domains", () => {
     );
     expect(screen.queryByText("Disabled channel 'matrix'")).not.toBeInTheDocument();
   });
+
+  it("pins and clears a model preset independently for a scheduled automation", async () => {
+    installAutomationPresetMock();
+    renderSettingsView({ initialSection: "automations", initialSettings: settingsPayload(), showSidebar: false });
+
+    fireEvent.click(await screen.findByRole("button", { name: "Edit" }));
+    const picker = screen.getByRole("combobox", { name: "Model preset" });
+    expect(picker).toHaveDisplayValue("Use gateway default");
+    fireEvent.change(picker, { target: { value: "fast" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(requestMutationMock).toHaveBeenLastCalledWith(
+      "automation.update", { id: "first", values: { name: "Daily report", message: "Report", model_preset: "fast" } }, 20_000,
+    ));
+
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+    expect(screen.getByRole("combobox", { name: "Model preset" })).toHaveValue("fast");
+    fireEvent.change(screen.getByRole("combobox", { name: "Model preset" }), { target: { value: "" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(requestMutationMock).toHaveBeenLastCalledWith(
+      "automation.update", { id: "first", values: { name: "Daily report", message: "Report", model_preset: null } }, 20_000,
+    ));
+  });
+
+  it("flags a removed automation preset and lets the owner recover", async () => {
+    installAutomationPresetMock("gone");
+    renderSettingsView({ initialSection: "automations", initialSettings: settingsPayload(), showSidebar: false });
+
+    expect(await screen.findByText("Model preset 'gone' is unavailable.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Run now" })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: /^Needs attention 1$/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+    const picker = screen.getByRole("combobox", { name: "Model preset" });
+    expect(picker).toHaveDisplayValue("gone (unavailable)");
+    expect(screen.getByRole("option", { name: "gone (unavailable)" })).toBeDisabled();
+    fireEvent.change(picker, { target: { value: "fast" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(requestMutationMock).toHaveBeenCalledWith(
+      "automation.update", { id: "first", values: { name: "Daily report", message: "Report", model_preset: "fast" } }, 20_000,
+    ));
+  });
 });
+
+function installAutomationPresetMock(modelPreset: string | null = null) {
+  const response = {
+    model_presets: [{ name: "fast", model: "small-model" }],
+    jobs: [{
+      id: "first", name: "Daily report", enabled: true,
+      schedule: { kind: "every", every_ms: 86_400_000 },
+      payload: { message: "Report", model_preset: modelPreset },
+      origin: { channel: "telegram" },
+      execution: {
+        manual_run_supported: modelPreset !== "gone",
+        model_preset_missing: modelPreset === "gone",
+        unavailable_reason: modelPreset === "gone" ? "Model preset 'gone' is unavailable." : null,
+      },
+      state: { next_run_at_ms: 1_800_000_000_000 },
+    }],
+  };
+  vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url === "/api/settings") return jsonResponse(settingsPayload());
+    if (url === "/api/webui/automations") return jsonResponse(response);
+    return jsonResponse({});
+  }));
+  requestMutationMock.mockImplementation(async (_action, data) => {
+    response.jobs[0].payload.model_preset = data.values.model_preset;
+    response.jobs[0].execution = {
+      manual_run_supported: true,
+      model_preset_missing: false,
+      unavailable_reason: null,
+    };
+    return response;
+  });
+}

@@ -77,6 +77,13 @@ receipt-backed result. It does not resume the history of the chat that created
 the job. Existing session-bound jobs require explicit migration before execution.
 Other delivery transports are unsupported by this scheduler.
 
+To choose a model for one scheduled job, open **Automations → Edit → Model preset**.
+Existing jobs use **Use gateway default** unless you pin a configured preset.
+The selection applies to both scheduled runs and **Run now** without changing
+the linked chat or other jobs. If the pinned preset is removed, the job needs
+attention and does not use a substitute model. Edit it to choose another preset
+or restore the gateway default. Local triggers still use their linked chat.
+
 ## Local Triggers
 
 Local triggers let a local script or external service send a message into a

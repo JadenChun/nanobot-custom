@@ -644,6 +644,7 @@ export function SettingsPage({
 
       <AutomationEditDialog
         job={automationPendingEdit}
+        modelPresets={automations?.model_presets}
         saving={automationAction === `update:${automationPendingEdit?.id ?? ""}`}
         onOpenChange={(open) => {
           if (!open) setAutomationPendingEdit(null);

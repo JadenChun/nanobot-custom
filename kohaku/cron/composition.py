@@ -27,7 +27,7 @@ from kohaku.cron.job_hooks import CronHookOutcome, CronJobHooks
 from kohaku.cron.occurrence_store import OccurrenceClaim
 from kohaku.cron.quota_recovery import CronQuotaRecovery
 from kohaku.cron.service import CronService
-from kohaku.cron.types import CronPayload, cron_thread_id
+from kohaku.cron.types import CRON_MODEL_PRESET_UNAVAILABLE, CronPayload, cron_thread_id
 from kohaku.session.manager import SessionManager
 
 
@@ -144,6 +144,15 @@ async def compose_claimed_text_occurrence(
                 run_id=claim.run_id, fence=fence)
             return ClaimedTextCompositionResult(turn, projection, None, None, ())
         turn = await agent.execute_silent_cron_turn(request)
+        if turn.status is RunStatus.POLICY_BLOCKED and turn.stop_reason == CRON_MODEL_PRESET_UNAVAILABLE:
+            if turn.run_id != claim.run_id or turn.sent_messages:
+                raise CronCompositionPreflightError("blocked cron result conflicts with its exact silent execution")
+            projection = service.complete_occurrence(claim, {
+                "status": "skipped", "run_status": turn.status.value,
+                "error": turn.error,
+                "delivery": {"version": 1, "deliver": False, "messages": []},
+            }, run_id=claim.run_id, fence=fence)
+            return ClaimedTextCompositionResult(turn, projection, None, None, ())
         quota_event = await quota_recovery.event(claim, turn) if quota_recovery is not None else None
         runtime_metadata: dict[str, object] = ({"quota_recovery": quota_event.model_dump()}
                                               if quota_event is not None else {})

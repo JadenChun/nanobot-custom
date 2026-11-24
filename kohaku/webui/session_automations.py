@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from collections.abc import Collection
+from collections.abc import Collection, Mapping
 from typing import Any, Protocol, cast
 
-from kohaku.cron.types import CronJob, CronRuntimeStatus
+from kohaku.cron.types import CronJob, CronRuntimeStatus, cron_model_preset_unavailable
 from kohaku.session.history_visibility import is_hidden_history_message
 from kohaku.session.manager import _message_preview_text  # pyright: ignore[reportPrivateUsage]
 from kohaku.triggers.local_types import LocalTrigger
@@ -98,6 +98,7 @@ def all_automations_payload(
     local_trigger_store: _LocalTriggerStoreLike | None = None,
     session_manager: _SessionManagerLike | None = None,
     pending_job_ids: Collection[str] | None = None,
+    model_presets: Mapping[str, str] | None = None,
 ) -> dict[str, Any]:
     """Return all cron jobs visible to the WebUI automation manager."""
     jobs: list[AutomationJob] = []
@@ -111,9 +112,12 @@ def all_automations_payload(
             pending_job_ids=pending_job_ids,
             include_details=True,
             session_manager=session_manager,
+            model_presets=model_presets,
             cron_service=cron_service,
             trigger_delivery_active=local_trigger_store.delivery_active if local_trigger_store else False,
-        )
+        ),
+        **({"model_presets": [{"name": name, "model": model} for name, model in model_presets.items()]}
+           if model_presets is not None else {}),
     }
 
 
@@ -125,6 +129,7 @@ def serialize_automation_jobs(
     session_manager: _SessionManagerLike | None = None,
     cron_service: _CronServiceLike | None = None,
     trigger_delivery_active: bool = False,
+    model_presets: Mapping[str, str] | None = None,
 ) -> list[dict[str, Any]]:
     return [
         _serialize_job(
@@ -134,6 +139,7 @@ def serialize_automation_jobs(
             session_manager=session_manager,
             cron_service=cron_service,
             trigger_delivery_active=trigger_delivery_active,
+            model_presets=model_presets,
         )
         for job in jobs
     ]
@@ -147,6 +153,7 @@ def _serialize_job(
     session_manager: _SessionManagerLike | None = None,
     cron_service: _CronServiceLike | None = None,
     trigger_delivery_active: bool = False,
+    model_presets: Mapping[str, str] | None = None,
 ) -> dict[str, Any]:
     if isinstance(job, LocalTrigger):
         payload = _serialize_trigger(
@@ -200,6 +207,15 @@ def _serialize_job(
     payload["created_at_ms"] = job.created_at_ms
     payload["updated_at_ms"] = job.updated_at_ms
     payload["payload"].update({"kind": job.payload.kind})
+    preset = job.payload.model_preset
+    if preset is not None:
+        payload["payload"]["model_preset"] = preset
+        if model_presets is not None and preset not in model_presets:
+            payload["execution"].update(
+                model_preset_missing=True,
+                manual_run_supported=False,
+                unavailable_reason=cron_model_preset_unavailable(preset),
+            )
     payload["state"].update(
         {
             "last_run_at_ms": state.last_run_at_ms,

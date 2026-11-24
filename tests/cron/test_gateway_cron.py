@@ -1,6 +1,7 @@
 """Explicit gateway scheduling admission and lifetime ownership, without networking."""
 
 import asyncio
+from contextlib import suppress
 from types import SimpleNamespace
 
 import pytest
@@ -118,3 +119,25 @@ def test_unmigrated_jobs_refused_before_runtime_admission(tmp_path):
             SessionManager(workspace, sessions_root=tmp_path / "sessions"), FakeChannels(),
             workspace, tmp_path / "instance")
     assert not (tmp_path / "instance" / "cron-runtime").exists()
+
+
+async def test_run_now_and_timer_use_the_same_job_preset(tmp_path):
+    gateway, clock, calls, channels, item = _gateway(tmp_path)
+    job = gateway.service.update_job(
+        item.job_id, model_preset="reports", job_instance_id=item.job_instance_id,
+        definition_revision=item.definition_revision,
+    )
+    channels.receipt_transport_ready = True
+    owner = asyncio.create_task(gateway.run())
+    try:
+        await _until(lambda: gateway.status()["state"] == "running")
+        assert await gateway.service.run_job(job.id, request_id="user-run-now")
+        await _until(lambda: len(channels.calls) == 2)
+        clock.now = 1100
+        await _until(lambda: len(channels.calls) == 4)
+        assert [request.cron_model_preset for request in calls] == ["reports", "reports"]
+        assert len({request.run_id for request in calls}) == 2
+    finally:
+        await gateway.aclose()
+        with suppress(asyncio.CancelledError):
+            await owner

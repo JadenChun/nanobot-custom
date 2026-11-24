@@ -5,18 +5,22 @@ from __future__ import annotations
 import asyncio
 from collections import deque
 from copy import deepcopy
+from importlib import import_module
 from pathlib import Path
 from unittest.mock import AsyncMock, Mock
 
 import pytest
 
 from kohaku.agent.loop import AgentLoop
+from kohaku.agent.model_presets import build_static_preset_snapshot, configured_model_presets
 from kohaku.agent.tools.registry import ToolRegistry
 from kohaku.agent.turn import DeliveryTarget, RunStatus, TurnRequest, TurnResult
-from kohaku.config.schema import Config
+from kohaku.config.schema import Config, ModelPresetConfig
 from kohaku.cron.action_store import CronActionStore
-from kohaku.cron.canonical_execution import execute_claimed_fresh_text
+from kohaku.cron.canonical_execution import build_claimed_fresh_request, execute_claimed_fresh_text
+from kohaku.cron.channel_sender import CronChannelSender
 from kohaku.cron.completion import CronCompletionProjector
+from kohaku.cron.composition import compose_claimed_text_occurrence
 from kohaku.cron.definition_store import (
     CronDefinitionAction,
     CronDefinitionStore,
@@ -33,6 +37,7 @@ from kohaku.cron.occurrence_store import (
 from kohaku.cron.service import CronService, _job_definition
 from kohaku.cron.types import CronDestination, CronSchedule
 from kohaku.providers.base import GenerationSettings, LLMProvider, LLMResponse
+from tests.cron.stage3_fixtures import FakeChannels
 
 
 class ScriptedProvider(LLMProvider):
@@ -53,6 +58,9 @@ class ScriptedProvider(LLMProvider):
 
 @pytest.fixture
 def engine_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    # croniter's first import probes Python's architecture via the host file utility.
+    import_module("croniter")
+
     monkeypatch.setattr("kohaku.migration_guard.require_runtime_ready", lambda: None)
     monkeypatch.setattr("subprocess.Popen", Mock(side_effect=AssertionError("process execution")))
     for name in ("socket.socket.connect", "socket.socket.connect_ex", "socket.create_connection",
@@ -69,7 +77,9 @@ def engine_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     return config
 
 
-def _service_claim(tmp_path: Path, *, legacy: bool = True, primary: bool = True):
+def _service_claim(
+    tmp_path: Path, *, legacy: bool = True, primary: bool = True, secondary: str = "discord",
+):
     root = tmp_path / "cron"
     namespace = "cron:canonical-execution-test"
     definitions = CronDefinitionStore(CronActionStore(root, namespace=namespace))
@@ -85,7 +95,7 @@ def _service_claim(tmp_path: Path, *, legacy: bool = True, primary: bool = True)
         "report", CronSchedule(kind="every", every_ms=60_000), "compute report",
         deliver=True, channel="telegram" if primary else None,
         to="primary" if primary else None,
-        additional_destinations=[CronDestination("discord", "secondary")],
+        additional_destinations=[CronDestination(secondary, "secondary")],
     )
     if legacy:
         job.payload.execution_mode = "legacy_fresh"
@@ -431,3 +441,96 @@ async def test_visible_link_failure_recovers_without_recomputing(tmp_path: Path,
     with pytest.raises(OccurrenceExecutionStartedError):
         await execute_claimed_fresh_text(service, agent, claim, visible_sessions=sessions)
     agent.execute_silent_cron_turn.assert_awaited_once()
+
+
+async def test_model_preset_is_frozen_per_job_and_used_by_the_real_runner(
+    engine_config, monkeypatch,
+) -> None:
+    engine_config.model_presets["reports"] = ModelPresetConfig(model="report-model")
+    engine_config.model_presets["fast"] = ModelPresetConfig(model="fast-model")
+    service, first_claim = _service_claim(engine_config.workspace_path.parent)
+    job_id = first_claim.identity.job_id
+
+    def update_preset(preset: str | None):
+        job = service.get_job(job_id)
+        return service.update_job(job.id, model_preset=preset, job_instance_id=job.job_instance_id,
+                                  definition_revision=job.definition_revision)
+
+    def next_claim(job, fire):
+        return service.claim_scheduled_occurrence(
+            job.id, fire, owner="worker", expected_job_instance_id=job.job_instance_id,
+            expected_definition_revision=job.definition_revision,
+        )
+
+    pinned_job = update_preset("reports")
+    pinned_claim = next_claim(pinned_job, 1_700_000_060_000)
+    assert service.get_job(job_id).payload.model_preset == "reports"
+    assert build_claimed_fresh_request(first_claim).cron_model_preset is None
+
+    fast_job = update_preset("fast")
+    fast_claim = next_claim(fast_job, 1_700_000_120_000)
+    assert build_claimed_fresh_request(pinned_claim).cron_model_preset == "reports"
+    cleared_job = update_preset(None)
+    cleared_claim = next_claim(cleared_job, 1_700_000_180_000)
+    assert "modelPreset" not in cleared_claim.job_snapshot["payload"]
+    assert cleared_job.definition_revision == first_claim.identity.job_revision
+
+    provider = ScriptedProvider([LLMResponse(content="report") for _ in range(4)])
+    monkeypatch.setattr(
+        "kohaku.agent.model_presets.build_provider_snapshot",
+        lambda config, *, preset_name: build_static_preset_snapshot(
+            provider, preset_name, config.model_presets[preset_name],
+        ),
+    )
+    agent = AgentLoop.from_config(engine_config, tool_registry=ToolRegistry(), provider=provider)
+    try:
+        for claim in (first_claim, pinned_claim, fast_claim, cleared_claim):
+            result, _, _ = await execute_claimed_fresh_text(service, agent, claim)
+            assert result.status is RunStatus.COMPLETED
+        assert [call[2] for call in provider.calls] == [
+            "synthetic-model", "report-model", "fast-model", "synthetic-model",
+        ]
+        assert agent.llm_runtime().model == "synthetic-model"
+    finally:
+        await agent.aclose()
+
+
+async def test_missing_preset_skips_without_calling_default_or_running_delivery_hooks(engine_config) -> None:
+    engine_config.model_presets["reports"] = ModelPresetConfig(model="report-model")
+    service, original = _service_claim(engine_config.workspace_path.parent, secondary="telegram")
+    job = service.update_job(
+        original.identity.job_id, model_preset="reports", job_instance_id=original.job_snapshot["jobInstanceId"],
+        definition_revision=original.identity.job_revision,
+    )
+    claim = service.claim_scheduled_occurrence(
+        job.id, 1_700_000_060_000, owner="worker", expected_job_instance_id=job.job_instance_id,
+        expected_definition_revision=job.definition_revision,
+    )
+    channels = FakeChannels()
+    hooks = AsyncMock()
+    provider = ScriptedProvider([])
+    agent = AgentLoop.from_config(
+        engine_config, tool_registry=ToolRegistry(), provider=provider,
+        preset_catalog_loader=lambda: configured_model_presets(engine_config),
+        preset_snapshot_loader=lambda name: build_static_preset_snapshot(
+            provider, name, engine_config.model_presets[name],
+        ),
+    )
+    try:
+        assert agent.runtime_resolver.resolve_preset("reports").model == "report-model"
+        del engine_config.model_presets["reports"]
+        engine_config.model_presets["REPORTS"] = ModelPresetConfig(model="different-model")
+        agent.invalidate_runtime_config()
+        result = await compose_claimed_text_occurrence(
+            service, agent, claim, CronChannelSender(channels.get_channel), job_hooks=hooks,
+        )
+        assert result.turn.status is RunStatus.POLICY_BLOCKED
+        assert result.completion.status == "skipped"
+        assert "Model preset 'reports' is unavailable" in result.completion.completion["error"]
+        assert result.outbox is None
+        assert service.occurrence_store.get(claim.occurrence_id).state == "completed"
+        assert provider.calls == channels.calls == []
+        hooks.verify.assert_not_awaited()
+        hooks.after_delivery.assert_not_awaited()
+    finally:
+        await agent.aclose()

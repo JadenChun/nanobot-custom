@@ -338,6 +338,7 @@ export interface SessionAutomationJob {
   enabled: boolean;
   execution?: {
     manual_run_supported: boolean;
+    model_preset_missing?: boolean;
     active?: boolean;
     unavailable_reason?: string | null;
     delivery_status?: string | null;
@@ -357,6 +358,7 @@ export interface SessionAutomationJob {
   payload: {
     message: string;
     kind?: "agent_turn" | "system_event" | "local_trigger" | string;
+    model_preset?: string | null;
     command?: string;
   };
   state: {
@@ -386,7 +388,10 @@ export interface SessionAutomationJob {
 }
 
 export interface SessionAutomationsPayload { jobs: SessionAutomationJob[]; }
-export interface AutomationsPayload { jobs: SessionAutomationJob[]; }
+export interface AutomationsPayload {
+  jobs: SessionAutomationJob[];
+  model_presets?: Array<{ name: string; model: string }>;
+}
 
 export interface GeneratedAsset {
   id: string;
@@ -431,6 +436,7 @@ export interface SessionGeneratedAssetsPayload {
 export interface AutomationUpdatePayload {
   name?: string;
   message?: string;
+  model_preset?: string | null;
   schedule?: {
     kind: "at" | "every" | "cron";
     at_ms?: number;

@@ -68,7 +68,9 @@ def cron_thread_id(metadata: Mapping[str, object]) -> int | None:
 
 
 DEFAULT_STATUS_REGEX = r"(?im)^\*\*Internal status:\*\*\s*([A-Za-z_]+)"
+CRON_MODEL_PRESET_UNAVAILABLE = "cron_model_preset_unavailable"
 CONTRACT_FIELD_ALIASES = {
+    "modelPreset": "model_preset",
     "planningMode": "planning_mode",
     "skipVerification": "skip_verification",
     "alertChannel": "alert_channel",
@@ -76,6 +78,10 @@ CONTRACT_FIELD_ALIASES = {
     "postDeliveryCommand": "post_delivery_command",
 }
 CONTRACT_FIELDS = set(CONTRACT_FIELD_ALIASES) | {"verifiers"}
+
+
+def cron_model_preset_unavailable(name: str) -> str:
+    return f"Model preset {name!r} is unavailable. Select another preset or use the gateway default."
 
 
 def _command_argv(value: object) -> tuple[str, ...]:
@@ -143,6 +149,10 @@ class CronVerifier:
 
 def validate_contract_fields(data: Mapping[str, object]) -> None:
     """Validate optional fields without inserting defaults into signed definitions."""
+    if "modelPreset" in data:
+        preset = data["modelPreset"]
+        if not isinstance(preset, str) or not preset or preset != preset.strip() or preset == "default":
+            raise ValueError("cron modelPreset must name a configured preset")
     mode = data.get("planningMode")
     if mode is not None and mode not in ("on", "off", "agent"):
         raise ValueError("cron planning mode is invalid")
@@ -184,6 +194,7 @@ class CronPayload:
     alert_to: str | None = None
     verifiers: list[CronVerifier] = field(default_factory=list)
     post_delivery_command: list[str] | None = None
+    model_preset: str | None = None
 
     def alert_destination(self) -> CronDestination | None:
         if not self.alert_to:
@@ -193,6 +204,8 @@ class CronPayload:
     def contract_fields(self) -> dict[str, Any]:
         """Omit defaults to preserve existing definition hashes and wire shapes."""
         result: dict[str, Any] = {}
+        if self.model_preset is not None:
+            result["modelPreset"] = self.model_preset
         for key, value in (("planningMode", self.planning_mode), ("alertChannel", self.alert_channel),
                            ("alertTo", self.alert_to), ("postDeliveryCommand", self.post_delivery_command)):
             if value is not None:
@@ -252,6 +265,7 @@ class CronPayload:
             alert_to=get_camel_snake(data, "alertTo", "alert_to"),
             verifiers=[CronVerifier.from_store_dict(value) for value in cast(list[object], data.get("verifiers", []))],
             post_delivery_command=get_camel_snake(data, "postDeliveryCommand", "post_delivery_command"),
+            model_preset=get_camel_snake(data, "modelPreset", "model_preset"),
         )
 
 

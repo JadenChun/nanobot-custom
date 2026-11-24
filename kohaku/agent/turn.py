@@ -285,6 +285,7 @@ class TurnRequest:
     # channel-layer name while ``prompt`` remains the canonical field.
     message: str | None = None
     expected_source_state: SourceState | None = None
+    cron_model_preset: str | None = None
 
     def __init__(
         self,
@@ -311,6 +312,8 @@ class TurnRequest:
         scheduled: ScheduledTurnLink | None = None,
         message: str | None = None,
         expected_source_state: SourceState | None = None,
+        *,
+        cron_model_preset: str | None = None,
     ) -> None:
         if content and prompt and content != prompt:
             raise ValueError("prompt and content must match when both are supplied")
@@ -330,6 +333,9 @@ class TurnRequest:
             if not isinstance(cast(object, expected_source_state), SourceState):
                 raise TypeError("source condition requires a trusted SourceState")
         object.__setattr__(self, "expected_source_state", expected_source_state)
+        if cron_model_preset is not None and self.source is not TurnSource.CRON:
+            raise ValueError("a cron model preset requires a scheduled turn")
+        object.__setattr__(self, "cron_model_preset", cron_model_preset)
         object.__setattr__(self, "route", route)
         object.__setattr__(self, "sender_id", sender_id)
         object.__setattr__(self, "attachments", tuple(attachments))

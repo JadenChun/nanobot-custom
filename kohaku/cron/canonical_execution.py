@@ -70,6 +70,7 @@ def _request_for_claim(claim: OccurrenceClaim) -> TurnRequest:
         route=DeliveryTarget(channel=channel, chat_id=chat_id, thread_id=str(thread_id) if thread_id is not None else None),
         run_id=claim.run_id,
         history_mode=HistoryMode.FRESH,
+        cron_model_preset=payload.model_preset,
         scheduled_link=ScheduledTurnLink(
             job_id=definition.job_id,
             job_name=definition.definition["name"],
