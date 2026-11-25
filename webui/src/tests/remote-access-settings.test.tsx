@@ -1,6 +1,6 @@
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("qrcode", () => ({
   default: {
@@ -95,7 +95,67 @@ function pendingFetch(state: { collected: boolean } = { collected: false }) {
   });
 }
 
+beforeEach(() => {
+  vi.stubGlobal("fetch", pendingFetch());
+});
+
 describe("RemoteAccessSettings", () => {
+  it("shows and copies the Serve repair command before re-checking readiness", async () => {
+    const command = "tailscale serve --bg --https=443 --set-path=/mobile/v1 http://127.0.0.1:19321/mobile/v1";
+    const diagnostic = "Tailscale Serve strips /mobile/v1 when the proxy URL omits that path.";
+    const mutate = mutationTransport();
+    const readyFetch = pendingFetch();
+    let verified = false;
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      if (!verified && String(input).endsWith("/tailscale")) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            available: true,
+            connected: true,
+            serve_mapped: false,
+            origin: "https://fixture.example",
+            issue: "serve_path_stripped",
+            error: diagnostic,
+            expected_port: 19321,
+            recommended_command: command,
+          }),
+        };
+      }
+      return readyFetch(input);
+    }));
+    const user = userEvent.setup();
+    const copy = vi.spyOn(navigator.clipboard, "writeText");
+    const happyWindow = window as unknown as { happyDOM: { setURL(url: string): void } };
+    const originalUrl = window.location.href;
+    happyWindow.happyDOM.setURL("https://desktop.example/settings");
+
+    try {
+      render(<RemoteAccessSettings token="token" mutate={mutate} initialStatus={status} />);
+      await user.click(screen.getByRole("button", { name: "Pair owner phone" }));
+      const dialog = within(screen.getByRole("dialog"));
+      expect(await dialog.findByText(diagnostic)).toBeVisible();
+      const [connection, serve] = dialog.getAllByRole("listitem");
+      expect(connection).toHaveTextContent("Tailscale connectedReady");
+      expect(serve).toHaveTextContent("/mobile/v1 Serve target verifiedNot ready");
+      expect(dialog.getByText(command)).toBeVisible();
+      expect(mutate.requestMutation).not.toHaveBeenCalled();
+
+      await user.click(dialog.getByRole("button", { name: "Copy" }));
+      expect(copy).toHaveBeenCalledWith(command);
+      expect(dialog.getByRole("button", { name: "Copied" })).toBeVisible();
+
+      verified = true;
+      await user.click(dialog.getByRole("button", { name: "Re-check" }));
+      expect(await dialog.findByText("1234 5678")).toBeVisible();
+      expect(await dialog.findByRole("img", { name: "Pairing QR code" })).toBeVisible();
+    } finally {
+      copy.mockRestore();
+      happyWindow.happyDOM.setURL(originalUrl);
+    }
+  });
+
   it("renders owner status and revokes after confirmation", async () => {
     const mutate = mutationTransport();
     render(<RemoteAccessSettings token="token" mutate={mutate} initialStatus={status} />);
@@ -189,9 +249,13 @@ describe("RemoteAccessSettings", () => {
     render(<RemoteAccessSettings token="token" mutate={mutate} initialStatus={status} />);
     await userEvent.click(screen.getByRole("button", { name: "Pair owner phone" }));
     await screen.findByText(/Pixel 10 wants owner access/, {}, { timeout: 3000 });
-    expect(
-      screen.getAllByText(/Key fingerprint/)[0],
-    ).toHaveTextContent("ab".repeat(32));
+    const fingerprint = screen.getByRole("button", { name: /Key fingerprint/ });
+    expect(fingerprint).toHaveAttribute("aria-expanded", "false");
+    expect(fingerprint).toHaveTextContent(/ab…ab/);
+    expect(screen.queryByText(pending.device_fingerprint)).not.toBeInTheDocument();
+    await userEvent.click(fingerprint);
+    expect(fingerprint).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByText(pending.device_fingerprint)).toBeVisible();
   });
 
   it("denies a pending owner request", async () => {
@@ -269,11 +333,32 @@ describe("RemoteAccessSettings", () => {
     render(<RemoteAccessSettings token="token" mutate={mutate} initialStatus={status} />);
     await userEvent.click(screen.getByRole("button", { name: "Pair owner phone" }));
     const renewButton = await screen.findByRole("button", { name: "Renew setup" });
+    expect(renewButton).toHaveClass("bg-primary");
     await userEvent.click(renewButton);
     await waitFor(() => expect(mutate.requestMutation).toHaveBeenCalledWith(
       "settings.remote_access.pairing.renew",
       { pairingId: "pair-1" },
     ));
+  });
+
+  it("makes New code the primary action after a code expires before collection", async () => {
+    const mutate = mutationTransport();
+    mutate.requestMutation.mockResolvedValueOnce({
+      pairing_id: "expired-pairing",
+      comparison_code: "12345678",
+      nonce: "nonce-value-000000000000",
+      collector_secret: "secret-value-000000000000",
+      expires_at: Math.floor(Date.now() / 1000) - 1,
+      transport: "tailscale",
+    });
+    vi.stubGlobal("fetch", pendingFetch());
+    render(<RemoteAccessSettings token="token" mutate={mutate} initialStatus={status} />);
+    await userEvent.click(screen.getByRole("button", { name: "Pair owner phone" }));
+
+    const newCode = await screen.findByRole("button", { name: "New code" });
+    expect(newCode).toHaveClass("bg-primary");
+    await userEvent.click(newCode);
+    expect(await screen.findByRole("img", { name: "Pairing QR code" })).toBeVisible();
   });
 
   it("restores a phone-scanned request after reopening settings", async () => {
