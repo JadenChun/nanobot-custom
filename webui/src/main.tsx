@@ -1,3 +1,4 @@
+import { lazy, Suspense } from "react";
 import ReactDOM from "react-dom/client";
 
 import App from "./App";
@@ -5,6 +6,7 @@ import { ErrorBoundary } from "./components/ErrorBoundary";
 import "./globals.css";
 import "./styles/mobile-shell.css";
 import { initializeI18n } from "./i18n";
+import type { MobilePairingBridge } from "./lib/mobile-pairing-bridge";
 import { initializeLoopbackRuntimeHost, isLinuxWebKitRuntime } from "./lib/runtime";
 import {
   createMobileRuntime,
@@ -34,6 +36,8 @@ if (typeof globalThis.crypto !== "undefined" && !("randomUUID" in globalThis.cry
 const root = document.getElementById("root");
 if (!root) throw new Error("root element missing");
 const appRoot: HTMLElement = root;
+const mobilePairing: MobilePairingBridge | undefined = window.kohakuMobilePairing;
+let appReady = false;
 
 const injectedMobileTransport = (window as Window & { nanobotMobileTransport?: MobileTransport })
   .nanobotMobileTransport;
@@ -51,34 +55,39 @@ if (isMobileRuntimeActive()) document.documentElement.classList.add("mobile-runt
 
 if (isMobileRuntimeActive()) {
   const recover = () => {
-    if (document.visibilityState === "visible") void recoverMobileRuntime();
+    if (appReady && document.visibilityState === "visible") void recoverMobileRuntime();
   };
   document.addEventListener("visibilitychange", recover);
   window.addEventListener("pageshow", recover);
   window.addEventListener("online", recover);
+  window.addEventListener("kohaku-native-resume", () => {
+    // App and session listeners also use the legacy event.
+    if (appReady) window.dispatchEvent(new Event("nanobot-native-resume"));
+  });
   window.addEventListener("nanobot-native-resume", recover);
 }
 
-async function renderWebui(container: HTMLElement) {
+async function startWebui(): Promise<void> {
   await initializeI18n();
   /* StrictMode disabled: dev double-invokes state updaters; delta accumulation must stay pure — see useKohakuStream. */
-  ReactDOM.createRoot(container).render(
-    <ErrorBoundary>
-      <App />
-    </ErrorBoundary>,
-  );
-}
+  const reactRoot = ReactDOM.createRoot(appRoot);
+  const showApp = () => {
+    appReady = true;
+    reactRoot.render(<ErrorBoundary><App /></ErrorBoundary>);
+  };
 
-async function startWebui(): Promise<void> {
-  try {
-    await (window as Window & { nanobotMobileReady?: Promise<void> }).nanobotMobileReady;
-  } catch {
-    // The shared UI shows its bootstrap/auth state when no target is ready.
+  if (mobilePairing) {
+    const MobileAuthGate = lazy(() => import("./components/mobile/MobileAuthGate"));
+    reactRoot.render(
+      <ErrorBoundary>
+        <Suspense fallback={null}>
+          <MobileAuthGate pairing={mobilePairing} transport={injectedMobileTransport} onReady={showApp} />
+        </Suspense>
+      </ErrorBoundary>,
+    );
+  } else {
+    showApp();
   }
-  if (injectedMobileTransport && !isMobileRuntimeActive()) {
-    installMobileRuntime(createMobileRuntime(injectedMobileTransport));
-  }
-  await renderWebui(appRoot);
 }
 
 void startWebui();
