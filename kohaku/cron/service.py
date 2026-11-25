@@ -1127,14 +1127,7 @@ class CronService:
             return None
         changed = deepcopy(current.definition)
         changed["enabled"] = enabled
-        action = CronDefinitionAction.update(
-            CronDefinition.from_definition(changed, job_instance_id=current.job_instance_id),
-            expected_job_instance_id=current.job_instance_id,
-            expected_definition_revision=current.definition_revision,
-        )
-        settled = self._definition_action(action)
-        result = self._find_definition(settled, job_id)
-        return None if result is None else _public_job(result)
+        return _public_job(self._commit_definition_update(current, changed))
 
     def update_job(
         self,
@@ -1196,17 +1189,29 @@ class CronService:
             payload["to"] = to
         if delete_after_run is not None:
             changed["deleteAfterRun"] = delete_after_run
+        result = self._commit_definition_update(current, changed)
+        if result != current:
+            logger.info("Cron: updated definition '{}' ({})", result.definition["name"], job_id)
+        return _public_job(result)
+
+    def _commit_definition_update(
+        self, current: CronDefinition, changed: dict[str, Any],
+    ) -> CronDefinition:
+        successor = current.successor(changed)
+        if successor.definition == current.definition:
+            return current
+        # The exact same request can still retry its durable receipt. A later
+        # transition to the same settings has a different parent and cursor.
         action = CronDefinitionAction.update(
-            CronDefinition.from_definition(changed, job_instance_id=current.job_instance_id),
+            successor,
             expected_job_instance_id=current.job_instance_id,
             expected_definition_revision=current.definition_revision,
         )
         settled = self._definition_action(action)
-        result = self._find_definition(settled, job_id)
-        if result is None:  # pragma: no cover - checkpoint/replay invariant
-            raise CronDefinitionServiceError("updated cron definition disappeared during checkpoint")
-        logger.info("Cron: updated definition '{}' ({})", result.definition["name"], job_id)
-        return _public_job(result)
+        result = self._find_definition(settled, current.job_id)
+        if result is None or result != successor:
+            raise CronDefinitionConflictError("cron definition changed before its update was confirmed")
+        return result
 
     async def run_job(
         self, job_id: str, force: bool = False, *, request_id: str | None = None,

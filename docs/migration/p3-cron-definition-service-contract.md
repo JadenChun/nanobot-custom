@@ -16,8 +16,12 @@ list/get and management callers. Projections carry the exact
 `job_instance_id` and `definition_revision`, while `state`, run history, and
 timestamps are empty because C2 owns definitions only. Those fields are never
 serialized into a definition action or candidate. New jobs receive a stable
-lowercase SHA-256 instance identity; updates retain it and C2 recomputes the
-revision from canonical definition JSON. Create, update, enable, and delete
+lowercase SHA-256 instance identity; updates retain it and C2 computes their
+revisions from canonical definition JSON and the exact preceding revision.
+An unchanged edit or toggle returns the current definition without resetting its
+schedule. A real edit or toggle back to previous settings creates a fresh revision,
+so neither an old mutation receipt nor an old scheduling cursor is reused.
+Create, update, enable, and delete
 actions are typed `cron_definition_action_v1` requests. Updates and deletes
 require both exact instance and revision tokens. The legacy method signatures
 remain available with token keywords added; a caller that omits required

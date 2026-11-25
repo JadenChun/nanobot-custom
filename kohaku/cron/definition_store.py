@@ -35,6 +35,7 @@ _ACTION_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,511}")
 
 _DEFINITION_FIELDS = {"id", "name", "enabled", "schedule", "payload", "deleteAfterRun"}
 _DEFINITION_WIRE_FIELDS = _DEFINITION_FIELDS | {"jobInstanceId", "definitionRevision"}
+_REVISION_PARENT_FIELD = "revisionParent"
 _SCHEDULE_FIELDS = {"kind", "atMs", "everyMs", "expr", "tz"}
 _PAYLOAD_FIELDS = {
     "kind",
@@ -205,9 +206,13 @@ def _validate_payload(value: object) -> dict[str, Any]:
     return payload
 
 
-def _definition_revision(definition: Mapping[str, Any], job_instance_id: str) -> str:
+def _definition_revision(
+    definition: Mapping[str, Any], job_instance_id: str, revision_parent: str | None,
+) -> str:
     digest_input = _copy_mapping(definition, label="cron definition")
     digest_input["jobInstanceId"] = job_instance_id
+    if revision_parent is not None:
+        digest_input[_REVISION_PARENT_FIELD] = revision_parent
     return hashlib.sha256(_canonical_json(digest_input, label="cron definition").encode("utf-8")).hexdigest()
 
 
@@ -232,28 +237,46 @@ class CronDefinition:
     definition: dict[str, Any]
     job_instance_id: str
     definition_revision: str
+    revision_parent: str | None = None
 
     @property
     def job_id(self) -> str:
         return self.definition["id"]
 
     @classmethod
-    def from_definition(cls, definition: Mapping[str, Any], *, job_instance_id: str) -> CronDefinition:
+    def from_definition(
+        cls, definition: Mapping[str, Any], *,
+        job_instance_id: str, revision_parent: str | None = None,
+    ) -> CronDefinition:
         canonical = _canonical_definition(definition)
         instance = _require_digest(job_instance_id, label="cron definition job_instance_id")
-        return cls(canonical, instance, _definition_revision(canonical, instance))
+        if revision_parent is not None:
+            revision_parent = _require_digest(revision_parent, label="cron definition revisionParent")
+        revision = _definition_revision(canonical, instance, revision_parent)
+        return cls(canonical, instance, revision, revision_parent)
+
+    def successor(self, definition: Mapping[str, Any]) -> CronDefinition:
+        """Give an actual edit a fresh identity even if its settings existed before."""
+        return self.from_definition(
+            definition, job_instance_id=self.job_instance_id, revision_parent=self.definition_revision,
+        )
 
     @classmethod
     def _from_wire(cls, value: object, *, label: str = "cron definition") -> CronDefinition:
         wire = _copy_mapping(value, label=label)
-        _require_exact_fields(wire, _DEFINITION_WIRE_FIELDS, label=label)
+        fields = _DEFINITION_WIRE_FIELDS
+        parent = None
+        if _REVISION_PARENT_FIELD in wire:
+            parent = _require_digest(wire[_REVISION_PARENT_FIELD], label=f"{label} revisionParent")
+            fields = fields | {_REVISION_PARENT_FIELD}
+        _require_exact_fields(wire, fields, label=label)
         instance = _require_digest(wire["jobInstanceId"], label=f"{label} jobInstanceId")
         supplied_revision = _require_digest(wire["definitionRevision"], label=f"{label} definitionRevision")
         definition = _canonical_definition({name: wire[name] for name in _DEFINITION_FIELDS})
-        calculated_revision = _definition_revision(definition, instance)
+        calculated_revision = _definition_revision(definition, instance, parent)
         if supplied_revision != calculated_revision:
             raise DefinitionStoreValidationError(f"{label} definitionRevision does not match its definition")
-        return cls(definition, instance, calculated_revision)
+        return cls(definition, instance, calculated_revision, parent)
 
     @classmethod
     def decode_wire(cls, value: object, *, label: str = "cron definition") -> CronDefinition:
@@ -261,7 +284,9 @@ class CronDefinition:
         return cls._from_wire(value, label=label)
 
     def _validated(self) -> CronDefinition:
-        validated = CronDefinition.from_definition(self.definition, job_instance_id=self.job_instance_id)
+        validated = CronDefinition.from_definition(
+            self.definition, job_instance_id=self.job_instance_id, revision_parent=self.revision_parent,
+        )
         if self.definition_revision != validated.definition_revision:
             raise DefinitionStoreValidationError("cron definition definitionRevision does not match its definition")
         return validated
@@ -272,11 +297,14 @@ class CronDefinition:
 
     def to_wire(self) -> dict[str, Any]:
         validated = self._validated()
-        return {
+        wire = {
             **_copy_mapping(validated.definition, label="cron definition"),
             "jobInstanceId": validated.job_instance_id,
             "definitionRevision": validated.definition_revision,
         }
+        if validated.revision_parent is not None:
+            wire[_REVISION_PARENT_FIELD] = validated.revision_parent
+        return wire
 
 
 @dataclass(frozen=True)
@@ -292,6 +320,8 @@ class CronDefinitionAction:
     @classmethod
     def create(cls, definition: CronDefinition) -> CronDefinitionAction:
         validated = _validate_definition_object(definition)
+        if validated.revision_parent is not None:
+            raise DefinitionStoreValidationError("a new cron definition cannot have a revision parent")
         return cls("create", validated.job_id, validated)
 
     @classmethod
@@ -305,8 +335,7 @@ class CronDefinitionAction:
         validated = _validate_definition_object(definition)
         instance = _require_digest(expected_job_instance_id, label="expected_job_instance_id")
         revision = _require_digest(expected_definition_revision, label="expected_definition_revision")
-        if validated.job_instance_id != instance:
-            raise DefinitionStoreValidationError("updated cron definition must retain its job instance")
+        _validate_update_identity(validated, instance, revision)
         return cls("update", validated.job_id, validated, instance, revision)
 
     @classmethod
@@ -375,6 +404,8 @@ class CronDefinitionAction:
     def to_wire(self) -> dict[str, Any]:
         if self.operation == "create":
             definition = _validate_definition_object(self.definition)
+            if definition.revision_parent is not None:
+                raise DefinitionStoreValidationError("a new cron definition cannot have a revision parent")
             if self.job_id != definition.job_id:
                 raise DefinitionStoreValidationError("cron definition create action job_id does not match its definition")
             return {
@@ -390,8 +421,7 @@ class CronDefinitionAction:
                 raise DefinitionStoreValidationError("cron definition update action job_id does not match its definition")
             instance = _require_digest(self.expected_job_instance_id, label="expected_job_instance_id")
             revision = _require_digest(self.expected_definition_revision, label="expected_definition_revision")
-            if definition.job_instance_id != instance:
-                raise DefinitionStoreValidationError("updated cron definition must retain its job instance")
+            _validate_update_identity(definition, instance, revision)
             return {
                 "schema_version": _SCHEMA_VERSION,
                 "kind": _ACTION_KIND,
@@ -415,6 +445,13 @@ class CronDefinitionAction:
                 ),
             }
         raise DefinitionStoreValidationError("cron definition action has an unknown operation")
+
+
+def _validate_update_identity(definition: CronDefinition, instance: str, revision: str) -> None:
+    if definition.job_instance_id != instance:
+        raise DefinitionStoreValidationError("updated cron definition must retain its job instance")
+    if definition.revision_parent is not None and definition.revision_parent != revision:
+        raise DefinitionStoreValidationError("updated cron definition parent must match its expected revision")
 
 
 def _validate_definition_object(value: object) -> CronDefinition:

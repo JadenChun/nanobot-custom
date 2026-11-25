@@ -2872,6 +2872,14 @@ async def test_webui_automations_route_lists_all_jobs_and_allows_user_actions(
         by_id = {job["id"]: job for job in enabled.json()["jobs"]}
         assert by_id[user_job.id]["enabled"] is True
 
+        # New clicks on the same job must not reuse the first cycle's receipts.
+        for action, expected in (("disable", False), ("enable", True)) * 2:
+            toggled = await _webui_mutate(channel, f"automation.{action}", {"id": user_job.id})
+            assert toggled.status_code == 200
+            by_id = {job["id"]: job for job in toggled.json()["jobs"]}
+            assert by_id[user_job.id]["enabled"] is expected
+            assert CronService(cron.store_path).get_job(user_job.id).enabled is expected
+
         deleted = await _webui_mutate(
             channel,
             "automation.delete",

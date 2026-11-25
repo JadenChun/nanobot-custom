@@ -22,14 +22,18 @@ The checkpointed candidate has this exact shape:
 }
 ```
 
-Each definition contains only `id`, `name`, `enabled`, `schedule`, `payload`,
-`deleteAfterRun`, `jobInstanceId`, and `definitionRevision`. Runtime state,
+Each definition contains `id`, `name`, `enabled`, `schedule`, `payload`,
+`deleteAfterRun`, `jobInstanceId`, `definitionRevision`, and optionally
+`revisionParent` for a definition written by a new management update. Runtime state,
 run history, next/last-run values, and creation/update timestamps are rejected
 from new typed definitions and are never written into this candidate.
 `jobInstanceId` is a caller-supplied lowercase SHA-256 value; it is required
 for new definitions and an update cannot change it. `definitionRevision` is
 the SHA-256 digest of canonical sorted JSON for the definition fields plus
-`jobInstanceId`, matching C1's legacy conversion calculation.
+`jobInstanceId` and, when present, `revisionParent`. Omitting the parent preserves
+C1's legacy conversion calculation and the identities of existing definitions,
+occurrences, and scheduling commits. Older readers that enforce the original
+field set cannot read newly written definitions with a parent.
 
 ## Typed action protocol
 
@@ -40,7 +44,9 @@ operations fail closed.
 
 Create fails if the job already exists. Update and delete require the exact
 current instance ID and definition revision. An update keeps the same instance
-ID. The store applies actions in durable receipt order only while deriving a
+ID; when present, its revision parent must equal the expected current revision.
+Create and legacy actions keep their original wire shape. The store applies
+actions in durable receipt order only while deriving a
 replay; `append` merely records a request. A checkpoint accepts only a replay
 created by that same definition store and only when the candidate's applied
 action IDs exactly match all replay receipt IDs. It delegates the generation

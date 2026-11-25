@@ -30,6 +30,15 @@ def _key(definition: CronDefinition) -> str:
     return definition.job_instance_id + ":" + definition.definition_revision
 
 
+def _initial_boundary(definition: CronDefinition, commit: ScheduleCommit) -> int:
+    boundary = commit["commit_clock_ms"]
+    if definition.revision_parent is None and commit["schedule"]["kind"] == "at":
+        # Preserve legacy/root one-shot semantics. An edit or resume starts a
+        # new epoch at commit time and cannot fire a one-shot that already passed.
+        return min(boundary, commit["schedule"]["atMs"] - 1)
+    return boundary
+
+
 def _exclusion(record: OccurrenceRecord) -> ObservedOccurrence:
     return {"occurrence_id": record.occurrence_id, "fire": record.identity.scheduled_fire_time_ms,
             "owner": record.owner, "generation": record.generation, "state": record.state}
@@ -113,9 +122,7 @@ class Scheduler:
             successor = deepcopy(state)
             for definition, commit in committed:
                 current = next((item for item in state["cursors"] if item["key"] == _key(definition)), None)
-                lower = current["boundary"] if current else commit["commit_clock_ms"]
-                if current is None and commit["schedule"]["kind"] == "at":
-                    lower = min(lower, commit["schedule"]["atMs"] - 1)
+                lower = current["boundary"] if current else _initial_boundary(definition, commit)
                 upper = max(snapshot, lower)
                 exclusions = [_exclusion(record) for record in records
                     if not isinstance(record.identity, TriggeredOccurrenceIdentity)
@@ -198,9 +205,7 @@ class Scheduler:
                 continue
             if not self._refresh_committed_revisions:
                 raise SchedulerConflictError("new revision requires scheduler reacquisition")
-            lower = commit["commit_clock_ms"]
-            if commit["schedule"]["kind"] == "at":
-                lower = min(lower, commit["schedule"]["atMs"] - 1)
+            lower = _initial_boundary(definition, commit)
             self._advance(successor, definition, commit, lower, lower, "missed", [])
         if successor != state:
             successor["generation"] += 1

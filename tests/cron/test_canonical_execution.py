@@ -473,7 +473,9 @@ async def test_model_preset_is_frozen_per_job_and_used_by_the_real_runner(
     cleared_job = update_preset(None)
     cleared_claim = next_claim(cleared_job, 1_700_000_180_000)
     assert "modelPreset" not in cleared_claim.job_snapshot["payload"]
-    assert cleared_job.definition_revision == first_claim.identity.job_revision
+    assert cleared_claim.job_snapshot["payload"] == first_claim.job_snapshot["payload"]
+    assert cleared_job.definition_revision != first_claim.identity.job_revision
+    assert cleared_claim.job_snapshot["revisionParent"] == fast_job.definition_revision
 
     provider = ScriptedProvider([LLMResponse(content="report") for _ in range(4)])
     monkeypatch.setattr(

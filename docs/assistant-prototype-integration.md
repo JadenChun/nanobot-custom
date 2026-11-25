@@ -151,7 +151,9 @@ rotation rules.
 On startup, past scheduled fires are recorded as missed. The gateway resumes
 future fires and does not catch up by replaying old work. While the gateway is
 running, new committed revisions get their exact commit boundary without
-discarding another job's due work. Computation and delivery with uncertain
+discarding another job's due work. Resuming a paused job starts a new revision at
+that boundary; recurring fires missed during the pause and a one-shot whose
+date has already passed are not replayed. Computation and delivery with uncertain
 outcomes require reconciliation. Imported legacy retry budgets are seeded once without resetting their counts.
 Pending old retries are marked unknown for operator review, since an old error
 alone does not prove that no tools ran. The stopped-writer
