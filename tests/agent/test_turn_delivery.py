@@ -180,7 +180,7 @@ async def test_cancelled_terminal_uses_lifecycle_route_without_synthetic_output(
 
     assert len(seen) == 1
     assert seen[0].context.metadata[WEBUI_TURN_METADATA_KEY] == lifecycle_turn_id
-    assert seen[0].outcome == "completed"
+    assert seen[0].outcome == "cancelled"
     assert seen[0].failure_kind is None and seen[0].failure_error_kind is None
     assert bus.outbound.empty()
 

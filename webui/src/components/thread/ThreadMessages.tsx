@@ -62,11 +62,9 @@ export function assistantForkFlags(units: DisplayUnit[]): boolean[] {
     }
     if (
       unit.type === "message"
-      && unit.message.role === "assistant"
-      && unit.message.kind === "compaction"
+      && (unit.message.kind === "compaction" || unit.message.kind === "run_stopped")
     ) {
-      // Compaction notices are session lifecycle markers, not assistant answers.
-      // They must neither expose nor displace the answer-level fork action.
+      // Lifecycle notices must neither expose nor displace the answer-level fork action.
       flags[i] = false;
       continue;
     }
@@ -272,11 +270,16 @@ export const ThreadMessages = memo(function ThreadMessages({
       unit.type === "activity"
       && next?.type === "message"
       && next.message.role === "assistant";
+    const stoppedActivity = unit.type === "activity"
+      && next?.type === "message"
+      && next.message.kind === "run_stopped"
+      && next.message.turnId === unit.turnId;
     const isIntermediateAssistant =
       unit.type === "message"
       && unit.message.role === "assistant"
       && next !== undefined
-      && (next.type === "activity" || next.message.role !== "user");
+      && (next.type === "activity"
+        || (next.message.role !== "user" && next.message.kind !== "run_stopped"));
     const userPromptId =
       unit.type === "message" && unit.message.role === "user"
         ? unit.message.id
@@ -327,6 +330,7 @@ export const ThreadMessages = memo(function ThreadMessages({
           unit.type === "message" && unit.message.id === revealMessageId
         }
         hasBodyBelow={hasBodyBelow}
+        stoppedActivity={stoppedActivity}
         isTurnStreaming={
           unit.type === "activity"
             ? isActivityLive
@@ -434,6 +438,7 @@ interface ThreadDisplayUnitProps {
   isPromptHighlighted?: boolean;
   revealOnHistoryEntry: boolean;
   hasBodyBelow: boolean;
+  stoppedActivity: boolean;
   isTurnStreaming: boolean;
   suppressReservedFooter: boolean;
   showTurnDuration: boolean;
@@ -461,6 +466,7 @@ const ThreadDisplayUnit = memo(function ThreadDisplayUnit({
   isPromptHighlighted = false,
   revealOnHistoryEntry,
   hasBodyBelow,
+  stoppedActivity,
   isTurnStreaming,
   suppressReservedFooter,
   showTurnDuration,
@@ -500,6 +506,7 @@ const ThreadDisplayUnit = memo(function ThreadDisplayUnit({
             isTurnStreaming={isTurnStreaming}
             retryStatus={retryStatus}
             hasBodyBelow={hasBodyBelow}
+            stopped={stoppedActivity}
             showTurnDuration={showTurnDuration}
             turnLatencyMs={unit.turnLatencyMs}
             startedAtMs={activeStartedAtMs ?? unit.startedAtMs}
@@ -543,6 +550,7 @@ function threadDisplayUnitPropsEqual(
     && previous.isPromptHighlighted === next.isPromptHighlighted
     && previous.revealOnHistoryEntry === next.revealOnHistoryEntry
     && previous.hasBodyBelow === next.hasBodyBelow
+    && previous.stoppedActivity === next.stoppedActivity
     && previous.isTurnStreaming === next.isTurnStreaming
     && previous.suppressReservedFooter === next.suppressReservedFooter
     && previous.showTurnDuration === next.showTurnDuration

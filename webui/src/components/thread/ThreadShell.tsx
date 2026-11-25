@@ -1608,6 +1608,7 @@ export function ThreadShell({
     stopCanBeSent,
     stopPending,
     stopNotice,
+    stopFeedback,
     dismissStopNotice,
     stopTarget,
     connectionOpen,
@@ -3605,6 +3606,11 @@ export function ThreadShell({
           error={streamError}
           onDismiss={dismissStreamError}
         />
+      ) : null}
+      {stopFeedback ? (
+        <p role="status" className="mx-4 px-3 py-1.5 text-xs text-muted-foreground">
+          {stopFeedback}
+        </p>
       ) : null}
       {stopNotice ? (
         <div role="alert" className="mx-4 flex items-center gap-2 rounded-control border border-destructive/25 bg-destructive/5 px-3 py-2 text-xs text-destructive">

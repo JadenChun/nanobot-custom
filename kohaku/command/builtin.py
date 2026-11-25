@@ -297,11 +297,15 @@ async def cmd_stop(ctx: CommandContext) -> OutboundMessage:
     msg = ctx.msg
     metadata = dict(msg.metadata or {})
     from kohaku.session.webui_turns import websocket_turn_id
-    from kohaku.webui.metadata import WEBUI_TARGET_TURN_METADATA_KEY
+    from kohaku.webui.metadata import (
+        WEBUI_STOP_FEEDBACK_TURN_METADATA_KEY,
+        WEBUI_TARGET_TURN_METADATA_KEY,
+    )
 
     target_turn_id = metadata.get(WEBUI_TARGET_TURN_METADATA_KEY)
     protocol_client = metadata.get(INBOUND_META_STOP_CLIENT) is True
     expectation_present = INBOUND_META_STOP_EXPECTATION in metadata
+    feedback_turn_id = target_turn_id
     if protocol_client:
         raw_expectation = metadata.get(INBOUND_META_STOP_EXPECTATION)
         if expectation_present and type(raw_expectation) is not StopExpectation:
@@ -335,7 +339,8 @@ async def cmd_stop(ctx: CommandContext) -> OutboundMessage:
             except (TypeError, ValueError):
                 current_expectation = None
             if (
-                current_expectation != raw_expectation
+                current_expectation is None
+                or current_expectation != raw_expectation
                 or (
                     isinstance(target_turn_id, str)
                     and target_turn_id
@@ -343,6 +348,7 @@ async def cmd_stop(ctx: CommandContext) -> OutboundMessage:
                 )
             ):
                 return _webui_admission_rejection(msg, metadata, "stale_stop_target")
+            feedback_turn_id = current_expectation.active_turn_id
     if isinstance(target_turn_id, str) and target_turn_id:
         current_turn_id = websocket_turn_id(str(msg.chat_id))
         if current_turn_id != target_turn_id:
@@ -484,6 +490,8 @@ async def cmd_stop(ctx: CommandContext) -> OutboundMessage:
         content = "Stop could not confirm cleanup. This chat needs recovery."
     else:
         content = f"Stopped {total} task(s)." if total else "No active task to stop."
+    if isinstance(feedback_turn_id, str) and (stop_pending or (total and media_stop_disposition is None)):
+        metadata[WEBUI_STOP_FEEDBACK_TURN_METADATA_KEY] = feedback_turn_id
     publish_target = getattr(type(loop), "_publish_stop_target_for_key", None)
     if callable(publish_target):
         with suppress(Exception):

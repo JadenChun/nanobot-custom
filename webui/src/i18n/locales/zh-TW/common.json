@@ -1124,6 +1124,7 @@
     "error": "連線錯誤"
   },
   "thread": {
+    "runStopped": "執行已停止",
     "compaction": {
       "cancelled": "上下文壓縮已取消",
       "empty": "無需壓縮上下文",

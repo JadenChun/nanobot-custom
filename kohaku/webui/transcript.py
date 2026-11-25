@@ -609,7 +609,7 @@ def validate_retained_webui_thread(data: dict[str, object]) -> None:
     records = {"toolEvents", "fileEdits", "cliApps", "mcpPresets", "sessionMentions", "roundUsages"}
     choices = {
         "role": {"user", "assistant", "tool", "system"},
-        "kind": {"message", "trace", "compaction", "delegated_child"},
+        "kind": {"message", "trace", "compaction", "delegated_child", "run_stopped"},
         "activityKind": {"model"}, "compactReply": {"empty", "failed"},
         "turnPhase": {"user", "reasoning", "activity", "answer", "complete"},
         "deliveryStatus": {"sending", "accepted", "failed"},
@@ -4517,6 +4517,15 @@ def replay_transcript_to_ui_messages(
                     else None
                 ),
             )
+            if rec.get("outcome") == "cancelled":
+                messages.append({
+                    "id": _new_id("stop", idx),
+                    "role": "system",
+                    "kind": "run_stopped",
+                    "content": "",
+                    "createdAt": _created_at_ms(rec, idx),
+                    **_turn_fields(rec, "complete"),
+                })
             buffer_message_id = None
             buffer_parts = []
             continue

@@ -236,7 +236,7 @@ function projectOrderedTurn(
       });
       continue;
     }
-    if (message.kind === "compaction") {
+    if (message.kind === "compaction" || message.kind === "run_stopped") {
       flushActivity();
       flushAnswers();
       units.push({

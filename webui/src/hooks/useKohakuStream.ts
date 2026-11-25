@@ -348,6 +348,7 @@ export function useKohakuStream(
   stopCanBeSent: boolean;
   stopPending: boolean;
   stopNotice: "stale_target" | "unavailable" | null;
+  stopFeedback: string | null;
   dismissStopNotice: () => void;
   stopTarget: StopExpectation | null;
   connectionOpen: boolean;
@@ -412,6 +413,7 @@ export function useKohakuStream(
   );
   const [stopPending, setStopPending] = useState(false);
   const [stopNotice, setStopNotice] = useState<"stale_target" | "unavailable" | null>(null);
+  const [stopFeedback, setStopFeedback] = useState<{ text: string; turnId?: string } | null>(null);
   const [stopTargetRequiresRefresh, setStopTargetRequiresRefresh] = useState(false);
   const [connectionStatus, setConnectionStatus] = useState(client.status);
   const [unknownMessageSend, setUnknownMessageSend] = useState(() => ({
@@ -993,6 +995,7 @@ export function useKohakuStream(
     setQueueCompletion(null);
     setStopPending(false);
     setStopNotice(null);
+    setStopFeedback(null);
     admissionWaitersRef.current.clear();
     childRowsRef.current = initialMessages.filter((message) => message.kind === "delegated_child");
     buffer.current = null;
@@ -1129,6 +1132,10 @@ export function useKohakuStream(
             turnId: ev.turn_id,
           });
         }
+        return;
+      }
+      if (ev.event === "message" && ev.kind === "stop_status") {
+        setStopFeedback({ text: ev.text, turnId: ev.stop_turn_id });
         return;
       }
       const turnId = eventTurnId(ev);
@@ -1486,7 +1493,11 @@ export function useKohakuStream(
         const completedAt = Date.now();
         const contextUsage = contextUsageFromEvent(ev);
         setMessages((prev) => {
-          let finalized = prev.map((m) => (m.isStreaming ? { ...m, isStreaming: false } : m));
+          let finalized = prev.map((m) => (
+            m.isStreaming || m.reasoningStreaming
+              ? { ...m, isStreaming: false, reasoningStreaming: false }
+              : m
+          ));
           const latencyMs =
             typeof ev.latency_ms === "number" && ev.latency_ms >= 0
               ? Math.round(ev.latency_ms)
@@ -1509,6 +1520,18 @@ export function useKohakuStream(
           activeAssistantRef.current = null;
           clearActivitySegment();
           closedAssistantStreamIdsRef.current.clear();
+          if (ev.outcome === "cancelled" && !finalized.some((message) => (
+            message.kind === "run_stopped" && Boolean(ev.turn_id) && message.turnId === ev.turn_id
+          ))) {
+            finalized.push({
+              id: ev.turn_id ? `run-stopped-${ev.turn_id}` : crypto.randomUUID(),
+              role: "system",
+              kind: "run_stopped",
+              content: "",
+              createdAt: completedAt,
+              ...turnFieldsFromEvent(ev, "complete"),
+            });
+          }
           return finalized;
         });
         mediaReplyTextsRef.current.clear();
@@ -1836,7 +1859,10 @@ export function useKohakuStream(
         queuedAttempt
         && !client.prepareQueuedAttempt(chatId, queuedAttempt, startsNewRun)
       ) return null;
-      if (startsNewRun) setQueueCompletion(null);
+      if (startsNewRun) {
+        setQueueCompletion(null);
+        setStopFeedback(null);
+      }
 
       setStreamError(null);
       const sideChannel = options?.sideChannel === true;
@@ -1974,6 +2000,7 @@ export function useKohakuStream(
     setQueueCompletion(null);
     setStopPending(true);
     setStopNotice(null);
+    setStopFeedback(null);
     client.sendMessage(
       chatId,
       "/stop",
@@ -2048,6 +2075,11 @@ export function useKohakuStream(
     stopCanBeSent,
     stopPending,
     stopNotice,
+    stopFeedback: stopFeedback && !(
+      stopFeedback.turnId && messages.some((message) => (
+        message.kind === "run_stopped" && message.turnId === stopFeedback.turnId
+      ))
+    ) ? stopFeedback.text : null,
     dismissStopNotice,
     stopTarget,
     connectionOpen,

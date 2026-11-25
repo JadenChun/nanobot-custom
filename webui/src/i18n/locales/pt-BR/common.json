@@ -1124,6 +1124,7 @@
     "error": "Erro de conexão"
   },
   "thread": {
+    "runStopped": "Execução interrompida",
     "compaction": {
       "cancelled": "Compactação do contexto cancelada",
       "empty": "Não há contexto para compactar.",

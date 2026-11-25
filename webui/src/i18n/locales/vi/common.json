@@ -1124,6 +1124,7 @@
     "error": "Lỗi kết nối"
   },
   "thread": {
+    "runStopped": "Đã dừng tác vụ",
     "compaction": {
       "cancelled": "Đã hủy nén ngữ cảnh",
       "empty": "Không có ngữ cảnh cần nén.",

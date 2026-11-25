@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 import kohaku.webui.transcript as transcript_module
 from kohaku.session.history_visibility import HIDDEN_HISTORY_META
 from kohaku.webui.transcript import (
@@ -410,6 +412,31 @@ def test_replay_canonical_completed_stream_records() -> None:
     assert msgs[1]["content"] == "answer"
     assert msgs[1]["reasoning"] == "think"
     assert msgs[1]["latencyMs"] == 42
+
+
+@pytest.mark.parametrize("answer", ["The result is inconclusive because the evidence remains", None])
+def test_stopped_turn_reloads_with_partial_answer_or_without_output(
+    tmp_path, monkeypatch, answer: str | None,
+) -> None:
+    monkeypatch.setattr("kohaku.config.paths.get_data_dir", lambda: tmp_path)
+    chat_id = "stopped-run"
+    key = f"websocket:{chat_id}"
+    fields = {"chat_id": chat_id, "turn_id": "turn-stopped"}
+    append_transcript_object(key, {**fields, "event": "user", "text": "Assess the evidence"})
+    if answer is not None:
+        append_transcript_object(key, {**fields, "event": "stream_end", "text": answer})
+    append_transcript_object(key, {**fields, "event": "turn_end", "outcome": "cancelled"})
+
+    thread = build_webui_thread_response(key)
+
+    assert thread is not None
+    rows = thread["messages"]
+    assert [row["content"] for row in rows if row["role"] == "assistant"] == (
+        [] if answer is None else [answer]
+    )
+    assert [row["kind"] for row in rows if row.get("kind") == "run_stopped"] == ["run_stopped"]
+    assert rows[-1]["kind"] == "run_stopped"
+    assert not thread["has_pending_tool_calls"]
 
 
 def test_replay_preserves_closed_reasoning_slices_before_later_tool_trace() -> None:

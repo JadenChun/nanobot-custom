@@ -4830,6 +4830,78 @@ describe("ThreadShell", () => {
     expect(historyCalls).toBe(1);
   });
 
+  it.each([true, false])("keeps the stopped turn after reload with output=%s", async (withOutput) => {
+    await preloadMarkdownText();
+    const client = makeClient();
+    const chatId = "stopped-output";
+    const turnId = "turn-stopped-output";
+    const partial = "The result is inconclusive because";
+    const answer = `${partial} the evidence remains`;
+    const stamp = { chat_id: chatId, turn_id: turnId };
+    const prompt = { role: "user" as const, content: "Assess the evidence", turnId };
+    let reloaded = false;
+    vi.mocked(fetch).mockImplementation(async (input) => {
+      if (!String(input).includes(`websocket%3A${chatId}/webui-thread`)) {
+        return new Response(null, { status: 404 });
+      }
+      const history = transcriptFromSimpleMessages([
+        prompt, ...(reloaded && withOutput ? [{ role: "assistant" as const, content: answer, turnId }] : []),
+      ]);
+      if (reloaded) history.messages.push({
+        id: "saved-stop", role: "system", kind: "run_stopped", content: "",
+        turnId, turnPhase: "complete", createdAt: 1002,
+      });
+      return httpJson(history);
+    });
+    const openThread = (threadClient: ReturnType<typeof makeClient>) => render(wrap(
+      threadClient, <ThreadShell session={session(chatId)} title="Stop display" onToggleSidebar={() => {}} />,
+    ));
+    const view = openThread(client);
+    await screen.findByText(prompt.content);
+    act(() => {
+      client._emitChat(chatId, { ...stamp, event: "goal_status", status: "running", started_at: Date.now() / 1000 });
+      if (withOutput) client._emitChat(chatId, { ...stamp, event: "delta", text: partial });
+    });
+    if (withOutput) await screen.findByText(replyText(partial));
+    fireEvent.click(screen.getByRole("button", { name: "Stop response" }));
+
+    act(() => client._emitChat(chatId, {
+      event: "message", chat_id: chatId, kind: "stop_status", stop_turn_id: turnId, text: "Stop pending",
+    }));
+    expect(screen.getByText("Stop pending")).toBeVisible();
+    if (withOutput) expect(screen.getByText(replyText(partial))).toBeVisible();
+
+    act(() => {
+      if (withOutput) client._emitChat(chatId, { ...stamp, event: "delta", text: " the evidence remains" });
+      client._emitChat(chatId, { ...stamp, event: "stream_end" });
+      client._emitChat(chatId, { ...stamp, event: "turn_end", outcome: "cancelled" });
+    });
+    const assertStopped = async () => {
+      const stopped = await screen.findByText("Run stopped");
+      expect(screen.getAllByText("Run stopped")).toHaveLength(1);
+      if (withOutput) {
+        const output = screen.getByText(replyText(answer));
+        expect(output.compareDocumentPosition(stopped) & Node.DOCUMENT_POSITION_FOLLOWING)
+          .toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+      } else {
+        expect(document.querySelector("[data-assistant-selectable]")).toBeNull();
+      }
+    };
+    await assertStopped();
+    expect(screen.queryByText("Stop pending")).toBeNull();
+
+    view.unmount();
+    reloaded = true;
+    const nextClient = makeClient();
+    openThread(nextClient);
+    await assertStopped();
+    fireEvent.change(screen.getByRole("textbox", { name: "Message input" }), {
+      target: { value: "Continue the assessment" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+    expectSendMessageWithTurn(nextClient, chatId, "Continue the assessment");
+  });
+
   it("keeps one uncertain user row and its details when canonical history echoes the attempt", async () => {
     const client = makeClient();
     const content = "check uncertain history";

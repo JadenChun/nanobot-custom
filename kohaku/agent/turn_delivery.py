@@ -500,6 +500,7 @@ class TurnDelivery:
             chat_id=self.lifecycle_message.chat_id,
             session_key=self.session_key,
             metadata=self.lifecycle_message.metadata,
+            outcome="cancelled",
         )
 
     async def fail(self, *, publish_completion: bool, error: Exception | None = None) -> None:

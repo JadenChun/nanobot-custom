@@ -24,6 +24,7 @@ from websockets.http11 import Request as WsRequest
 from kohaku.attachments._inventory import retained_markdown_media
 from kohaku.attachments.models import AttachmentRecord
 from kohaku.bus.events import (
+    INBOUND_META_STOP_CLIENT,
     OUTBOUND_META_AGENT_UI,
     InboundMessage,
     OutboundMessage,
@@ -55,6 +56,7 @@ from kohaku.webui.http_utils import (
 from kohaku.webui.inbound_commands import WebUICommandRouter
 from kohaku.webui.metadata import (
     WEBSOCKET_TURN_OWNER_METADATA_KEY,
+    WEBUI_STOP_FEEDBACK_TURN_METADATA_KEY,
     WEBUI_TURN_METADATA_KEY,
 )
 from kohaku.webui.outbound_projection import WebUIOutboundProjector
@@ -1380,6 +1382,23 @@ class WebSocketChannel(BaseChannel):
     ) -> None:
         """Serialize one ordinary outbound message selected by the projector."""
         conns = list(self._subs.get(msg.chat_id, ()))
+        turn_id = msg.metadata.get(WEBUI_TURN_METADATA_KEY)
+        if msg.metadata.get(INBOUND_META_STOP_CLIENT) is True:
+            body = {
+                "event": "message",
+                "chat_id": msg.chat_id,
+                "kind": "stop_status",
+                "text": msg.content,
+            }
+            if isinstance(turn_id, str) and turn_id:
+                body["turn_id"] = turn_id
+            feedback_turn_id = msg.metadata.get(WEBUI_STOP_FEEDBACK_TURN_METADATA_KEY)
+            if isinstance(feedback_turn_id, str):
+                body["stop_turn_id"] = feedback_turn_id
+            raw = json.dumps(body, ensure_ascii=False)
+            for connection in conns:
+                await self._safe_send_to(connection, raw, label=" stop status ")
+            return
         text = msg.content
         workspace_path, allow_folder_grants = self._media_workspace(msg.chat_id)
         wire_text = self._media.rewrite_local_markdown_images(
@@ -1392,7 +1411,6 @@ class WebSocketChannel(BaseChannel):
             "chat_id": msg.chat_id,
             "text": wire_text,
         }
-        turn_id = msg.metadata.get(WEBUI_TURN_METADATA_KEY)
         if isinstance(turn_id, str) and turn_id:
             payload["turn_id"] = turn_id
         if msg.media:

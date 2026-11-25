@@ -1124,6 +1124,7 @@
     "error": "接続エラー"
   },
   "thread": {
+    "runStopped": "実行を停止しました",
     "compaction": {
       "cancelled": "コンテキストの圧縮をキャンセルしました",
       "empty": "圧縮するコンテキストはありません。",

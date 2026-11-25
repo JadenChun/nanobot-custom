@@ -1124,6 +1124,7 @@
     "error": "Kesalahan koneksi"
   },
   "thread": {
+    "runStopped": "Proses dihentikan",
     "compaction": {
       "cancelled": "Pemadatan konteks dibatalkan",
       "empty": "Tidak ada konteks yang perlu dipadatkan.",

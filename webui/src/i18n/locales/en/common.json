@@ -1127,6 +1127,7 @@
     "error": "Connection error"
   },
   "thread": {
+    "runStopped": "Run stopped",
     "compaction": {
       "cancelled": "Context compaction cancelled",
       "empty": "Nothing to compact.",

@@ -1124,6 +1124,7 @@
     "error": "Erreur de connexion"
   },
   "thread": {
+    "runStopped": "Exécution arrêtée",
     "compaction": {
       "cancelled": "Compression du contexte annulée",
       "empty": "Aucun contexte à compresser.",

@@ -19,6 +19,7 @@ import {
   ImageIcon,
   Loader2,
   Quote,
+  Square,
   Wrench,
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
@@ -520,6 +521,15 @@ export function MessageBubble({
 
   if (message.kind === "compaction" && message.compaction) {
     return <ContextCompactionNotice compaction={message.compaction} />;
+  }
+
+  if (message.kind === "run_stopped") {
+    return (
+      <div role="status" className="flex items-center gap-2 py-1 text-xs font-medium text-muted-foreground">
+        <Square className="size-3 fill-current" aria-hidden />
+        {t("thread.runStopped", { defaultValue: "Run stopped" })}
+      </div>
+    );
   }
 
   if (message.kind === "trace") {

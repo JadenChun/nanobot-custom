@@ -163,6 +163,7 @@ interface AgentActivityClusterProps {
   messages: UIMessage[];
   /** True while the session turn is still running (drives “Working…” copy + header sheen). */
   isTurnStreaming: boolean;
+  stopped?: boolean;
   hasBodyBelow: boolean;
   /** Persisted end-to-end turn latency from the assistant answer, used for history replay. */
   turnLatencyMs?: number;
@@ -182,6 +183,7 @@ interface AgentActivityClusterProps {
 export function AgentActivityCluster({
   messages,
   isTurnStreaming,
+  stopped = false,
   hasBodyBelow,
   turnLatencyMs,
   showTurnDuration = true,
@@ -237,10 +239,10 @@ export function AgentActivityCluster({
   const scrollFrameRef = useRef<number | null>(null);
   const wasTurnStreamingRef = useRef(isTurnStreaming);
   const wasTurnStreaming = wasTurnStreamingRef.current;
-  /** Live work stays open; completed work briefly shows the done state, then tucks away. */
+  /** Keep the last visible activity available when the run stops. */
   const outerExpanded = userToggledOuter
     ? outerOpenLocal
-    : isTurnStreaming || completionHoldOpen || (wasTurnStreaming && !isTurnStreaming);
+    : isTurnStreaming || stopped || completionHoldOpen || (wasTurnStreaming && !isTurnStreaming);
 
   const hasVisibleActivity = reasoningSteps > 0 || toolCalls > 0 || modelSegments > 0 || cliCount > 0 || mcpCount > 0 || fileCount > 0;
   const hasOnlyFileActivity = fileCount > 0 && activityMessages.every(messageHasOnlyFileActivity);
@@ -423,6 +425,7 @@ export function AgentActivityCluster({
           <ActivityMessageTimeline
             messages={activityMessages}
             active={isTurnStreaming}
+            stopped={stopped}
             cliAppsByName={cliAppsByName}
             mcpPresetsByName={mcpPresetsByName}
             fileEditsByMessage={fileEditsByMessage}
@@ -504,6 +507,7 @@ function hasRunningToolEvent(message: UIMessage): boolean {
 function ActivityMessageTimeline({
   messages,
   active,
+  stopped,
   cliAppsByName,
   mcpPresetsByName,
   fileEditsByMessage,
@@ -512,6 +516,7 @@ function ActivityMessageTimeline({
 }: {
   messages: UIMessage[];
   active: boolean;
+  stopped: boolean;
   cliAppsByName: Map<string, CliAppInfo>;
   mcpPresetsByName: Map<string, McpPresetInfo>;
   fileEditsByMessage: Map<string, FileEditSummary[]>;
@@ -538,6 +543,7 @@ function ActivityMessageTimeline({
           key={message.id}
           text={message.reasoning ?? ""}
           streaming={active && !!message.reasoningStreaming}
+          defaultExpanded={stopped && index === messages.length - 1}
           durationMs={message.latencyMs}
           nestedInScrollViewport
         />,

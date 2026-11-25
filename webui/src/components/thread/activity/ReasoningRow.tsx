@@ -14,12 +14,14 @@ export function ReasoningRow({
   text,
   streaming,
   durationMs,
+  defaultExpanded = false,
   nestedInScrollViewport = false,
   className,
 }: {
   text: string;
   streaming: boolean;
   durationMs?: number;
+  defaultExpanded?: boolean;
   /** When inside the outer AgentActivityCluster scroll viewport, flow naturally
    * without a competing nested inner scrollbar. */
   nestedInScrollViewport?: boolean;
@@ -37,7 +39,7 @@ export function ReasoningRow({
 
   const trimmed = text.trim();
   const hasDetails = trimmed.length > 0;
-  const shouldAutoExpand = streaming && hasDetails;
+  const shouldAutoExpand = (streaming || defaultExpanded) && hasDetails;
   const expanded = userExpanded ?? shouldAutoExpand;
 
   const hasDuration = typeof durationMs === "number" && Number.isFinite(durationMs) && durationMs > 0;

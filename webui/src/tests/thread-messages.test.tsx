@@ -16,6 +16,32 @@ afterEach(() => {
 });
 
 describe("ThreadMessages", () => {
+  it("keeps the latest activity readable and collapsible when a run stops", async () => {
+    await preloadMarkdownText();
+    vi.useFakeTimers();
+    const turnId = "stopped-activity";
+    const details = "Checking which records support the assessment.";
+    const messages: UIMessage[] = [
+      { id: "prompt", role: "user", content: "Assess the evidence", turnId, createdAt: 1000 },
+      { id: "thinking", role: "assistant", content: "", reasoning: details,
+        isStreaming: true, reasoningStreaming: true, turnId, createdAt: 2000 },
+    ];
+    const { rerender } = render(<ThreadMessages messages={messages} isStreaming activeTurnId={turnId} />);
+    expect(screen.getByText(details)).toBeVisible();
+
+    rerender(<ThreadMessages messages={[
+      messages[0],
+      { ...messages[1], isStreaming: false, reasoningStreaming: false },
+      { id: "stopped", role: "system", kind: "run_stopped", content: "", turnId, createdAt: 3000 },
+    ]} />);
+    act(() => vi.advanceTimersByTime(1000));
+    expect(screen.getByText(details)).toBeVisible();
+    const activity = screen.getByRole("button", { name: /^Worked/ });
+    expect(activity).toHaveAttribute("aria-expanded", "true");
+    fireEvent.click(activity);
+    expect(activity).toHaveAttribute("aria-expanded", "false");
+  });
+
   it("keeps one timer through interleaved work and freezes the full duration on completion", () => {
     vi.useFakeTimers();
     const startedAt = 1_800_000_000_000;
