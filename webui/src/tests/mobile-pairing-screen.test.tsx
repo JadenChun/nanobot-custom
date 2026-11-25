@@ -88,11 +88,11 @@ describe("MobilePairingScreen", () => {
     ["starting_transport", "Connecting to Tailscale…", { tailscaleState: "starting" }],
     ["tailscale_login_required", "Sign in to Tailscale", { tailscaleState: "needs_login", tailscaleHasLoginUrl: true }],
     ["collecting", "Contacting your desktop…", {}],
-    ["waiting_approval", "Approve owner access", { comparisonCode: "832156" }],
-    ["expired_renewable", "Renew setup", {}],
+    ["waiting_approval", "Approve on desktop", { comparisonCode: "832156" }],
+    ["expired_renewable", "Setup expired", {}],
     ["proving", "Verifying this phone…", {}],
     ["cancelling", "Cancelling pairing…", {}],
-    ["paired", "Connected — loading Kohaku…", {}],
+    ["paired", "Loading Kohaku…", {}],
     ["failed", defaultError.title, { error: defaultError }],
   ] satisfies Array<[PairingStage, string, Partial<PairingSnapshot>]>)(
     "shows the %s stage",
@@ -100,7 +100,7 @@ describe("MobilePairingScreen", () => {
       const { bridge } = pairingFixture(snapshot(stage, fields));
       render(<MobilePairingScreen pairing={bridge} onPaired={vi.fn()} />);
 
-      expect(await screen.findByText(text)).toBeVisible();
+      expect((await screen.findAllByText(text))[0]).toBeVisible();
       if (stage === "tailscale_login_required") expect(screen.getByRole("button", { name: "Back" })).toBeVisible();
       if (stage === "waiting_approval") {
         expect(screen.getByText("832156")).toBeVisible();
@@ -112,6 +112,15 @@ describe("MobilePairingScreen", () => {
       if (stage === "failed") expect(screen.getByText(defaultError.message)).toBeVisible();
     },
   );
+
+  it("ignores user-cancelled QR scans without showing an error", async () => {
+    const { bridge } = pairingFixture();
+    bridge.scanPairingQr.mockRejectedValueOnce(new Error("QR scan cancelled"));
+    render(<MobilePairingScreen pairing={bridge} onPaired={vi.fn()} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Scan QR code" }));
+    await waitFor(() => expect(bridge.scanPairingQr).toHaveBeenCalledOnce());
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
 
   it("shows a live expiry for the comparison code", async () => {
     const now = Date.UTC(2026, 10, 25);
@@ -126,7 +135,7 @@ describe("MobilePairingScreen", () => {
   it("prefills the desktop address, keeps edits, and formats the setup code", async () => {
     const { bridge, emit } = pairingFixture();
     render(<MobilePairingScreen pairing={bridge} onPaired={vi.fn()} />);
-    fireEvent.click(await screen.findByRole("button", { name: "8-digit code" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Enter code or link manually" }));
     const address = screen.getByLabelText("Desktop address");
     const code = screen.getByLabelText("Setup code");
     expect(address).toHaveValue(origin);
@@ -144,7 +153,8 @@ describe("MobilePairingScreen", () => {
     const link = "kohaku://pair?example=%2B";
     vi.spyOn(navigator.clipboard, "readText").mockResolvedValue(link);
     render(<MobilePairingScreen pairing={bridge} onPaired={vi.fn()} />);
-    fireEvent.click(await screen.findByRole("button", { name: "Paste link" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Enter code or link manually" }));
+    fireEvent.click(screen.getByRole("button", { name: "Paste link" }));
     fireEvent.click(screen.getByRole("button", { name: "Paste" }));
     await waitFor(() => expect(screen.getByLabelText("Pairing link")).toHaveValue(link));
     fireEvent.click(screen.getByRole("button", { name: "Pair with link" }));
@@ -233,7 +243,7 @@ describe("MobileAuthGate", () => {
     render(<MobileAuthGate pairing={bridge} onReady={onReady} />);
     await screen.findByRole("button", { name: "Scan QR code" });
     act(() => emit(snapshot("paired")));
-    expect(screen.getByText("Connected — loading Kohaku…")).toBeVisible();
+    expect(screen.getByText("Loading Kohaku…")).toBeVisible();
     expect(onReady).not.toHaveBeenCalled();
     act(() => emit(snapshot("paired")));
     await waitFor(() => expect(onReady).toHaveBeenCalledOnce(), { timeout: 1_500 });
@@ -330,8 +340,10 @@ describe("MobileAuthGate", () => {
       const onReady = vi.fn();
       render(<MobileAuthGate pairing={bridge} transport={transport} onReady={onReady} />);
 
-      expect(await screen.findByRole("heading", { name: "Reconnect this phone" })).toBeVisible();
-      expect(screen.getByText("Your pairing with desktop.example is saved.")).toBeVisible();
+      expect(await screen.findByRole("heading", {
+        name: failure === "needs_login" ? "Sign in to Tailscale" : "Reconnect this phone",
+      })).toBeVisible();
+      expect(screen.getByText(/desktop\.example/)).toBeVisible();
       expect(bridge.logout).not.toHaveBeenCalled();
       expect(onReady).not.toHaveBeenCalled();
     },
@@ -358,7 +370,7 @@ describe("MobileAuthGate", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Sign in to Tailscale" }));
     await waitFor(() => expect(bridge.openLogin).toHaveBeenCalledOnce());
 
-    const unpair = screen.getByRole("button", { name: "Unpair / Switch desktop" });
+    const unpair = screen.getByRole("button", { name: "Switch desktop" });
     await waitFor(() => expect(unpair).toBeEnabled());
     fireEvent.click(unpair);
     expect(await screen.findByRole("button", { name: "Scan QR code" })).toBeVisible();

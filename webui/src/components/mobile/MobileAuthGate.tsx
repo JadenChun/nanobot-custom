@@ -158,19 +158,20 @@ export default function MobileAuthGate({ pairing, transport, onReady }: MobileAu
     );
   }
   return (
-    <MobileAuthLayout title="Connect to Kohaku" subtitle="Pair this phone with your desktop.">
+    <MobileAuthLayout
+      title={view.kind === "target_error" ? "Couldn’t check pairing" : "Connecting to Kohaku…"}
+      subtitle={view.kind === "target_error" ? "Check your connection and try again." : null}
+      icon={view.kind === "target_error" ? undefined : (
+        <LoaderCircle size={32} className="text-muted-foreground motion-safe:animate-spin" aria-hidden="true" />
+      )}
+    >
       {view.kind === "target_error" ? (
-        <div className="space-y-3">
-          <p role="alert" className="text-sm text-muted-foreground">Couldn’t check your saved pairing.</p>
-          <Button type="button" className="min-h-11" onClick={() => {
-            setView({ kind: "checking" });
-            setTargetAttempt((attempt) => attempt + 1);
-          }}>Retry</Button>
-        </div>
+        <Button type="button" className="h-12 w-full rounded-xl" onClick={() => {
+          setView({ kind: "checking" });
+          setTargetAttempt((attempt) => attempt + 1);
+        }}>Retry</Button>
       ) : (
-        <p role="status" className="flex items-center gap-2 text-sm text-muted-foreground">
-          <LoaderCircle size={17} className="motion-safe:animate-spin" aria-hidden="true" /> Connecting to Kohaku…
-        </p>
+        <span role="status" className="sr-only">Connecting to Kohaku…</span>
       )}
     </MobileAuthLayout>
   );
