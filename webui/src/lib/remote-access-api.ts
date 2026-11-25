@@ -21,6 +21,15 @@ export interface RemoteTailscaleStatus {
   dns_name: string;
   origin: string;
   error?: string;
+  expected_port?: number | null;
+  issue?:
+    | ""
+    | "cli_missing"
+    | "not_running"
+    | "serve_missing"
+    | "serve_wrong_port"
+    | "serve_path_stripped";
+  recommended_command?: string;
 }
 
 export interface RemoteAccessStatus {

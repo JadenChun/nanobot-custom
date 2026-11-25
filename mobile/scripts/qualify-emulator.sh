@@ -68,8 +68,6 @@ adb version
   bunx cap sync android
 )
 
-"${script_dir}/build-native-network.sh"
-
 (
   cd "${MOBILE_ROOT}/android"
   ./gradlew --no-daemon :app:assembleDebug

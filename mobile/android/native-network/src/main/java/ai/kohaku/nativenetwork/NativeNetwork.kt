@@ -1,4 +1,4 @@
-package ai.kohaku.mobile.network
+package ai.kohaku.nativenetwork
 
 /**
  * Narrow JNI surface. Every method is implemented by native_network_jni.c,

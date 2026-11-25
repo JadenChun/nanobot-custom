@@ -1,6 +1,8 @@
+import { Check, ChevronDown, CircleCheck, CircleX, Clock, Copy, RefreshCw, Smartphone } from "lucide-react";
 import QRCode from "qrcode";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
+import { Button } from "@/components/ui/button";
 import {
   Dialog,
   DialogContent,
@@ -25,6 +27,7 @@ import {
   type RemoteAccessStatus,
   type RemotePairingOffer,
   type RemotePairingPending,
+  type RemoteTailscaleStatus,
 } from "@/lib/remote-access-api";
 
 interface RemoteAccessSettingsProps {
@@ -37,11 +40,7 @@ interface RemoteAccessSettingsProps {
 }
 
 const OFFER_SECONDS = 300;
-
-function currentHttpsOrigin(): string {
-  if (typeof window === "undefined" || window.location.protocol !== "https:") return "";
-  return window.location.origin;
-}
+type CopyTarget = "link" | "code" | "command";
 
 function formatLastSeen(timestamp: number): string {
   if (!timestamp) return "never";
@@ -57,11 +56,36 @@ function formatRemaining(seconds: number): string {
 }
 
 function DeviceFingerprint({ value }: { value?: string }) {
+  const [expanded, setExpanded] = useState(false);
   if (!value) return null;
   return (
-    <p className="mt-1 break-all font-mono text-[11px] text-muted-foreground">
-      Key fingerprint: {value}
-    </p>
+    <div className="mt-2 text-xs">
+      <button
+        type="button"
+        aria-expanded={expanded}
+        onClick={() => setExpanded(!expanded)}
+        className="inline-flex max-w-full flex-wrap items-center gap-x-2 rounded-sm text-left text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      >
+        Key fingerprint
+        {!expanded ? <code>{value.slice(0, 8)}…{value.slice(-4)}</code> : null}
+        <ChevronDown aria-hidden="true" className={`h-3 w-3 ${expanded ? "rotate-180" : ""}`} />
+      </button>
+      {expanded ? <code className="mt-1 block break-all text-foreground">{value}</code> : null}
+    </div>
+  );
+}
+
+function ReadinessCheck({ ready, label }: { ready: boolean; label: string }) {
+  const Icon = ready ? CircleCheck : CircleX;
+  return (
+    <li className="flex items-center gap-2.5 px-3 py-2.5 text-sm text-foreground">
+      <Icon
+        aria-hidden="true"
+        className={`h-4 w-4 shrink-0 ${ready ? "text-emerald-700 dark:text-emerald-400" : "text-destructive"}`}
+      />
+      <span>{label}</span>
+      <span className="sr-only">{ready ? "Ready" : "Not ready"}</span>
+    </li>
   );
 }
 
@@ -76,11 +100,12 @@ export function RemoteAccessSettings({
   const [busy, setBusy] = useState(false);
   const [setupOpen, setSetupOpen] = useState(false);
   const [step, setStep] = useState<"loading" | "waiting" | "pending" | "connected">("loading");
-  const [origin, setOrigin] = useState(currentHttpsOrigin);
+  const [readiness, setReadiness] = useState<RemoteTailscaleStatus | null>(null);
+  const [origin, setOrigin] = useState("");
   const [offer, setOffer] = useState<RemotePairingOffer | null>(null);
   const [pending, setPending] = useState<RemotePairingPending | null>(null);
   const [now, setNow] = useState(() => Date.now());
-  const [copied, setCopied] = useState<"link" | "code" | null>(null);
+  const [copied, setCopied] = useState<CopyTarget | null>(null);
   const [revoking, setRevoking] = useState<{ installationId: string; label: string } | null>(null);
 
   const refresh = useCallback(async () => {
@@ -120,13 +145,6 @@ export function RemoteAccessSettings({
       setPending(active);
       setNow(Date.now());
       setStep("pending");
-      if (active.expires_at * 1000 <= Date.now()) {
-        setError(
-          active.renewable
-            ? "The pairing code expired. Renew setup on this desktop."
-            : "The pairing code expired. Generate a new one.",
-        );
-      }
     } catch {
       /* The pending route is optional for older servers. */
     }
@@ -149,6 +167,12 @@ export function RemoteAccessSettings({
   }, [offer]);
 
   useEffect(() => {
+    if (!copied) return;
+    const timer = window.setTimeout(() => setCopied(null), 1500);
+    return () => window.clearTimeout(timer);
+  }, [copied]);
+
+  useEffect(() => {
     if (!offer || (step !== "waiting" && step !== "pending")) return;
     let cancelled = false;
     const poll = async () => {
@@ -156,17 +180,11 @@ export function RemoteAccessSettings({
         const next = await fetchRemotePairingPending(token, offer.pairing_id);
         if (cancelled || !next || next.pairing_id !== offer.pairing_id) return;
         setPending(next);
-        if (next.state === "pending_approval") setStep("pending");
-        if (next.state === "approved") setStep("connected");
-        if (next.state === "denied" || next.state === "expired") {
-          setError(
-            next.state === "denied"
-              ? "The phone request was denied."
-              : next.renewable
-                ? "The pairing code expired. Renew setup on this desktop."
-                : "The pairing code expired. Generate a new one.",
-          );
+        if (next.state === "pending_approval" || (next.state === "expired" && next.device)) {
+          setStep("pending");
         }
+        if (next.state === "approved") setStep("connected");
+        if (next.state === "denied") setError("The phone request was denied.");
       } catch {
         /* Older servers may not support pending status yet. */
       }
@@ -183,37 +201,50 @@ export function RemoteAccessSettings({
     ? (offer.expires_at ?? offer.expiration ?? Math.floor(now / 1000) + OFFER_SECONDS) * 1000
     : 0;
   const remaining = offer ? Math.max(0, (expiresAt - now) / 1000) : 0;
-  const expired = !!offer && remaining <= 0;
+  const expired = !!offer && (remaining <= 0 || pending?.state === "expired");
+  const pairingSecret = offer?.pairing_code || offer?.comparison_code || "";
+  const pairingCode = pairingSecret.replace(/(\d{4})(?=\d)/g, "$1 ");
+  const hasFreshChallenge = Boolean(offer?.nonce && offer?.collector_secret);
+  const canRenew = step === "pending" && pending?.renewable;
+  const preflight = readiness && !(readiness.connected && readiness.serve_mapped && readiness.origin)
+    ? readiness : null;
+  const command = preflight?.recommended_command;
 
   const pairingLink = useMemo(
-    () => (offer && origin ? buildMobilePairingLink(origin, offer) : ""),
-    [offer, origin],
+    () => (offer && origin && hasFreshChallenge ? buildMobilePairingLink(origin, offer) : ""),
+    [offer, origin, hasFreshChallenge],
   );
-  const pairingCode = offer
-    ? String(offer.pairing_code || offer.comparison_code || "").replace(/(\d{4})(?=\d)/g, "$1 ")
-    : "";
-  const hasFreshChallenge = Boolean(offer?.nonce && offer?.collector_secret);
 
-  const [qrDataUrl, setQrDataUrl] = useState("");
+  const [qr, setQr] = useState<{ link: string; dataUrl: string } | null>(null);
   useEffect(() => {
-    if (!pairingLink) {
-      setQrDataUrl("");
-      return;
-    }
+    if (!pairingLink) return;
     let cancelled = false;
     void QRCode.toDataURL(pairingLink, {
       width: 224,
       margin: 1,
       color: { dark: "#111827", light: "#ffffff" },
-    }).then((url) => {
-      if (!cancelled) setQrDataUrl(url);
+    }).then((dataUrl) => {
+      if (!cancelled) setQr({ link: pairingLink, dataUrl });
     }).catch(() => {
-      if (!cancelled) setQrDataUrl("");
+      if (!cancelled) setQr(null);
     });
     return () => {
       cancelled = true;
     };
   }, [pairingLink]);
+
+  const copy = async (target: CopyTarget, value: string) => {
+    if (!navigator.clipboard) {
+      setError("Clipboard access is unavailable.");
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(value);
+      setCopied(target);
+    } catch {
+      setError("Could not copy to the clipboard.");
+    }
+  };
 
   const run = async (action: () => Promise<void>) => {
     setBusy(true);
@@ -227,37 +258,37 @@ export function RemoteAccessSettings({
     }
   };
 
-  const openSetup = async () => {
-    if (offer && (step === "pending" || step === "waiting")) {
-      setSetupOpen(true);
-      return;
-    }
-    resetSetup();
-    setSetupOpen(true);
+  const checkReadiness = async () => {
     if (!status?.enabled) {
       setError("Enable remote access first.");
       return;
     }
+    setBusy(true);
+    setError(null);
     try {
-      const readiness = await fetchRemoteTailscaleStatus(token);
-      const detected = readiness.connected && readiness.serve_mapped ? readiness.origin : "";
-      const target = detected || currentHttpsOrigin();
-      if (!target) {
-        setError(
-          readiness.error ||
-            "Tailscale Serve is not ready. Run `tailscale serve --bg 18793` on this desktop.",
-        );
-        return;
-      }
-      setOrigin(target);
-      await begin(target);
+      const next = await fetchRemoteTailscaleStatus(token);
+      setReadiness(next);
+      if (!next.connected || !next.serve_mapped || !next.origin) return;
+      setOrigin(next.origin);
+      await begin(next.origin);
     } catch (exception) {
       setError(exception instanceof Error ? exception.message : "pairing is unavailable");
+    } finally {
+      setBusy(false);
     }
+  };
+
+  const openSetup = async () => {
+    setSetupOpen(true);
+    if (offer && (step === "pending" || step === "waiting")) return;
+    resetSetup();
+    await checkReadiness();
   };
 
   const resetSetup = () => {
     setStep("loading");
+    setReadiness(null);
+    setOrigin("");
     setOffer(null);
     setPending(null);
     setCopied(null);
@@ -280,7 +311,7 @@ export function RemoteAccessSettings({
     });
   };
 
-  const begin = async (targetOrigin = origin) => {
+  const begin = async (targetOrigin: string) => {
     await run(async () => {
       if (!targetOrigin.trim()) return;
       const next = await startRemotePairing(mutate, {
@@ -292,9 +323,15 @@ export function RemoteAccessSettings({
       });
       setOffer(next);
       setPending(null);
+      setCopied(null);
       setNow(Date.now());
       setStep("waiting");
     });
+  };
+
+  const newCode = async () => {
+    setStep("loading");
+    await checkReadiness();
   };
 
   const approve = async () => {
@@ -320,6 +357,33 @@ export function RemoteAccessSettings({
   };
 
   const activeDevices = (status?.devices ?? []).filter((device) => device.status === "active");
+  const pendingDevice = step === "pending" ? pending?.device : undefined;
+  const approvalCard = pendingDevice ? (
+    <div className="rounded-xl border border-emerald-600/25 bg-emerald-50 p-4 text-foreground shadow-sm dark:bg-emerald-950/30">
+      <div className="flex items-start gap-3">
+        <span className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-emerald-100 text-emerald-800 dark:bg-emerald-900/60 dark:text-emerald-300">
+          <Smartphone aria-hidden="true" className="h-5 w-5" />
+        </span>
+        <div className="min-w-0">
+          <p className="break-words text-sm font-medium">
+            {pendingDevice.label || "Phone"}{setupOpen ? " wants owner access" : " is waiting for owner approval"}
+          </p>
+          <p className="mt-1 text-xs text-muted-foreground">
+            {pendingDevice.platform || "Android"} · files, commands, settings, existing chats
+          </p>
+          <DeviceFingerprint value={pending?.device_fingerprint} />
+        </div>
+      </div>
+      <div className="mt-4 flex flex-wrap justify-end gap-2">
+        <Button type="button" variant="outline" size="sm" disabled={busy} onClick={() => void deny()}>
+          Deny
+        </Button>
+        <Button type="button" size="sm" disabled={busy || expired} onClick={() => void approve()}>
+          Approve owner access
+        </Button>
+      </div>
+    </div>
+  ) : null;
 
   return (
     <section className="space-y-6" aria-labelledby="remote-access-heading">
@@ -329,37 +393,8 @@ export function RemoteAccessSettings({
           Pair this owner phone once. It stays connected until you revoke it.
         </p>
       </header>
-      {error ? <p role="alert" className="text-sm text-destructive">{error}</p> : null}
-
-      {step === "pending" && pending?.device ? (
-        <div className="rounded-xl border border-emerald-600/30 p-4">
-          <p className="text-sm font-medium">
-            {pending.device.label || "Phone"} is waiting for owner approval
-          </p>
-          <p className="mt-1 text-xs text-muted-foreground">
-            {pending.device.platform || "Android"} · files, commands, settings, existing chats
-          </p>
-          <DeviceFingerprint value={pending.device_fingerprint} />
-          <div className="mt-3 flex gap-2">
-            <button
-              type="button"
-              disabled={busy}
-              onClick={() => void deny()}
-              className="rounded-md border px-3 py-1.5 text-sm"
-            >
-              Deny
-            </button>
-            <button
-              type="button"
-              disabled={busy}
-              onClick={() => void approve()}
-              className="rounded-md border border-foreground bg-foreground px-3 py-1.5 text-sm text-background"
-            >
-              Approve owner access
-            </button>
-          </div>
-        </div>
-      ) : null}
+      {!setupOpen && error ? <p role="alert" className="text-sm text-destructive">{error}</p> : null}
+      {!setupOpen ? approvalCard : null}
 
       <div className="flex items-center justify-between rounded-xl border p-4">
         <div>
@@ -472,14 +507,14 @@ export function RemoteAccessSettings({
       <Dialog open={setupOpen} onOpenChange={(open) => {
         setSetupOpen(open);
       }}>
-        <DialogContent className="max-w-lg">
+        <DialogContent className="max-h-[calc(100dvh-2rem)] max-w-lg overflow-y-auto">
           <DialogHeader>
             <DialogTitle>
               {step === "connected" ? "Owner phone connected" : "Pair owner phone"}
             </DialogTitle>
             <DialogDescription>
               {step === "loading"
-                ? "Checking Tailscale and preparing a 5-minute pairing code."
+                ? "Verify Tailscale Serve on this desktop to start pairing."
                 : step === "waiting"
                   ? "Scan the QR code or enter the 8-digit code on the phone."
                   : step === "pending"
@@ -490,33 +525,36 @@ export function RemoteAccessSettings({
 
           {step === "loading" ? (
             <div className="space-y-4">
-              <p
-                role={error ? "alert" : undefined}
-                className={error ? "text-sm text-destructive" : "text-sm text-muted-foreground"}
-              >
-                {error || "Preparing pairing…"}
-              </p>
-              {error ? (
-                <p className="text-xs text-muted-foreground">
-                  Make sure Tailscale Serve is running on this desktop, then retry.
-                </p>
+              {preflight ? (
+                <div className="space-y-3 rounded-xl border border-border bg-card p-4">
+                  <ul aria-label="Tailscale readiness" className="divide-y divide-border rounded-lg border border-border bg-muted/40">
+                    <ReadinessCheck ready={preflight.connected} label="Tailscale connected" />
+                    <ReadinessCheck ready={preflight.serve_mapped} label="/mobile/v1 Serve target verified" />
+                  </ul>
+                  <p role="status" className="text-sm text-destructive">
+                    {preflight.error || "Tailscale Serve is not ready."}
+                  </p>
+                  {command ? (
+                    <div className="flex items-start gap-2 rounded-lg border border-border bg-muted p-2">
+                      <code className="min-w-0 flex-1 select-all break-all p-1 font-mono text-xs text-foreground">{command}</code>
+                      <Button type="button" variant="ghost" size="sm" onClick={() => void copy("command", command)} className="h-7 gap-1.5 px-2 text-xs">
+                        {copied === "command" ? <Check aria-hidden="true" className="h-3.5 w-3.5" /> : <Copy aria-hidden="true" className="h-3.5 w-3.5" />}
+                        {copied === "command" ? "Copied" : "Copy"}
+                      </Button>
+                    </div>
+                  ) : null}
+                </div>
               ) : null}
+              {error ? <p role="alert" className="text-sm text-destructive">{error}</p> : null}
+              {busy ? <p role="status" className="text-sm text-muted-foreground">Checking Tailscale…</p> : null}
               <div className="flex justify-end gap-2">
-                <button
-                  type="button"
-                  onClick={() => setSetupOpen(false)}
-                  className="rounded-md border px-3 py-1.5 text-sm"
-                >
+                <Button type="button" variant="outline" size="sm" onClick={() => setSetupOpen(false)}>
                   Cancel
-                </button>
-                <button
-                  type="button"
-                  disabled={busy}
-                  onClick={() => void openSetup()}
-                  className="rounded-md border border-foreground bg-foreground px-3 py-1.5 text-sm text-background"
-                >
-                  Retry
-                </button>
+                </Button>
+                <Button type="button" size="sm" disabled={busy} onClick={() => void checkReadiness()} className="gap-2">
+                  <RefreshCw aria-hidden="true" className="h-4 w-4" />
+                  Re-check
+                </Button>
               </div>
             </div>
           ) : null}
@@ -524,145 +562,66 @@ export function RemoteAccessSettings({
           {step === "waiting" || step === "pending" ? (
             <div className="space-y-4">
               {error ? (
-                <p className="rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2 text-xs text-destructive">
+                <p role="alert" className="rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2 text-xs text-destructive">
                   {error}
                 </p>
               ) : null}
-              <p className="text-xs text-muted-foreground">
-                Only pair your own phone. Full owner control; the desktop must approve it.
-              </p>
-
-              {hasFreshChallenge ? (
-                <div className="grid gap-4 sm:grid-cols-[224px_1fr]">
-                  <div className="flex flex-col items-center gap-2">
-                    {qrDataUrl ? (
-                      <img
-                        src={qrDataUrl}
-                        alt="Pairing QR code"
-                        className="h-48 w-48 rounded-lg border bg-white p-2"
-                      />
-                    ) : (
-                      <div className="grid h-48 w-48 place-items-center rounded-lg border text-xs text-muted-foreground">
-                        Loading QR code
+              {expired ? (
+                <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border bg-card p-4">
+                  <p role="status" className="flex items-center gap-2 text-sm text-destructive">
+                    <Clock aria-hidden="true" className="h-4 w-4" />
+                    Pairing code expired.
+                  </p>
+                  <Button type="button" size="sm" disabled={busy} onClick={() => void (canRenew ? renew() : newCode())}>
+                    {canRenew ? "Renew setup" : "New code"}
+                  </Button>
+                </div>
+              ) : hasFreshChallenge ? (
+                <>
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-[auto_minmax(0,1fr)]">
+                    <div className="mx-auto grid h-40 w-40 place-items-center rounded-xl border border-border bg-white p-2 shadow-sm sm:h-44 sm:w-44">
+                      {qr && qr.link === pairingLink ? (
+                        <img src={qr.dataUrl} alt="Pairing QR code" className="block h-full w-full" />
+                      ) : (
+                        <span className="text-xs text-gray-700">Loading QR code</span>
+                      )}
+                    </div>
+                    <div className="flex flex-col justify-center gap-2 rounded-xl border border-border bg-card p-4 text-foreground">
+                      <p className="text-xs font-medium text-muted-foreground">8-digit code</p>
+                      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                        <p className="whitespace-nowrap font-mono text-2xl font-semibold tabular-nums">
+                          {pairingCode}
+                        </p>
+                        <Button type="button" variant="ghost" size="sm" onClick={() => void copy("code", pairingSecret)} className="h-7 gap-1.5 px-2 text-xs">
+                          {copied === "code" ? <Check aria-hidden="true" className="h-3.5 w-3.5" /> : <Copy aria-hidden="true" className="h-3.5 w-3.5" />}
+                          {copied === "code" ? "Copied" : "Copy code"}
+                        </Button>
                       </div>
-                    )}
-                    <p className="text-xs text-muted-foreground">Scan with the phone</p>
-                  </div>
-                  <div className="space-y-3">
-                    <div className="rounded-lg border p-3 text-center">
-                      <p className="text-xs uppercase tracking-wide text-muted-foreground">
-                        8-digit code
+                      <p role="timer" className="flex items-center gap-1.5 text-xs tabular-nums text-muted-foreground">
+                        <Clock aria-hidden="true" className="h-3.5 w-3.5" />
+                        Expires in {formatRemaining(remaining)}
                       </p>
-                      <p className="mt-1 whitespace-nowrap font-mono text-2xl font-semibold tracking-[0.12em]">
-                        {pairingCode}
-                      </p>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          void navigator.clipboard
-                            ?.writeText(offer?.pairing_code || offer?.comparison_code || "")
-                            .then(() => {
-                              setCopied("code");
-                              window.setTimeout(() => setCopied(null), 1500);
-                            })
-                            .catch(() => undefined);
-                        }}
-                        className="mt-2 rounded-md border px-3 py-1 text-xs"
-                      >
-                        {copied === "code" ? "Copied" : "Copy code"}
-                      </button>
-                    </div>
-                    <p className="text-center text-xs text-muted-foreground">
-                      {expired ? "Code expired." : `Expires in ${formatRemaining(remaining)}`}
-                    </p>
-                    <div className="flex flex-wrap justify-center gap-2">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          void navigator.clipboard
-                            ?.writeText(pairingLink)
-                            .then(() => {
-                              setCopied("link");
-                              window.setTimeout(() => setCopied(null), 1500);
-                            })
-                            .catch(() => undefined);
-                        }}
-                        className="rounded-md border px-3 py-1.5 text-sm"
-                      >
-                        {copied === "link" ? "Copied" : "Copy link"}
-                      </button>
-                      <button
-                        type="button"
-                        disabled={busy}
-                        onClick={() => void begin()}
-                        className="rounded-md border px-3 py-1.5 text-sm"
-                      >
-                        New code
-                      </button>
-                      {expired && pending?.renewable ? (
-                        <button
-                          type="button"
-                          disabled={busy}
-                          onClick={() => void renew()}
-                          className="rounded-md border border-foreground bg-foreground px-3 py-1.5 text-sm text-background"
-                        >
-                          Renew setup
-                        </button>
-                      ) : null}
                     </div>
                   </div>
-                </div>
-              ) : (
-                <div className="space-y-2 text-center">
-                  <p className="text-xs text-muted-foreground">
-                    This request was created earlier.
+                  <p className="text-xs leading-relaxed text-muted-foreground">
+                    First time on this phone? Signing into Tailscale may take a minute — if this code expires, click <strong>New code</strong> and scan again.
                   </p>
-                  {expired && pending?.renewable ? (
-                    <button
-                      type="button"
-                      disabled={busy}
-                      onClick={() => void renew()}
-                      className="rounded-md border border-foreground bg-foreground px-3 py-1.5 text-sm text-background"
-                    >
-                      Renew setup
-                    </button>
-                  ) : null}
-                </div>
-              )}
+                  <div className="flex flex-wrap justify-end gap-2">
+                    <Button type="button" variant="outline" size="sm" onClick={() => void copy("link", pairingLink)}>
+                      {copied === "link" ? "Copied" : "Copy link"}
+                    </Button>
+                    <Button type="button" variant="outline" size="sm" disabled={busy} onClick={() => void newCode()}>
+                      New code
+                    </Button>
+                  </div>
+                </>
+              ) : null}
 
-              {step === "pending" && pending?.device ? (
-                <div className="rounded-xl border border-emerald-600/30 p-3">
-                  <p className="text-sm font-medium">
-                    {pending.device.label || "Phone"} wants owner access
-                  </p>
-                  <p className="mt-1 text-xs text-muted-foreground">
-                    {pending.device.platform || "Android"} · files, commands, settings, existing chats
-                  </p>
-                  <DeviceFingerprint value={pending.device_fingerprint} />
-                  <div className="mt-3 flex gap-2">
-                    <button
-                      type="button"
-                      disabled={busy}
-                      onClick={() => void deny()}
-                      className="rounded-md border px-3 py-1.5 text-sm"
-                    >
-                      Deny
-                    </button>
-                    <button
-                      type="button"
-                      disabled={busy}
-                      onClick={() => void approve()}
-                      className="rounded-md border border-foreground bg-foreground px-3 py-1.5 text-sm text-background"
-                    >
-                      Approve owner access
-                    </button>
-                  </div>
-                </div>
-              ) : (
+              {approvalCard || (!expired ? (
                 <p className="text-center text-xs text-muted-foreground">
                   Waiting for the phone to connect…
                 </p>
-              )}
+              ) : null)}
             </div>
           ) : null}
 
@@ -672,13 +631,9 @@ export function RemoteAccessSettings({
                 Owner phone connected. It stays authorized until revoked.
               </p>
               <div className="flex justify-end">
-                <button
-                  type="button"
-                  onClick={() => setSetupOpen(false)}
-                  className="rounded-md border border-foreground bg-foreground px-3 py-1.5 text-sm text-background"
-                >
+                <Button type="button" size="sm" onClick={() => setSetupOpen(false)}>
                   Done
-                </button>
+                </Button>
               </div>
             </div>
           ) : null}

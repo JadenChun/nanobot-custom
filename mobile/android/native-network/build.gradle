@@ -1,0 +1,83 @@
+import com.android.build.api.artifact.ScopedArtifact
+import com.android.build.api.variant.ScopedArtifacts
+
+apply plugin: 'com.android.library'
+apply plugin: 'kotlin-android'
+apply from: rootProject.file('verify-jni.gradle')
+
+def libraryNamespace = 'ai.kohaku.nativenetwork'
+def networkClassName = "${libraryNamespace}.NativeNetwork"
+def mobileRoot = rootProject.file('..')
+def mobileAbis = rootProject.ext.mobileAbis
+def ndkRevision = rootProject.ext.mobileNdkVersion
+def minSdk = rootProject.ext.minSdkVersion
+def goLibDir = layout.buildDirectory.dir("generated/go-network/${mobileAbis.join('_')}")
+def buildScript = new File(mobileRoot, 'scripts/build-native-network.sh')
+
+abstract class BuildGoNetwork extends Exec {
+    @OutputDirectory abstract DirectoryProperty getLibraryDirectory()
+}
+
+android {
+    namespace = libraryNamespace
+    compileSdk = rootProject.ext.compileSdkVersion
+    buildToolsVersion = '36.0.0'
+    ndkVersion = ndkRevision
+    defaultConfig {
+        minSdkVersion minSdk
+        consumerProguardFiles 'consumer-rules.pro'
+        ndk {
+            abiFilters(*mobileAbis)
+        }
+        externalNativeBuild {
+            cmake {
+                arguments "-DJNI_CLASS_NAME=${networkClassName.replace('.', '/')}",
+                          "-DGO_NETWORK_LIB_DIR=${goLibDir.get().asFile}"
+            }
+        }
+    }
+    externalNativeBuild {
+        cmake {
+            path file('src/main/cpp/CMakeLists.txt')
+            version rootProject.ext.mobileCmakeVersion
+        }
+    }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_21
+        targetCompatibility JavaVersion.VERSION_21
+    }
+    kotlinOptions {
+        jvmTarget = '21'
+    }
+}
+
+def buildGoNetwork = tasks.register('buildGoNetwork', BuildGoNetwork) {
+    def goSources = fileTree(new File(mobileRoot, 'native-network')) {
+        include '**/*.go', '**/*.c', '**/*.h', '**/*.s', 'go.mod', 'go.sum'
+        exclude 'cabi/**'
+    }
+    inputs.files(goSources, buildScript, new File(mobileRoot, 'scripts/mobile-env.sh'),
+                 new File(mobileRoot, 'toolchain.lock.json'))
+        .withPathSensitivity(PathSensitivity.RELATIVE)
+    inputs.property('abis', mobileAbis)
+    inputs.property('ndkVersion', ndkRevision)
+    inputs.property('minSdk', minSdk)
+    libraryDirectory.set(goLibDir)
+
+    environment 'NDK_VERSION', ndkRevision
+    environment 'MIN_SDK', minSdk.toString()
+    commandLine 'bash', buildScript, goLibDir.get().asFile, *mobileAbis
+}
+
+androidComponents.onVariants(androidComponents.selector().all()) { variant ->
+    variant.sources.jniLibs.addGeneratedSourceDirectory(buildGoNetwork) { it.libraryDirectory }
+}
+
+tasks.configureEach {
+    if (name.startsWith('configureCMake') || name.startsWith('buildCMake')) {
+        dependsOn buildGoNetwork
+    }
+}
+
+registerJniContract(networkClassName, file('src/main/cpp/native_network_jni.c'),
+                    ScopedArtifacts.Scope.PROJECT, ScopedArtifact.CLASSES.INSTANCE)

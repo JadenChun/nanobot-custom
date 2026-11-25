@@ -1,0 +1,75 @@
+import javax.inject.Inject
+
+abstract class VerifyJniContract extends DefaultTask {
+    @Input abstract Property<String> getClassName()
+    @InputFile @PathSensitive(PathSensitivity.RELATIVE)
+    abstract RegularFileProperty getNativeSource()
+    @Classpath abstract ListProperty<RegularFile> getClassJars()
+    @Classpath abstract ListProperty<Directory> getClassDirectories()
+    @Inject abstract ExecOperations getExecOperations()
+
+    @TaskAction
+    void verify() {
+        def type = className.get()
+        def classpath = (classDirectories.get() + classJars.get())
+            .collect { it.asFile.path }.join(File.pathSeparator)
+        def output = new ByteArrayOutputStream()
+        execOperations.exec {
+            commandLine new File(System.getProperty('java.home'), 'bin/javap'),
+                '-p', '-s', '-classpath', classpath, type
+            standardOutput = output
+        }
+
+        def bytecodeMethods = []
+        def lines = output.toString('UTF-8').readLines()
+        lines.eachWithIndex { line, index ->
+            def method = line =~ /^\s*((?:\w+\s+)*)native\s+\S+\s+(\S+)\(/
+            if (method.find()) {
+                def descriptor = lines[index + 1].trim()
+                if (method.group(1).tokenize().contains('static') || !descriptor.startsWith('descriptor: ')) {
+                    throw new GradleException("Expected an instance native method with a descriptor in ${type}: ${line}")
+                }
+                bytecodeMethods.add(method.group(2) + descriptor.substring('descriptor: '.length()))
+            }
+        }
+
+        def table = nativeSource.get().asFile.getText('UTF-8') =~ /(?s)\bJNINativeMethod\s+methods\[\]\s*=\s*\{(.*?)\};/
+        if (!table.find()) {
+            throw new GradleException("JNI method table missing for ${type}")
+        }
+        def entries = table.group(1) =~ /\{\s*"([^"]+)"\s*,\s*"([^"]+)"\s*,\s*\(void \*\)\w+\s*\},/
+        def registeredMethods = entries.collect { it[1] + it[2] }.sort()
+        if (registeredMethods.isEmpty() || !entries.reset().replaceAll('').isBlank()) {
+            throw new GradleException("Cannot read the JNI method table for ${type}")
+        }
+        if (bytecodeMethods.sort() != registeredMethods) {
+            throw new GradleException(
+                "JNI contract mismatch for ${type}\n" +
+                "  Compiled class: ${bytecodeMethods}\n  C registration: ${registeredMethods}"
+            )
+        }
+        logger.lifecycle("Verified JNI contract for ${type} (${registeredMethods.size()} methods)")
+    }
+}
+
+ext.registerJniContract = { String type, File source, scope, classes ->
+    def application = plugins.hasPlugin('com.android.application')
+    androidComponents.onVariants(androidComponents.selector().all()) { variant ->
+        def suffix = variant.name.capitalize()
+        def verify = tasks.register("verify${suffix}JniContract", VerifyJniContract) {
+            group = 'verification'
+            className.set(type)
+            nativeSource.set(source)
+            if (application) {
+                dependsOn ":native-network:verify${suffix}JniContract"
+            }
+        }
+        variant.artifacts.forScope(scope).use(verify)
+            .toGet(classes, { it.classJars }, { it.classDirectories })
+
+        def packageTasks = application ? ["package${suffix}", "package${suffix}Bundle"] : ["bundle${suffix}Aar"]
+        tasks.matching { task -> packageTasks.any { it == task.name } }.configureEach {
+            dependsOn verify
+        }
+    }
+}

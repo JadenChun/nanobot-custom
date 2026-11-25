@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build the Go native transport for Android ABIs and retain its ABI evidence.
+# Usage: build-native-network.sh [output-directory [abi ...]]
 
 set -euo pipefail
 
@@ -12,7 +12,21 @@ NDK_VERSION="${NDK_VERSION:-29.0.14206865}"
 NDK_BIN="${ANDROID_SDK_ROOT}/ndk/${NDK_VERSION}/toolchains/llvm/prebuilt/linux-x86_64/bin"
 MIN_SDK="${MIN_SDK:-24}"
 NETWORK_ROOT="${MOBILE_ROOT}/native-network"
-JNI_ROOT="${MOBILE_ROOT}/android/app/src/main/jniLibs"
+output_dir="${1:-${MOBILE_ROOT}/android/native-network/build/standalone/go-network}"
+if [[ $# -gt 0 ]]; then
+  shift
+fi
+if [[ $# -eq 0 ]]; then
+  set -- x86_64 arm64-v8a
+fi
+for abi in "$@"; do
+  case "${abi}" in
+    x86_64|arm64-v8a) ;;
+    *) echo "Unsupported Android ABI: ${abi}" >&2; exit 2 ;;
+  esac
+done
+mkdir -p "${output_dir}"
+JNI_ROOT="$(cd -- "${output_dir}" && pwd)"
 
 (
   cd "${NETWORK_ROOT}"
@@ -42,7 +56,12 @@ build_abi() {
   "${readelf}" --dyn-syms "${JNI_ROOT}/${abi}/libnanobot_network.so" | grep ' nanobot_network_' | head -12
 }
 
-build_abi x86_64 amd64 x86_64
-build_abi arm64-v8a arm64 aarch64
-
-sha256sum "${JNI_ROOT}"/*/libnanobot_network.so
+outputs=()
+for abi in "$@"; do
+  case "${abi}" in
+    x86_64) build_abi x86_64 amd64 x86_64 ;;
+    arm64-v8a) build_abi arm64-v8a arm64 aarch64 ;;
+  esac
+  outputs+=("${JNI_ROOT}/${abi}/libnanobot_network.so")
+done
+sha256sum "${outputs[@]}"

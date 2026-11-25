@@ -5,9 +5,11 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, cast
 
+from pydantic import TypeAdapter, ValidationError
 from websockets.http11 import Request as WsRequest
 from websockets.http11 import Response
 
+from kohaku.config.loader import resolve_env_refs
 from kohaku.config.schema import Config, RemoteAccessConfig
 from kohaku.remote.client import OwnerRequestError, OwnerUnavailableError
 from kohaku.remote.management import RemoteAccessManager
@@ -16,6 +18,7 @@ from kohaku.webui.http_utils import http_error, http_json_response
 from kohaku.webui.settings_services import WebUISettingsConfig
 
 _PREFIX = "/api/settings/remote-access"
+_WEBSOCKET_PORT = TypeAdapter(int)
 
 
 def owner_paths(
@@ -69,12 +72,12 @@ def handle_remote_access(
     if path == f"{_PREFIX}/tailscale":
         from kohaku.remote.tailscale import tailscale_status
 
-        ws_cfg: object = getattr(cfg.channels, "websocket", None)
-        if isinstance(ws_cfg, dict):
-            ws_port: object | None = cast(dict[object, object], ws_cfg).get("port")
-        else:
-            ws_port = getattr(ws_cfg, "port", None)
-        expected_port = ws_port if isinstance(ws_port, int) and ws_port > 0 else None
+        ws_port = resolve_env_refs(cfg.channels.websocket.get("port"))
+        try:
+            port = _WEBSOCKET_PORT.validate_python(ws_port)
+        except ValidationError:
+            port = None
+        expected_port = port if port is not None and 1 <= port <= 65535 else None
         return http_json_response(tailscale_status(expected_port=expected_port))
     if path == f"{_PREFIX}/pairing/pending":
         try:

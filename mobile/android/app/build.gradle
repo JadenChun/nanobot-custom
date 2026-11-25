@@ -1,5 +1,12 @@
+import com.android.build.api.artifact.ScopedArtifact
+import com.android.build.api.variant.ScopedArtifacts
+
 apply plugin: 'com.android.application'
 apply plugin: 'kotlin-android'
+apply from: rootProject.file('verify-jni.gradle')
+
+def appNamespace = 'ai.kohaku.mobile'
+def probeClassName = "${appNamespace}.NativeProbe"
 
 def unsignedRelease = project.findProperty('kohakuUnsignedRelease') == 'true'
 def releaseKeystorePath = System.getenv("KOHAKU_MOBILE_KEYSTORE") ?: "${System.properties['user.home']}/.config/kohaku-mobile/release.keystore"
@@ -18,11 +25,10 @@ def releaseKeystore = new File(releaseKeystorePath)
 def hasReleaseSigning = !unsignedRelease && releaseKeystore.isFile() && releaseKeyAlias && releaseStorePassword
 
 android {
-    namespace = "ai.kohaku.mobile"
+    namespace = appNamespace
     compileSdk = rootProject.ext.compileSdkVersion
     buildToolsVersion = "36.0.0"
-    ndkVersion = "29.0.14206865"
-    def mobileAbis = project.findProperty('mobileAbis')?.split(',') ?: ['x86_64', 'arm64-v8a']
+    ndkVersion = rootProject.ext.mobileNdkVersion
     defaultConfig {
         applicationId "ai.kohaku.mobile"
         minSdkVersion rootProject.ext.minSdkVersion
@@ -35,16 +41,21 @@ android {
              // Default: https://android.googlesource.com/platform/frameworks/base/+/282e181b58cf72b6ca770dc7ca5f91f135444502/tools/aapt/AaptAssets.cpp#61
             ignoreAssetsPattern = '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
         }
+        ndk {
+            abiFilters(*rootProject.ext.mobileAbis)
+        }
         externalNativeBuild {
             cmake {
-                abiFilters(*mobileAbis)
+                arguments "-DJNI_CLASS_NAME=${probeClassName.replace('.', '/')}"
             }
         }
     }
+    // Exclude Go libraries from older builds in this checkout.
+    sourceSets.main.jniLibs.setSrcDirs([])
     externalNativeBuild {
         cmake {
             path file('src/main/cpp/CMakeLists.txt')
-            version '3.31.6'
+            version rootProject.ext.mobileCmakeVersion
         }
     }
     signingConfigs {
@@ -89,6 +100,7 @@ dependencies {
     implementation "androidx.core:core-splashscreen:$coreSplashScreenVersion"
     implementation "org.jetbrains.kotlin:kotlin-stdlib:2.2.20"
     implementation project(':capacitor-android')
+    implementation project(':native-network')
     implementation "com.journeyapps:zxing-android-embedded:4.3.0"
     testImplementation "junit:junit:$junitVersion"
     testImplementation 'org.json:json:20240303'
@@ -98,6 +110,9 @@ dependencies {
 }
 
 apply from: 'capacitor.build.gradle'
+
+registerJniContract(probeClassName, file('src/main/cpp/probe.c'),
+                    ScopedArtifacts.Scope.PROJECT, ScopedArtifact.CLASSES.INSTANCE)
 
 try {
     def servicesJSON = file('google-services.json')

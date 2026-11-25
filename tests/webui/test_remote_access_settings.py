@@ -245,24 +245,24 @@ def test_owner_pairing_start_requires_consent_and_exposes_pending(tmp_path: Path
         owner.stop()
 
 
-def test_tailscale_readiness_route(tmp_path: Path, monkeypatch) -> None:
+@pytest.mark.parametrize("port", [19321, None])
+def test_tailscale_readiness_route(tmp_path: Path, monkeypatch, port: int | None) -> None:
     config_path = tmp_path / "config.json"
-    save_config(Config(), config_path)
+    config = Config()
+    if port is not None:
+        config.channels.websocket["port"] = port
+    save_config(config, config_path)
     settings = WebUISettingsConfig(config_path)
-    seen_ports: list[int | None] = []
+    monkeypatch.setattr("kohaku.remote.tailscale.shutil.which", lambda _name: "/usr/bin/tailscale")
+    responses = {
+        ("status", "--json"): {
+            "BackendState": "Running",
+            "Self": {"DNSName": "desktop.tailnet.ts.net"},
+        },
+        ("serve", "status", "--json"): {"Web": {}},
+    }
     monkeypatch.setattr(
-        "kohaku.remote.tailscale.tailscale_status",
-        lambda *, expected_port=None: (
-            seen_ports.append(expected_port)
-            or {
-                "available": True,
-                "connected": True,
-                "serve_mapped": True,
-                "dns_name": "desktop.tailnet.ts.net",
-                "origin": "https://desktop.tailnet.ts.net",
-                "error": "",
-            }
-        ),
+        "kohaku.remote.tailscale._run_json", lambda command: responses[tuple(command[1:])],
     )
     response = handle_remote_access(
         settings,
@@ -270,5 +270,11 @@ def test_tailscale_readiness_route(tmp_path: Path, monkeypatch) -> None:
         "/api/settings/remote-access/tailscale",
     )
     assert response.status_code == 200
-    assert seen_ports == [None]
-    assert json.loads(response.body)["origin"] == "https://desktop.tailnet.ts.net"
+    body = json.loads(response.body)
+    assert body["origin"] == "https://desktop.tailnet.ts.net"
+    assert body["expected_port"] == port
+    assert body["issue"] == "serve_missing"
+    assert body["recommended_command"] == (
+        "tailscale serve --bg --https=443 --set-path=/mobile/v1 "
+        f"http://127.0.0.1:{port or 18790}/mobile/v1"
+    )

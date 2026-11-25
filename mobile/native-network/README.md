@@ -8,22 +8,28 @@ Capacitor plugin. The phone never receives raw URL, dial, LocalAPI or filesystem
 - `internal/broker/` — policy, HTTP, WebSocket, event queue and tsnet lifecycle.
 - `cmd/lib/` — exported C ABI (`nanobot_network_*`) and handle registry.
 - `include/nanobot_network.h` — hand-written ABI contract, version 1.
-- `cabi/smoke.c` — host C host smoke test (validation and error paths).
-- `../android/app/src/main/cpp/native_network_jni.c` — JNI shim.
-- `../android/app/src/main/java/ai/kohaku/mobile/network/` — Kotlin/Capacitor bridge.
+- `cabi/smoke.c` — host C smoke test for validation and error paths.
+- `../android/native-network/src/main/cpp/native_network_jni.c` — JNI registration and C ABI calls.
+- `../android/native-network/src/main/java/ai/kohaku/nativenetwork/NativeNetwork.kt` — Kotlin JNI declarations.
+- `../android/app/src/main/java/ai/kohaku/mobile/network/` — app-side Capacitor bridge.
 
 ## Build and test
 
 ```bash
-cd mobile
-../scripts/build-native-network.sh   # go test/vet + x86_64 and arm64-v8a c-shared builds
-../scripts/test-cabi.sh              # host C ABI link/smoke test
-cd android && ./gradlew :app:connectedDebugAndroidTest
+source mobile/scripts/mobile-env.sh
+mobile/scripts/test-cabi.sh
+cd mobile/android
+./gradlew :app:verifyDebugJniContract
+./gradlew :app:connectedDebugAndroidTest
 ```
 
-Android shared libraries are generated under `app/src/main/jniLibs/` and are intentionally
-gitignored. The `qualify-emulator.sh --native-tests` runner builds them, boots the AVD, runs
-Android instrumentation and then executes the fixture probe.
+Gradle builds the Go libraries under `mobile/android/native-network/build/generated/go-network/`.
+The default build includes `x86_64` and `arm64-v8a`. To build only Arm64, add
+`-PmobileAbis=arm64-v8a` to the Gradle command.
+
+To build the Go libraries separately, run `mobile/scripts/build-native-network.sh` from the
+repository root. This script runs Go tests and `go vet`, then writes the libraries to
+`mobile/android/native-network/build/standalone/go-network/` by default.
 
 ## Security rules
 

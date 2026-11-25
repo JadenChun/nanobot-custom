@@ -1,5 +1,6 @@
 package ai.kohaku.mobile.network
 
+import ai.kohaku.nativenetwork.NativeNetwork
 import android.util.Base64
 import android.util.Log
 import androidx.test.ext.junit.runners.AndroidJUnit4

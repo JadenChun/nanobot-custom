@@ -214,9 +214,14 @@ seam and checks ABI version, invalid-config fail-closed behavior and unknown-han
 
 ## Native transport
 
-`mobile/native-network/` contains the M03 Go `tsnet` transport and typed C ABI. Build the
-Android libraries with `mobile/scripts/build-native-network.sh` before Gradle; they are
-generated into `android/app/src/main/jniLibs/` and are not tracked. Host ABI smoke test:
+`mobile/native-network/` contains the Go `tsnet` transport and typed C ABI. The
+`:native-network` Android library contains the Kotlin JNI declarations and the C JNI code.
+Gradle builds the Go libraries under `android/native-network/build/generated/go-network/`.
+Add `-PmobileAbis=arm64-v8a` to the Gradle command to build an Arm64-only APK.
+
+Gradle checks the compiled JNI declarations against the C registration tables before it packages
+the APK. To run the check on its own, run `./gradlew :app:verifyDebugJniContract` from
+`mobile/android`. To run the host C ABI smoke test, use this command from the repository root.
 
 ```bash
 mobile/scripts/test-cabi.sh

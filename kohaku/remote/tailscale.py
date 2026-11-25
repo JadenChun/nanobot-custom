@@ -36,12 +36,13 @@ def _serve_target(
     *,
     dns_name: str,
     expected_port: int | None,
-) -> str | None:
-    """Return the exact /mobile/v1 proxy target, if it matches the host."""
+) -> tuple[str, str]:
+    """Return the proxy target and its readiness issue."""
     web = serve.get("Web")
     if not isinstance(web, dict):
-        return None
+        return "", "serve_missing"
     web_map = cast(dict[str, Any], web)
+    issue = "serve_missing"
     for key, entry in web_map.items():
         if not key.startswith(f"{dns_name}:"):
             continue
@@ -52,48 +53,59 @@ def _serve_target(
         if not isinstance(handlers, dict):
             continue
         handler_map = cast(dict[str, Any], handlers)
-        handler = handler_map.get("/mobile/v1")
+        if "/mobile/v1" not in handler_map:
+            continue
+        if issue == "serve_missing":
+            issue = "serve_wrong_port"
+        handler = handler_map["/mobile/v1"]
         if not isinstance(handler, dict):
             continue
         handler_value = cast(dict[str, Any], handler)
         proxy = handler_value.get("Proxy")
         if not isinstance(proxy, str) or not proxy:
             continue
-        if expected_port is not None:
+        try:
             parsed = urlparse(proxy)
-            if (
-                parsed.scheme != "http"
-                or parsed.hostname not in {"127.0.0.1", "::1", "localhost"}
-                or parsed.port != expected_port
-            ):
-                continue
-        return proxy
-    return None
+            port = parsed.port
+        except ValueError:
+            continue
+        if (
+            parsed.scheme != "http"
+            or parsed.hostname not in {"127.0.0.1", "::1", "localhost"}
+            or (expected_port is not None and port != expected_port)
+        ):
+            continue
+        if parsed.path.rstrip("/") != "/mobile/v1":
+            issue = "serve_path_stripped"
+            continue
+        return proxy, ""
+    return "", issue
 
 
 def tailscale_status(expected_port: int | None = None) -> dict[str, Any]:
     """Return bounded readiness data; never mutate Tailscale or Serve state."""
 
+    port = expected_port if expected_port is not None else 18790
+    result: dict[str, Any] = {
+        "available": False,
+        "connected": False,
+        "serve_mapped": False,
+        "serve_target": "",
+        "dns_name": "",
+        "origin": "",
+        "expected_port": expected_port,
+        "recommended_command": (
+            "tailscale serve --bg --https=443 --set-path=/mobile/v1 "
+            f"http://127.0.0.1:{port}/mobile/v1"
+        ),
+    }
     binary = shutil.which("tailscale")
     if binary is None:
-        return {
-            "available": False,
-            "connected": False,
-            "serve_mapped": False,
-            "dns_name": "",
-            "origin": "",
-            "error": "tailscale CLI is not installed",
-        }
+        return {**result, "issue": "cli_missing", "error": "The Tailscale CLI is not installed."}
     status = _run_json([binary, "status", "--json"])
+    not_running = "Tailscale is not running or not signed in."
     if status is None:
-        return {
-            "available": True,
-            "connected": False,
-            "serve_mapped": False,
-            "dns_name": "",
-            "origin": "",
-            "error": "Tailscale is not running or not signed in",
-        }
+        return {**result, "available": True, "issue": "not_running", "error": not_running}
     self_info: object = status.get("Self")
     self_object: dict[str, Any] = (
         cast(dict[str, Any], self_info) if isinstance(self_info, dict) else {}
@@ -103,18 +115,27 @@ def tailscale_status(expected_port: int | None = None) -> dict[str, Any]:
     backend_state = status.get("BackendState")
     connected = isinstance(backend_state, str) and backend_state == "Running"
     serve = _run_json([binary, "serve", "status", "--json"]) or {}
-    target = _serve_target(serve, dns_name=dns_text, expected_port=expected_port)
-    mapped = target is not None
-    origin = f"https://{dns_text}" if dns_text else ""
+    target, issue = _serve_target(serve, dns_name=dns_text, expected_port=expected_port)
+    if not connected:
+        issue = "not_running"
+    port_hint = f" on port {expected_port}" if expected_port is not None else ""
+    errors = {
+        "": "",
+        "not_running": not_running,
+        "serve_missing": "Tailscale Serve is missing the exact /mobile/v1 target on this host.",
+        "serve_wrong_port": f"The /mobile/v1 Serve target must use loopback HTTP{port_hint}.",
+        "serve_path_stripped": (
+            "Tailscale Serve strips /mobile/v1 when the proxy URL omits that path."
+        ),
+    }
     return {
+        **result,
         "available": True,
         "connected": connected,
-        "serve_mapped": mapped,
-        "serve_target": target or "",
+        "serve_mapped": bool(target),
+        "serve_target": target,
         "dns_name": dns_text,
-        "origin": origin,
-        "error": "" if connected and mapped else (
-            "Tailscale Serve is missing the exact /mobile/v1 target"
-            if connected else "Tailscale is not connected"
-        ),
+        "origin": f"https://{dns_text}" if dns_text else "",
+        "issue": issue,
+        "error": errors[issue],
     }
