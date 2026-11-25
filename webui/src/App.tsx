@@ -1559,13 +1559,15 @@ function Shell({
     workspaceScope?: WorkspaceScopePayload | null,
     _initialMessage?: string,
     modelPreset?: string | null,
-    options?: { fullAccess?: boolean; harness?: ChatHarness },
+    options?: { fullAccess?: boolean; harness?: ChatHarness; reasoningEffort?: string | null },
   ) => {
     try {
       const scope = workspaceScope ?? activeWorkspaceScope;
       const chatId = await (options?.harness === "claude_sdk"
-        ? createChat(scope, modelPreset, options.harness)
-        : createChat(scope, modelPreset));
+        ? createChat(scope, modelPreset, options.harness, options?.reasoningEffort)
+        : options?.reasoningEffort
+          ? createChat(scope, modelPreset, undefined, options.reasoningEffort)
+          : createChat(scope, modelPreset));
       const key = `websocket:${chatId}`;
       if (options?.fullAccess) {
         const prepared = await prepareWorkspaceFullAccess(client, chatId);

@@ -715,6 +715,55 @@ class WebUICommandRouter:
             return fields, None
         return fields, snapshot
 
+    def _apply_new_chat_model_selection(
+        self,
+        chat_id: str,
+        scope: WorkspaceScope,
+        requested_preset: str | None,
+        requested_effort: str | None,
+    ) -> None:
+        """Persist validated model_preset / reasoning_effort inline during new_chat."""
+        sessions = self.gateway.session_manager
+        if sessions is None:
+            return
+        from kohaku.config.loader import ConfigLoadError, load_config
+        from kohaku.providers.registry import reasoning_effort_values_for
+        from kohaku.session.model_selection import (
+            SESSION_MODEL_PRESET_METADATA_KEY,
+            SESSION_REASONING_EFFORT_METADATA_KEY,
+        )
+
+        try:
+            config = self.gateway.settings.read(load_config, apply_network_policy=False)
+        except ConfigLoadError:
+            return
+        preset_name = requested_preset or config.agents.defaults.model_preset
+        if not preset_name or preset_name not in config.model_presets:
+            return
+        preset = config.model_presets[preset_name]
+        metadata: dict[str, Any] = {
+            "webui": True,
+            WORKSPACE_SCOPE_METADATA_KEY: scope.metadata(),
+            SESSION_MODEL_PRESET_METADATA_KEY: preset_name,
+        }
+        if requested_effort is not None:
+            provider_name = (
+                preset.provider
+                if preset.provider and preset.provider != "auto"
+                else config.get_provider_name(preset.model)
+            )
+            if not provider_name:
+                return
+            levels = reasoning_effort_values_for(provider_name, preset.model)
+            if requested_effort not in levels:
+                return
+            metadata[SESSION_REASONING_EFFORT_METADATA_KEY] = requested_effort
+        sessions.upsert_session_metadata(
+            webui_session_key(chat_id),
+            metadata,
+            create_if_absent=True,
+        )
+
     async def dispatch(
         self,
         connection: ServerConnection,
@@ -822,6 +871,28 @@ class WebUICommandRouter:
                     return
             else:
                 self._workspaces.stage_scope(new_id, scope)
+            raw_model_preset = envelope.get("model_preset")
+            raw_reasoning_effort = envelope.get("reasoning_effort")
+            requested_preset = (
+                raw_model_preset.strip()
+                if isinstance(raw_model_preset, str) and raw_model_preset.strip()
+                else None
+            )
+            requested_effort = (
+                raw_reasoning_effort.strip()
+                if isinstance(raw_reasoning_effort, str) and raw_reasoning_effort.strip()
+                else None
+            )
+            if (requested_preset is not None or requested_effort is not None) and (
+                self.gateway.session_manager is not None
+            ):
+                await asyncio.to_thread(
+                    self._apply_new_chat_model_selection,
+                    new_id,
+                    scope,
+                    requested_preset,
+                    requested_effort,
+                )
             self._transport.webui_attach(connection, new_id)
             fields = self._session_projection.attach_fields(webui_session_key(new_id))
             if _typed_mobile_identity(connection) is not None and "harness_capabilities" not in fields:
@@ -1657,10 +1728,11 @@ class WebUICommandRouter:
             if mcp_presets:
                 metadata["mcp_presets"] = mcp_presets
             session_mentions: list[SessionMention] = []
-            if trusted_webui and self._session_access is not None:
+            raw_session_mentions = envelope.get("session_mentions")
+            if trusted_webui and self._session_access is not None and raw_session_mentions:
                 session_mentions = await asyncio.to_thread(
                     self._session_access.normalize_mentions,
-                    envelope.get("session_mentions"),
+                    raw_session_mentions,
                     exclude_session_key=webui_session_key(chat_id),
                 )
                 if session_mentions:
@@ -1782,33 +1854,6 @@ class WebUICommandRouter:
                     workspace_scope=scope,
                     permission_reference=permission_reference,
                 )
-                if temporary_policy is None:
-                    stripped_content = content.strip()
-                    is_model_cmd = (
-                        bool(stripped_content)
-                        and stripped_content.lower().split(maxsplit=1)[0] == "/model"
-                    )
-                    should_persist_scope = (
-                        not was_chat_running
-                        and not is_stop
-                        and request_intent != "steer"
-                        and (
-                            not is_model_cmd
-                            or self.gateway.session_manager is None
-                            or self.gateway.session_manager.read_session_metadata(
-                                webui_session_key(chat_id)
-                            )
-                            is None
-                        )
-                    )
-                    if should_persist_scope:
-                        def _persist_scope_and_defaults() -> None:
-                            self._workspaces.persist_scope(chat_id, scope)
-                            self._workspaces.remember_request_defaults(
-                                chat_id, scope, skip_if_unchanged=True,
-                            )
-
-                        await asyncio.to_thread(_persist_scope_and_defaults)
                 accepted = True
             finally:
                 if not accepted and queued_owner is not None:
@@ -1849,6 +1894,34 @@ class WebUICommandRouter:
                         else {}
                     ),
                 )
+
+            if temporary_policy is None:
+                stripped_content = content.strip()
+                is_model_cmd = (
+                    bool(stripped_content)
+                    and stripped_content.lower().split(maxsplit=1)[0] == "/model"
+                )
+                if (
+                    not was_chat_running
+                    and not is_stop
+                    and request_intent != "steer"
+                ):
+                    def _persist_scope_and_defaults() -> None:
+                        if (
+                            is_model_cmd
+                            and self.gateway.session_manager is not None
+                            and self.gateway.session_manager.read_session_metadata(
+                                webui_session_key(chat_id)
+                            )
+                            is not None
+                        ):
+                            return
+                        self._workspaces.persist_scope(chat_id, scope)
+                        self._workspaces.remember_request_defaults(
+                            chat_id, scope, skip_if_unchanged=True,
+                        )
+
+                    await asyncio.to_thread(_persist_scope_and_defaults)
 
         finally:
             if not accepted and queued_owner is not None:

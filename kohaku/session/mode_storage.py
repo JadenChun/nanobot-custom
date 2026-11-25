@@ -1367,6 +1367,112 @@ class SessionModeStorage:
                 os.close(directory)
             os.close(parent)
 
+    def scan_journal_versions(
+        self,
+    ) -> tuple[
+        tuple[str, tuple[int, int] | None, tuple[tuple[str, PrivateFileVersion], ...]],
+        ...,
+    ]:
+        """Scan live journal directories under one pinned path validation.
+
+        Returns ``(operation_id, dir_identity, file_versions)`` for each entry in
+        ``.session-mode/journals``. Any non-standard entry yields ``dir_identity=None``
+        so callers fall back to full per-record validation with identical diagnostics.
+        """
+        try:
+            parent, leaf = self._parent(".session-mode/journals")
+        except FileNotFoundError:
+            return ()
+        journals_fd = -1
+        try:
+            dir_flags = (
+                os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0)
+            )
+            journals_fd = os.open(leaf, dir_flags, dir_fd=parent)
+            value = os.fstat(journals_fd)
+            euid = os.geteuid()
+            if (
+                not stat.S_ISDIR(value.st_mode)
+                or value.st_uid != euid
+                or value.st_mode & 0o777 != 0o700
+            ):
+                raise _mode_error()
+            journals_identity = (value.st_dev, value.st_ino)
+            journals_key = (False, (".session-mode", "journals"))
+            known_journals = self._directory_identities.setdefault(
+                journals_key, journals_identity,
+            )
+            if known_journals != journals_identity:
+                raise _mode_error()
+            names = sorted(os.listdir(journals_fd))
+            if len(names) > MODE_ENUM_LIMIT:
+                raise _mode_error()
+            results: list[
+                tuple[str, tuple[int, int] | None, tuple[tuple[str, PrivateFileVersion], ...]]
+            ] = []
+            for op in names:
+                if not _hex32(op):
+                    results.append((op, None, ()))
+                    continue
+                op_fd = -1
+                try:
+                    op_fd = os.open(op, dir_flags, dir_fd=journals_fd)
+                    op_stat = os.fstat(op_fd)
+                    if (
+                        not stat.S_ISDIR(op_stat.st_mode)
+                        or op_stat.st_uid != euid
+                        or op_stat.st_mode & 0o777 != 0o700
+                    ):
+                        results.append((op, None, ()))
+                        continue
+                    op_identity = (op_stat.st_dev, op_stat.st_ino)
+                    op_key = (False, (".session-mode", "journals", op))
+                    known_op = self._directory_identities.get(op_key)
+                    if known_op is not None and known_op != op_identity:
+                        results.append((op, None, ()))
+                        continue
+                    file_names = sorted(os.listdir(op_fd))
+                    if (
+                        not file_names
+                        or len(file_names) > MODE_ENUM_LIMIT
+                        or any(not item.endswith(".json") for item in file_names)
+                    ):
+                        results.append((op, None, ()))
+                        continue
+                    versions: list[tuple[str, PrivateFileVersion]] = []
+                    valid = True
+                    for item in file_names:
+                        ver = private_file_version(
+                            os.stat(item, dir_fd=op_fd, follow_symlinks=False)
+                        )
+                        if ver is None:
+                            valid = False
+                            break
+                        versions.append((item, ver))
+                    if not valid:
+                        results.append((op, None, ()))
+                        continue
+                    if known_op is None:
+                        self._directory_identities[op_key] = op_identity
+                    results.append((op, op_identity, tuple(versions)))
+                except OSError:
+                    results.append((op, None, ()))
+                finally:
+                    if op_fd >= 0:
+                        os.close(op_fd)
+            if self._identity(journals_fd) != journals_identity:
+                raise _mode_error()
+            self._verify_parent(".session-mode/journals", parent)
+            return tuple(results)
+        except FileNotFoundError:
+            return ()
+        except OSError:
+            raise _mode_error() from None
+        finally:
+            if journals_fd >= 0:
+                os.close(journals_fd)
+            os.close(parent)
+
     def list_namespace(self) -> tuple[str, ...]:
         self._require_current()
         descriptor = -1

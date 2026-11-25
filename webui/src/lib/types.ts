@@ -2368,7 +2368,13 @@ export interface ApprovalDecisionPayload {
 }
 
 export type Outbound =
-  | { type: "new_chat"; workspace_scope?: WorkspaceScopePayload; harness?: ChatHarness }
+  | {
+      type: "new_chat";
+      workspace_scope?: WorkspaceScopePayload;
+      harness?: ChatHarness;
+      model_preset?: string;
+      reasoning_effort?: string;
+    }
   | { type: "new_temporary_chat" }
   | {
       type: "webui_request";

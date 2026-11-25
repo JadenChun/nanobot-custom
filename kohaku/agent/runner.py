@@ -806,9 +806,11 @@ class AgentRunner:
         try:
             request_state = self._make_request_state(spec, messages, compaction)
             if request_state.source is not None:
+                before_epoch = request_state.source.projection_epoch
                 self.context_governor.admit_source_checkpoint(request_state, request_state.source.transcript,
                     tool_definitions=spec.tools.get_definitions())
-                context.messages = deepcopy(messages)
+                if request_state.source.projection_epoch != before_epoch:
+                    context.messages = deepcopy(messages)
             await hook.before_run(context)
             result = await self._run_core(spec, hook, messages, request_state)
         except asyncio.CancelledError as exc:

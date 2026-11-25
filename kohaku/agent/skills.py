@@ -73,6 +73,32 @@ class SkillsLoader:
         self.disabled_skills = disabled_skills or set()
         self.extra_paths = extra_paths or []
         self.resource_policy = resource_policy
+        self._frontmatter_cache: dict[str, tuple[int, int, dict[str, object] | None]] = {}
+
+    def _read_metadata_from_path(self, path_str: str) -> dict[str, object] | None:
+        """Read and parse YAML frontmatter from a skill file, cached by (mtime_ns, size)."""
+        path = Path(path_str)
+        try:
+            st = path.stat()
+        except OSError:
+            self._frontmatter_cache.pop(path_str, None)
+            return None
+        cached = self._frontmatter_cache.get(path_str)
+        if cached is not None and cached[0] == st.st_mtime_ns and cached[1] == st.st_size:
+            return cached[2]
+        try:
+            content = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeError):
+            self._frontmatter_cache.pop(path_str, None)
+            return None
+        parsed = parse_skill_metadata(content)
+        self._frontmatter_cache[path_str] = (st.st_mtime_ns, st.st_size, parsed)
+        return parsed
+
+    def _get_skill_meta_for_entry(self, entry: dict[str, str]) -> dict[str, Any]:
+        """Extract nanobot metadata directly from a resolved skill entry without re-listing."""
+        raw_meta = self._read_metadata_from_path(entry["path"]) or {}
+        return self._parse_nanobot_metadata(raw_meta.get("metadata"))
 
     def _skill_aliases(self) -> dict[str, str]:
         """Return compatibility aliases owned by installed CLI Apps."""
@@ -225,7 +251,11 @@ class SkillsLoader:
 
         skills = [entry for entry in skills if self._skill_read_allowed(entry)]
         if filter_unavailable:
-            return [skill for skill in skills if self._check_requirements(self._get_skill_meta(skill["name"]))]
+            return [
+                skill
+                for skill in skills
+                if self._check_requirements(self._get_skill_meta_for_entry(skill))
+            ]
         return skills
 
     def load_skill(self, name: str) -> str | None:
@@ -381,9 +411,11 @@ class SkillsLoader:
                 )
             for entry in entries:
                 skill_name = entry["name"]
-                meta = self._get_skill_meta(skill_name)
+                raw_meta = self._read_metadata_from_path(entry["path"]) or {}
+                meta = self._parse_nanobot_metadata(raw_meta.get("metadata"))
                 available = self._check_requirements(meta)
-                desc = self.get_skill_description(skill_name)
+                description = raw_meta.get("description")
+                desc = description if isinstance(description, str) and description else skill_name
                 suffix = ""
                 if not available:
                     missing = self._get_missing_requirements(meta)
@@ -514,7 +546,7 @@ class SkillsLoader:
         return [
             entry["name"]
             for entry in self.list_skills(filter_unavailable=True)
-            if (meta := self.get_skill_metadata(entry["name"]) or {})
+            if (meta := self._read_metadata_from_path(entry["path"]) or {})
             and (
                 self._parse_nanobot_metadata(meta.get("metadata")).get("always")
                 or meta.get("always")

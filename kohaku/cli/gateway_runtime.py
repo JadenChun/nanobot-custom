@@ -522,6 +522,7 @@ def _run_gateway(
         tasks: list[asyncio.Task[Any]] = []
         local_trigger_task: asyncio.Task[None] | None = None
         identity_publish_task: asyncio.Task[None] | None = None
+        token_warmup_task: asyncio.Task[None] | None = None
         shutdown = asyncio.Event()
         processes = None
         cron_gateway = None
@@ -713,6 +714,11 @@ def _run_gateway(
                     asyncio.create_task(channels.start_all()),
                     asyncio.create_task(monitor_clients()),
                 ])
+                from kohaku.utils.helpers import warm_token_encodings
+
+                token_warmup_task = asyncio.create_task(
+                    asyncio.to_thread(warm_token_encodings)
+                )
                 if processes is not None:
                     await processes.astart()
                 if cron_gateway is not None:
@@ -761,6 +767,10 @@ def _run_gateway(
             primary_error = exc
             raise
         finally:
+            if token_warmup_task is not None and not token_warmup_task.done():
+                token_warmup_task.cancel()
+                with suppress(asyncio.CancelledError, Exception):
+                    await token_warmup_task
             if identity_publish_task is not None and not identity_publish_task.done():
                 identity_publish_task.cancel()
                 try:

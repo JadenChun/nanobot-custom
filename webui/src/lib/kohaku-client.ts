@@ -425,6 +425,8 @@ export class KohakuClient {
   private harnessAvailabilityHandlers = new Set<(available: boolean) => void>();
   private externalApprovals = new Map<string, Map<string, Extract<InboundEvent, { event: "external_approval" }>>>();
   private harnessBindings = new Map<string, HarnessBinding>();
+  private attachedModelPresets = new Map<string, string | null>();
+  private attachedReasoningEfforts = new Map<string, string | null>();
 
   // Set by ``close()`` so the onclose handler knows the drop was intentional
   // and must not schedule a reconnect or flip status back to "reconnecting".
@@ -470,6 +472,14 @@ export class KohakuClient {
 
   getHarnessBinding(chatId: string): HarnessBinding | undefined {
     return this.harnessBindings.get(chatId);
+  }
+
+  getAttachedModelPreset(chatId: string): string | null | undefined {
+    return this.attachedModelPresets.get(chatId);
+  }
+
+  getAttachedReasoningEffort(chatId: string): string | null | undefined {
+    return this.attachedReasoningEfforts.get(chatId);
   }
 
   onRuntimeModelUpdate(handler: RuntimeModelHandler): Unsubscribe {
@@ -1426,7 +1436,10 @@ export class KohakuClient {
 
   /** Ask the server to provision a new chat_id; resolves with the assigned id. */
   newChat(
-    timeoutMs: number = 5_000, workspaceScope?: WorkspaceScopePayload | null, harness?: ChatHarness,
+    timeoutMs: number = 5_000,
+    workspaceScope?: WorkspaceScopePayload | null,
+    harness?: ChatHarness,
+    selection?: { modelPreset?: string | null; reasoningEffort?: string | null },
   ): Promise<string> {
     if (this.pendingNewChat) {
       return Promise.reject(new Error("newChat already in flight"));
@@ -1441,6 +1454,8 @@ export class KohakuClient {
         type: "new_chat",
         ...(harness === "claude_sdk" ? { harness } : {}),
         ...(workspaceScope ? { workspace_scope: workspaceScope } : {}),
+        ...(selection?.modelPreset ? { model_preset: selection.modelPreset } : {}),
+        ...(selection?.reasoningEffort ? { reasoning_effort: selection.reasoningEffort } : {}),
       });
     });
   }
@@ -2201,6 +2216,12 @@ export class KohakuClient {
     if (parsed.event === "attached") {
       this.externalApprovals.delete(parsed.chat_id);
       if (parsed.harness_binding) this.harnessBindings.set(parsed.chat_id, parsed.harness_binding);
+      if ("model_preset" in parsed) {
+        this.attachedModelPresets.set(parsed.chat_id, parsed.model_preset ?? null);
+      }
+      if ("reasoning_effort" in parsed) {
+        this.attachedReasoningEfforts.set(parsed.chat_id, parsed.reasoning_effort ?? null);
+      }
       const capability = parseAttemptCapability(parsed.input_attempt_source, parsed.chat_id);
       if (capability && parsed.temporary !== true) this.inputAttemptSources.set(parsed.chat_id, capability);
       else this.inputAttemptSources.delete(parsed.chat_id);
@@ -2762,6 +2783,8 @@ export class KohakuClient {
     this.chatHandlers.delete(chatId);
     this.externalApprovals.delete(chatId);
     this.harnessBindings.delete(chatId);
+    this.attachedModelPresets.delete(chatId);
+    this.attachedReasoningEfforts.delete(chatId);
     this.pendingInboundByChat.delete(chatId);
     const wasRunning = this.runStartedAtByChatId.delete(chatId);
     const hadOwnedRun = this.hasOwnedRun(chatId);
