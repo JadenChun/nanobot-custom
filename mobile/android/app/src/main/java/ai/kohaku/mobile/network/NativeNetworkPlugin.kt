@@ -2,8 +2,10 @@ package ai.kohaku.mobile.network
 
 import ai.kohaku.nativenetwork.NativeNetwork
 import android.Manifest
+import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.app.PendingIntent
 import android.app.Activity
 import android.content.Context
 import android.content.Intent
@@ -44,10 +46,31 @@ import ai.kohaku.mobile.links.PairingChallenge
 import ai.kohaku.mobile.links.PairingChallengeCodec
 import ai.kohaku.mobile.links.PairingLinkParser
 import ai.kohaku.mobile.media.MediaHandleStore
+import ai.kohaku.mobile.network.pairing.CollectedPairing
+import ai.kohaku.mobile.network.pairing.NativeHttpException
+import ai.kohaku.mobile.network.pairing.NativeTransportException
+import ai.kohaku.mobile.network.pairing.PairingAttempt
+import ai.kohaku.mobile.network.pairing.PairingConnection
+import ai.kohaku.mobile.network.pairing.PairingCoordinator
+import ai.kohaku.mobile.network.pairing.PairingCredentials
+import ai.kohaku.mobile.network.pairing.PairingCustody
+import ai.kohaku.mobile.network.pairing.PairingMethod
+import ai.kohaku.mobile.network.pairing.PairingPollResult
+import ai.kohaku.mobile.network.pairing.PairingProgress
+import ai.kohaku.mobile.network.pairing.PairingRequest
+import ai.kohaku.mobile.network.pairing.PairingScheduler
+import ai.kohaku.mobile.network.pairing.PairingSnapshot
+import ai.kohaku.mobile.network.pairing.PairingStage
+import ai.kohaku.mobile.network.pairing.PairingTarget
+import ai.kohaku.mobile.network.pairing.PairingTransport
+import ai.kohaku.mobile.network.pairing.StoredPairing
+import ai.kohaku.mobile.network.pairing.TailscaleState
 import java.util.Locale
+import java.util.UUID
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executors
+import java.util.concurrent.RejectedExecutionException
 import java.util.concurrent.ScheduledExecutorService
 import java.util.concurrent.ScheduledFuture
 import java.util.concurrent.TimeUnit
@@ -64,6 +87,8 @@ import java.io.ByteArrayOutputStream
 class NativeNetworkPlugin : Plugin() {
     private companion object {
         private const val NOTIFICATION_GRACE_MS = 2_000L
+        private const val PAIRING_NOTIFICATION_CHANNEL = "kohaku_pairing_status"
+        private const val PAIRING_NOTIFICATION_ID = 4102
         private const val TAG = "NanobotNetwork"
         private const val HOSTNAME_PREFIX = "kohaku-"
         private const val MAX_DNS_LABEL_LENGTH = 63
@@ -72,23 +97,22 @@ class NativeNetworkPlugin : Plugin() {
     }
 
     @Volatile private var transportHandle: Long = 0L
-    private var stateRecoveryAttempted = false
+    @Volatile private var stateRecoveryAttempted = false
     private val pollExecutor: ScheduledExecutorService = Executors.newSingleThreadScheduledExecutor()
     private val retryExecutor: ScheduledExecutorService = Executors.newSingleThreadScheduledExecutor()
     private val retryTimer = ScheduledRetryTimer(retryExecutor)
+    private val pairingExecutor = Executors.newSingleThreadExecutor()
     private val operationExecutor = Executors.newCachedThreadPool()
     @Volatile private var requests = NativeRequestCorrelator<JSONObject>()
     @Volatile private var admission = NativeRequestAdmission(timer = retryTimer)
     private data class PendingWsFrame(val kind: Int, val data: ByteArrayOutputStream)
     private val pendingWsFrames = ConcurrentHashMap<Long, PendingWsFrame>()
-    @Volatile private var activePairing: PairingChallenge? = null
-    private data class PairingApproval(
-        val pairingId: String,
-        val generation: Long,
-        val handle: Long,
-        val response: JSONObject,
-    )
-    private var pairingApproval: PairingApproval? = null
+    @Volatile private var loginTabOpen = false
+    @Volatile private var isActivityResumed = false
+    @Volatile private var destroyed = false
+    private var transportTarget: Pair<String, String>? = null
+    private var legacyPendingLink: PairingSnapshot? = null
+    private val pairingWaiters = mutableListOf<(PairingSnapshot) -> Boolean>()
     private data class RefreshAttempt(
         val origin: String,
         val installationId: String,
@@ -126,7 +150,19 @@ class NativeNetworkPlugin : Plugin() {
 
     override fun handleOnResume() {
         super.handleOnResume()
+        isActivityResumed = true
+        loginTabOpen = false
+        context.getSystemService(NotificationManager::class.java).cancel(PAIRING_NOTIFICATION_ID)
+        dispatchPairing {
+            readPairingState()
+            pairingCoordinator.checkResume()
+        }
         notifyNativeNetworkChanged()
+    }
+
+    override fun handleOnPause() {
+        isActivityResumed = false
+        super.handleOnPause()
     }
 
     private fun registerNetworkCallback() {
@@ -281,8 +317,6 @@ class NativeNetworkPlugin : Plugin() {
                         attempt.handle == 0L || transportHandle != attempt.handle
                     ) return@withAuthority null
                     custody.cancelPairing()
-                    activePairing = null
-                    pairingApproval = null
                     RunKeepAliveRegistry.clear()
                     RunKeepAliveService.stop(context.applicationContext)
                     NativeNetwork.mediaPurge(attempt.handle)
@@ -295,6 +329,9 @@ class NativeNetworkPlugin : Plugin() {
         } catch (_: Exception) {
             null
         } ?: return failure
+        dispatchPairing {
+            if (custody.attemptGeneration() == clearedGeneration) pairingCoordinator.invalidate()
+        }
         mainHandler.post {
             synchronized(this) {
                 try {
@@ -425,150 +462,167 @@ class NativeNetworkPlugin : Plugin() {
         }
     }
 
-    @PluginMethod
-    fun pairStart(call: PluginCall) {
-        val origin = call.getString("origin")
-        val installationId = call.getString("installationId")
-        val rawChallenge = call.getString("challenge")
-        val requestedLabel = call.getString("label")?.trim().orEmpty()
-        val label = if (
-            requestedLabel.isEmpty() ||
-            requestedLabel.equals("android", ignoreCase = true) ||
-            requestedLabel.equals("phone", ignoreCase = true)
-        ) {
-            defaultDeviceLabel()
-        } else {
-            requestedLabel.take(64)
+    private val pairingCoordinatorDelegate = lazy {
+        PairingCoordinator(
+            pairingTransport, pairingCustody,
+            PairingScheduler { delay, action ->
+                retryExecutor.schedule({ if (!destroyed) operationExecutor.execute(action) }, delay, TimeUnit.MILLISECONDS)
+            },
+        ) { snapshot ->
+            mainHandler.post {
+                if (!destroyed) notifyListeners("pairingStateChanged", snapshot.toJSObject())
+            }
+            dispatchPairing(::settlePairingWaiters)
         }
-        if (origin.isNullOrBlank() || installationId.isNullOrBlank()) {
+    }
+    private val pairingCoordinator: PairingCoordinator by pairingCoordinatorDelegate
+
+    private fun settlePairingWaiters() {
+        if (pairingWaiters.isEmpty()) return
+        val current = pairingCoordinator.state()
+        pairingWaiters.removeAll { it(current) }
+    }
+
+    private fun dispatchPairing(action: () -> Unit) {
+        if (destroyed) return
+        try {
+            pairingExecutor.execute {
+                if (!destroyed) action()
+            }
+        } catch (failure: RejectedExecutionException) {
+            if (!destroyed) throw failure
+        }
+    }
+
+    private fun pairingCall(call: PluginCall, action: () -> Unit) = dispatchPairing {
+        try {
+            action()
+        } catch (_: Exception) {
+            call.reject("Pairing is unavailable.")
+        }
+    }
+
+    private fun readPairingState(): PairingSnapshot {
+        val raw = MainActivity.pendingPairingLink ?: return pairingCoordinator.state()
+        MainActivity.pendingPairingLink = null
+        return startPairingLink(raw, PairingMethod.LINK, restore = true)
+    }
+
+    private fun startPairingLink(raw: String, method: PairingMethod, restore: Boolean = false): PairingSnapshot =
+        pairingCoordinator.startWithLink(raw, method, defaultDeviceLabel(), restore).also { legacyPendingLink = it }
+
+    @PluginMethod
+    fun pairingState(call: PluginCall) = pairingCall(call) { call.resolve(readPairingState().toJSObject()) }
+
+    @PluginMethod
+    fun pairWithLink(call: PluginCall) = pairingCall(call) {
+        val snapshot = pairingCoordinator.startWithLink(call.getString("rawLink").orEmpty(), label = defaultDeviceLabel())
+        call.resolve(snapshot.toJSObject())
+    }
+
+    @PluginMethod
+    fun pairWithCode(call: PluginCall) = pairingCall(call) {
+        val snapshot = pairingCoordinator.startWithCode(
+            call.getString("origin").orEmpty(), call.getString("code").orEmpty(), defaultDeviceLabel(),
+        )
+        call.resolve(snapshot.toJSObject())
+    }
+
+    @PluginMethod
+    fun pairRetry(call: PluginCall) = pairingCall(call) {
+        readPairingState()
+        call.resolve(pairingCoordinator.retry().toJSObject())
+    }
+
+    @PluginMethod
+    fun pairResetToIdle(call: PluginCall) = pairingCall(call) {
+        legacyPendingLink = null
+        call.resolve(pairingCoordinator.resetToIdle().toJSObject())
+    }
+
+    @PluginMethod
+    fun pairCheckResume(call: PluginCall) = pairingCall(call) {
+        readPairingState()
+        call.resolve(pairingCoordinator.checkResume().toJSObject())
+    }
+
+    @PluginMethod
+    fun pairStart(call: PluginCall) = pairingCall(call) {
+        val origin = call.getString("origin").orEmpty()
+        val installationId = call.getString("installationId").orEmpty()
+        if (origin.isBlank() || installationId.isBlank()) {
             call.reject("origin and installationId are required")
-            return
+            return@pairingCall
         }
-        val challenge = try {
-            if (!rawChallenge.isNullOrBlank()) {
-                PairingChallengeCodec.decode(rawChallenge).also { activePairing = it }
-            } else {
-                activePairing ?: throw IllegalStateException("no pending pairing challenge")
+        val raw = call.getString("challenge")
+        val snapshot = if (raw.isNullOrBlank()) {
+            val current = readPairingState()
+            if (current.origin != origin.trimEnd('/') || current.installationId != installationId ||
+                current.attemptId == null || current.method == PairingMethod.CODE
+            ) {
+                call.reject("no pending pairing challenge")
+                return@pairingCall
             }
-        } catch (exception: Exception) {
-            call.reject(exception.message ?: "pairing challenge is invalid")
-            return
+            pairingCoordinator.retry()
+        } else {
+            pairingCoordinator.startWithChallenge(origin, installationId, raw, pairingLabel(call))
         }
-        val generation = try {
-            custody.beginPairing(origin, installationId, challenge = PairingChallengeCodec.encode(challenge), label = label)
-        } catch (exception: Exception) {
-            call.reject(exception.message ?: "pending pairing could not be persisted")
-            return
-        }
-        operationExecutor.execute {
-            try {
-                val existing = custody.load()
-                if (
-                    transportHandle == 0L ||
-                    existing == null ||
-                    existing.origin != origin ||
-                    existing.installationId != installationId
-                ) {
-                    startTransport(origin, installationId, generation)
-                }
-                waitUntilReady()
-                custody.requirePairing(generation)
-                val collected = jsonRequest(
-                    "mobile_pair_collect",
-                    "/mobile/v1/pair/collect",
-                    body = null,
-                    headers = mapOf(
-                        "X-Nanobot-Pairing-Id" to challenge.pairingId,
-                        "X-Nanobot-Pairing-Nonce" to challenge.nonce,
-                        "X-Nanobot-Pairing-Secret" to challenge.collectorSecret,
-                        "X-Nanobot-Installation" to installationId,
-                        "X-Nanobot-Label" to label,
-                        "X-Nanobot-Device-Key" to DeviceProofCanonicalizer.encode(custody.deviceProofPublicKey()),
-                    ),
-                )
-                custody.withPairing(generation) {
-                    custody.savePendingPairing(origin, installationId, challenge.pairingId,
-                        PairingChallengeCodec.encode(challenge), generation)
-                    activePairing = challenge
-                }
-                val result = JSObject()
-                    .put("pairing_id", collected.getString("pairing_id"))
-                    .put("origin", origin)
-                    .put("installationId", installationId)
-                (collected.opt("comparison_code") as? String)?.let { result.put("comparison_code", it) }
-                (collected.opt("status") as? String)?.let { result.put("status", it) }
-                mainHandler.post { call.resolve(result) }
-            } catch (exception: Exception) {
-                mainHandler.post { call.reject(exception.message ?: "pairing collect failed") }
-            }
-        }
+        completeLegacyStart(call, snapshot)
     }
 
     @PluginMethod
-    fun pairStartCode(call: PluginCall) {
-        val origin = call.getString("origin")
-        val installationId = call.getString("installationId")
-        val code = call.getString("code")
-        val requestedLabel = call.getString("label")?.trim().orEmpty()
-        val label = if (
-            requestedLabel.isEmpty() ||
-            requestedLabel.equals("android", ignoreCase = true) ||
-            requestedLabel.equals("phone", ignoreCase = true)
-        ) {
-            defaultDeviceLabel()
-        } else {
-            requestedLabel.take(64)
-        }
-        if (origin.isNullOrBlank() || installationId.isNullOrBlank() || code.isNullOrBlank()) {
+    fun pairStartCode(call: PluginCall) = pairingCall(call) {
+        val origin = call.getString("origin").orEmpty()
+        val installationId = call.getString("installationId").orEmpty()
+        val code = call.getString("code").orEmpty()
+        if (origin.isBlank() || installationId.isBlank() || code.isBlank()) {
             call.reject("origin, installationId and code are required")
-            return
+            return@pairingCall
         }
-        if (!Regex("^[0-9]{8}$").matches(code)) {
-            call.reject("pairing code must be 8 digits")
-            return
-        }
-        val generation = try {
-            custody.beginPairing(origin, installationId, code = code, label = label)
-        } catch (exception: Exception) {
-            call.reject(exception.message ?: "pending pairing could not be persisted")
-            return
-        }
-        operationExecutor.execute {
-            try {
-                val collected = collectPairingCode(origin, installationId, code, label, generation)
-                val result = JSObject()
-                    .put("pairing_id", collected.getString("pairing_id"))
-                    .put("origin", origin)
-                    .put("installationId", installationId)
-                (collected.opt("comparison_code") as? String)?.let { result.put("comparison_code", it) }
-                (collected.opt("status") as? String)?.let { result.put("status", it) }
-                mainHandler.post { call.resolve(result) }
-            } catch (exception: Exception) {
-                mainHandler.post { call.reject(exception.message ?: "pairing code failed") }
+        completeLegacyStart(call, pairingCoordinator.startWithCode(origin, code, pairingLabel(call), installationId))
+    }
+
+    private fun pairingLabel(call: PluginCall): String {
+        val label = call.getString("label")?.trim().orEmpty()
+        return if (label.isEmpty() || label.equals("android", true) || label.equals("phone", true)) {
+            defaultDeviceLabel()
+        } else label.take(64)
+    }
+
+    private fun completeLegacyStart(call: PluginCall, initial: PairingSnapshot) {
+        awaitPairing(initial) { snapshot ->
+            when {
+                snapshot.attemptId != initial.attemptId || snapshot.stage == PairingStage.CANCELLING ->
+                    call.reject("pairing attempt was cancelled or superseded")
+                snapshot.error != null -> call.reject(snapshot.legacyError())
+                snapshot.pairingId != null -> call.resolve(legacyPairingProgress(snapshot))
+                snapshot.stage == PairingStage.PAIRED -> call.reject("No pending pairing.")
+                else -> return@awaitPairing false
             }
+            true
         }
     }
 
-    private fun collectPairingCode(origin: String, installationId: String, code: String, label: String, generation: Long): JSONObject {
-        custody.requirePairing(generation)
-        val existing = custody.load()
-        if (transportHandle == 0L || existing == null || existing.origin != origin || existing.installationId != installationId) {
-            startTransport(origin, installationId, generation)
-        }
-        waitUntilReady()
-        custody.requirePairing(generation)
-        val collected = jsonRequest("mobile_pair_code", "/mobile/v1/pair/code", body = null,
-            headers = mapOf("X-Nanobot-Pairing-Code" to code, "X-Nanobot-Installation" to installationId,
-                "X-Nanobot-Label" to label, "X-Nanobot-Device-Key" to DeviceProofCanonicalizer.encode(custody.deviceProofPublicKey())))
-        val rawChallenge = collected.optString("challenge")
-        val challenge = if (rawChallenge.isNotBlank()) PairingChallengeCodec.decode(rawChallenge) else PairingChallenge(
-            collected.getString("pairing_id"), collected.getString("nonce"), collected.getString("collector_secret"))
-        custody.withPairing(generation) {
-            custody.savePendingPairing(origin, installationId, challenge.pairingId, PairingChallengeCodec.encode(challenge), generation)
-            activePairing = challenge
-        }
-        return collected
+    private fun awaitPairing(initial: PairingSnapshot, accept: (PairingSnapshot) -> Boolean) {
+        if (!accept(initial)) pairingWaiters.add(accept)
     }
+
+    private fun PairingSnapshot.legacyError(): String = when (stage) {
+        PairingStage.TAILSCALE_LOGIN_REQUIRED -> "tailnet login required"
+        else -> error?.let {
+            if (it.httpStatus != null) {
+                "HTTP ${it.httpStatus}" + (it.serverCode?.let { code -> " $code" } ?: "")
+            } else it.technicalDetail.ifBlank { it.message }
+        } ?: "Pairing is unavailable."
+    }
+
+    private fun legacyPairingProgress(snapshot: PairingSnapshot): JSObject = JSObject()
+        .put("pairing_id", snapshot.pairingId)
+        .put("origin", snapshot.origin)
+        .put("installationId", snapshot.installationId)
+        .put("status", if (snapshot.stage == PairingStage.PAIRED) "approved" else "pending_approval")
+        .put("comparison_code", snapshot.comparisonCode)
+        .apply { snapshot.expiresAt?.let { put("expires_at", it) } }
 
     @PluginMethod
     fun connectTailscale(call: PluginCall) {
@@ -582,7 +636,7 @@ class NativeNetworkPlugin : Plugin() {
             try {
                 val current = synchronized(this) {
                     val record = requireTransportTarget(origin, installationId)
-                    if (transportHandle == 0L) startTransport(record)
+                    if (!matchesTransport(record)) startTransport(record)
                     transportHandle
                 }
                 val deadline = System.currentTimeMillis() + 5_000
@@ -604,164 +658,51 @@ class NativeNetworkPlugin : Plugin() {
     }
 
     @PluginMethod
-    @Synchronized
-    fun pairCancel(call: PluginCall) {
-        val (generation, pending) = try {
-            val cancelled = custody.fencePendingPairing()
-            activePairing = null
-            pairingApproval = null
-            cancelled
-        } catch (exception: Exception) {
-            call.reject(exception.message ?: "pairing cancellation could not be persisted")
-            return
-        }
-        if (pending == null) {
-            call.resolve(JSObject().put("status", "cancelled"))
-            return
-        }
-        operationExecutor.execute {
-            try {
-                // Collection cannot issue access. An attempt with no saved ID
-                // cannot have started polling or proving on this installation.
-                if (pending.pairingId.isNotBlank()) {
-                    val challenge = PairingChallengeCodec.decode(pending.challenge)
-                    val record = custody.load() ?: throw IllegalStateException("custody target is missing")
-                    val handle = synchronized(this) {
-                        custody.withAuthority(generation) {
-                            check(record.origin == pending.origin) { "Custody target changed." }
-                            val current = transportHandle
-                            val state = if (current == 0L) "" else NativeNetwork.status(current)
-                                ?.let { JSONObject(String(it, Charsets.UTF_8)).optString("state") }
-                            if (state !in setOf("starting", "needs_login", "ready")) startTransport(record)
-                            transportHandle
-                        }
-                    }
-                    waitUntilReady(expectedHandle = handle)
-                    val result = jsonRequest(
-                        "mobile_pair_cancel",
-                        "/mobile/v1/pair/cancel",
-                        body = null,
-                        headers = pairingHeaders(challenge) + ("X-Nanobot-Installation" to record.installationId),
-                        expectedHandle = handle,
-                    )
-                    check(result.optBoolean("cancelled", false)) { "owner did not cancel the pairing" }
-                }
-                custody.finishPairingCancellation(generation, pending)
-                mainHandler.post { call.resolve(JSObject().put("status", "cancelled")) }
-            } catch (exception: Exception) {
-                mainHandler.post {
-                    call.reject(exception.message ?: "pairing cancellation did not reach the owner")
-                }
-            }
+    fun pairCancel(call: PluginCall) = pairingCall(call) {
+        legacyPendingLink = null
+        val initial = pairingCoordinator.cancel()
+        awaitPairing(initial) { snapshot ->
+            if (snapshot.stage == PairingStage.CANCELLING) return@awaitPairing false
+            val result = snapshot.toJSObject()
+            if (snapshot.stage == PairingStage.IDLE) result.put("status", "cancelled")
+            call.resolve(result)
+            true
         }
     }
 
     @PluginMethod
-    fun pendingPairing(call: PluginCall) {
-        val pending = try {
-            val cancelling = custody.loadPairingCancellation()
-            if (cancelling != null) {
-                call.resolve(JSObject().put("cancellationPending", true).put("origin", cancelling.origin))
-                return
-            }
-            custody.loadPendingPairing()
-        } catch (exception: Exception) {
-            call.reject(exception.message ?: "pending pairing is unavailable")
-            return
-        }
-        if (pending == null) { call.resolve(JSObject().put("pending", false)); return }
-        operationExecutor.execute {
-            try {
-                if (pending.challenge.isBlank() && pending.code.isNotBlank()) {
-                    val record = custody.load() ?: throw IllegalStateException("custody target is missing")
-                    collectPairingCode(pending.origin, record.installationId, pending.code, pending.label, pending.generation)
-                }
-                val current = custody.loadPendingPairing() ?: throw IllegalStateException("pairing attempt was cancelled")
-                val challenge = PairingChallengeCodec.decode(current.challenge)
-                custody.withPairing(current.generation) { activePairing = challenge }
-                val result = JSObject().put("pending", true).put("origin", current.origin)
-                    .put("pairingId", challenge.pairingId).put("challenge", current.challenge)
-                mainHandler.post { call.resolve(result) }
-            } catch (exception: Exception) {
-                mainHandler.post { call.reject(exception.message ?: "pending pairing is unavailable") }
-            }
-        }
+    fun pendingPairing(call: PluginCall) = pairingCall(call) {
+        val snapshot = readPairingState()
+        call.resolve(JSObject()
+            .put("pending", snapshot.canCancel && snapshot.pairingId != null)
+            .put("cancellationPending", snapshot.stage == PairingStage.CANCELLING)
+            .put("origin", snapshot.origin)
+            .put("pairingId", snapshot.pairingId)
+            .put("attemptId", snapshot.attemptId))
     }
 
     @PluginMethod
-    @Synchronized
-    fun pairPoll(call: PluginCall) {
+    fun pairPoll(call: PluginCall) = pairingCall(call) {
         val pairingId = call.getString("pairingId")
         if (pairingId.isNullOrBlank()) {
             call.reject("pairingId is required")
-            return
+            return@pairingCall
         }
-        val challenge = activePairing
-        if (challenge == null || challenge.pairingId != pairingId) {
-            call.reject("pairing challenge is not active")
-            return
-        }
-        val pending = try {
-            custody.loadPendingPairing()
-        } catch (exception: Exception) {
-            call.reject(exception.message ?: "pending pairing is unavailable")
-            return
-        }
-        if (pending == null || pending.pairingId != pairingId) {
-            call.reject("pairing attempt is not current")
-            return
-        }
-        val generation = pending.generation
-        val handle = transportHandle
-        operationExecutor.execute {
-            try {
-                val record = custody.load() ?: throw IllegalStateException("custody target is missing")
-                custody.requirePairing(generation)
-                val approved = pollPairingResult(challenge, record, generation, handle)
-                if (approved.optString("status") != "approved") {
-                    val publicState = JSObject()
-                    (approved.opt("status") as? String)?.let { publicState.put("status", it) }
-                    (approved.opt("pairing_id") as? String)?.let { publicState.put("pairing_id", it) }
-                    (approved.opt("comparison_code") as? String)?.let { publicState.put("comparison_code", it) }
-                    (approved.opt("expires_at") as? Number)?.let { publicState.put("expires_at", it.toLong()) }
-                    (approved.opt("expires_in") as? Number)?.let { publicState.put("expires_in", it.toLong()) }
-                    mainHandler.post { call.resolve(publicState) }
-                    return@execute
-                }
-                synchronized(this) {
-                    custody.withPairing(generation) {
-                        check(transportHandle == handle) { "Native transport changed." }
-                        pairingApproval = PairingApproval(pairingId, generation, handle, approved)
-                    }
-                }
-                mainHandler.post {
-                    call.resolve(
-                        JSObject()
-                            .put("status", "approved")
-                            .put("installationId", record.installationId)
-                    )
-                }
-            } catch (exception: Exception) {
-                mainHandler.post { call.reject(exception.message ?: "pairing poll failed") }
-            }
+        val snapshot = pairingCoordinator.state()
+        when {
+            snapshot.pairingId != pairingId -> call.reject("pairing challenge is not active")
+            snapshot.error != null -> call.reject(snapshot.legacyError())
+            else -> call.resolve(legacyPairingProgress(snapshot))
         }
     }
 
     @PluginMethod
-    @Synchronized
-    fun pairAccept(call: PluginCall) {
-        try {
-            val approval = pairingApproval ?: throw IllegalStateException("pairing approval is unavailable")
-            check(approval.pairingId == call.getString("pairingId") && approval.handle == transportHandle) {
-                "pairing approval is not current"
-            }
-            val saved = custody.savePairingTokens(approval.generation, approval.pairingId, approval.response)
-            pairingApproval = null
-            activePairing = null
-            NativeNetwork.mediaSetToken(approval.handle, saved.accessToken)
+    fun pairAccept(call: PluginCall) = pairingCall(call) {
+        val snapshot = pairingCoordinator.state()
+        if (snapshot.stage == PairingStage.PAIRED && snapshot.pairingId == call.getString("pairingId")) {
             call.resolve()
-        } catch (exception: Exception) {
-            call.reject(exception.message ?: "pairing could not be completed")
+        } else {
+            call.reject("pairing approval is not current")
         }
     }
 
@@ -771,32 +712,198 @@ class NativeNetworkPlugin : Plugin() {
         "X-Nanobot-Pairing-Secret" to challenge.collectorSecret,
     )
 
-    private fun pollPairingResult(
-        challenge: PairingChallenge,
-        record: CustodyRecord,
-        generation: Long,
-        handle: Long,
-    ): JSONObject {
-        try {
-            val polled = jsonRequest(
-                "mobile_pair_poll",
-                "/mobile/v1/pair/poll",
-                body = null,
-                headers = pairingHeaders(challenge),
-                expectedHandle = handle,
-            )
-            val proofChallenge = polled.optJSONObject("proof_challenge")
-            if (polled.optString("status") == "approved" && proofChallenge != null && !polled.has("access_token")) {
-                return provePairing(challenge.pairingId, proofChallenge, generation, handle)
+    private fun CustodyRecord.pairingTarget() = PairingTarget(
+        origin, installationId, accessToken.isNotBlank() || refreshToken.isNotBlank(),
+    )
+
+    private val pairingCustody = object : PairingCustody {
+        override fun load(): StoredPairing {
+            val record = custody.load() ?: return StoredPairing()
+            val cancellation = custody.loadPairingCancellation()
+            val pending = cancellation ?: custody.loadPendingPairing()
+            val target = record.pairingTarget()
+            if (pending == null || !record.isUnpaired) return StoredPairing(target)
+            val method = when (pending.method) {
+                "qr" -> PairingMethod.QR
+                "code" -> PairingMethod.CODE
+                "link" -> PairingMethod.LINK
+                else -> if (pending.code.isNotBlank()) PairingMethod.CODE else PairingMethod.LINK
             }
-            return polled
-        } catch (failure: IllegalStateException) {
-            val code = failure.message.orEmpty().substringAfterLast(' ')
-            if (code != "pairing_not_found" && code != "pairing_consumed") throw failure
-            custody.requirePairing(generation)
-            return recoverAccess(record, generation, handle, pairingId = challenge.pairingId)
+            val challenge = pending.challenge.takeIf(String::isNotBlank)?.let {
+                if (cancellation != null) runCatching { PairingChallengeCodec.decode(it) }.getOrNull()
+                else PairingChallengeCodec.decode(it)
+            }
+            val request = PairingRequest(
+                method, pending.origin, pending.label.ifBlank(::defaultDeviceLabel), challenge,
+                pending.code.takeIf(String::isNotBlank),
+            )
+            val attemptId = pending.attemptId.ifBlank {
+                UUID.nameUUIDFromBytes("${record.installationId}:${pending.generation}".toByteArray()).toString()
+            }
+            val progress = pending.pairingId.takeIf(String::isNotBlank)?.let {
+                PairingProgress(it, pending.comparisonCode.takeIf(String::isNotBlank), pending.expiresAt.takeIf { it > 0 })
+            }
+            return StoredPairing(target, PairingAttempt(attemptId, pending.generation, target, request, progress), cancellation != null)
+        }
+
+        override fun begin(request: PairingRequest, attemptId: String): PairingAttempt {
+            val installationId = request.installationId ?: custody.installationIdentity()
+            val generation = custody.beginPairing(
+                request.origin, installationId, request.challenge?.let(PairingChallengeCodec::encode).orEmpty(),
+                request.code.orEmpty(), request.label, attemptId, request.method.name.lowercase(Locale.ROOT),
+            )
+            return PairingAttempt(attemptId, generation, PairingTarget(request.origin, installationId, false), request)
+        }
+
+        override fun saveCollected(attempt: PairingAttempt, collected: CollectedPairing): PairingAttempt {
+            check(!destroyed)
+            val progress = collected.progress
+            custody.savePendingPairing(
+                attempt.target.origin, attempt.target.installationId, progress.pairingId,
+                PairingChallengeCodec.encode(collected.challenge), attempt.generation,
+                progress.comparisonCode.orEmpty(), progress.expiresAt ?: 0,
+            )
+            return attempt.copy(request = attempt.request.copy(challenge = collected.challenge, code = null), progress = progress)
+        }
+
+        override fun complete(attempt: PairingAttempt, handle: Long, credentials: PairingCredentials) {
+            synchronized(this@NativeNetworkPlugin) {
+                check(!destroyed)
+                if (transportHandle != handle) throw NativeTransportException("network")
+                val saved = custody.savePairingTokens(
+                    attempt.generation, checkNotNull(attempt.progress).pairingId,
+                    JSONObject()
+                        .put("installation_id", credentials.installationId)
+                        .put("access_token", credentials.accessToken)
+                        .put("refresh_token", credentials.refreshToken)
+                        .put("expires_in", credentials.expiresIn)
+                        .put("refresh_expires_in", credentials.refreshExpiresIn),
+                )
+                NativeNetwork.mediaSetToken(handle, saved.accessToken)
+            }
+        }
+
+        override fun fence(): Long {
+            custody.cancelPairing()
+            return custody.attemptGeneration()
+        }
+        override fun resetUnpairedAttempt() = custody.resetUnpairedAttempt()
+    }
+
+    private val pairingTransport = object : PairingTransport {
+        override fun start(attempt: PairingAttempt): PairingConnection = synchronized(this@NativeNetworkPlugin) {
+            check(!destroyed)
+            custody.withPairing(attempt.generation) {
+                val record = requireTransportTarget(attempt.target.origin, attempt.target.installationId)
+                val connection = current()
+                if (!matchesTransport(record) ||
+                    connection.state !in setOf(TailscaleState.STARTING, TailscaleState.NEEDS_LOGIN, TailscaleState.READY)
+                ) {
+                    startTransport(record)
+                    current()
+                } else connection
+            }
+        }
+
+        override fun current(): PairingConnection = synchronized(this@NativeNetworkPlugin) {
+            val handle = transportHandle
+            if (handle == 0L) return@synchronized PairingConnection()
+            val status = NativeNetwork.status(handle)?.let { JSONObject(String(it, Charsets.UTF_8)) }
+            PairingConnection(
+                handle,
+                TailscaleState.fromWire(status?.optString("state").orEmpty()),
+                isApprovedLoginURL(status?.optString("login_url").orEmpty()) || approvedLoginUrl(handle) != null,
+            )
+        }
+
+        override fun collect(attempt: PairingAttempt, handle: Long): CollectedPairing {
+            custody.requirePairing(attempt.generation)
+            val request = attempt.request
+            val code = request.code
+            val suffix = if (code == null) "collect" else "code"
+            val headers = if (code == null) pairingHeaders(checkNotNull(request.challenge)) else
+                mapOf("X-Nanobot-Pairing-Code" to code)
+            val response = jsonRequest(
+                "mobile_pair_$suffix", "/mobile/v1/pair/$suffix", body = null, expectedHandle = handle,
+                authorityGeneration = attempt.generation,
+                headers = headers + mapOf(
+                    "X-Nanobot-Installation" to attempt.target.installationId,
+                    "X-Nanobot-Label" to request.label,
+                    "X-Nanobot-Device-Key" to DeviceProofCanonicalizer.encode(custody.deviceProofPublicKey()),
+                ),
+            )
+            val challenge = request.challenge ?: PairingChallengeCodec.decode(
+                response.optString("challenge").ifBlank {
+                    PairingChallengeCodec.encode(PairingChallenge(
+                        response.getString("pairing_id"), response.getString("nonce"), response.getString("collector_secret"),
+                    ))
+                },
+            )
+            val progress = pairingProgress(response, challenge.pairingId)
+            return CollectedPairing(challenge, progress)
+        }
+
+        override fun poll(attempt: PairingAttempt, handle: Long): PairingPollResult {
+            custody.requirePairing(attempt.generation)
+            val challenge = checkNotNull(attempt.request.challenge)
+            val response = try {
+                jsonRequest(
+                    "mobile_pair_poll", "/mobile/v1/pair/poll", body = null,
+                    headers = pairingHeaders(challenge), expectedHandle = handle,
+                    authorityGeneration = attempt.generation,
+                )
+            } catch (failure: NativeHttpException) {
+                if (failure.serverCode !in setOf("pairing_not_found", "pairing_consumed")) throw failure
+                return PairingPollResult.Approved {
+                    custody.requirePairing(attempt.generation)
+                    val record = requireTransportTarget(attempt.target.origin, attempt.target.installationId)
+                    credentials(recoverAccess(record, attempt.generation, handle, challenge.pairingId))
+                }
+            }
+            return if (response.optString("status") == "approved") {
+                val proof = response.optJSONObject("proof_challenge")
+                PairingPollResult.Approved {
+                    credentials(if (proof != null && !response.has("access_token")) {
+                        provePairing(challenge.pairingId, proof, attempt.generation, handle)
+                    } else response)
+                }
+            } else {
+                PairingPollResult.Waiting(pairingProgress(response, challenge.pairingId))
+            }
+        }
+
+        override fun cancel(attempt: PairingAttempt, generation: Long) {
+            val challenge = attempt.request.challenge ?: return
+            val handle = synchronized(this@NativeNetworkPlugin) {
+                custody.withAuthority(generation) {
+                    val record = requireTransportTarget(attempt.target.origin, attempt.target.installationId)
+                    check(record.isUnpaired && !destroyed)
+                    if (!matchesTransport(record)) startTransport(record)
+                    transportHandle
+                }
+            }
+            jsonRequest(
+                "mobile_pair_cancel", "/mobile/v1/pair/cancel", body = null, expectedHandle = handle, timeoutSeconds = 5,
+                authorityGeneration = generation,
+                headers = pairingHeaders(challenge) + ("X-Nanobot-Installation" to attempt.target.installationId),
+            )
         }
     }
+
+    private fun pairingProgress(response: JSONObject, expectedId: String): PairingProgress {
+        val pairingId = response.optString("pairing_id", expectedId)
+        check(pairingId == expectedId) { "Pairing ID changed." }
+        return PairingProgress(
+            pairingId,
+            (response.opt("comparison_code") as? String)?.takeIf { it.matches(Regex("[0-9]{8}")) },
+            response.optLong("expires_at").takeIf { it > 0 },
+        )
+    }
+
+    private fun credentials(response: JSONObject) = PairingCredentials(
+        response.getString("installation_id"), response.getString("access_token"), response.optString("refresh_token"),
+        response.optInt("expires_in", 600), response.optInt("refresh_expires_in", 0),
+    )
 
     private fun recoverAccess(
         record: CustodyRecord,
@@ -816,6 +923,7 @@ class NativeNetworkPlugin : Plugin() {
             body = null,
             expectedHandle = handle,
             headers = headers,
+            authorityGeneration = generation,
         )
         val claims = begun.getJSONObject("proof_challenge")
         val canonical = DeviceProofCanonicalizer.canonicalBytes(
@@ -829,6 +937,7 @@ class NativeNetworkPlugin : Plugin() {
             "/mobile/v1/pair/recover/complete",
             body = null,
             expectedHandle = handle,
+            authorityGeneration = generation,
             headers = mapOf(
                 "X-Nanobot-Installation" to installationId,
                 "X-Nanobot-Device-Signature" to DeviceProofCanonicalizer.encode(signature),
@@ -838,40 +947,23 @@ class NativeNetworkPlugin : Plugin() {
     }
 
     @PluginMethod
-    fun pendingPairingLink(call: PluginCall) {
-        val raw = MainActivity.pendingPairingLink
-        MainActivity.pendingPairingLink = null
-        if (raw == null) {
-            call.resolve(JSObject())
-            return
-        }
-        try {
-            val link = PairingLinkParser.parse(raw)
-            activePairing = PairingChallengeCodec.decode(link.challenge)
-            call.resolve(
-                JSObject()
-                    .put("origin", link.origin)
-                    .put("installationId", link.installationId)
-            )
-        } catch (exception: Exception) {
-            call.reject(exception.message ?: "pairing link is invalid")
-        }
-    }
+    fun pendingPairingLink(call: PluginCall) = pairingCall(call) { resolvePendingLink(call, required = false) }
 
     @PluginMethod
-    fun consumePairingLink(call: PluginCall) {
-        val raw = MainActivity.pendingPairingLink
-        MainActivity.pendingPairingLink = null
-        if (raw == null) {
-            call.reject("no pending pairing link")
-            return
-        }
-        try {
-            val link = PairingLinkParser.parse(raw)
-            activePairing = PairingChallengeCodec.decode(link.challenge)
-            call.resolve(JSObject().put("origin", link.origin).put("installationId", link.installationId))
-        } catch (exception: Exception) {
-            call.reject(exception.message ?: "pairing link is invalid")
+    fun consumePairingLink(call: PluginCall) = pairingCall(call) { resolvePendingLink(call, required = true) }
+
+    private fun resolvePendingLink(call: PluginCall, required: Boolean) {
+        readPairingState()
+        val link = legacyPendingLink
+        legacyPendingLink = null
+        when {
+            link == null && required -> call.reject("no pending pairing link")
+            link == null -> call.resolve(JSObject())
+            link.error != null -> call.reject(link.legacyError())
+            else -> call.resolve(JSObject()
+                .put("origin", link.origin)
+                .put("installationId", link.installationId)
+                .put("attemptId", link.attemptId))
         }
     }
 
@@ -1243,36 +1335,87 @@ class NativeNetworkPlugin : Plugin() {
 
     @PluginMethod
     fun openLogin(call: PluginCall) {
-        val current = transportHandle
-        if (current == 0L) {
-            call.reject("transport is not started")
-            return
+        mainHandler.post {
+            val handle = transportHandle
+            val loginUrl = if (handle == 0L) null else approvedLoginUrl(handle)
+            if (loginUrl == null) {
+                call.reject("no approved login URL is available")
+                return@post
+            }
+            val act = activity
+            val uri = Uri.parse(loginUrl)
+            loginTabOpen = true
+            try {
+                try {
+                    val customTabs = CustomTabsIntent.Builder().setShowTitle(true).build()
+                    if (act != null) {
+                        customTabs.launchUrl(act, uri)
+                    } else {
+                        customTabs.intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                        customTabs.launchUrl(context, uri)
+                    }
+                } catch (_: Exception) {
+                    val intent = Intent(Intent.ACTION_VIEW, uri)
+                    if (act != null) act.startActivity(intent)
+                    else context.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                }
+                call.resolve()
+            } catch (_: Exception) {
+                loginTabOpen = false
+                call.reject("Tailscale sign-in could not open.")
+            }
         }
-        val bytes = NativeNetwork.loginUrl(current)
-        if (bytes == null) {
-            call.reject("no approved login URL is available")
-            return
+    }
+
+    private fun approvedLoginUrl(handle: Long): String? =
+        NativeNetwork.loginUrl(handle)?.let {
+            JSONObject(String(it, Charsets.UTF_8)).optString("login_url").takeIf(::isApprovedLoginURL)
         }
-        val loginURL = JSONObject(String(bytes, StandardCharsets.UTF_8)).optString("login_url")
-        if (!isApprovedLoginURL(loginURL)) {
-            call.reject("native transport returned an unapproved login URL")
-            return
-        }
+
+    private fun returnFromTailscaleLogin() {
+        if (!loginTabOpen || isActivityResumed) return
+        val intent = Intent(context, MainActivity::class.java)
+            .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
         try {
-            val customTabs = CustomTabsIntent.Builder().setShowTitle(true).build()
-            customTabs.intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            customTabs.launchUrl(context, Uri.parse(loginURL))
-        } catch (exception: Exception) {
-            val intent = Intent(Intent.ACTION_VIEW, Uri.parse(loginURL))
-            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            context.startActivity(intent)
+            (activity ?: context).startActivity(intent)
+        } catch (_: Exception) {
+            // Android can block an activity launch while the browser is visible.
         }
-        call.resolve()
+        mainHandler.postDelayed({
+            if (!isActivityResumed && loginTabOpen) notifyTailscaleConnected(intent)
+        }, 800L)
+    }
+
+    private fun notifyTailscaleConnected(intent: Intent) {
+        val manager = context.getSystemService(NotificationManager::class.java)
+        val builder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            manager.createNotificationChannel(
+                NotificationChannel(PAIRING_NOTIFICATION_CHANNEL, "Pairing status", NotificationManager.IMPORTANCE_HIGH)
+            )
+            Notification.Builder(context, PAIRING_NOTIFICATION_CHANNEL)
+        } else {
+            @Suppress("DEPRECATION")
+            Notification.Builder(context).setPriority(Notification.PRIORITY_HIGH).setDefaults(Notification.DEFAULT_ALL)
+        }
+        val openApp = PendingIntent.getActivity(
+            context, PAIRING_NOTIFICATION_ID, intent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
+        try {
+            manager.notify(PAIRING_NOTIFICATION_ID, builder
+                .setSmallIcon(android.R.drawable.stat_notify_sync)
+                .setContentTitle("Tailscale connected")
+                .setContentText("Tap to finish pairing Kohaku")
+                .setContentIntent(openApp)
+                .setAutoCancel(true)
+                .build())
+        } catch (_: SecurityException) {
+            // The user can still return to Kohaku from the browser.
+        }
     }
 
     @PluginMethod
     fun stop(call: PluginCall) {
-        stopInternal()
+        synchronized(this) { stopInternal() }
         call.resolve()
     }
 
@@ -1312,8 +1455,10 @@ class NativeNetworkPlugin : Plugin() {
             call.reject("QR scan cancelled")
             return
         }
-        MainActivity.pendingPairingLink = raw
-        call.resolve(JSObject().put("scanned", true))
+        pairingCall(call) {
+            val snapshot = startPairingLink(raw, PairingMethod.QR)
+            call.resolve(snapshot.toJSObject().put("scanned", true))
+        }
     }
 
     @PluginMethod
@@ -1484,40 +1629,37 @@ class NativeNetworkPlugin : Plugin() {
     }
 
     @PluginMethod
-    @Synchronized
-    fun logout(call: PluginCall) {
+    fun logout(call: PluginCall) = pairingCall(call) {
         RunKeepAliveRegistry.clear()
         RunKeepAliveService.stop(context.applicationContext)
-        try {
-            custody.cancelPairing()
-            activePairing = null
-            pairingApproval = null
-        } catch (exception: Exception) {
-            call.reject(exception.message ?: "custody cancellation fence failed"); return
+        legacyPendingLink = null
+        val pending = synchronized(this) {
+            val record = runCatching { custody.load() }.getOrNull()
+            if (record?.isUnpaired == true) {
+                custody.resetUnpairedAttempt()
+                false
+            } else {
+                custody.cancelPairing()
+                val current = transportHandle
+                if (current != 0L) NativeNetwork.mediaPurge(current)
+                stopInternal()
+                custody.logout(call.getBoolean("serverReachable") ?: false)
+            }.also { custody.purgeMedia() }
         }
-        val serverReachable = call.getBoolean("serverReachable") ?: false
-        val current = transportHandle
-        if (current != 0L) {
-            NativeNetwork.mediaPurge(current)
-        }
-        stopInternal()
-        val pending = try {
-            custody.logout(serverReachable)
-        } catch (exception: Exception) {
-            call.reject(exception.message ?: "custody erasure failed")
-            return
-        }
-        custody.purgeMedia()
+        pairingCoordinator.invalidate()
         call.resolve(JSObject().put("serverRevocationPending", pending))
     }
 
     override fun handleOnDestroy() {
+        destroyed = true
+        if (pairingCoordinatorDelegate.isInitialized()) pairingCoordinator.invalidate()
         unregisterNetworkCallback()
         RunKeepAliveRegistry.clear()
         RunKeepAliveService.stop(context.applicationContext)
-        stopInternal()
+        synchronized(this) { stopInternal() }
         pollExecutor.shutdownNow()
         retryExecutor.shutdownNow()
+        pairingExecutor.shutdownNow()
         operationExecutor.shutdownNow()
     }
 
@@ -1535,8 +1677,9 @@ class NativeNetworkPlugin : Plugin() {
                         }
                         val bytes = NativeNetwork.pollEvent(current) ?: return@scheduleWithFixedDelay
                         val event = JSONObject(String(bytes, StandardCharsets.UTF_8))
-                        logTransportEvent(event)
                         if (current != transportHandle) return@scheduleWithFixedDelay
+                        logTransportEvent(event)
+                        if (event.optString("type") == "node_state") handlePairingNodeEvent(current, event)
                         val requestId = event.optLong("request_id", 0L)
                         val publish: (JSONObject) -> Unit = { admitted ->
                             val jsEvent = JSObject(admitted, admitted.keys().asSequence().toList().toTypedArray())
@@ -1573,21 +1716,8 @@ class NativeNetworkPlugin : Plugin() {
                     "ws_closed ws=${event.optLong("ws_id")} code=${event.optInt("code")} " +
                         "reason=${event.optString("reason")}",
                 )
-            "node_state" -> {
-                val nodeState = event.optString("state")
-                val message = event.optString("message")
-                Log.i(
-                    TAG,
-                    "node_state state=$nodeState login_url=${event.optString("login_url")} " +
-                        "message=$message",
-                )
-                if (nodeState == "ready") stateRecoveryAttempted = false
-                if (nodeState == "error" &&
-                    (message.contains("cannot be decrypted") || message.contains("ReadState"))
-                ) {
-                    recoverCorruptNetworkState()
-                }
-            }
+            "node_state" ->
+                Log.i(TAG, "node_state state=${event.optString("state")} message=${event.optString("message")}")
             "http_error" ->
                 Log.w(
                     TAG,
@@ -1608,6 +1738,31 @@ class NativeNetworkPlugin : Plugin() {
         }
     }
 
+    private fun handlePairingNodeEvent(handle: Long, event: JSONObject) {
+        val state = TailscaleState.fromWire(event.optString("state"))
+        dispatchPairing {
+            if (handle == transportHandle) {
+                val connection = pairingTransport.current()
+                if (connection.handle == handle) pairingCoordinator.onTransportChanged(connection)
+            }
+        }
+        when (state) {
+            TailscaleState.READY -> {
+                stateRecoveryAttempted = false
+                mainHandler.post {
+                    if (handle == transportHandle) returnFromTailscaleLogin()
+                }
+            }
+            TailscaleState.ERROR -> {
+                val message = event.optString("message")
+                if (message.contains("cannot be decrypted") || message.contains("ReadState")) {
+                    recoverCorruptNetworkState(handle)
+                }
+            }
+            else -> Unit
+        }
+    }
+
     private fun requestRefresh(record: CustodyRecord, handle: Long): JSONObject = jsonRequest(
         "remote_refresh",
         "/remote/v1/refresh",
@@ -1617,13 +1772,9 @@ class NativeNetworkPlugin : Plugin() {
         expectedHandle = handle,
     )
 
-    private fun isUnauthorized(exception: Exception): Boolean =
-        (exception.message ?: "").contains("HTTP 401")
+    private fun isUnauthorized(exception: Exception): Boolean = httpStatus(exception) == 401
 
-    private fun httpStatus(exception: Exception): Int {
-        val match = Regex("HTTP (\\d{3})").find(exception.message ?: "") ?: return 0
-        return match.groupValues.getOrNull(1)?.toIntOrNull() ?: 0
-    }
+    private fun httpStatus(exception: Exception): Int = (exception as? NativeHttpException)?.status ?: 0
 
     private fun requireTransportTarget(origin: String, installationId: String): CustodyRecord {
         val record = custody.load() ?: throw CustodyMismatchException("Custody target is missing.")
@@ -1631,12 +1782,8 @@ class NativeNetworkPlugin : Plugin() {
         return record
     }
 
-    @Synchronized
-    private fun startTransport(origin: String, installationId: String, generation: Long) {
-        custody.withPairing(generation) {
-            startTransport(custody.loadOrCreate(origin, installationId))
-        }
-    }
+    private fun matchesTransport(record: CustodyRecord): Boolean =
+        transportHandle != 0L && transportTarget == (record.origin to record.installationId)
 
     private fun startTransport(record: CustodyRecord) {
         stopInternal()
@@ -1664,27 +1811,11 @@ class NativeNetworkPlugin : Plugin() {
         if (newHandle == 0L) {
             throw IllegalStateException(NativeNetwork.lastError())
         }
+        transportTarget = record.origin to record.installationId
         transportHandle = newHandle
         NativeNetwork.mediaSetToken(newHandle, record.accessToken)
         NativeMediaInterceptor.transportHandle = newHandle
         startPoller()
-    }
-
-    private fun waitUntilReady(timeoutMs: Long = 90_000, expectedHandle: Long? = null) {
-        val deadline = System.currentTimeMillis() + timeoutMs
-        while (System.currentTimeMillis() < deadline) {
-            val current = transportHandle
-            if (current == 0L) throw IllegalStateException("native transport stopped")
-            check(expectedHandle == null || current == expectedHandle) { "Native transport changed." }
-            val status = JSONObject(String(NativeNetwork.status(current) ?: ByteArray(0), Charsets.UTF_8))
-            when (status.optString("state")) {
-                "ready" -> return
-                "needs_login" -> throw IllegalStateException("tailnet login required")
-                "error" -> throw IllegalStateException(status.optString("message", "native transport failed"))
-            }
-            Thread.sleep(250)
-        }
-        throw IllegalStateException("native transport readiness timeout")
     }
 
     private fun provePairing(pairingId: String, claims: JSONObject, generation: Long, handle: Long): JSONObject {
@@ -1701,6 +1832,7 @@ class NativeNetworkPlugin : Plugin() {
             "/mobile/v1/pair/prove",
             body = null,
             expectedHandle = handle,
+            authorityGeneration = generation,
             headers = mapOf(
                 "X-Nanobot-Pairing-Id" to pairingId,
                 "X-Nanobot-Device-Signature" to DeviceProofCanonicalizer.encode(signature),
@@ -1725,12 +1857,14 @@ class NativeNetworkPlugin : Plugin() {
         headers: Map<String, String> = emptyMap(),
         timeoutSeconds: Long = 30,
         expectedHandle: Long? = null,
+        authorityGeneration: Long? = null,
     ): JSONObject {
         val (current, requestOwner, retry) = synchronized(this) {
             Triple(transportHandle, requests, admission)
         }
-        check(current != 0L) { "transport is not started" }
-        check(expectedHandle == null || current == expectedHandle) { "Native transport changed." }
+        if (current == 0L || expectedHandle != null && current != expectedHandle) {
+            throw NativeTransportException("network")
+        }
         val request = JSONObject()
             .put("operation", operation)
             .put("method", if (body == null) "GET" else "POST")
@@ -1749,16 +1883,23 @@ class NativeNetworkPlugin : Plugin() {
         }
         // The same encoded bytes carry the same request identity on retry.
         val encodedRequest = request.toString()
+        val launch = {
+            requestOwner.launch(
+                true,
+                lastError = { NativeNetwork.lastError() },
+                start = { NativeNetwork.http(current, encodedRequest) },
+            )
+        }
         val admission = try {
             retry.run {
-                requestOwner.launch(
-                    true,
-                    lastError = { NativeNetwork.lastError() },
-                    start = { NativeNetwork.http(current, encodedRequest) },
-                )
+                if (authorityGeneration == null) launch()
+                else custody.withAuthority(authorityGeneration, launch)
             }.get()
         } catch (exception: Exception) {
             val cause = (exception as? java.util.concurrent.ExecutionException)?.cause ?: exception
+            if (authorityGeneration != null && cause is NativeAdmissionFailure) {
+                throw NativeTransportException("network")
+            }
             throw cause as? Exception ?: exception
         }
         val requestId = admission.id
@@ -1766,25 +1907,17 @@ class NativeNetworkPlugin : Plugin() {
         try {
             val event = future.get(timeoutSeconds, TimeUnit.SECONDS)
             if (event.optString("type") == "http_error") {
-                throw IllegalStateException(event.optString("code", "native request failed"))
+                throw NativeTransportException(event.optString("code", "network"))
             }
             val status = event.optInt("status")
             if (status < 200 || status >= 300) {
                 val code = try {
                     val body = String(Base64.decode(event.optString("body_base64"), Base64.DEFAULT), Charsets.UTF_8)
-                    JSONObject(body).optString("error")
+                    JSONObject(body).opt("error") as? String
                 } catch (_: Exception) {
-                    ""
+                    null
                 }
-                val safeCode = if (code in setOf(
-                    "pairing_expired",
-                    "pairing_not_found",
-                    "pairing_consumed",
-                    "pairing_rejected",
-                    "device_revoked",
-                    "upgrade_required",
-                )) " $code" else ""
-                throw IllegalStateException("HTTP $status$safeCode")
+                throw NativeHttpException(status, code, path)
             }
             val payload = Base64.decode(event.getString("body_base64"), Base64.DEFAULT)
             return JSONObject(String(payload, Charsets.UTF_8))
@@ -1794,28 +1927,28 @@ class NativeNetworkPlugin : Plugin() {
         }
     }
 
-    @Synchronized
-    private fun recoverCorruptNetworkState() {
-        synchronized(this) {
-            if (stateRecoveryAttempted) return
-            stateRecoveryAttempted = true
-        }
-        operationExecutor.execute {
+    private fun recoverCorruptNetworkState(handle: Long) {
+        dispatchPairing {
             try {
-                val record = custody.load() ?: return@execute
-                CustodyStore.purgeNetworkState(context, record.installationId)
-                synchronized(this) {
+                val recovered = synchronized(this) {
+                    if (handle != transportHandle || stateRecoveryAttempted) return@synchronized false
+                    val record = custody.load() ?: return@synchronized false
+                    if (!matchesTransport(record)) return@synchronized false
+                    stateRecoveryAttempted = true
                     stopInternal()
+                    CustodyStore.purgeNetworkState(context, record.installationId)
                     startTransport(record)
+                    true
                 }
+                if (recovered) pairingCoordinator.onTransportReplaced(handle)
             } catch (_: Exception) {
-                // The pairing page still offers Retry and a fresh link.
+                // Pairing can still retry transport startup.
             }
         }
     }
 
     private fun stopInternal() {
-        pairingApproval = null
+        loginTabOpen = false
         admission.close()
         requests.close()
         pollTask?.cancel(false)
@@ -1823,6 +1956,7 @@ class NativeNetworkPlugin : Plugin() {
         pendingWsFrames.clear()
         val current = transportHandle
         transportHandle = 0L
+        transportTarget = null
         NativeMediaInterceptor.transportHandle = 0L
         if (current != 0L) {
             NativeNetwork.stop(current)

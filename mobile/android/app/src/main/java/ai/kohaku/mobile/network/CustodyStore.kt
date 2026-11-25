@@ -38,6 +38,10 @@ data class PendingPairingSetup(
     val generation: Long,
     val code: String = "",
     val label: String = "",
+    val attemptId: String = "",
+    val method: String = "",
+    val comparisonCode: String = "",
+    val expiresAt: Long = 0,
 )
 
 data class CustodyRecord(
@@ -58,7 +62,14 @@ data class CustodyRecord(
     val pendingPairingGeneration: Long = 0,
     val pendingPairingCode: String = "",
     val pendingPairingLabel: String = "",
+    val pendingPairingAttemptId: String = "",
+    val pendingPairingMethod: String = "",
+    val pendingPairingComparisonCode: String = "",
+    val pendingPairingExpiresAt: Long = 0,
 ) {
+    val isUnpaired: Boolean
+        get() = accessToken.isBlank() && refreshToken.isBlank() && !revocationPending
+
     fun toJson(): JSONObject = JSONObject()
         .put("version", version)
         .put("installation_id", installationId)
@@ -77,6 +88,10 @@ data class CustodyRecord(
         .put("pending_pairing_generation", pendingPairingGeneration)
         .put("pending_pairing_code", pendingPairingCode)
         .put("pending_pairing_label", pendingPairingLabel)
+        .put("pending_pairing_attempt_id", pendingPairingAttemptId)
+        .put("pending_pairing_method", pendingPairingMethod)
+        .put("pending_pairing_comparison_code", pendingPairingComparisonCode)
+        .put("pending_pairing_expires_at", pendingPairingExpiresAt)
 
     companion object {
         fun fromJson(json: JSONObject): CustodyRecord {
@@ -112,6 +127,10 @@ data class CustodyRecord(
                 pendingPairingGeneration = json.optLong("pending_pairing_generation"),
                 pendingPairingCode = json.optString("pending_pairing_code"),
                 pendingPairingLabel = json.optString("pending_pairing_label"),
+                pendingPairingAttemptId = json.optString("pending_pairing_attempt_id"),
+                pendingPairingMethod = json.optString("pending_pairing_method"),
+                pendingPairingComparisonCode = json.optString("pending_pairing_comparison_code"),
+                pendingPairingExpiresAt = json.optLong("pending_pairing_expires_at"),
             )
         }
     }
@@ -159,14 +178,28 @@ class CustodyStore(context: Context) {
         attemptFence.withCurrent(generation, requireActive = false, write = action)
     fun <T> withPairing(generation: Long, action: () -> T): T = attemptFence.withCurrent(generation, write = action)
 
-    fun beginPairing(origin: String, installationId: String, challenge: String = "", code: String = "", label: String = ""): Long {
+    fun beginPairing(
+        origin: String,
+        installationId: String,
+        challenge: String = "",
+        code: String = "",
+        label: String = "",
+        attemptId: String = UUID.randomUUID().toString(),
+        method: String = if (code.isBlank()) "link" else "code",
+    ): Long {
         return withAuthority(attemptGeneration()) {
-            check(loadPairingCancellation() == null) { "Complete pairing cancellation first." }
             val current = loadOrCreate(origin, installationId)
+            check(current.isUnpaired) { "Custody already has a paired desktop." }
             val generation = attemptFence.begin()
-            save(current.copy(pendingPairingId = "", pendingPairingOrigin = origin,
-                pendingPairingChallenge = challenge, pendingPairingGeneration = generation,
-                pendingPairingCode = code, pendingPairingLabel = label))
+            save(current.withoutPendingSetup().copy(
+                pendingPairingOrigin = origin,
+                pendingPairingChallenge = challenge,
+                pendingPairingGeneration = generation,
+                pendingPairingCode = code,
+                pendingPairingLabel = label,
+                pendingPairingAttemptId = attemptId,
+                pendingPairingMethod = method,
+            ))
             generation
         }
     }
@@ -175,11 +208,15 @@ class CustodyStore(context: Context) {
     fun loadOrCreate(origin: String, installationId: String?, hostname: String = "kohaku-android"): CustodyRecord {
         val existing = load()
         if (existing != null) {
-            if (existing.origin != origin) {
-                throw CustodyMismatchException("custody is bound to a different origin")
-            }
             if (!installationId.isNullOrBlank() && existing.installationId != installationId) {
                 throw CustodyMismatchException("custody is bound to a different installation")
+            }
+            if (existing.origin != origin) {
+                if (!existing.isUnpaired) {
+                    throw CustodyMismatchException("custody is bound to a different origin")
+                }
+                return existing.withoutPendingSetup().copy(origin = origin, updatedAt = System.currentTimeMillis())
+                    .also(::save)
             }
             return existing
         }
@@ -323,28 +360,32 @@ class CustodyStore(context: Context) {
         pairingId: String,
         challenge: String,
         generation: Long,
+        comparisonCode: String = "",
+        expiresAt: Long = 0,
     ): CustodyRecord = attemptFence.withCurrent(generation) {
         synchronized(this) {
-        if (origin.isBlank() || pairingId.isBlank() || challenge.isBlank()) {
-            throw CustodyException("pending pairing is incomplete")
-        }
-        if (pairingId.length > 128 || challenge.length > 4096) {
-            throw CustodyException("pending pairing exceeds the bound")
-        }
-        val record = load() ?: loadOrCreate(origin, installationId)
-        if (record.origin != origin) {
-            throw CustodyMismatchException("custody is bound to a different origin")
-        }
-        val updated = record.copy(
-            pendingPairingId = pairingId,
-            pendingPairingOrigin = origin,
-            pendingPairingChallenge = challenge,
-            pendingPairingGeneration = generation,
-            pendingPairingCode = "",
-            updatedAt = System.currentTimeMillis(),
-        )
-        save(updated)
-        updated
+            if (origin.isBlank() || pairingId.isBlank() || challenge.isBlank()) {
+                throw CustodyException("pending pairing is incomplete")
+            }
+            if (pairingId.length > 128 || challenge.length > 4096) {
+                throw CustodyException("pending pairing exceeds the bound")
+            }
+            val record = load() ?: throw CustodyMismatchException("custody target is missing")
+            if (record.origin != origin || record.installationId != installationId ||
+                record.pendingPairingGeneration != generation
+            ) {
+                throw CustodyMismatchException("custody pairing target changed")
+            }
+            val updated = record.copy(
+                pendingPairingId = pairingId,
+                pendingPairingChallenge = challenge,
+                pendingPairingCode = "",
+                pendingPairingComparisonCode = comparisonCode,
+                pendingPairingExpiresAt = expiresAt,
+                updatedAt = System.currentTimeMillis(),
+            )
+            save(updated)
+            updated
         }
     }
 
@@ -353,17 +394,15 @@ class CustodyStore(context: Context) {
 
     fun loadPairingCancellation(): PendingPairingSetup? =
         load()?.pendingSetup()?.takeIf {
-            it.pairingId.isNotBlank() && !attemptFence.isCurrent(it.generation)
+            it.challenge.isNotBlank() && !attemptFence.isCurrent(it.generation)
         }
 
-    fun fencePendingPairing(): Pair<Long, PendingPairingSetup?> =
-        attemptFence.cancel { load()?.pendingSetup() }
-
-    fun finishPairingCancellation(generation: Long, pending: PendingPairingSetup) {
-        withAuthority(generation) {
+    fun resetUnpairedAttempt() {
+        withAuthority(attemptGeneration()) {
             synchronized(this) {
                 val record = load() ?: return@synchronized
-                if (record.pendingPairingGeneration == pending.generation) {
+                if (record.isUnpaired) {
+                    attemptFence.cancel()
                     save(record.withoutPendingSetup())
                 }
             }
@@ -381,6 +420,10 @@ class CustodyStore(context: Context) {
             generation = pendingPairingGeneration,
             code = pendingPairingCode,
             label = pendingPairingLabel,
+            attemptId = pendingPairingAttemptId,
+            method = pendingPairingMethod,
+            comparisonCode = pendingPairingComparisonCode,
+            expiresAt = pendingPairingExpiresAt,
         )
     }
 
@@ -392,6 +435,10 @@ class CustodyStore(context: Context) {
             pendingPairingGeneration = 0,
             pendingPairingCode = "",
             pendingPairingLabel = "",
+            pendingPairingAttemptId = "",
+            pendingPairingMethod = "",
+            pendingPairingComparisonCode = "",
+            pendingPairingExpiresAt = 0,
         )
 
     /**
