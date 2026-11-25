@@ -41,7 +41,7 @@ import { providerBrand } from "@/lib/provider-brand";
 import type { ProviderModelsPayload, SettingsPayload } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
-const DEFERRED_MODEL_LIST_PROVIDERS = new Set([
+export const DEFERRED_MODEL_LIST_PROVIDERS = new Set([
   "aihubmix",
   "atomic_chat",
   "byteplus",
@@ -60,6 +60,10 @@ const DEFERRED_MODEL_LIST_PROVIDERS = new Set([
   "volcengine_coding_plan",
 ]);
 const DEFERRED_MODEL_LIST_QUERY_MIN_LENGTH = 2;
+
+export function providerModelKey(provider: string, model: string): string {
+  return JSON.stringify([provider, model]);
+}
 
 export function normalizeContextWindowTokens(value: number | null | undefined): number {
   return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : 200_000;

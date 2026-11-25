@@ -12,7 +12,8 @@ from urllib.parse import parse_qs, urlsplit
 import pytest
 from websockets.datastructures import Headers
 
-from kohaku.config.loader import get_config_path
+from kohaku.config.loader import get_config_path, save_config
+from kohaku.config.schema import Config
 from kohaku.webui.http_utils import http_json_response
 from kohaku.webui.mcp_presets_api import custom_mcp_action
 from kohaku.webui.settings_routes import WebUISettingsRouter
@@ -417,6 +418,33 @@ async def test_runtime_config_mutation_routes_refresh_live_runtime(
     assert response.status_code == 200
     assert json.loads(response.body)["routed"] == function_name
     assert captured["query"] == expected_query
+    refresh_runtime_config.assert_called_once_with()
+
+
+async def test_provider_model_toggle_route_persists_and_refreshes_runtime(tmp_path) -> None:
+    config_path = tmp_path / "config.json"
+    config = Config()
+    config.providers.local_manager.api_base = "http://127.0.0.1:8082/v1"
+    save_config(config, config_path)
+    refresh_runtime_config = MagicMock()
+    router = _router(config_path=config_path, refresh_runtime_config=refresh_runtime_config)
+    path = "/api/settings/provider-models/toggle"
+    payload = {"provider": "local_manager", "model": "profile-32k", "contextWindowTokens": 32768}
+
+    response = await router.dispatch(None, _mutation_request(path, {**payload, "enabled": True}), path)
+
+    assert response is not None
+    assert response.status_code == 200
+    settings = json.loads(response.body)
+    assert settings["model_call_order"] == ["profile-32k"]
+    assert settings["agent"]["context_window_tokens"] == 32768
+    refresh_runtime_config.assert_called_once_with()
+
+    response = await router.dispatch(None, _mutation_request(path, {**payload, "enabled": False}), path)
+
+    assert response is not None
+    assert response.status_code == 409
+    assert json.loads(response.body)["error"] == "at least one model must remain enabled"
     refresh_runtime_config.assert_called_once_with()
 
 

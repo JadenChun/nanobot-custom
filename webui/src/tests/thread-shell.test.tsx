@@ -2142,7 +2142,7 @@ describe("ThreadShell", () => {
     expect(screen.queryByRole("button", { name: "Choose your AI" })).not.toBeInTheDocument();
   });
 
-  it("switches through every named preset while preserving call-order priority", async () => {
+  it("switches through every named preset when the legacy call order is empty", async () => {
     const client = makeClient();
     const settings = settingsWithFastPreset();
     settings.model_presets.push({
@@ -2155,7 +2155,6 @@ describe("ThreadShell", () => {
       active: false,
       is_default: false,
     });
-    settings.model_call_order = ["fast"];
 
     const view = (preset: string) => wrap(client, (
       <ThreadShell
@@ -2191,6 +2190,42 @@ describe("ThreadShell", () => {
 
     rerender(view("fast"));
     expect(await screen.findByText("fast")).toBeInTheDocument();
+  });
+
+  it("shows chat model choices in call order and removes a model when it is disabled", async () => {
+    const client = makeClient();
+    const settings = settingsWithFastPreset();
+    const preset = settings.model_presets.at(-1)!;
+    settings.model_presets.push(
+      { ...preset, name: "steady", model: "steady-model", active: false },
+      { ...preset, name: "catalog", model: "catalog-model", active: false },
+      { ...preset, name: "disabled", model: "disabled-model", active: false },
+    );
+    const view = (order: string[]) => wrap(client, (
+      <ThreadShell
+        session={session("catalog-preset-order", "fast")}
+        title="Catalog preset order"
+        onToggleSidebar={() => {}}
+        settingsSnapshot={{ ...settings, model_call_order: order }}
+      />
+    ));
+    const { rerender } = render(view(["fast", "steady"]));
+    fireEvent.click(await screen.findByRole("button", { name: "fast" }));
+    const picker = await screen.findByRole("dialog", { name: "Switch model for this chat" });
+    expect(within(picker).getAllByRole("option")).toHaveLength(1);
+    expect(within(picker).getByRole("option", { name: /^steady\b/ })).toBeInTheDocument();
+
+    rerender(view(["fast", "catalog", "steady"]));
+    await waitFor(() => {
+      const options = within(picker).getAllByRole("option");
+      expect(options).toHaveLength(2);
+      expect(options[0]).toHaveAccessibleName("catalog");
+      expect(options[1]).toHaveAccessibleName("steady");
+    });
+
+    rerender(view(["fast", "steady"]));
+    await waitFor(() => expect(within(picker).getAllByRole("option")).toHaveLength(1));
+    expect(within(picker).getByRole("option", { name: /^steady\b/ })).toBeInTheDocument();
   });
 
   it("uses the backend-resolved provider for an auto session preset", async () => {

@@ -609,7 +609,7 @@ describe("Settings providers", () => {
     ).toBeEnabled());
 
     fireEvent.click(screen.getByRole("button", { name: "OpenAI Codex" }));
-    fireEvent.click(screen.getByRole("button", { name: /^DeepSeek/ }));
+    fireEvent.click(screen.getByRole("button", { name: /^DeepSeek/, expanded: false }));
     expect(screen.getByText(/DeepSeek V4 Flash/)).toBeInTheDocument();
     const deepSeekSearch = screen.getByRole("switch", { name: "DeepSeek web search" });
     expect(deepSeekSearch).toHaveAttribute("aria-checked", "true");
@@ -840,7 +840,7 @@ describe("Settings providers", () => {
       });
     });
     expect(
-      await screen.findByRole("button", { name: /Company Gateway/ }),
+      await screen.findByRole("button", { name: /Company Gateway/, expanded: false }),
     ).toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: "Add your own model provider" }),

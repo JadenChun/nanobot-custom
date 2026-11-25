@@ -1,7 +1,7 @@
 """Model and provider settings domain logic.
 
 This module owns model/provider DTO construction, validation, configuration
-updates, model discovery, and OAuth workflows. It deliberately has no
+updates, and OAuth workflows. It deliberately has no
 dependency on the WebSocket transport.
 """
 
@@ -13,7 +13,6 @@ from __future__ import annotations
 import asyncio
 import json
 import math
-import os
 import re
 import secrets
 import time
@@ -22,21 +21,33 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Awaitable, Callable, TypedDict, cast
 
-import httpx
-
-from kohaku.config.loader import resolve_config_env_vars, resolve_env_refs
-from kohaku.config.schema import Config, FallbackCandidate, ModelPresetConfig, ProviderConfig
-from kohaku.providers.factory import provider_extra_headers
+from kohaku.config.loader import resolve_config_env_vars
+from kohaku.config.schema import (
+    Config,
+    FallbackCandidate,
+    InlineFallbackConfig,
+    ModelPresetConfig,
+    ProviderConfig,
+)
 from kohaku.providers.image_generation import get_image_gen_provider
+from kohaku.providers.model_catalog import (
+    HttpGet,
+    ProviderModelCatalogPayload,
+    discover_provider_models,
+)
+from kohaku.providers.model_catalog import (
+    model_catalog_kind as model_catalog_kind,
+)
+from kohaku.providers.model_catalog import (
+    provider_requires_api_key as provider_requires_api_key,
+)
 from kohaku.providers.oauth_credentials import CredentialOwner
 from kohaku.providers.oauth_guidance import OAUTH_CLI_KIT_MISSING_MESSAGE
-from kohaku.providers.oauth_model_catalog import (
-    get_oauth_model_catalog,
-    invalidate_oauth_model_catalog,
-)
+from kohaku.providers.oauth_model_catalog import invalidate_oauth_model_catalog
 from kohaku.providers.provider_policy import ProviderPolicy, resolve_provider_policy
 from kohaku.providers.registry import (
     PROVIDERS,
+    ProviderSpec,
     create_dynamic_spec,
     find_by_name,
     reasoning_effort_values_for,
@@ -60,7 +71,6 @@ if TYPE_CHECKING:
 
 OAuthStatusReader = Callable[[Any], dict[str, Any]]
 SettingsPayloadBuilder = Callable[..., dict[str, Any]]
-HttpGet = Callable[..., httpx.Response]
 SettingsOperation = Callable[..., dict[str, Any]]
 
 
@@ -72,9 +82,10 @@ class ModelSettingsOperations:
     delete_model: SettingsOperation
     migrate_models: SettingsOperation
     update_call_order: SettingsOperation
+    toggle_provider_model: SettingsOperation
     update_provider: SettingsOperation
     create_provider: SettingsOperation
-    provider_models: SettingsOperation
+    provider_models: Callable[..., ProviderModelCatalogPayload]
     oauth_login: SettingsOperation
     oauth_complete: SettingsOperation
     oauth_logout: SettingsOperation
@@ -97,7 +108,6 @@ _CONTEXT_WINDOW_TOKEN_OPTIONS = {65_536, 200_000, 262_144, 500_000, 1_048_576}
 _OAUTH_PROXY_PROVIDERS = {"openai_codex", "xai_grok"}
 _WEBUI_OAUTH_TIMEOUT_S = 600
 _MODEL_CONFIGURATION_SLUG_RE = re.compile(r"[^a-z0-9_-]+")
-_ENV_REF_RE = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
 _REDACTED_PROVIDER_SECRET = "••••••••"
 _PROVIDER_STRUCTURED_FIELDS = ("extra_headers", "extra_body", "extra_query")
 _PROVIDER_SECRET_KEYS = frozenset({
@@ -266,35 +276,6 @@ def mask_secret_hint(secret: str | None) -> str | None:
     return f"{secret[:4]}••••{secret[-4:]}"
 
 
-def _resolve_env_placeholders(value: str | None) -> str | None:
-    if not value:
-        return None
-    missing = False
-
-    def replace(match: re.Match[str]) -> str:
-        nonlocal missing
-        env_value = os.environ.get(match.group(1))
-        if env_value is None:
-            missing = True
-            return ""
-        return env_value
-
-    resolved = _ENV_REF_RE.sub(replace, value).strip()
-    if missing and not resolved:
-        return None
-    return resolved or None
-
-
-def provider_requires_api_key(spec: Any) -> bool:
-    if spec.name == "azure_openai":
-        return False
-    if spec.is_oauth:
-        return False
-    if spec.is_local or spec.is_direct:
-        return False
-    return True
-
-
 def provider_requires_api_base(spec: Any) -> bool:
     if spec.name == "azure_openai":
         return True
@@ -429,7 +410,7 @@ def _dynamic_provider_items(config: Config) -> list[tuple[str, ProviderConfig]]:
 def resolve_settings_provider(
     config: Config,
     provider_name: str,
-) -> tuple[Any, str, ProviderConfig] | None:
+) -> tuple[ProviderSpec, str, ProviderConfig] | None:
     spec = find_by_name(provider_name)
     if spec is not None:
         provider_config = getattr(config.providers, spec.name, None)
@@ -580,106 +561,13 @@ def _provider_settings_rows(
     return rows
 
 
-def model_catalog_kind(spec: Any) -> str:
-    catalog = getattr(spec, "model_catalog", "auto")
-    if catalog != "auto":
-        return catalog
-    if spec.is_transcription_only or spec.is_oauth:
-        return "unsupported"
-    if spec.backend != "openai_compat" and spec.name != "minimax_anthropic":
-        return "unsupported"
-    if spec.is_local:
-        return "local"
-    if spec.is_direct:
-        return "custom"
-    if spec.is_gateway:
-        return "catalog"
-    return "official"
-
-
-def _model_id_from_row(row: Any) -> str | None:
-    if isinstance(row, str):
-        return row.strip() or None
-    if not isinstance(row, dict):
-        return None
-    row_mapping = cast(dict[str, Any], row)
-    for key in ("id", "name", "model"):
-        value = row_mapping.get(key)
-        if isinstance(value, str) and value.strip():
-            return value.strip()
-    return None
-
-
-def _model_context_window(row: Any) -> int | None:
-    if not isinstance(row, dict):
-        return None
-    row_mapping = cast(dict[str, Any], row)
-    for key in (
-        "context_window",
-        "context_length",
-        "max_context_length",
-        "max_model_len",
-        "max_input_tokens",
-    ):
-        value = row_mapping.get(key)
-        if isinstance(value, int) and value > 0:
-            return value
-        if isinstance(value, float) and value > 0:
-            return int(value)
-    return None
-
-
-def _model_row_payload(row: Any) -> dict[str, Any] | None:
-    model_id = _model_id_from_row(row)
-    if not model_id:
-        return None
-    label: str | None = None
-    description: str | None = None
-    owned_by: str | None = None
-    if isinstance(row, dict):
-        row_mapping = cast(dict[str, Any], row)
-        raw_label = row_mapping.get("display_name") or row_mapping.get("label") or row_mapping.get("name")
-        if isinstance(raw_label, str) and raw_label.strip() and raw_label.strip() != model_id:
-            label = raw_label.strip()
-        raw_description = row_mapping.get("description")
-        if isinstance(raw_description, str) and raw_description.strip():
-            description = raw_description.strip()
-        raw_owner = row_mapping.get("owned_by") or row_mapping.get("owner") or row_mapping.get("organization")
-        if isinstance(raw_owner, str) and raw_owner.strip():
-            owned_by = raw_owner.strip()
-    payload = {
-        "id": model_id,
-        "label": label,
-        "owned_by": owned_by,
-        "context_window": _model_context_window(row),
-    }
-    if description:
-        payload["description"] = description
-    return payload
-
-
-def _extract_model_rows(body: Any) -> list[dict[str, Any]]:
-    raw_rows = cast(dict[str, Any], body).get("data") if isinstance(body, dict) else body
-    if not isinstance(raw_rows, list):
-        return []
-    rows: list[dict[str, Any]] = []
-    seen: set[str] = set()
-    for raw_row in cast(list[object], raw_rows):
-        row = _model_row_payload(raw_row)
-        if row is None or row["id"] in seen:
-            continue
-        seen.add(row["id"])
-        rows.append(row)
-    return rows
-
-
 def provider_models_payload(
     config: Config,
     query: QueryParams,
     *,
     http_get: HttpGet,
     credential_owner: CredentialOwner | None = None,
-) -> dict[str, Any]:
+) -> ProviderModelCatalogPayload:
     """Fetch an advisory model list without mutating configuration."""
     provider_name = (query_first(query, "provider") or "").strip()
     if not provider_name:
@@ -690,144 +578,13 @@ def provider_models_payload(
         raise WebUISettingsError("unknown provider")
     spec, provider_key, provider_config = resolved_provider
 
-    catalog_kind = model_catalog_kind(spec)
-    base_payload: dict[str, Any] = {
-        "provider": provider_key,
-        "label": provider_config.display_name or spec.label,
-        "catalog_kind": catalog_kind,
-        "models": [],
-        "model_count": 0,
-        "message": None,
-        "fetched_at": time.time(),
-    }
-    if catalog_kind == "unsupported":
-        return {
-            **base_payload,
-            "status": "unsupported",
-            "message": "Model list is not available for this provider. Type a model ID manually.",
-        }
-    if catalog_kind == "builtin":
-        rows = [
-            {
-                "id": model.id,
-                "label": model.label or None,
-                "description": model.description or None,
-                "owned_by": spec.label,
-                "context_window": model.context_window,
-            }
-            for model in spec.builtin_models
-        ]
-        return {
-            **base_payload,
-            "status": "available",
-            "models": rows,
-            "model_count": len(rows),
-        }
-    if catalog_kind == "hybrid":
-        proxy = _resolve_env_placeholders(provider_config.proxy)
-        catalog = get_oauth_model_catalog(spec.name, proxy=proxy, owner=credential_owner)
-        rows = [
-            {
-                "id": model.id,
-                "label": model.label or None,
-                "description": model.description or None,
-                "owned_by": model.owned_by or spec.label,
-                "context_window": model.context_window,
-                "reasoning_efforts": list(model.reasoning_efforts),
-                "supports_backend_search": model.supports_backend_search,
-            }
-            for model in catalog.models
-        ]
-        return {
-            **base_payload,
-            "status": "available",
-            "source": catalog.source,
-            "models": rows,
-            "model_count": len(rows),
-            "message": catalog.message,
-            "fetched_at": catalog.fetched_at,
-        }
-
-    if provider_config.api_base:
-        # Never send credentials for an explicitly configured endpoint to a
-        # different origin if the endpoint's environment reference is unset.
-        api_base = resolve_env_refs(provider_config.api_base).strip()
-    else:
-        api_base = spec.default_api_base or ("https://api.openai.com/v1" if spec.name == "openai" else "")
-    if not api_base:
-        return {
-            **base_payload,
-            "status": "missing_api_base",
-            "message": "Configure an API base URL to load models.",
-        }
-
-    api_key = _resolve_env_placeholders(provider_config.api_key)
-    if provider_requires_api_key(spec) and not api_key:
-        return {
-            **base_payload,
-            "status": "not_configured",
-            "message": "Configure this provider before loading models.",
-        }
-
-    headers = {"Accept": "application/json"}
-    if api_key:
-        if spec.name == "minimax_anthropic":
-            headers["X-Api-Key"] = api_key
-        else:
-            headers["Authorization"] = f"Bearer {api_key}"
-
-    extra_headers: dict[str, str] = {}
-    for name, value in (provider_extra_headers(spec, provider_config) or {}).items():
-        resolved = resolve_env_refs(value)
-        if value and not resolved:
-            return {
-                **base_payload,
-                "status": "not_configured",
-                "message": "A configured provider header is missing from the environment.",
-            }
-        extra_headers[name] = resolved
-
-    models_url = f"{api_base.rstrip('/')}/models"
-    if spec.name == "minimax_anthropic" and not api_base.rstrip("/").endswith("/v1"):
-        models_url = f"{api_base.rstrip('/')}/v1/models"
-
-    try:
-        request_headers = httpx.Headers(headers)
-        request_headers.update(extra_headers)
-        response = http_get(
-            models_url,
-            headers=request_headers,
-            timeout=10.0,
-            follow_redirects=False,
-        )
-        response.raise_for_status()
-        rows = _extract_model_rows(response.json())
-    except httpx.HTTPStatusError as exc:
-        status = exc.response.status_code
-        if status in {401, 403}:
-            return {
-                **base_payload,
-                "status": "not_configured",
-                "message": "The provider rejected the configured credential.",
-            }
-        return {
-            **base_payload,
-            "status": "error",
-            "message": f"Model list request failed with HTTP {status}.",
-        }
-    except (httpx.HTTPError, ValueError):
-        return {
-            **base_payload,
-            "status": "error",
-            "message": "Could not load models from the configured provider.",
-        }
-
-    return {
-        **base_payload,
-        "status": "available",
-        "models": rows,
-        "model_count": len(rows),
-    }
+    return discover_provider_models(
+        spec,
+        provider_config,
+        provider_key=provider_key,
+        http_get=http_get,
+        credential_owner=credential_owner,
+    )
 
 
 def _parse_context_window_tokens(value: str | None) -> int | None:
@@ -977,7 +734,8 @@ def _unique_model_configuration_name(config: Config, label: str) -> str:
     candidate = base
     suffix = 2
     while _model_configuration_name_exists(config, candidate):
-        candidate = f"{base}-{suffix}"
+        ending = f"-{suffix}"
+        candidate = base[:48 - len(ending)].rstrip("-_") + ending
         suffix += 1
     return candidate
 
@@ -1404,6 +1162,96 @@ def update_model_call_order(
         defaults.model_preset = normalized_order[0]
         defaults.fallback_models = fallback_models
     return changed
+
+
+def _provider_model_preset_names(config: Config, provider: str, model: str) -> list[str]:
+    explicit: list[str] = []
+    resolved: list[str] = []
+    for name, preset in config.model_presets.items():
+        if preset.model != model:
+            continue
+        if preset.provider == provider:
+            explicit.append(name)
+        elif config.get_provider_name(model, preset=preset) == provider:
+            resolved.append(name)
+    return explicit + resolved
+
+
+def toggle_provider_model(
+    config: Config,
+    query: QueryParams,
+    *,
+    oauth_status: OAuthStatusReader,
+) -> bool:
+    provider = (query_first(query, "provider") or "").strip()
+    model = (query_first(query, "model") or "").strip()
+    raw_enabled = query_first(query, "enabled")
+    if not provider:
+        raise WebUISettingsError("provider is required")
+    if not model:
+        raise WebUISettingsError("model is required")
+    if raw_enabled is None:
+        raise WebUISettingsError("enabled is required")
+    enabled = parse_bool(raw_enabled, "enabled")
+    _validate_configured_provider(config, provider, oauth_status)
+    resolved = resolve_settings_provider(config, provider)
+    if resolved is None:
+        raise WebUISettingsError("unknown provider")
+    _, provider, _ = resolved
+
+    defaults = config.agents.defaults
+    order, _ = _model_call_order_state(config)
+    matching = _provider_model_preset_names(config, provider, model)
+    if enabled:
+        if any(name in order for name in matching):
+            return False
+        context_window = _parse_positive_int(
+            query_first_alias(query, "context_window_tokens", "contextWindowTokens"),
+            "context_window_tokens",
+        )
+        base = config.resolve_preset()
+        if defaults.fallback:
+            # Materialize the legacy list before adding named fallback models.
+            defaults.fallback_models = [
+                InlineFallbackConfig(
+                    model=entry.model,
+                    provider=entry.provider,
+                    reasoning_effort=base.reasoning_effort,
+                )
+                for entry in defaults.fallback
+            ]
+            defaults.fallback = []
+        if _legacy_model_configuration_migratable(config, oauth_status):
+            migrate_model_configurations(config, oauth_status=oauth_status)
+            order, _ = _model_call_order_state(config)
+            matching = _provider_model_preset_names(config, provider, model)
+            if any(name in order for name in matching):
+                return True
+        if matching:
+            preferred = matching[0]
+        else:
+            label = (query_first(query, "label") or "").strip() or _model_configuration_label(model)
+            preferred = _unique_model_configuration_name(config, label)
+            config.model_presets[preferred] = ModelPresetConfig(
+                model=model,
+                provider=provider,
+                max_tokens=base.max_tokens,
+                context_window_tokens=context_window or base.context_window_tokens,
+                temperature=base.temperature,
+                reasoning_effort=base.reasoning_effort,
+            )
+        order.append(preferred)
+    else:
+        remaining = [name for name in order if name not in matching]
+        if remaining == order:
+            return False
+        if not remaining:
+            raise WebUISettingsError("at least one model must remain enabled", status=409)
+        order = remaining
+
+    defaults.model_preset = order[0]
+    defaults.fallback_models = list(order[1:])
+    return True
 
 
 def migrate_model_configurations(
@@ -1843,6 +1691,7 @@ class ModelSettingsHandler:
                 "model-delete": operations.delete_model,
                 "models-migrate": operations.migrate_models,
                 "call-order-update": operations.update_call_order,
+                "provider-model-toggle": operations.toggle_provider_model,
                 "provider-create": operations.create_provider,
             }.get(action)
             if mutation is not None:
@@ -1883,7 +1732,7 @@ class ModelSettingsHandler:
                         500,
                         "failed to load provider model list",
                     )
-                return SettingsRouteResult.success(payload)
+                return SettingsRouteResult.success(dict(payload))
 
             if action == "oauth-login":
                 payload = await asyncio.to_thread(

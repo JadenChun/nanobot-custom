@@ -33,6 +33,7 @@ from kohaku.webui.settings_api import (
     provider_models_payload,
     settings_payload,
     settings_usage_payload,
+    toggle_provider_model,
     update_agent_settings,
     update_api_settings,
     update_model_call_order,
@@ -2349,7 +2350,7 @@ def test_provider_models_payload_returns_online_openai_codex_models(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
-        "kohaku.webui.settings_models.get_oauth_model_catalog",
+        "kohaku.providers.model_catalog.get_oauth_model_catalog",
         lambda *_args, **_kwargs: OAuthModelCatalogSnapshot(
             models=(
                 ProviderModelSpec(
@@ -2387,7 +2388,7 @@ def test_provider_models_payload_returns_online_github_copilot_models(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
-        "kohaku.webui.settings_models.get_oauth_model_catalog",
+        "kohaku.providers.model_catalog.get_oauth_model_catalog",
         lambda *_args, **_kwargs: OAuthModelCatalogSnapshot(
             models=(
                 ProviderModelSpec(
@@ -2414,7 +2415,7 @@ def test_provider_models_payload_returns_online_xai_grok_models(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
-        "kohaku.webui.settings_models.get_oauth_model_catalog",
+        "kohaku.providers.model_catalog.get_oauth_model_catalog",
         lambda *_args, **_kwargs: OAuthModelCatalogSnapshot(
             models=(
                 ProviderModelSpec(
@@ -2594,7 +2595,9 @@ def test_provider_models_payload_fetches_orcarouter_catalog(
 
 def test_model_catalog_kind_uses_provider_spec_metadata() -> None:
     assert _model_catalog_kind(find_by_name("skywork")) == "official"
-    assert _model_catalog_kind(find_by_name("anthropic")) == "unsupported"
+    assert _model_catalog_kind(find_by_name("anthropic")) == "official"
+    assert _model_catalog_kind(find_by_name("bedrock")) == "unsupported"
+    assert _model_catalog_kind(find_by_name("azure_openai")) == "unsupported"
     assert _model_catalog_kind(find_by_name("openrouter")) == "catalog"
     assert _model_catalog_kind(find_by_name("orcarouter")) == "catalog"
     assert _model_catalog_kind(find_by_name("openai_codex")) == "hybrid"
@@ -2748,3 +2751,108 @@ def test_azure_openai_spec_no_longer_requires_api_key() -> None:
     spec = find_by_name("azure_openai")
     assert spec is not None
     assert _provider_requires_api_key(spec) is False
+
+
+def test_toggle_provider_model_persists_and_reuses_discovered_preset(tmp_path) -> None:
+    config_path = tmp_path / "config.json"
+    config = Config()
+    config.providers.local_manager.api_base = "http://127.0.0.1:8082/v1"
+    config.model_presets["primary"] = ModelPresetConfig(
+        model="profile-primary", provider="local_manager", max_tokens=2048, temperature=0.4,
+    )
+    config.agents.defaults.model_preset = "primary"
+    save_config(config, config_path)
+    query = {"provider": ["local_manager"], "model": ["profile-32k"]}
+
+    enabled = toggle_provider_model(
+        {**query, "enabled": ["true"], "label": ["Profile 32K"], "contextWindowTokens": ["32768"]},
+        config_path=config_path,
+    )
+    assert enabled["model_call_order"] == ["primary", "profile-32k"]
+    discovered = next(preset for preset in enabled["model_presets"] if preset["name"] == "profile-32k")
+    assert discovered["provider"] == "local_manager"
+    assert discovered["model"] == "profile-32k"
+    assert discovered["context_window_tokens"] == 32768
+    assert discovered["max_tokens"] == 2048
+    assert discovered["temperature"] == 0.4
+
+    disabled = toggle_provider_model({**query, "enabled": ["false"]}, config_path=config_path)
+    assert disabled["model_call_order"] == ["primary"]
+    assert discovered in disabled["model_presets"]
+
+    reenabled = toggle_provider_model(
+        {**query, "enabled": ["true"], "label": ["New label"], "context_window_tokens": ["65536"]},
+        config_path=config_path,
+    )
+    assert reenabled["model_call_order"] == enabled["model_call_order"]
+    assert reenabled["model_presets"] == enabled["model_presets"]
+    assert load_config(config_path).agents.defaults.fallback_models == ["profile-32k"]
+
+
+def test_toggle_provider_model_materializes_legacy_call_order(tmp_path) -> None:
+    config_path = tmp_path / "config.json"
+    config = Config()
+    config.providers.local_manager.api_base = "http://127.0.0.1:8082/v1"
+    config.agents.defaults.model = "profile-primary"
+    config.agents.defaults.provider = "local_manager"
+    config.agents.defaults.fallback_models = [
+        InlineFallbackConfig(model="profile-backup", provider="local_manager", temperature=0.8),
+    ]
+    save_config(config, config_path)
+
+    result = toggle_provider_model(
+        {"provider": ["local_manager"], "model": ["profile-32k"], "enabled": ["true"]},
+        config_path=config_path,
+    )
+
+    assert result["model_call_order"] == ["profile-primary", "profile-backup", "profile-32k"]
+    assert result["model_call_order_editable"]
+    backup = next(preset for preset in result["model_presets"] if preset["name"] == "profile-backup")
+    assert backup["temperature"] == 0.8
+
+
+def test_toggle_provider_model_resolves_auto_matches_and_prefers_explicit_preset(tmp_path) -> None:
+    config_path = tmp_path / "config.json"
+    config = Config()
+    config.providers.openai.api_key = "key-test"
+    config.model_presets = {
+        "primary": ModelPresetConfig(model="gpt-4.1", provider="openai"),
+        "inferred": ModelPresetConfig(model="openai/gpt-4o", provider="auto"),
+        "explicit": ModelPresetConfig(model="openai/gpt-4o", provider="openai", temperature=0.7),
+    }
+    config.agents.defaults.model_preset = "primary"
+    config.agents.defaults.fallback_models = ["inferred", "explicit"]
+    save_config(config, config_path)
+    query = {"provider": ["openai"], "model": ["openai/gpt-4o"]}
+
+    enabled = toggle_provider_model({**query, "enabled": ["true"]}, config_path=config_path)
+    assert enabled["model_call_order"] == ["primary", "inferred", "explicit"]
+
+    disabled = toggle_provider_model({**query, "enabled": ["false"]}, config_path=config_path)
+    assert disabled["model_call_order"] == ["primary"]
+    assert disabled["model_presets"] == enabled["model_presets"]
+
+    reenabled = toggle_provider_model({**query, "enabled": ["true"]}, config_path=config_path)
+    assert reenabled["model_call_order"] == ["primary", "explicit"]
+    assert reenabled["model_presets"] == enabled["model_presets"]
+
+
+def test_toggle_provider_model_cannot_disable_last_enabled_model(tmp_path) -> None:
+    config_path = tmp_path / "config.json"
+    config = Config()
+    config.providers.local_manager.api_base = "http://127.0.0.1:8082/v1"
+    config.model_presets["primary"] = ModelPresetConfig(
+        model="profile-primary", provider="local_manager",
+    )
+    config.agents.defaults.model_preset = "primary"
+    save_config(config, config_path)
+    original = config_path.read_bytes()
+
+    with pytest.raises(WebUISettingsError, match="at least one model must remain enabled") as error:
+        toggle_provider_model(
+            {"provider": ["local_manager"], "model": ["profile-primary"], "enabled": ["false"]},
+            config_path=config_path,
+        )
+
+    assert error.value.status == 409
+    assert config_path.read_bytes() == original

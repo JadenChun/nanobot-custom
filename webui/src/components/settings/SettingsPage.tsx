@@ -13,6 +13,7 @@ import {
   ModelPresetDeleteDialog,
   ModelsSettings,
 } from "@/components/settings/models/ModelsSettings";
+import { ProviderModelsCatalog } from "@/components/settings/models/ProviderModelsCatalog";
 import {
   ProviderOAuthLoginDialog,
   ProvidersSettings,
@@ -171,6 +172,8 @@ export function SettingsPage({
     networkSafetyForm,
     networkSafetySaving,
     pendingRestartSections,
+    pendingProviderModelToggles,
+    providerCatalogRefreshKey,
     providerForms,
     providerOAuthCompleting,
     providerOAuthDialogError,
@@ -229,6 +232,7 @@ export function SettingsPage({
     toggleProviderKeyEditing,
     toggleProviderKeyVisibility,
     token,
+    toggleProviderModel,
     transcriptionDirty,
     transcriptionForm,
     transcriptionSaving,
@@ -283,7 +287,7 @@ export function SettingsPage({
               creatingSaving={modelConfigurationSaving}
               callOrder={modelCallOrder}
               saving={saving}
-              orderSaving={modelCallOrderSaving || modelConfigurationSaving}
+              orderSaving={modelCallOrderSaving || modelConfigurationSaving || pendingProviderModelToggles.size > 0}
               migrationSaving={modelMigrationSaving}
               showBrandLogos={localPrefs.brandLogos}
               providerSaving={providerSaving}
@@ -301,6 +305,16 @@ export function SettingsPage({
                 modelPresetBeforeCreateRef.current = null;
               }}
               onDeleteConfiguration={setModelPresetPendingDelete}
+            />
+            <ProviderModelsCatalog
+              token={token}
+              settings={settings}
+              modelCallOrder={modelCallOrder}
+              providerCatalogRefreshKey={providerCatalogRefreshKey}
+              showBrandLogos={localPrefs.brandLogos}
+              pendingToggles={pendingProviderModelToggles}
+              orderSaving={modelCallOrderSaving || modelConfigurationSaving}
+              onToggleProviderModel={toggleProviderModel}
             />
             <ProvidersSettings
               settings={settings}

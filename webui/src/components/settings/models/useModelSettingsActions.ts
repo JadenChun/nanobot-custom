@@ -1,4 +1,4 @@
-import { useCallback, type Dispatch, type SetStateAction } from "react";
+import { useCallback, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import type { TFunction } from "i18next";
 
 import type {
@@ -13,7 +13,10 @@ import {
   type CustomProviderDraft,
 } from "@/components/settings/models/ProviderSettings";
 import type { ModelSettingsState } from "@/components/settings/models/useModelSettingsState";
-import { normalizeContextWindowTokens } from "@/components/settings/shared/ModelControls";
+import {
+  normalizeContextWindowTokens,
+  providerModelKey,
+} from "@/components/settings/shared/ModelControls";
 import {
   ApiError,
   completeProviderOAuth,
@@ -23,6 +26,7 @@ import {
   loginProviderOAuth,
   logoutProviderOAuth,
   migrateModelConfigurations,
+  toggleProviderModel as toggleProviderModelRequest,
   updateModelCallOrder,
   updateModelConfiguration,
   updateProviderSettings,
@@ -33,6 +37,7 @@ import type {
   ProviderOAuthCompletionResult,
   ProviderOAuthLoginResult,
   ProviderOAuthPending,
+  ProviderModelToggle,
   ProviderSettingsUpdate,
   SettingsPayload,
 } from "@/lib/types";
@@ -82,6 +87,10 @@ export function useModelSettingsActions({
   modelDirty,
   configuredModelProviderOptions,
 }: ModelSettingsActionsOptions) {
+  const [providerCatalogRefreshKey, setProviderCatalogRefreshKey] = useState(0);
+  const pendingToggles = useRef(new Set<string>());
+  const [pendingProviderModelToggles, setPendingProviderModelToggles] =
+    useState<ReadonlySet<string>>(new Set());
   const {
     expandedProvider,
     form,
@@ -120,6 +129,28 @@ export function useModelSettingsActions({
     setVisibleProviderKeys,
     visibleProviderKeys,
   } = state;
+
+  const refreshProviderCatalog = () => setProviderCatalogRefreshKey((key) => key + 1);
+
+  const toggleProviderModel = async (update: ProviderModelToggle) => {
+    const key = providerModelKey(update.provider, update.model);
+    if (!settings || modelCallOrderSaving || modelConfigurationSaving || pendingToggles.current.has(key)) {
+      return;
+    }
+    pendingToggles.current.add(key);
+    setPendingProviderModelToggles(new Set(pendingToggles.current));
+    try {
+      const payload = await toggleProviderModelRequest(client, update);
+      applyPayload(payload, { preserveAgentForm: true });
+      onModelNameChange(payload.agent.model || null);
+      setError(null);
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      pendingToggles.current.delete(key);
+      setPendingProviderModelToggles(new Set(pendingToggles.current));
+    }
+  };
 
   const presetNameConflict = (name: string, currentName?: string) => {
     const normalized = name.toLowerCase();
@@ -312,6 +343,7 @@ export function useModelSettingsActions({
       saving ||
       modelCallOrderSaving ||
       modelConfigurationSaving ||
+      pendingToggles.current.size > 0 ||
       nextOrder.length === 0 ||
       unchanged
     ) {
@@ -412,6 +444,7 @@ export function useModelSettingsActions({
       }
       const payload = await updateProviderSettings(client, update);
       applyPayload(payload);
+      refreshProviderCatalog();
       if (payload.requires_restart) {
         setPendingRestartSections((prev) => ({ ...prev, image: true }));
       }
@@ -455,6 +488,7 @@ export function useModelSettingsActions({
         thinkingStyle: draft.thinkingStyle.trim(),
       });
       applyPayload(payload);
+      refreshProviderCatalog();
       setExpandedProvider(null);
       setError(null);
       return true;
@@ -508,6 +542,7 @@ export function useModelSettingsActions({
       popup?.close();
       closeProviderOAuthFlow();
       applyPayload(payload);
+      refreshProviderCatalog();
       setExpandedProvider(providerName);
       setError(null);
     } catch (err) {
@@ -534,6 +569,7 @@ export function useModelSettingsActions({
       if (providerOAuthFlowRef.current?.flow_id !== flow.flow_id) return;
       if (isProviderOAuthPending(payload)) return;
       applyPayload(payload);
+      refreshProviderCatalog();
       setExpandedProvider(flow.provider);
       setError(null);
       closeProviderOAuthFlow();
@@ -599,10 +635,13 @@ export function useModelSettingsActions({
     handleDeleteModelConfiguration,
     handleMigrateModelConfigurations,
     handleToggleProvider,
+    pendingProviderModelToggles,
+    providerCatalogRefreshKey,
     resetProviderDraft,
     runProviderOAuth,
     saveModelSettings,
     saveProvider,
+    toggleProviderModel,
     toggleProviderKeyEditing,
     toggleProviderKeyVisibility,
   };

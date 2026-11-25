@@ -27,8 +27,8 @@ def test_registry_matches_m36_inventory() -> None:
     }
     registry = load_registry()
     assert set(registry.operations) == expected
-    assert len(registry.operations) == 113
-    assert sum(1 for spec in registry.operations.values() if spec.enabled) == 113
+    assert len(registry.operations) == 114
+    assert sum(1 for spec in registry.operations.values() if spec.enabled) == 114
     delegated_children = registry.by_id("sessions.delegated_children")
     assert delegated_children is not None
     assert delegated_children.scope == "chat.read"
