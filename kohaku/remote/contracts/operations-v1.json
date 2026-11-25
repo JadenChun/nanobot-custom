@@ -1584,6 +1584,26 @@
       }
     },
     {
+      "id": "settings.provider_model.toggle",
+      "inventory_row": "settings.provider_model.toggle",
+      "category": "settings",
+      "kind": "mutation",
+      "method": "POST",
+      "path": "/api/settings/provider-models/toggle",
+      "action": "settings.provider_model.toggle",
+      "ws_type": null,
+      "scope": "owner",
+      "enabled": true,
+      "planned_task": null,
+      "replay": "submit",
+      "bounds": {
+        "max_request_bytes": 131072,
+        "max_response_bytes": null,
+        "timeout_s": 60,
+        "range_requests": false
+      }
+    },
+    {
       "id": "settings.provider_models.read",
       "inventory_row": "settings.provider_models.read",
       "category": "settings",

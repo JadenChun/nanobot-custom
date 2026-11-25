@@ -1047,6 +1047,14 @@ interface ProviderModelInfo {
   supports_backend_search?: boolean;
 }
 
+export interface ProviderModelToggle {
+  provider: string;
+  model: string;
+  enabled: boolean;
+  label?: string;
+  contextWindowTokens?: number;
+}
+
 export interface ProviderModelsPayload {
   provider: string;
   label: string;

@@ -89,6 +89,127 @@ async function togglePresetEditor(name = "primary") {
 describe("Settings models", () => {
   installSettingsViewTestHooks();
 
+  it("enables and disables a discovered Local Inference Manager model", async () => {
+    const payload = settingsPayload();
+    payload.providers.push({
+      name: "local_manager",
+      label: "Local Inference Manager",
+      configured: true,
+      model_catalog: "local",
+    });
+    const profile = {
+      ...payload.model_presets[0],
+      name: "profile-32k",
+      model: "local-profile-32k",
+      provider: "local_manager",
+      resolved_provider: "local_manager",
+      context_window_tokens: 32768,
+      active: false,
+    };
+    const disabled = { ...payload, model_presets: [...payload.model_presets, profile] };
+    const enabled = { ...disabled, model_call_order: [...payload.model_call_order, profile.name] };
+    requestMutationMock.mockResolvedValueOnce(enabled).mockResolvedValueOnce(disabled);
+    let refreshed = false;
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input) === "/api/settings/provider-models?provider=local_manager") {
+        const models = [{ id: profile.model, label: "Profile 32K", context_window: 32768 }];
+        if (refreshed) models.push({ id: "new-profile", label: "New profile", context_window: 32768 });
+        return jsonResponse({
+          status: "available",
+          models,
+          model_count: models.length,
+        });
+      }
+      return { ok: false, status: 404, json: async () => ({}) } as Response;
+    }));
+
+    renderSettingsView({ initialSection: "models", initialSettings: payload });
+
+    const catalog = await screen.findByRole("region", { name: "Available models" });
+    const toggle = await within(catalog).findByRole("switch", { name: "Enable Profile 32K" });
+    expect(toggle).not.toBeChecked();
+    expect(within(catalog).getByText(profile.model)).toBeInTheDocument();
+    expect(within(catalog).getByText("32.8K")).toBeInTheDocument();
+
+    fireEvent.click(toggle);
+    const presetRow = await screen.findByTestId("model-call-order-row-profile-32k");
+    expect(within(presetRow).getByRole("switch", { name: "Disable preset" })).toBeChecked();
+    expect(toggle).toBeChecked();
+    expect(requestMutationMock).toHaveBeenNthCalledWith(1, "settings.provider_model.toggle", {
+      provider: "local_manager",
+      model: profile.model,
+      enabled: true,
+      label: "Profile 32K",
+      contextWindowTokens: 32768,
+    }, expect.any(Number));
+
+    fireEvent.click(toggle);
+    await waitFor(() => expect(toggle).not.toBeChecked());
+    const disabledRow = screen.getByTestId("model-call-order-row-profile-32k");
+    expect(within(disabledRow).getByRole("switch", { name: "Enable preset" })).not.toBeChecked();
+    expect(requestMutationMock).toHaveBeenNthCalledWith(2, "settings.provider_model.toggle", {
+      provider: "local_manager",
+      model: profile.model,
+      enabled: false,
+      label: "Profile 32K",
+      contextWindowTokens: 32768,
+    }, expect.any(Number));
+
+    refreshed = true;
+    fireEvent.click(within(catalog).getByRole("button", { name: "Refresh" }));
+    expect(await within(catalog).findByRole("switch", { name: "Enable New profile" })).toBeInTheDocument();
+  });
+
+  it("searches across providers and loads a deferred catalog when the search has two characters", async () => {
+    const payload = settingsPayload();
+    payload.providers = [
+      { name: "local_manager", label: "Local Inference Manager", configured: true, model_catalog: "local" },
+      { name: "orcarouter", label: "OrcaRouter", configured: true, model_catalog: "catalog" },
+      { name: "openai_codex", label: "OpenAI Codex", configured: false, auth_type: "oauth", model_catalog: "hybrid" },
+      { name: "github_copilot", label: "GitHub Copilot", configured: true, auth_type: "oauth" },
+    ];
+    const gatewayPath = "/api/settings/provider-models?provider=orcarouter";
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === gatewayPath) {
+        return jsonResponse({
+          status: "available",
+          models: [{ id: "vendor/remote", label: "Gateway Model", owned_by: "Northwind" }],
+          model_count: 1,
+        });
+      }
+      if (url === "/api/settings/provider-models?provider=local_manager") {
+        return jsonResponse({
+          status: "available",
+          models: [{ id: "local-model", label: "Local Model", description: "Northwind profile" }],
+          model_count: 1,
+        });
+      }
+      return { ok: false, status: 404, json: async () => ({}) } as Response;
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    renderSettingsView({ initialSection: "models", initialSettings: payload });
+
+    const catalog = within(await screen.findByRole("region", { name: "Available models" }));
+    expect(await catalog.findByRole("switch", { name: "Enable Local Model" })).toBeInTheDocument();
+    expect(catalog.getByRole("button", { name: "Load models" })).toBeInTheDocument();
+    const search = catalog.getByRole("searchbox", { name: "Search available models" });
+    fireEvent.change(search, { target: { value: "n" } });
+    expect(fetchMock.mock.calls.some(([input]) => String(input) === gatewayPath)).toBe(false);
+
+    fireEvent.change(search, { target: { value: "northwind" } });
+    expect(await catalog.findByRole("switch", { name: "Enable Gateway Model" })).toBeInTheDocument();
+    expect(catalog.getByRole("switch", { name: "Enable Local Model" })).toBeInTheDocument();
+    fireEvent.change(search, { target: { value: "orcarouter" } });
+    expect(catalog.queryByRole("switch", { name: "Enable Local Model" })).not.toBeInTheDocument();
+    expect(catalog.getByRole("switch", { name: "Enable Gateway Model" })).toBeInTheDocument();
+    expect(fetchMock.mock.calls.map(([input]) => String(input)).filter((url) => url.startsWith("/api/settings/provider-models"))).toEqual([
+      "/api/settings/provider-models?provider=local_manager",
+      gatewayPath,
+    ]);
+  });
+
   it("uses the preset name as the canonical identity", async () => {
     const payload = settingsPayload();
     payload.model_presets[0] = {
@@ -1330,8 +1451,8 @@ describe("Settings models", () => {
     });
     await openPopover(modelButtons[modelButtons.length - 1]);
 
-    expect(await screen.findByText("GPT-5.6-Sol")).toBeInTheDocument();
-    expect(screen.getByText(/Latest frontier agentic coding model\./)).toBeInTheDocument();
+    const option = await screen.findByRole("option", { name: /GPT-5.6-Sol/ });
+    expect(within(option).getByText(/Latest frontier agentic coding model\./)).toBeInTheDocument();
     expect(fetchMock).toHaveBeenCalledWith(
       "/api/settings/provider-models?provider=openai_codex",
       expect.objectContaining({ headers: { Authorization: "Bearer tok" } }),
@@ -1412,8 +1533,8 @@ describe("Settings models", () => {
     });
     await openPopover(modelButtons[modelButtons.length - 1]);
 
-    expect(await screen.findByText("Grok 4.6")).toBeInTheDocument();
-    expect(screen.getByText(/Latest frontier model/)).toBeInTheDocument();
+    const option = await screen.findByRole("option", { name: /Grok 4\.6/ });
+    expect(within(option).getByText(/Latest frontier model/)).toBeInTheDocument();
     expect(fetchMock).toHaveBeenCalledWith(
       "/api/settings/provider-models?provider=xai_grok",
       expect.objectContaining({ headers: { Authorization: "Bearer tok" } }),
@@ -1559,8 +1680,7 @@ describe("Settings models", () => {
     await togglePresetEditor();
     const modelButtons = await screen.findAllByRole("button", { name: /deepseek-chat/i });
     await openPopover(modelButtons[modelButtons.length - 1]);
-    await screen.findByText("deepseek-reasoner");
-    fireEvent.click(screen.getAllByText("deepseek-reasoner")[0]);
+    fireEvent.click(await screen.findByRole("option", { name: /deepseek-reasoner/ }));
     fireEvent.click(screen.getByRole("button", { name: /Advanced options/ }));
     fireEvent.change(screen.getByLabelText("Temperature"), {
       target: { value: "0.4" },

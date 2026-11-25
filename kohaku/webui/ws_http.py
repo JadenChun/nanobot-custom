@@ -287,6 +287,7 @@ WEBSOCKET_MUTATION_ROUTES = {
     "settings.model_configuration.delete": "/api/settings/model-configurations/delete",
     "settings.model_configuration.migrate": "/api/settings/model-configurations/migrate",
     "settings.model_call_order.update": "/api/settings/model-call-order/update",
+    "settings.provider_model.toggle": "/api/settings/provider-models/toggle",
     "settings.provider.update": "/api/settings/provider/update",
     "settings.provider.create": "/api/settings/provider/create",
     "settings.provider.oauth_login": "/api/settings/provider/oauth-login",

@@ -23,6 +23,7 @@ import type {
   PairingPayload,
   ProviderCreationUpdate,
   ProviderModelsPayload,
+  ProviderModelToggle,
   ProviderOAuthCompletionResult,
   ProviderOAuthLoginResult,
   ProviderSettingsUpdate,
@@ -1684,13 +1685,14 @@ export async function fetchProviderModels(
   token: string,
   provider: string,
   base: string = "",
+  signal?: AbortSignal,
 ): Promise<ProviderModelsPayload> {
   const query = new URLSearchParams();
   query.set("provider", provider);
   return request<ProviderModelsPayload>(
     `${base}/api/settings/provider-models?${query}`,
     token,
-    undefined,
+    signal ? { signal } : undefined,
     API_READ_TIMEOUT_MS,
   );
 }
@@ -1868,6 +1870,13 @@ export async function updateModelCallOrder(
   order: string[],
 ): Promise<SettingsPayload> {
   return mutation<SettingsPayload>(transport, "settings.model_call_order.update", { order });
+}
+
+export async function toggleProviderModel(
+  transport: WebUIMutationTransport,
+  update: ProviderModelToggle,
+): Promise<SettingsPayload> {
+  return mutation<SettingsPayload>(transport, "settings.provider_model.toggle", { ...update });
 }
 
 export async function updateProviderSettings(

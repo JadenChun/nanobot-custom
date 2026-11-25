@@ -16,6 +16,7 @@ import httpx
 from kohaku import __version__
 from kohaku.config.loader import get_config_path, load_config, save_config
 from kohaku.config.schema import Config
+from kohaku.providers.model_catalog import ProviderModelCatalogPayload
 from kohaku.providers.oauth_credentials import CredentialOwner
 from kohaku.webui import settings_capabilities as capabilities
 from kohaku.webui import settings_contracts as contracts
@@ -305,6 +306,17 @@ def migrate_model_configurations(
     return settings_payload(config_path=config_path)
 
 
+def toggle_provider_model(
+    query: QueryParams,
+    *,
+    config_path: Path | None = None,
+) -> dict[str, Any]:
+    config = _load_settings_config(config_path)
+    if models.toggle_provider_model(config, query, oauth_status=_oauth_status_for(config_path)):
+        _save_settings_config(config, config_path)
+    return settings_payload(config_path=config_path)
+
+
 def delete_model_configuration(
     query: QueryParams,
     *,
@@ -348,7 +360,7 @@ def provider_models_payload(
     query: QueryParams,
     *,
     config_path: Path | None = None,
-) -> dict[str, Any]:
+) -> ProviderModelCatalogPayload:
     return models.provider_models_payload(
         _load_settings_config(config_path),
         query,

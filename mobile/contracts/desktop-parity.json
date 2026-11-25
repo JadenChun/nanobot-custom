@@ -1595,7 +1595,7 @@
       "id": "settings",
       "label": "Settings, providers, models, capabilities, channels",
       "required": true,
-      "row_count": 31,
+      "row_count": 32,
       "rows": [
         {
           "id": "settings.read",
@@ -2496,6 +2496,66 @@
             "mobile_implementation": "absent",
             "evidence": [
               "desktop handler only"
+            ]
+          },
+          "exception": null,
+          "notes": ""
+        },
+        {
+          "id": "settings.provider_model.toggle",
+          "category": "settings",
+          "feature": "Models",
+          "action": "Enable or disable a provider model",
+          "desktop": {
+            "source": [
+              "kohaku/webui/settings_models.py"
+            ],
+            "tests": [
+              "tests/webui/test_settings_api.py",
+              "tests/webui/test_settings_routes.py"
+            ],
+            "implementation": "present"
+          },
+          "api": {
+            "kind": "http",
+            "method": "POST",
+            "path": "/api/settings/provider-models/toggle",
+            "mutation_action": "settings.provider_model.toggle"
+          },
+          "ui": {
+            "entry": "Models > Available models"
+          },
+          "auth": {
+            "owner": "write",
+            "legacy": "none",
+            "local_only": false,
+            "current_local_only": false
+          },
+          "native": {
+            "operation": "settings.provider_model.toggle",
+            "bounds": {
+              "max_request_bytes": 131072,
+              "timeout_s": 60
+            },
+            "replay": "submit"
+          },
+          "dependency": [
+            "M31",
+            "M32"
+          ],
+          "checks": {
+            "positive": [
+              "owner enables or disables a provider model"
+            ],
+            "negative": [
+              "last enabled model cannot be disabled"
+            ]
+          },
+          "status": {
+            "desktop_implementation": "present",
+            "mobile_implementation": "present",
+            "evidence": [
+              "Shared WebUI and owner operation contract"
             ]
           },
           "exception": null,
