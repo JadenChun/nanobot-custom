@@ -15,7 +15,6 @@ unsigned="${MOBILE_ROOT}/android/app/build/outputs/apk/release/app-release-unsig
   unset KOHAKU_MOBILE_KEYSTORE_PASSWORD KOHAKU_MOBILE_KEYSTORE_PASSWORD_FILE KOHAKU_MOBILE_KEY_PASSWORD
   export KOHAKU_MOBILE_WEB_DIR="www-shared"
   "${script_dir}/verify-gradle-archive.sh"
-  "${script_dir}/build-native-network.sh"
   "${script_dir}/build-shared-webui.sh"
   cd "${MOBILE_ROOT}"
   bunx cap sync android

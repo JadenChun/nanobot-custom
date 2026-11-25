@@ -11,7 +11,6 @@ mobile_require_toolchain
 
 export KOHAKU_MOBILE_WEB_DIR="www-shared"
 
-"${script_dir}/build-native-network.sh"
 "${script_dir}/build-shared-webui.sh"
 
 (

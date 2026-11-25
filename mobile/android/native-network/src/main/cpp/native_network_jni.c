@@ -18,15 +18,13 @@ static jbyteArray copy_bytes(JNIEnv *env, const char *data, int32_t length) {
     return result;
 }
 
-JNIEXPORT jint JNICALL
-Java_ai_kohaku_mobile_network_NativeNetwork_abiVersion(JNIEnv *env, jobject thiz) {
+static jint JNICALL jni_abiVersion(JNIEnv *env, jobject thiz) {
     (void)env;
     (void)thiz;
     return (jint)nanobot_network_abi_version();
 }
 
-JNIEXPORT jlong JNICALL
-Java_ai_kohaku_mobile_network_NativeNetwork_start(JNIEnv *env, jobject thiz, jstring config) {
+static jlong JNICALL jni_start(JNIEnv *env, jobject thiz, jstring config) {
     (void)thiz;
     const char *raw = (*env)->GetStringUTFChars(env, config, NULL);
     if (raw == NULL) {
@@ -37,8 +35,7 @@ Java_ai_kohaku_mobile_network_NativeNetwork_start(JNIEnv *env, jobject thiz, jst
     return (jlong)handle;
 }
 
-JNIEXPORT jbyteArray JNICALL
-Java_ai_kohaku_mobile_network_NativeNetwork_status(JNIEnv *env, jobject thiz, jlong handle) {
+static jbyteArray JNICALL jni_status(JNIEnv *env, jobject thiz, jlong handle) {
     (void)thiz;
     char *buffer = malloc(64 * 1024);
     if (buffer == NULL) {
@@ -50,8 +47,7 @@ Java_ai_kohaku_mobile_network_NativeNetwork_status(JNIEnv *env, jobject thiz, jl
     return result;
 }
 
-JNIEXPORT jbyteArray JNICALL
-Java_ai_kohaku_mobile_network_NativeNetwork_loginUrl(JNIEnv *env, jobject thiz, jlong handle) {
+static jbyteArray JNICALL jni_loginUrl(JNIEnv *env, jobject thiz, jlong handle) {
     (void)thiz;
     char *buffer = malloc(16 * 1024);
     if (buffer == NULL) {
@@ -63,9 +59,8 @@ Java_ai_kohaku_mobile_network_NativeNetwork_loginUrl(JNIEnv *env, jobject thiz, 
     return result;
 }
 
-JNIEXPORT jlong JNICALL
-Java_ai_kohaku_mobile_network_NativeNetwork_http(JNIEnv *env, jobject thiz, jlong handle,
-                                                  jstring request) {
+static jlong JNICALL jni_http(JNIEnv *env, jobject thiz, jlong handle,
+                              jstring request) {
     (void)thiz;
     const char *raw = (*env)->GetStringUTFChars(env, request, NULL);
     if (raw == NULL) {
@@ -77,17 +72,15 @@ Java_ai_kohaku_mobile_network_NativeNetwork_http(JNIEnv *env, jobject thiz, jlon
     return status == 0 ? (jlong)request_id : 0;
 }
 
-JNIEXPORT jint JNICALL
-Java_ai_kohaku_mobile_network_NativeNetwork_cancel(JNIEnv *env, jobject thiz, jlong handle,
-                                                    jlong request_id) {
+static jint JNICALL jni_cancel(JNIEnv *env, jobject thiz, jlong handle,
+                               jlong request_id) {
     (void)env;
     (void)thiz;
     return (jint)nanobot_network_cancel((int64_t)handle, (uint64_t)request_id);
 }
 
-JNIEXPORT jlong JNICALL
-Java_ai_kohaku_mobile_network_NativeNetwork_wsOpen(JNIEnv *env, jobject thiz, jlong handle,
-                                                    jstring request) {
+static jlong JNICALL jni_wsOpen(JNIEnv *env, jobject thiz, jlong handle,
+                                jstring request) {
     (void)thiz;
     const char *raw = (*env)->GetStringUTFChars(env, request, NULL);
     if (raw == NULL) {
@@ -99,9 +92,8 @@ Java_ai_kohaku_mobile_network_NativeNetwork_wsOpen(JNIEnv *env, jobject thiz, jl
     return status == 0 ? (jlong)ws_id : 0;
 }
 
-JNIEXPORT jint JNICALL
-Java_ai_kohaku_mobile_network_NativeNetwork_wsSend(JNIEnv *env, jobject thiz, jlong handle,
-                                                    jlong ws_id, jint kind, jbyteArray data) {
+static jint JNICALL jni_wsSend(JNIEnv *env, jobject thiz, jlong handle,
+                               jlong ws_id, jint kind, jbyteArray data) {
     (void)thiz;
     jsize length = (*env)->GetArrayLength(env, data);
     jbyte *bytes = NULL;
@@ -119,24 +111,21 @@ Java_ai_kohaku_mobile_network_NativeNetwork_wsSend(JNIEnv *env, jobject thiz, jl
     return (jint)status;
 }
 
-JNIEXPORT jint JNICALL
-Java_ai_kohaku_mobile_network_NativeNetwork_wsClose(JNIEnv *env, jobject thiz, jlong handle,
-                                                     jlong ws_id) {
+static jint JNICALL jni_wsClose(JNIEnv *env, jobject thiz, jlong handle,
+                                jlong ws_id) {
     (void)env;
     (void)thiz;
     return (jint)nanobot_network_ws_close((int64_t)handle, (uint64_t)ws_id);
 }
 
-JNIEXPORT jint JNICALL
-Java_ai_kohaku_mobile_network_NativeNetwork_wsPing(JNIEnv *env, jobject thiz, jlong handle,
-                                                    jlong ws_id) {
+static jint JNICALL jni_wsPing(JNIEnv *env, jobject thiz, jlong handle,
+                               jlong ws_id) {
     (void)env;
     (void)thiz;
     return (jint)nanobot_network_ws_ping((int64_t)handle, (uint64_t)ws_id);
 }
 
-JNIEXPORT jbyteArray JNICALL
-Java_ai_kohaku_mobile_network_NativeNetwork_pollEvent(JNIEnv *env, jobject thiz, jlong handle) {
+static jbyteArray JNICALL jni_pollEvent(JNIEnv *env, jobject thiz, jlong handle) {
     (void)thiz;
     int32_t capacity = 512 * 1024;
     char *buffer = malloc(capacity);
@@ -164,15 +153,13 @@ Java_ai_kohaku_mobile_network_NativeNetwork_pollEvent(JNIEnv *env, jobject thiz,
     return result;
 }
 
-JNIEXPORT jint JNICALL
-Java_ai_kohaku_mobile_network_NativeNetwork_stop(JNIEnv *env, jobject thiz, jlong handle) {
+static jint JNICALL jni_stop(JNIEnv *env, jobject thiz, jlong handle) {
     (void)env;
     (void)thiz;
     return (jint)nanobot_network_stop((int64_t)handle);
 }
 
-JNIEXPORT jstring JNICALL
-Java_ai_kohaku_mobile_network_NativeNetwork_lastError(JNIEnv *env, jobject thiz) {
+static jstring JNICALL jni_lastError(JNIEnv *env, jobject thiz) {
     (void)thiz;
     /* Copy under the library lock; never keep a library-owned pointer. */
     char buffer[2048];
@@ -184,9 +171,8 @@ Java_ai_kohaku_mobile_network_NativeNetwork_lastError(JNIEnv *env, jobject thiz)
     return (*env)->NewStringUTF(env, buffer);
 }
 
-JNIEXPORT jint JNICALL
-Java_ai_kohaku_mobile_network_NativeNetwork_mediaSetToken(JNIEnv *env, jobject thiz,
-                                                          jlong handle, jstring token) {
+static jint JNICALL jni_mediaSetToken(JNIEnv *env, jobject thiz,
+                                      jlong handle, jstring token) {
     (void)thiz;
     const char *raw = (*env)->GetStringUTFChars(env, token, NULL);
     if (raw == NULL) {
@@ -197,9 +183,8 @@ Java_ai_kohaku_mobile_network_NativeNetwork_mediaSetToken(JNIEnv *env, jobject t
     return status;
 }
 
-JNIEXPORT jlong JNICALL
-Java_ai_kohaku_mobile_network_NativeNetwork_mediaOpen(JNIEnv *env, jobject thiz, jlong handle,
-                                                       jstring path, jstring range_header) {
+static jlong JNICALL jni_mediaOpen(JNIEnv *env, jobject thiz, jlong handle,
+                                   jstring path, jstring range_header) {
     (void)thiz;
     const char *raw_path = (*env)->GetStringUTFChars(env, path, NULL);
     if (raw_path == NULL) {
@@ -218,9 +203,8 @@ Java_ai_kohaku_mobile_network_NativeNetwork_mediaOpen(JNIEnv *env, jobject thiz,
     return status == 0 ? (jlong)stream_id : 0;
 }
 
-JNIEXPORT jbyteArray JNICALL
-Java_ai_kohaku_mobile_network_NativeNetwork_mediaInfo(JNIEnv *env, jobject thiz, jlong handle,
-                                                       jlong stream_id) {
+static jbyteArray JNICALL jni_mediaInfo(JNIEnv *env, jobject thiz, jlong handle,
+                                        jlong stream_id) {
     (void)thiz;
     char *buffer = malloc(16 * 1024);
     if (buffer == NULL) {
@@ -233,9 +217,8 @@ Java_ai_kohaku_mobile_network_NativeNetwork_mediaInfo(JNIEnv *env, jobject thiz,
     return result;
 }
 
-JNIEXPORT jint JNICALL
-Java_ai_kohaku_mobile_network_NativeNetwork_mediaRead(JNIEnv *env, jobject thiz, jlong handle,
-                                                       jlong stream_id, jbyteArray buffer) {
+static jint JNICALL jni_mediaRead(JNIEnv *env, jobject thiz, jlong handle,
+                                  jlong stream_id, jbyteArray buffer) {
     (void)thiz;
     if (buffer == NULL) {
         return -1;
@@ -251,24 +234,59 @@ Java_ai_kohaku_mobile_network_NativeNetwork_mediaRead(JNIEnv *env, jobject thiz,
     return (jint)read;
 }
 
-JNIEXPORT jint JNICALL
-Java_ai_kohaku_mobile_network_NativeNetwork_mediaClose(JNIEnv *env, jobject thiz, jlong handle,
-                                                        jlong stream_id) {
+static jint JNICALL jni_mediaClose(JNIEnv *env, jobject thiz, jlong handle,
+                                   jlong stream_id) {
     (void)env;
     (void)thiz;
     return (jint)nanobot_network_media_close((int64_t)handle, (uint64_t)stream_id);
 }
 
-JNIEXPORT jint JNICALL
-Java_ai_kohaku_mobile_network_NativeNetwork_mediaPurge(JNIEnv *env, jobject thiz, jlong handle) {
+static jint JNICALL jni_mediaPurge(JNIEnv *env, jobject thiz, jlong handle) {
     (void)env;
     (void)thiz;
     return (jint)nanobot_network_media_purge((int64_t)handle);
 }
 
-JNIEXPORT jint JNICALL
-Java_ai_kohaku_mobile_network_NativeNetwork_networkChanged(JNIEnv *env, jobject thiz, jlong handle) {
+static jint JNICALL jni_networkChanged(JNIEnv *env, jobject thiz, jlong handle) {
     (void)env;
     (void)thiz;
     return (jint)nanobot_network_network_changed((int64_t)handle);
+}
+
+static const JNINativeMethod methods[] = {
+    {"abiVersion", "()I", (void *)jni_abiVersion},
+    {"start", "(Ljava/lang/String;)J", (void *)jni_start},
+    {"status", "(J)[B", (void *)jni_status},
+    {"loginUrl", "(J)[B", (void *)jni_loginUrl},
+    {"http", "(JLjava/lang/String;)J", (void *)jni_http},
+    {"cancel", "(JJ)I", (void *)jni_cancel},
+    {"wsOpen", "(JLjava/lang/String;)J", (void *)jni_wsOpen},
+    {"wsSend", "(JJI[B)I", (void *)jni_wsSend},
+    {"wsClose", "(JJ)I", (void *)jni_wsClose},
+    {"wsPing", "(JJ)I", (void *)jni_wsPing},
+    {"pollEvent", "(J)[B", (void *)jni_pollEvent},
+    {"mediaSetToken", "(JLjava/lang/String;)I", (void *)jni_mediaSetToken},
+    {"mediaOpen", "(JLjava/lang/String;Ljava/lang/String;)J", (void *)jni_mediaOpen},
+    {"mediaInfo", "(JJ)[B", (void *)jni_mediaInfo},
+    {"mediaRead", "(JJ[B)I", (void *)jni_mediaRead},
+    {"mediaClose", "(JJ)I", (void *)jni_mediaClose},
+    {"mediaPurge", "(J)I", (void *)jni_mediaPurge},
+    {"networkChanged", "(J)I", (void *)jni_networkChanged},
+    {"stop", "(J)I", (void *)jni_stop},
+    {"lastError", "()Ljava/lang/String;", (void *)jni_lastError},
+};
+
+JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *vm, void *reserved) {
+    (void)reserved;
+    JNIEnv *env;
+    if ((*vm)->GetEnv(vm, (void **)&env, JNI_VERSION_1_6) != JNI_OK) {
+        return JNI_ERR;
+    }
+    jclass type = (*env)->FindClass(env, JNI_CLASS_NAME);
+    if (type == NULL) {
+        return JNI_ERR;
+    }
+    jint result = (*env)->RegisterNatives(env, type, methods, sizeof(methods) / sizeof(methods[0]));
+    (*env)->DeleteLocalRef(env, type);
+    return result == JNI_OK ? JNI_VERSION_1_6 : JNI_ERR;
 }

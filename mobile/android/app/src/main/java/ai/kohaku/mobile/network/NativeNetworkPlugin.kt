@@ -1,5 +1,6 @@
 package ai.kohaku.mobile.network
 
+import ai.kohaku.nativenetwork.NativeNetwork
 import android.Manifest
 import android.app.NotificationChannel
 import android.app.NotificationManager

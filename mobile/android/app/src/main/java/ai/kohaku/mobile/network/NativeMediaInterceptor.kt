@@ -1,5 +1,6 @@
 package ai.kohaku.mobile.network
 
+import ai.kohaku.nativenetwork.NativeNetwork
 import android.util.Log
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse

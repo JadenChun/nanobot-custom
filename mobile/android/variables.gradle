@@ -2,6 +2,9 @@ ext {
     minSdkVersion = 24
     compileSdkVersion = 36
     targetSdkVersion = 36
+    mobileAbis = providers.gradleProperty('mobileAbis').getOrElse('x86_64,arm64-v8a').split(',').toList()
+    mobileNdkVersion = '29.0.14206865'
+    mobileCmakeVersion = '3.31.6'
     androidxActivityVersion = '1.11.0'
     androidxAppCompatVersion = '1.7.1'
     androidxCoordinatorLayoutVersion = '1.3.0'
