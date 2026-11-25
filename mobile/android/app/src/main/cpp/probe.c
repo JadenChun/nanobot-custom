@@ -4,7 +4,7 @@
 #include <unistd.h>
 
 JNIEXPORT jstring JNICALL
-Java_ai_nanobot_mobile_NativeProbe_nativeIdentity(JNIEnv *env, jobject thiz) {
+Java_ai_kohaku_mobile_NativeProbe_nativeIdentity(JNIEnv *env, jobject thiz) {
     struct utsname info;
     if (uname(&info) != 0) {
         return (*env)->NewStringUTF(env, "unknown:-1");
