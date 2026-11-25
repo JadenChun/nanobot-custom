@@ -12,8 +12,8 @@ from urllib.parse import parse_qs, urlsplit
 import pytest
 from websockets.datastructures import Headers
 
-from kohaku.config.loader import get_config_path, save_config
-from kohaku.config.schema import Config
+from kohaku.config.loader import get_config_path, load_config, save_config
+from kohaku.config.schema import Config, ModelPresetConfig
 from kohaku.webui.http_utils import http_json_response
 from kohaku.webui.mcp_presets_api import custom_mcp_action
 from kohaku.webui.settings_routes import WebUISettingsRouter
@@ -419,6 +419,49 @@ async def test_runtime_config_mutation_routes_refresh_live_runtime(
     assert json.loads(response.body)["routed"] == function_name
     assert captured["query"] == expected_query
     refresh_runtime_config.assert_called_once_with()
+
+
+async def test_delete_provider_route_guards_references_and_persists_removal(tmp_path) -> None:
+    config_path = tmp_path / "config.json"
+    config = Config.model_validate({
+        "providers": {
+            "openai": {"apiKey": "sk-built-in", "apiKeys": ["sk-pool"], "apiBase": "https://openai.example/v1"},
+            "custom-team": {"apiKey": "sk-team", "apiBase": "https://gateway.example/v1"},
+        },
+    })
+    config.model_presets["Team model"] = ModelPresetConfig(
+        model="custom-team/example-model", provider="auto",
+    )
+    save_config(config, config_path)
+    original = config_path.read_bytes()
+    refresh_runtime_config = MagicMock()
+    router = _router(config_path=config_path, refresh_runtime_config=refresh_runtime_config)
+    path = "/api/settings/provider/delete"
+    request = _mutation_request(path, {"provider": "custom-team"})
+
+    denied = await router.dispatch(None, SimpleNamespace(path=path, headers=Headers()), path)
+    assert denied is not None and denied.status_code == 405
+    conflict = await router.dispatch(None, request, path)
+    assert conflict is not None and conflict.status_code == 409
+    assert "Team model" in json.loads(conflict.body)["error"]
+    assert config_path.read_bytes() == original
+    refresh_runtime_config.assert_not_called()
+
+    del config.model_presets["Team model"]
+    save_config(config, config_path)
+    removed = await router.dispatch(None, request, path)
+    assert removed is not None and removed.status_code == 200
+    assert "custom-team" not in {row["name"] for row in json.loads(removed.body)["providers"]}
+    assert "custom-team" not in (load_config(config_path).providers.model_extra or {})
+    assert b"sk-team" not in config_path.read_bytes()
+    refresh_runtime_config.assert_called_once_with()
+
+    built_in = await router.dispatch(None, _mutation_request(path, {"provider": "openai"}), path)
+    assert built_in is not None and built_in.status_code == 200
+    openai = next(row for row in json.loads(built_in.body)["providers"] if row["name"] == "openai")
+    assert not openai["configured"]
+    assert load_config(config_path).providers.openai == Config().providers.openai
+    assert refresh_runtime_config.call_count == 2
 
 
 async def test_provider_model_toggle_route_persists_and_refreshes_runtime(tmp_path) -> None:

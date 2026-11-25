@@ -290,6 +290,7 @@ WEBSOCKET_MUTATION_ROUTES = {
     "settings.provider_model.toggle": "/api/settings/provider-models/toggle",
     "settings.provider.update": "/api/settings/provider/update",
     "settings.provider.create": "/api/settings/provider/create",
+    "settings.provider.delete": "/api/settings/provider/delete",
     "settings.provider.oauth_login": "/api/settings/provider/oauth-login",
     "settings.provider.oauth_complete": "/api/settings/provider/oauth-login/complete",
     "settings.provider.oauth_logout": "/api/settings/provider/oauth-logout",

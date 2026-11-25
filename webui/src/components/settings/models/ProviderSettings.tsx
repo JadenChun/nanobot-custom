@@ -11,6 +11,7 @@ import {
   Pencil,
   Plus,
   RotateCcw,
+  Trash2,
   Zap,
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
@@ -22,6 +23,15 @@ import {
   SettingsSectionTitle,
 } from "@/components/settings/shared/SettingsControls";
 import { ToggleButton } from "@/components/settings/ToggleButton";
+import {
+  AlertDialog,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -661,6 +671,7 @@ export function ProvidersSettings({
   onChangeProviderForm,
   onSaveProvider,
   onCreateCustomProvider,
+  onRemoveProvider,
   onProviderOAuthLogin,
   onProviderOAuthLogout,
   imageProviderRestartPending,
@@ -684,6 +695,7 @@ export function ProvidersSettings({
   onChangeProviderForm: (provider: string, value: Partial<ProviderForm>) => void;
   onSaveProvider: (provider: string) => void;
   onCreateCustomProvider: (draft: CustomProviderDraft) => Promise<boolean>;
+  onRemoveProvider: (provider: string) => Promise<boolean>;
   onProviderOAuthLogin: (provider: string) => void;
   onProviderOAuthLogout: (provider: string) => void;
   imageProviderRestartPending: boolean;
@@ -697,6 +709,20 @@ export function ProvidersSettings({
   const [customProviderDraft, setCustomProviderDraft] = useState<CustomProviderDraft>(
     emptyCustomProviderDraft,
   );
+  const [providerPendingRemoval, setProviderPendingRemoval] = useState<
+    SettingsPayload["providers"][number] | null
+  >(null);
+  const [removeError, setRemoveError] = useState<string | null>(null);
+  const removing = providerPendingRemoval !== null && providerSaving === providerPendingRemoval.name;
+  const confirmProviderRemoval = async () => {
+    if (!providerPendingRemoval || providerSaving) return;
+    setRemoveError(null);
+    try {
+      if (await onRemoveProvider(providerPendingRemoval.name)) setProviderPendingRemoval(null);
+    } catch (error) {
+      setRemoveError(error instanceof Error ? error.message : String(error));
+    }
+  };
   const configuredProviders = settings.providers.filter((provider) => provider.configured);
   const unconfiguredProviders = useMemo(
     () =>
@@ -1027,7 +1053,23 @@ export function ProvidersSettings({
                   form={form}
                   onChange={(value) => onChangeProviderForm(provider.name, value)}
                 />
-                <div className="flex items-center justify-end gap-2">
+                <div className="flex flex-wrap items-center justify-end gap-2">
+                  {provider.configured || provider.is_custom ? (
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="ghost"
+                      disabled={providerSaving !== null}
+                      className="mr-auto rounded-full text-destructive hover:text-destructive"
+                      onClick={() => {
+                        setRemoveError(null);
+                        setProviderPendingRemoval(provider);
+                      }}
+                    >
+                      <Trash2 className="mr-1.5 h-3.5 w-3.5" aria-hidden />
+                      {t("settings.providers.removeProvider")}
+                    </Button>
+                  ) : null}
                   <Button
                     size="sm"
                     variant="ghost"
@@ -1199,6 +1241,34 @@ export function ProvidersSettings({
   ) : null;
   return (
     <div className="space-y-6">
+      <AlertDialog
+        open={providerPendingRemoval !== null}
+        onOpenChange={(open) => {
+          if (!open && !removing) setProviderPendingRemoval(null);
+        }}
+      >
+        <AlertDialogContent className="max-w-[440px]">
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t("settings.providers.removeProviderTitle")}</AlertDialogTitle>
+            <AlertDialogDescription>
+              {t("settings.providers.removeProviderHelp", { name: providerPendingRemoval?.label ?? "" })}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          {removeError ? <p role="alert" className="text-sm text-destructive">{removeError}</p> : null}
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={removing}>{t("settings.actions.cancel")}</AlertDialogCancel>
+            <Button
+              type="button"
+              variant="destructive"
+              disabled={providerSaving !== null}
+              onClick={confirmProviderRemoval}
+            >
+              {removing ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" aria-hidden /> : null}
+              {t("settings.providers.removeProvider")}
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
       {imageProviderRestartPending && onRestart ? (
         <div className="flex min-h-[48px] items-center justify-between gap-3 border-y border-border/55 py-3">
           <p className="text-[13px] leading-5 text-muted-foreground">

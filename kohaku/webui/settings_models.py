@@ -21,6 +21,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Awaitable, Callable, TypedDict, cast
 
+from kohaku.audio.transcription_registry import resolve_transcription_provider
 from kohaku.config.loader import resolve_config_env_vars
 from kohaku.config.schema import (
     Config,
@@ -85,6 +86,7 @@ class ModelSettingsOperations:
     toggle_provider_model: SettingsOperation
     update_provider: SettingsOperation
     create_provider: SettingsOperation
+    delete_provider: SettingsOperation
     provider_models: Callable[..., ProviderModelCatalogPayload]
     oauth_login: SettingsOperation
     oauth_complete: SettingsOperation
@@ -1370,6 +1372,74 @@ def create_provider_settings(config: Config, query: QueryParams) -> str:
     return provider_key
 
 
+def delete_provider_settings(config: Config, query: QueryParams) -> None:
+    provider_name = (query_first(query, "provider") or "").strip()
+    if not provider_name:
+        raise WebUISettingsError("provider is required")
+    resolved = resolve_settings_provider(config, provider_name)
+    if resolved is None:
+        raise WebUISettingsError("unknown provider")
+    spec, provider_key, provider_config = resolved
+    if spec.is_oauth:
+        raise WebUISettingsError("use sign out to disconnect this provider")
+
+    for name, preset in config.model_presets.items():
+        if config.get_provider_name(preset=preset) == provider_key:
+            raise WebUISettingsError(
+                f"Change or delete model preset “{name}” before removing this provider.",
+                status=409,
+            )
+
+    defaults = config.agents.defaults
+    default_in_use = (
+        defaults.model_preset in (None, "", "default")
+        or "default" in defaults.fallback_models
+        or defaults.dream.model_override == "default"
+    )
+    default_preset = config.resolve_default_preset()
+    # Adding one provider to a fresh workspace can incidentally make it the
+    # auto-routing fallback for the schema's starter model.
+    starter_fallback = (
+        default_preset.provider == "auto"
+        and default_preset.model == type(defaults).model_fields["model"].default
+        and default_preset.model.partition("/")[0] != provider_key
+    )
+    if default_in_use and not starter_fallback:
+        if config.get_provider_name(preset=default_preset) == provider_key:
+            raise WebUISettingsError(
+                "Choose a different default model before removing this provider.",
+                status=409,
+            )
+    for fallback in [*defaults.fallback, *defaults.fallback_models]:
+        if isinstance(fallback, str):
+            continue
+        preset = ModelPresetConfig(model=fallback.model, provider=fallback.provider)
+        if config.get_provider_name(preset=preset) == provider_key:
+            raise WebUISettingsError(
+                "Change the fallback model before removing this provider.",
+                status=409,
+            )
+
+    image = config.tools.image_generation
+    transcription = resolve_transcription_provider(config.transcription.provider)
+    if image.enabled and image.provider == provider_key:
+        raise WebUISettingsError(
+            "Change or disable image generation before removing this provider.",
+            status=409,
+        )
+    if config.transcription.enabled and transcription is not None and transcription.name == provider_key:
+        raise WebUISettingsError(
+            "Change or disable transcription before removing this provider.",
+            status=409,
+        )
+
+    if find_by_name(provider_key) is None:
+        delattr(config.providers, provider_key)
+    else:
+        # Built-ins stay registered and available to add again.
+        setattr(config.providers, provider_key, type(provider_config)())
+
+
 def update_provider_settings(
     config: Config,
     query: QueryParams,
@@ -1693,6 +1763,7 @@ class ModelSettingsHandler:
                 "call-order-update": operations.update_call_order,
                 "provider-model-toggle": operations.toggle_provider_model,
                 "provider-create": operations.create_provider,
+                "provider-delete": operations.delete_provider,
             }.get(action)
             if mutation is not None:
                 payload = self.settings.mutate(mutation, request.query)

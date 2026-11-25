@@ -160,6 +160,47 @@ describe("Settings models", () => {
     expect(await within(catalog).findByRole("switch", { name: "Enable New profile" })).toBeInTheDocument();
   });
 
+  it("shows readable model names without changing IDs and lets each provider collapse", async () => {
+    const { payload } = settingsPayloadWithBackup();
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (!url.startsWith("/api/settings/provider-models?")) {
+        return { ok: false, status: 404, json: async () => ({}) } as Response;
+      }
+      const models = url.endsWith("provider=openai")
+        ? [{ id: "gpt-4o", label: "gpt-4o" }]
+        : [{ id: "anthropic/claude-sonnet-4-6", label: null }];
+      return jsonResponse({ status: "available", models, model_count: models.length });
+    }));
+
+    renderSettingsView({ initialSection: "models", initialSettings: payload });
+
+    const catalog = within(await screen.findByRole("region", { name: "Available models" }));
+    expect(await catalog.findByRole("switch", { name: "Enable Claude Sonnet 4.6" })).toBeInTheDocument();
+    expect(catalog.getByText("anthropic/claude-sonnet-4-6")).toBeInTheDocument();
+    const anthropic = catalog.getByRole("button", { name: "Anthropic 1" });
+    expect(anthropic).toHaveAttribute("aria-expanded", "true");
+    fireEvent.click(anthropic);
+    expect(anthropic).toHaveAttribute("aria-expanded", "false");
+    expect(catalog.queryByRole("switch", { name: "Enable Claude Sonnet 4.6" })).not.toBeInTheDocument();
+    expect(catalog.getByRole("switch", { name: "Enable GPT-4o" })).toBeInTheDocument();
+
+    const search = catalog.getByRole("searchbox", { name: "Search available models" });
+    fireEvent.change(search, { target: { value: "claude sonnet" } });
+    expect(catalog.getByRole("switch", { name: "Enable Claude Sonnet 4.6" })).toBeInTheDocument();
+    fireEvent.change(search, { target: { value: "" } });
+    expect(anthropic).toHaveAttribute("aria-expanded", "false");
+    fireEvent.click(anthropic);
+    const toggle = catalog.getByRole("switch", { name: "Enable Claude Sonnet 4.6" });
+    requestMutationMock.mockResolvedValueOnce(payload);
+    fireEvent.click(toggle);
+    await waitFor(() => expect(requestMutationMock).toHaveBeenCalledWith(
+      "settings.provider_model.toggle",
+      { provider: "anthropic", model: "anthropic/claude-sonnet-4-6", enabled: true, label: "Claude Sonnet 4.6" },
+      expect.any(Number),
+    ));
+  });
+
   it("searches across providers and loads a deferred catalog when the search has two characters", async () => {
     const payload = settingsPayload();
     payload.providers = [
