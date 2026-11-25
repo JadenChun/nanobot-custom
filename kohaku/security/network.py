@@ -15,6 +15,13 @@ from urllib.request import getproxies, proxy_bypass
 
 import httpx
 
+_NON_APPROVABLE_NETWORKS = (
+    ipaddress.ip_network("0.0.0.0/8"),
+    ipaddress.ip_network("169.254.0.0/16"),   # link-local / cloud metadata
+    ipaddress.ip_network("::/128"),            # unspecified; may route to local host
+    ipaddress.ip_network("fe80::/10"),         # link-local v6
+)
+
 _BLOCKED_NETWORKS = [
     ipaddress.ip_network("0.0.0.0/8"),
     ipaddress.ip_network("10.0.0.0/8"),
@@ -389,6 +396,19 @@ def validate_resolved_url(
     return True, ""
 
 
+def _is_non_approvable_private(
+    addr: ipaddress.IPv4Address | ipaddress.IPv6Address,
+    policy: NetworkPolicy | None = None,
+) -> bool:
+    normalized = _normalize_addr(addr)
+    active = policy or current_network_policy()
+    if active.allowed_networks and any(
+        normalized in net for net in active.allowed_networks
+    ):
+        return False
+    return any(normalized in net for net in _NON_APPROVABLE_NETWORKS)
+
+
 def contains_internal_url(
     command: str,
     *,
@@ -404,6 +424,37 @@ def contains_internal_url(
             policy=policy,
         )
         if not ok:
+            return True
+    return False
+
+
+def contains_non_approvable_internal_url(
+    command: str,
+    *,
+    policy: NetworkPolicy | None = None,
+) -> bool:
+    """Return True if *command* targets a link-local, metadata, or unspecified IP."""
+    for m in _URL_RE.finditer(command):
+        url = m.group(0)
+        try:
+            parsed = urlparse(url)
+        except Exception:
+            continue
+        hostname = parsed.hostname
+        if not hostname:
+            continue
+        addrs: list[ipaddress.IPv4Address | ipaddress.IPv6Address] = []
+        try:
+            addrs.append(ipaddress.ip_address(hostname))
+        except ValueError:
+            try:
+                infos = socket.getaddrinfo(hostname, None, socket.AF_UNSPEC, socket.SOCK_STREAM)
+            except socket.gaierror:
+                continue
+            for info in infos:
+                with suppress(ValueError):
+                    addrs.append(ipaddress.ip_address(info[4][0]))
+        if any(_is_non_approvable_private(addr, policy) for addr in addrs):
             return True
     return False
 

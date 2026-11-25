@@ -87,6 +87,7 @@ class ToolPolicyDecision:
     edit_binding: EditContentBinding | None = None
     exec_cwd: Path | None = None
     exec_unsandboxed: bool = False
+    exec_private_network: bool = False
 
 
 class ToolPolicy:
@@ -151,6 +152,7 @@ class CompositeToolPolicy(ToolPolicy):
         edit_binding = None
         exec_cwd = None
         exec_unsandboxed = False
+        exec_private_network = False
         for policy in self.policies:
             decision = policy.authorize_dispatch(tool_call, arguments, turn_context)
             if decision.action != "allow" or decision.preflight_result is not None:
@@ -160,8 +162,12 @@ class CompositeToolPolicy(ToolPolicy):
             if decision.exec_cwd is not None:
                 exec_cwd = decision.exec_cwd
                 exec_unsandboxed = decision.exec_unsandboxed
+                exec_private_network = decision.exec_private_network
         return ToolPolicyDecision(
-            edit_binding=edit_binding, exec_cwd=exec_cwd, exec_unsandboxed=exec_unsandboxed,
+            edit_binding=edit_binding,
+            exec_cwd=exec_cwd,
+            exec_unsandboxed=exec_unsandboxed,
+            exec_private_network=exec_private_network,
         )
 
     def validate_write_target_binding(
@@ -313,6 +319,7 @@ class _EffectAssessment:
     edit_binding: EditContentBinding | None = None
     exec_cwd: Path | None = None
     sandbox_exception: bool = False
+    private_network_exception: bool = False
     save_exclusion_command: str | None = None
     refusal: str | ToolOutcome | None = None
 
@@ -443,8 +450,10 @@ class RiskyActionPolicy(ToolPolicy):
             and self.effect_authority.consume(effect_id, turn_context)
         ):
             return ToolPolicyDecision(
-                edit_binding=assessment.edit_binding, exec_cwd=assessment.exec_cwd,
+                edit_binding=assessment.edit_binding,
+                exec_cwd=assessment.exec_cwd,
                 exec_unsandboxed=assessment.sandbox_exception,
+                exec_private_network=assessment.private_network_exception,
             )
         return self._request_approval(effect_id, reason, assessment.save_exclusion_command)
 
@@ -516,6 +525,7 @@ class RiskyActionPolicy(ToolPolicy):
 
         tool = self._tools.get(call.name) if self._tools is not None else None
         sandbox_exception = False
+        private_network_exception = False
         save_exclusion_command = None
         needs_exception_approval = False
         if call.name == "exec" and type(tool) is ExecTool:
@@ -530,28 +540,39 @@ class RiskyActionPolicy(ToolPolicy):
                 needs_exception_approval = sandbox_exception and not tool.sandbox_exclusion_matches(
                     command, shell=shell, login=login,
                 )
-                if needs_exception_approval and not shell and not login:
+                private_network_exception = tool.private_network_approval_requested(command)
+                if needs_exception_approval and not private_network_exception and not shell and not login:
                     save_exclusion_command = extract_saveable_sandbox_command(command)
 
         reason = self._risky_reason(
-            call, sandbox_exception=sandbox_exception, needs_exception_approval=needs_exception_approval,
+            call,
+            sandbox_exception=sandbox_exception,
+            needs_exception_approval=needs_exception_approval,
+            private_network_exception=private_network_exception,
         )
         if isinstance(reason, ToolPolicyDecision):
             return reason
         reason = reason or previous_reason
-        if (reason is not None or sandbox_exception) and type(tool) is ExecTool:
+        if (reason is not None or sandbox_exception or private_network_exception) and type(tool) is ExecTool:
             check = tool.approval_preflight(**call.arguments)
             if not isinstance(check, Path):
                 return _EffectAssessment(refusal=check)
             return _EffectAssessment(
-                reason=reason, exec_cwd=check, sandbox_exception=sandbox_exception,
+                reason=reason,
+                exec_cwd=check,
+                sandbox_exception=sandbox_exception,
+                private_network_exception=private_network_exception,
                 save_exclusion_command=save_exclusion_command,
             )
         return _EffectAssessment(reason=reason)
 
     def _risky_reason(
-        self, tool_call: ToolCallRequest, *, sandbox_exception: bool = False,
+        self,
+        tool_call: ToolCallRequest,
+        *,
+        sandbox_exception: bool = False,
         needs_exception_approval: bool = False,
+        private_network_exception: bool = False,
     ) -> str | ToolPolicyDecision | None:
         profile = self._effective_profile()
         if tool_call.name == "exec":
@@ -573,6 +594,16 @@ class RiskyActionPolicy(ToolPolicy):
             )
             if explicit == "deny":
                 return self._refuse_denied_rule(tool_call, detail=command)
+            if private_network_exception:
+                preview = " ".join(command.split())[:80]
+                if sandbox_exception and (
+                    sandbox_exec_risk_reason(command) is not None or needs_exception_approval
+                ):
+                    return (
+                        "run outside Sandbox and access a private network URL: "
+                        f"{preview}"
+                    )
+                return f"access a private network URL: {preview}"
             if sandbox_exception:
                 risk = sandbox_exec_risk_reason(command)
                 if risk is not None or needs_exception_approval:
@@ -762,6 +793,8 @@ class RiskyActionPolicy(ToolPolicy):
                 payload["cwd"] = str(assessment.exec_cwd)
             if assessment.sandbox_exception:
                 payload["exec_unsandboxed"] = True
+            if assessment.private_network_exception:
+                payload["exec_private_network"] = True
         encoded = json.dumps(
             payload,
             sort_keys=True,

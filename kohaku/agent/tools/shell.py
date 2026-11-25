@@ -82,6 +82,7 @@ from kohaku.security.folder_grants import (
 )
 from kohaku.security.native_admission import NativeProcessReservation
 from kohaku.security.workspace_access import (
+    current_scope_allows_loopback,
     current_tool_workspace,
     current_workspace_focus,
     current_workspace_scope,
@@ -98,17 +99,20 @@ from kohaku.security.workspace_policy import is_path_within
 
 _IS_WINDOWS = sys.platform == "win32"
 _PROCESS_TREE_OWNER_ATTR = "_nanobot_process_tree_owner"
-_approved_exec: ContextVar[tuple[Path | None, bool]] = ContextVar(
-    "nanobot_approved_exec", default=(None, False),
+_approved_exec: ContextVar[tuple[Path | None, bool, bool]] = ContextVar(
+    "nanobot_approved_exec", default=(None, False, False),
 )
 
 
 @contextmanager
 def bind_approved_exec_cwd(
-    cwd: Path | None, *, unsandboxed: bool = False,
+    cwd: Path | None,
+    *,
+    unsandboxed: bool = False,
+    private_network: bool = False,
 ) -> Generator[None, None, None]:
     """Carry the exact approval to the shell executor for this dispatch."""
-    token = _approved_exec.set((cwd, unsandboxed))
+    token = _approved_exec.set((cwd, unsandboxed, private_network))
     try:
         yield
     finally:
@@ -431,6 +435,31 @@ class ExecTool(Tool):
         return not shell and not login and matches_sandbox_excluded_command(
             command, self.sandbox_excluded_commands,
         )
+
+    def _allows_loopback_urls(self) -> bool:
+        return current_scope_allows_loopback(
+            enabled=self.webui_allow_local_service_access,
+            allow_sandbox=self.sandbox_allow_local_binding,
+        )
+
+    def _contains_blocked_internal_url(self, command: str) -> bool:
+        from kohaku.security.network import contains_internal_url
+
+        if self._allows_loopback_urls():
+            return contains_internal_url(command, allow_loopback=True)
+        return contains_internal_url(command)
+
+    def _contains_non_approvable_internal_url(self, command: str) -> bool:
+        from kohaku.security.network import contains_non_approvable_internal_url
+
+        return contains_non_approvable_internal_url(command)
+
+    def private_network_approval_requested(self, command: str) -> bool:
+        """Return True when *command* hits an approvable private-network URL guard."""
+        cmd = command.strip()
+        if not cmd or self._contains_non_approvable_internal_url(cmd):
+            return False
+        return self._contains_blocked_internal_url(cmd)
 
     def _outer_confinement_provider(self, working_dir: str | None) -> str | None:
         """Name the OS sandbox this executor applies to a launched command.
@@ -966,7 +995,7 @@ class ExecTool(Tool):
         sandbox_exception = self.sandbox_exception_requested(
             command, unsandboxed=unsandboxed, shell=shell, login=login,
         )
-        approved_cwd, exception_approved = _approved_exec.get()
+        approved_cwd, exception_approved, private_network_approved = _approved_exec.get()
         if sandbox_exception:
             if input_mounts:
                 return ToolResult.error("Error: input_files requires a sandboxed command")
@@ -1020,9 +1049,17 @@ class ExecTool(Tool):
                     + _WORKSPACE_BOUNDARY_NOTE
                 )
 
+        allow_private_network = bool(
+            (approved_cwd is not None and private_network_approved)
+            or (approval_preflight and not self._contains_non_approvable_internal_url(command))
+        )
         guard_error = self._guard_command(
-            command, cwd, restrict_to_workspace=(access.restrict_to_workspace and not managed),
-            workspace_root=workspace_root, sandbox_exception=sandbox_exception,
+            command,
+            cwd,
+            restrict_to_workspace=(access.restrict_to_workspace and not managed),
+            workspace_root=workspace_root,
+            sandbox_exception=sandbox_exception,
+            allow_private_network=allow_private_network,
         )
         if guard_error:
             return guard_error
@@ -1590,6 +1627,7 @@ class ExecTool(Tool):
         restrict_to_workspace: bool | None = None,
         workspace_root: str | None = None,
         sandbox_exception: bool = False,
+        allow_private_network: bool = False,
     ) -> str | ToolOutcome | None:
         """Best-effort safety guard for potentially destructive commands."""
         cmd = command.strip()
@@ -1607,8 +1645,11 @@ class ExecTool(Tool):
             return ToolResult.error("Error: Command blocked by allowlist filter (not in allowlist)")
         if self.desktop_use_active and self._DESKTOP_MUTATION_COMMAND_RE.search(cmd):
             return ToolResult.error("Error: Shell-based desktop mutation is blocked because desktop_use is enabled")
-        from kohaku.security.network import contains_internal_url
-        if contains_internal_url(cmd):
+        if (
+            self._contains_non_approvable_internal_url(cmd)
+            if allow_private_network
+            else self._contains_blocked_internal_url(cmd)
+        ):
             return ToolDenialResult(
                 "Error: Command blocked by safety guard (internal/private URL detected)"
                 f"\n\n{PRIVATE_NETWORK_DENIAL_NOTE}",

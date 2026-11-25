@@ -458,17 +458,15 @@ def current_tool_workspace(
     )
 
 
-def current_scope_allows_loopback(*, enabled: bool) -> bool:
-    """Return True when the current WebUI Full Access turn may touch loopback URLs."""
+def current_scope_allows_loopback(*, enabled: bool, allow_sandbox: bool = False) -> bool:
+    """Return True when the current WebUI turn may touch literal loopback URLs."""
 
     scope = current_workspace_scope()
-    return bool(
-        enabled
-        and scope is not None
-        and scope.source_channel == "websocket"
-        and scope.access_mode == "full"
-        and not scope.restrict_to_workspace
-    )
+    if not enabled or scope is None or scope.source_channel != "websocket":
+        return False
+    if scope.access_mode == "full" and not scope.restrict_to_workspace:
+        return True
+    return bool(allow_sandbox and scope.access_mode == "restricted")
 
 
 def _env_system_provider(environ: dict[str, str] | None = None) -> str | None:

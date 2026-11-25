@@ -777,12 +777,12 @@ async def test_foreground_turn_recovers_from_typed_private_url_denial(
             tool_calls=[ToolCallRequest(
                 id="private-url",
                 name="exec",
-                arguments={"command": "curl -s http://127.0.0.1:8188/system_stats"},
+                arguments={"command": "curl -s http://169.254.169.254/latest/meta-data/"},
             )],
             usage=None,
         ),
         LLMResponse(
-            content="The local service is unavailable; continuing with other work.",
+            content="The metadata service is unavailable; continuing with other work.",
             tool_calls=[],
             usage=None,
         ),
@@ -794,7 +794,7 @@ async def test_foreground_turn_recovers_from_typed_private_url_denial(
     monkeypatch.setattr(exec_tool, "_spawn", spawn)
     monkeypatch.setattr(
         "kohaku.security.network.contains_internal_url",
-        lambda _command: True,
+        lambda _command, **_kwargs: True,
     )
 
     result = await _execute_inbound(loop,
@@ -808,7 +808,7 @@ async def test_foreground_turn_recovers_from_typed_private_url_denial(
 
     assert provider.chat_with_retry.await_count == 2
     assert result is not None
-    assert result.content == "The local service is unavailable; continuing with other work."
+    assert result.content == "The metadata service is unavailable; continuing with other work."
     spawn.assert_not_awaited()
 
 
@@ -827,7 +827,7 @@ async def test_direct_cli_turn_recovers_from_typed_private_url_denial(
             tool_calls=[ToolCallRequest(
                 id="private-url",
                 name="exec",
-                arguments={"command": "curl -s http://127.0.0.1:8188/system_stats"},
+                arguments={"command": "curl -s http://169.254.169.254/latest/meta-data/"},
             )],
             usage=None,
         ),
@@ -840,7 +840,7 @@ async def test_direct_cli_turn_recovers_from_typed_private_url_denial(
     monkeypatch.setattr(exec_tool, "_spawn", spawn)
     monkeypatch.setattr(
         "kohaku.security.network.contains_internal_url",
-        lambda _command: True,
+        lambda _command, **_kwargs: True,
     )
 
     result = await loop.process_direct(
@@ -872,7 +872,7 @@ async def test_api_direct_turn_does_not_enable_pre_dispatch_recovery(
             tool_calls=[ToolCallRequest(
                 id="private-url",
                 name="exec",
-                arguments={"command": "curl -s http://127.0.0.1:8188/system_stats"},
+                arguments={"command": "curl -s http://169.254.169.254/latest/meta-data/"},
             )],
             usage=None,
         ),
@@ -885,7 +885,7 @@ async def test_api_direct_turn_does_not_enable_pre_dispatch_recovery(
     monkeypatch.setattr(exec_tool, "_spawn", spawn)
     monkeypatch.setattr(
         "kohaku.security.network.contains_internal_url",
-        lambda _command: True,
+        lambda _command, **_kwargs: True,
     )
 
     result = await loop.process_direct(

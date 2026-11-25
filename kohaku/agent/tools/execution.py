@@ -531,6 +531,7 @@ async def _execute_tool_call(
     edit_binding: EditContentBinding | None = None
     exec_cwd: Path | None = None
     exec_unsandboxed = False
+    exec_private_network = False
     with tools.dispatch_admission(tool_call.name) as dispatch_error:
         if dispatch_error is not None:
             payload = _with_retry_hint(dispatch_error)
@@ -566,6 +567,7 @@ async def _execute_tool_call(
             edit_binding = decision.edit_binding
             exec_cwd = decision.exec_cwd
             exec_unsandboxed = decision.exec_unsandboxed
+            exec_private_network = decision.exec_private_network
         dispatched = preflight_result is None
         progress_sink = hook.tool_progress_sink(tool_call) if dispatched else None
         try:
@@ -576,7 +578,9 @@ async def _execute_tool_call(
                     if turn_context is not None
                     else nullcontext()
                 ), bind_approved_exec_cwd(
-                    exec_cwd, unsandboxed=exec_unsandboxed,
+                    exec_cwd,
+                    unsandboxed=exec_unsandboxed,
+                    private_network=exec_private_network,
                 ), bind_tool_progress_sink(progress_sink):
                     if preflight_result is not None:
                         result = preflight_result

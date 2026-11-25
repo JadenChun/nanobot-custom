@@ -47,13 +47,29 @@ async def test_exec_blocks_wget_localhost():
     assert "Error" in result
 
 
-def test_exec_full_workspace_scope_preserves_loopback_guard(tmp_path):
+def _fake_resolve_lan(hostname, port, family=0, type_=0):
+    return [(socket.AF_INET, socket.SOCK_STREAM, 0, "", ("192.168.1.50", 0))]
+
+
+def test_exec_full_workspace_scope_allows_loopback(tmp_path):
     tool = ExecTool(working_dir=str(tmp_path))
     scope = build_workspace_scope(tmp_path, "full", source_channel="websocket")
     token = bind_workspace_scope(scope)
     try:
         with patch("kohaku.security.network.socket.getaddrinfo", _fake_resolve_localhost):
             error = tool._guard_command("curl http://localhost:8765/", str(tmp_path))
+    finally:
+        reset_workspace_scope(token)
+    assert error is None
+
+
+def test_exec_full_workspace_scope_blocks_dns_rebinding_to_loopback(tmp_path):
+    tool = ExecTool(working_dir=str(tmp_path))
+    scope = build_workspace_scope(tmp_path, "full", source_channel="websocket")
+    token = bind_workspace_scope(scope)
+    try:
+        with patch("kohaku.security.network.socket.getaddrinfo", _fake_resolve_localhost):
+            error = tool._guard_command("curl http://evil.com:8765/", str(tmp_path))
     finally:
         reset_workspace_scope(token)
     assert error is not None
@@ -86,8 +102,20 @@ def test_exec_full_workspace_scope_blocks_loopback_when_local_service_disabled(t
     assert "internal/private" in error
 
 
-def test_exec_restricted_workspace_scope_blocks_loopback(tmp_path):
+def test_exec_restricted_workspace_scope_allows_loopback(tmp_path):
     tool = ExecTool(working_dir=str(tmp_path))
+    scope = build_workspace_scope(tmp_path, "restricted", source_channel="websocket")
+    token = bind_workspace_scope(scope)
+    try:
+        with patch("kohaku.security.network.socket.getaddrinfo", _fake_resolve_localhost):
+            error = tool._guard_command("curl http://localhost:8765/", str(tmp_path))
+    finally:
+        reset_workspace_scope(token)
+    assert error is None
+
+
+def test_exec_restricted_workspace_scope_blocks_loopback_when_local_service_disabled(tmp_path):
+    tool = ExecTool(working_dir=str(tmp_path), webui_allow_local_service_access=False)
     scope = build_workspace_scope(tmp_path, "restricted", source_channel="websocket")
     token = bind_workspace_scope(scope)
     try:
@@ -97,6 +125,36 @@ def test_exec_restricted_workspace_scope_blocks_loopback(tmp_path):
         reset_workspace_scope(token)
     assert error is not None
     assert "internal/private" in error
+
+
+def test_exec_restricted_workspace_scope_blocks_loopback_when_sandbox_binding_disabled(tmp_path):
+    tool = ExecTool(working_dir=str(tmp_path), sandbox_allow_local_binding=False)
+    scope = build_workspace_scope(tmp_path, "restricted", source_channel="websocket")
+    token = bind_workspace_scope(scope)
+    try:
+        with patch("kohaku.security.network.socket.getaddrinfo", _fake_resolve_localhost):
+            error = tool._guard_command("curl http://localhost:8765/", str(tmp_path))
+    finally:
+        reset_workspace_scope(token)
+    assert error is not None
+    assert "internal/private" in error
+
+
+def test_exec_restricted_workspace_scope_still_blocks_rfc1918_and_metadata(tmp_path):
+    tool = ExecTool(working_dir=str(tmp_path))
+    scope = build_workspace_scope(tmp_path, "restricted", source_channel="websocket")
+    token = bind_workspace_scope(scope)
+    try:
+        with patch("kohaku.security.network.socket.getaddrinfo", _fake_resolve_lan):
+            lan_error = tool._guard_command("curl http://192.168.1.50:8080/", str(tmp_path))
+            assert tool.private_network_approval_requested("curl http://192.168.1.50:8080/")
+        with patch("kohaku.security.network.socket.getaddrinfo", _fake_resolve_private):
+            meta_error = tool._guard_command("curl http://169.254.169.254/latest/meta-data/", str(tmp_path))
+            assert not tool.private_network_approval_requested("curl http://169.254.169.254/latest/meta-data/")
+    finally:
+        reset_workspace_scope(token)
+    assert lan_error is not None and "internal/private" in lan_error
+    assert meta_error is not None and "internal/private" in meta_error
 
 
 def test_exec_full_workspace_scope_still_blocks_metadata(tmp_path):
