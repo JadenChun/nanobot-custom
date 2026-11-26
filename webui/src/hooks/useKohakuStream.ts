@@ -1179,7 +1179,7 @@ export function useKohakuStream(
       liveStopTargetSeenRef.current = true;
       setStopTargetSnapshotAvailable(true);
       const candidate = value === null ? null : parseStopExpectation(value);
-      let target = candidate
+      const target = candidate
         && (!expectedRootSessionKey || candidate.source.session_key === expectedRootSessionKey)
         ? candidate
         : null;
