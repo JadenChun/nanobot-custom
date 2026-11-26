@@ -250,3 +250,39 @@ def test_receipts_validate_and_are_never_replaced(tmp_path: Path) -> None:
     assert oct(written.stat().st_mode & 0o777) == "0o600"
     with pytest.raises(OSError):
         admission.write_quiescence_receipt(directory, {**receipt, "completed_ns": 1})
+
+
+# --- Membership verdicts and ancestry (used by the launch domain) -------------
+
+
+@pytest.mark.parametrize(
+    ("sandboxed", "denies_member", "denies_fence", "expected"),
+    [
+        (False, None, None, False),
+        (None, False, True, None),
+        (True, True, True, False),
+        (True, False, False, False),
+        (True, False, True, True),
+        (True, None, True, None),
+        (True, False, None, None),
+    ],
+)
+def test_membership_separates_unknown_from_not_a_member(
+    monkeypatch, sandboxed, denies_member, denies_fence, expected,
+) -> None:
+    verdicts = {
+        darwin.member_name("a" * 32): denies_member,
+        darwin.fence_name("a" * 32): denies_fence,
+    }
+    monkeypatch.setattr(darwin, "is_sandboxed", lambda pid: sandboxed)
+    monkeypatch.setattr(darwin, "denies_global_name", lambda pid, name: verdicts[name])
+
+    assert darwin.membership(10, "a" * 32) is expected
+    assert darwin.is_member(10, "a" * 32) is (expected is True)
+
+
+@on_darwin
+def test_parent_pid_covers_processes_of_other_users() -> None:
+    assert darwin.parent_pid(os.getpid()) == os.getppid()
+    assert darwin.parent_pid(1) == 0
+    assert darwin.parent_pid(99_999_999) is None

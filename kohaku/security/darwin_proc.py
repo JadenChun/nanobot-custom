@@ -38,8 +38,11 @@ SANDBOX_EXEC = "/usr/bin/sandbox-exec"
 _LIBSYSTEM = "/usr/lib/libSystem.B.dylib"
 _PROC_ALL_PIDS = 1
 _PROC_PIDTBSDINFO = 3
+_PROC_PIDT_SHORTBSDINFO = 13
 _BSDINFO_FORMAT = "<12I16s32s5IiQQ"
 _BSDINFO_SIZE = struct.calcsize(_BSDINFO_FORMAT)
+_SHORT_BSDINFO_FORMAT = "<4I16s8I"
+_SHORT_BSDINFO_SIZE = struct.calcsize(_SHORT_BSDINFO_FORMAT)
 _RENAME_EXCL = 0x4
 _FILTER_NONE = 0
 _FILTER_GLOBAL_NAME = 2
@@ -130,18 +133,27 @@ def list_pids() -> list[int]:
     raise DarwinUnavailableError("process table kept growing during a scan")
 
 
-def process_info(pid: int) -> ProcessInfo | None:
-    """Return identity fields for one pid, or None when it does not exist."""
+def _pid_info(pid: int, flavor: int, size: int) -> bytes | None:
     function = _symbol("proc_pidinfo")
     function.restype = ctypes.c_int
     function.argtypes = [
         ctypes.c_int, ctypes.c_int, ctypes.c_uint64, ctypes.c_void_p, ctypes.c_int,
     ]
-    buffer = ctypes.create_string_buffer(_BSDINFO_SIZE)
-    written = int(function(pid, _PROC_PIDTBSDINFO, 0, buffer, _BSDINFO_SIZE))
-    if written != _BSDINFO_SIZE:
+    buffer = ctypes.create_string_buffer(size)
+    if int(function(pid, flavor, 0, buffer, size)) != size:
         return None
-    fields = struct.unpack(_BSDINFO_FORMAT, buffer.raw)
+    return buffer.raw
+
+
+def process_info(pid: int) -> ProcessInfo | None:
+    """Return identity fields for one pid.
+
+    None means the pid does not exist, is a zombie, or belongs to another user.
+    """
+    raw = _pid_info(pid, _PROC_PIDTBSDINFO, _BSDINFO_SIZE)
+    if raw is None:
+        return None
+    fields = struct.unpack(_BSDINFO_FORMAT, raw)
     if int(fields[3]) != pid:
         return None
     return ProcessInfo(
@@ -157,6 +169,15 @@ def process_start_time(pid: int) -> int | None:
     """Return a stable per-process start stamp in microseconds, if the pid exists."""
     info = process_info(pid)
     return None if info is None else info.start_us
+
+
+def parent_pid(pid: int) -> int | None:
+    """Return the parent of any live process, including another user's."""
+    raw = _pid_info(pid, _PROC_PIDT_SHORTBSDINFO, _SHORT_BSDINFO_SIZE)
+    if raw is None:
+        return None
+    fields = struct.unpack(_SHORT_BSDINFO_FORMAT, raw)
+    return int(fields[1]) if int(fields[0]) == pid else None
 
 
 @functools.lru_cache(maxsize=1)
@@ -202,13 +223,24 @@ def denies_global_name(pid: int, name: str) -> bool | None:
     return None
 
 
+def membership(pid: int, launch_id: str) -> bool | None:
+    """Whether pid belongs to one launch; None when the kernel gives no answer.
+
+    A pid that no longer exists, or is a zombie, reports as sandboxed with every
+    name denied, so it is correctly not a member.
+    """
+    sandboxed = is_sandboxed(pid)
+    if sandboxed is not True:
+        return sandboxed
+    member_denied = denies_global_name(pid, member_name(launch_id))
+    if member_denied is not False:
+        return None if member_denied is None else False
+    return denies_global_name(pid, fence_name(launch_id))
+
+
 def is_member(pid: int, launch_id: str) -> bool:
     """Exact membership of one launch. Anything unknown is not a member."""
-    if is_sandboxed(pid) is not True:
-        return False
-    if denies_global_name(pid, member_name(launch_id)) is not False:
-        return False
-    return denies_global_name(pid, fence_name(launch_id)) is True
+    return membership(pid, launch_id) is True
 
 
 def scan_members(launch_id: str, pids: Iterable[int] | None = None) -> list[int]:
