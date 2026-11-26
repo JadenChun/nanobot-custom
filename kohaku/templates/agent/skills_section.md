@@ -1,5 +1,5 @@
 # Skills
 
-The following skills extend your capabilities. Each group lists one root and relative SKILL.md paths; join them when using `read_file`.
+Use `read_file` to open `skills/<name>/SKILL.md` for agent-home and bundled skills. Other groups list their source paths.
 
 {{ skills_summary }}

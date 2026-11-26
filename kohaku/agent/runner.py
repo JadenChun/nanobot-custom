@@ -21,7 +21,6 @@ from kohaku.agent.context import TranscriptInput
 from kohaku.agent.context_governance import (
     ContextCompactionState,
     ContextGovernanceConfig,
-    ContextGovernor,
     HistoryConsolidator,
     ModelRequestState,
     ProviderCompactionConsolidator,
@@ -37,8 +36,11 @@ from kohaku.agent.tools.execution import (
     execute_tool_calls,
     strip_retry_hint,
 )
-from kohaku.agent.tools.registry import CapturedToolBindings, ToolRegistry
+from kohaku.agent.tools.registry import CapturedToolBindings, PolicyToolView, ToolRegistry
 from kohaku.agent.turn import ToolOutcome, TurnContext
+from kohaku.context.budget import TokenMeter
+from kohaku.context.compaction import CompactionEngine
+from kohaku.context.tool_surface import ToolSurface
 from kohaku.events import NO_EVENTS, EventSink
 from kohaku.llm_usage.context import (
     LLMUsageSource,
@@ -60,6 +62,11 @@ from kohaku.providers.conversation_state import (
     ProviderConversationStateController,
     ProviderStateSettlement,
 )
+from kohaku.providers.image_history import (
+    MAX_TOOL_IMAGE_BATCH_BYTES,
+    MAX_TOOL_IMAGES_PER_BATCH,
+    recent_image_messages,
+)
 from kohaku.providers.request_budget import (
     BackendContextOverflow,
     FinalizedRequestBudgetExceeded,
@@ -77,7 +84,6 @@ from kohaku.session.turn_writer import SourceInjectionBinding, SourceTurnWriter
 from kohaku.utils.helpers import (
     build_assistant_message,
     estimate_message_tokens,
-    estimate_prompt_tokens_chain,
     extract_reasoning,
     strip_reasoning_tags,
 )
@@ -103,6 +109,10 @@ if TYPE_CHECKING:
     )
     from kohaku.session.artifact_reader import ArtifactReader
     from kohaku.session.source_request import SourceTranscript
+    from kohaku.session.source_store import SourceSnapshot
+
+
+estimate_prompt_tokens_chain = TokenMeter.estimate_messages_tokens
 
 
 @dataclass(frozen=True)
@@ -268,7 +278,7 @@ def _is_non_recoverable_tool_error(content: str) -> bool:
     )
 
 
-def _context_budget_error_response(
+def _prompt_budget_error_response(
     exc: FinalizedRequestBudgetExceeded | BackendContextOverflow,
     recovery_failure_reason: str | None = None,
 ) -> LLMResponse:
@@ -311,6 +321,8 @@ class AgentRunSpec:
     max_iterations: int
     max_tool_result_chars: int
     tool_policy: ToolPolicy | None = None
+    # When set, only DIRECT tools and the activated tail reach the provider.
+    tool_surface: ToolSurface | None = None
     turn_context: TurnContext | None = None
     fail_on_tool_error: bool = False
     # Bounded continuation after ordinary tool errors. Consecutive errors are
@@ -343,13 +355,16 @@ class AgentRunSpec:
     followup_request_acknowledged: Callable[[tuple[str, ...]], None] | None = None
     pending_followup_acknowledgments: list[str] = field(default_factory=list, repr=False)
     source_transcript: SourceTranscript | None = None
+    source_transcript_builder: Callable[[ToolRegistry], SourceTranscript] | None = None
     source_initial_eligible_ids: frozenset[str] = frozenset()
     source_isolated: bool = False
-    source_compaction_idle_timeout_seconds: float = 300.0
-    source_compaction_overall_timeout_seconds: float = 900.0
-    source_compaction_pressure_trigger_ratio: float = 0.9
-    source_compaction_target_ratio: float = 0.6
+    source_compaction_idle_timeout_seconds: float = 45.0
+    source_compaction_overall_timeout_seconds: float = 120.0
+    source_compaction_pressure_trigger_ratio: float = 0.80
+    source_compaction_target_ratio: float = 0.50
     source_compaction_summary_generation_tokens: int | None = None
+    source_compaction_runtime: LLMRuntime | None = None
+    on_source_checkpoint: Callable[[SourceSnapshot], None] | None = None
     artifact_read_allowed: bool = False
     conversation_binding: ConversationRequestBinding | None = field(default=None, repr=False)
     artifact_grants: ArtifactGrantSet | None = field(default=None, repr=False)
@@ -399,7 +414,7 @@ class AgentRunner:
     def __init__(self, *, artifact_reader_factory: Callable[
             [SourceTurnWriter, bool, ReadFileTool], ArtifactReader | None] | None = None) -> None:
         self.artifact_reader_factory = artifact_reader_factory
-        self.context_governor = ContextGovernor()
+        self.context_governor = CompactionEngine()
 
     @staticmethod
     def _is_missing_skill_file_error(
@@ -710,7 +725,8 @@ class AgentRunner:
                     spec.turn_context.artifact_grants = None
                     spec.turn_context.artifact_handoff_notices.clear()
 
-                tools = spec.tools.filtered([
+                excluded = {"read_artifact", "handoff_artifact"}
+                tools = spec.tools.without(excluded) if isinstance(spec.tools, PolicyToolView) else spec.tools.filtered([
                     name for name in spec.tools.tool_names
                     if name not in {'read_artifact', 'handoff_artifact'}
                 ])
@@ -758,7 +774,11 @@ class AgentRunner:
                 from kohaku.agent.tools.artifact import ReadArtifactTool
                 from kohaku.agent.tools.filesystem import ReadFileTool
 
-                tools = spec.tools.filtered([name for name in spec.tools.tool_names if name != 'read_artifact'])
+                tools = (
+                    spec.tools.without({"read_artifact"})
+                    if isinstance(spec.tools, PolicyToolView)
+                    else spec.tools.filtered([name for name in spec.tools.tool_names if name != 'read_artifact'])
+                )
                 read_file = tools.get('read_file')
                 if (spec.artifact_read_allowed and artifact_reader_factory is not None and spec.source_writer is not None
                         and type(read_file) is ReadFileTool):
@@ -791,6 +811,10 @@ class AgentRunner:
                 else:
                     collector = None
                 spec = replace(spec, tools=tools, artifact_handoff_collector=collector)
+            if spec.tool_surface is not None:
+                spec.tool_surface.registry = spec.tools
+            if spec.source_transcript_builder is not None:
+                spec = replace(spec, source_transcript=spec.source_transcript_builder(spec.tools))
             hook = spec.hook or AgentHook()
             messages, compaction = self._initial_transcript_and_compaction(spec)
             context = AgentRunHookContext(messages=deepcopy(messages))
@@ -808,10 +832,28 @@ class AgentRunner:
             if request_state.source is not None:
                 before_epoch = request_state.source.projection_epoch
                 self.context_governor.admit_source_checkpoint(request_state, request_state.source.transcript,
-                    tool_definitions=spec.tools.get_definitions())
+                    tool_definitions=self._surface_definitions(spec, spec.tools))
                 if request_state.source.projection_epoch != before_epoch:
                     context.messages = deepcopy(messages)
+            before_mcp = frozenset(name for name in spec.tools.tool_names if name.startswith("mcp_"))
             await hook.before_run(context)
+            after_mcp = frozenset(name for name in spec.tools.tool_names if name.startswith("mcp_"))
+            if (
+                after_mcp != before_mcp
+                and spec.source_transcript_builder is not None
+                and request_state.source is not None
+                and not request_state.source.has_pending_requests
+            ):
+                rebuilt = spec.source_transcript_builder(spec.tools)
+                active = request_state.source.transcript
+                if rebuilt.nodes and active.nodes:
+                    updated = SourceTranscript((rebuilt.nodes[0], *active.nodes[1:]))
+                    request_state.source.replace_projection(updated)
+                    messages[:] = updated.messages()
+                    request_state.conversation.replace_transcript(messages)
+                    context.messages = deepcopy(messages)
+            if spec.tool_surface is not None:
+                spec.tool_surface.activate_requested_namespaces()
             result = await self._run_core(spec, hook, messages, request_state)
         except asyncio.CancelledError as exc:
             if spec.source_writer is not None:
@@ -924,13 +966,15 @@ class AgentRunner:
             conversation=conversation_state,
             conversation_binding=spec.conversation_binding,
             compaction=compaction,
-            source_compaction=SourceCompactionState(spec.source_writer, spec.runtime, messages,
+            source_compaction=SourceCompactionState(
+                spec.source_writer, spec.source_compaction_runtime or spec.runtime, messages,
                 spec.source_writer.stream_id if spec.source_isolated or spec.source_writer.parent_stream_id is not None else None,
                 idle_timeout_seconds=spec.source_compaction_idle_timeout_seconds,
                 overall_timeout_seconds=spec.source_compaction_overall_timeout_seconds,
                 pressure_trigger_ratio=spec.source_compaction_pressure_trigger_ratio,
                 target_ratio=spec.source_compaction_target_ratio,
-                summary_generation_tokens=spec.source_compaction_summary_generation_tokens)
+                summary_generation_tokens=spec.source_compaction_summary_generation_tokens,
+                on_checkpoint=spec.on_source_checkpoint)
                 if spec.source_writer is not None else None,
             source=SourceRequestLedger(spec.source_transcript,
                 initial_eligible_ids=spec.source_initial_eligible_ids)
@@ -1266,7 +1310,13 @@ class AgentRunner:
                 context.tool_results = list(results)
                 context.tool_events = list(public_events)
                 completed_tool_results: list[dict[str, Any]] = []
-                for ordinal, (tool_call, result) in enumerate(zip(response.tool_calls, results)):
+                for tool_call, result in zip(response.tool_calls, results):
+                    if spec.tool_surface is not None:
+                        result_text = result if isinstance(result, str) else ""
+                        if tool_call.name == "exec" and "Process running. session_id:" in result_text:
+                            spec.tool_surface.activate(["exec_session", "list_exec_sessions"])
+                        elif tool_call.name == "generate_image":
+                            spec.tool_surface.activate(["message"])
                     tool_message = {
                         "role": "tool",
                         "tool_call_id": tool_call.id,
@@ -1278,13 +1328,22 @@ class AgentRunner:
                             result,
                         ),
                     }
+                    completed_tool_results.append(tool_message)
+                if request_state.source is not None:
+                    completed_tool_results = recent_image_messages(
+                        completed_tool_results,
+                        max_tool_images=MAX_TOOL_IMAGES_PER_BATCH,
+                        max_tool_image_bytes=MAX_TOOL_IMAGE_BATCH_BYTES,
+                        max_tool_image_tokens=None,
+                        preserve_prior_batches=True,
+                    )
+                for ordinal, tool_message in enumerate(completed_tool_results):
                     messages.append(tool_message)
                     if request_state.source is not None:
                         identity = result_ids.get(ordinal)
                         if identity is None:
                             raise SourceValidationError('Tool result has no durable source identity')
                         request_state.source.append_source(identity, tool_message)
-                    completed_tool_results.append(tool_message)
                 if spec.turn_context is not None and spec.turn_context.artifact_handoff_notices:
                     references = tuple(spec.turn_context.artifact_handoff_notices)
                     spec.turn_context.artifact_handoff_notices.clear()
@@ -2003,9 +2062,15 @@ class AgentRunner:
             if isinstance(exc.actual_fallback_index, int)
             else 0
         )
+        selected = provider_context.selected_route
+        if selected is None or (selected.provider, selected.model) != (
+            exc.actual_provider, exc.actual_model,
+        ):
+            request_state.local_usage_anchor = None
         next_context = replace(
             provider_context,
             selected_route=None,
+            local_usage_anchor=request_state.local_usage_anchor,
             route_candidate_index=max(
                 provider_context.route_candidate_index,
                 actual_index,
@@ -2059,6 +2124,8 @@ class AgentRunner:
                 malformed_retry=malformed_retry, source_view=source_view,
                 transcript=transcript, bindings=bindings,
             )
+            if isinstance(spec.tools, PolicyToolView):
+                bindings.refresh_reconnected_tools()
             return replace(recorded, tools=bindings), usage
         except BaseException:
             bindings.release()
@@ -2079,7 +2146,13 @@ class AgentRunner:
     ) -> tuple[RecordedResponse, LLMUsage]:
         source_view = self._source_view(request_state, messages, source_view)
         timeout_s = self._resolve_llm_timeout_s(spec)
-        tool_definitions = bindings.get_definitions()
+        tool_definitions = self._surface_definitions(spec, bindings)
+        direct_tool_count = None if spec.tool_surface is None else next(
+            (index for index, schema in enumerate(tool_definitions)
+             if (tool := bindings.get(ToolRegistry.schema_name(schema))) is not None
+             and tool.exposure != "direct"),
+            len(tool_definitions),
+        )
         wants_streaming = hook.wants_streaming()
         messages, provider_context = await self.context_governor.prepare_request(
             request_state,
@@ -2211,6 +2284,8 @@ class AgentRunner:
             )
             ticket = request_state.source.issue(source_view) if request_state.source is not None and source_view is not None else None
             kwargs = self._build_request_kwargs(spec, messages, tools=deepcopy(tool_definitions))
+            if provider_context is not None and direct_tool_count is not None:
+                provider_context = replace(provider_context, direct_tool_count=direct_tool_count)
             if wants_streaming:
                 coro = spec.runtime.provider.chat_stream_with_retry(
                     **kwargs,
@@ -2231,6 +2306,13 @@ class AgentRunner:
                     await coro if outer_timeout_s is None
                     else await asyncio.wait_for(coro, timeout=outer_timeout_s)
                 )
+                if response.finish_reason == "error":
+                    overflow = BackendContextOverflow.from_report(
+                        response.error_status_code, response.error_code,
+                        response.error_type, response.content,
+                    )
+                    if overflow is not None:
+                        raise overflow
             except asyncio.CancelledError:
                 if ticket is not None and request_state.source is not None:
                     request_state.source.discard(ticket)
@@ -2300,7 +2382,7 @@ class AgentRunner:
                         generation_started_at = None
                         generation_elapsed_s = 0.0
                         continue
-                response = _context_budget_error_response(
+                response = _prompt_budget_error_response(
                     original_budget_error,
                     recovery_failure_reason,
                 )
@@ -2729,6 +2811,13 @@ class AgentRunner:
                     if timeout_s is None
                     else await asyncio.wait_for(coro, timeout=timeout_s)
                 )
+                if response.finish_reason == "error":
+                    overflow = BackendContextOverflow.from_report(
+                        response.error_status_code, response.error_code,
+                        response.error_type, response.content,
+                    )
+                    if overflow is not None:
+                        raise overflow
             except asyncio.TimeoutError:
                 response = LLMResponse(
                     content=f"Error calling LLM: timed out after {timeout_s:g}s",
@@ -2777,7 +2866,7 @@ class AgentRunner:
                         )
                         recovery_used = True
                         continue
-                response = _context_budget_error_response(
+                response = _prompt_budget_error_response(
                     original_budget_error,
                     recovery_failure_reason,
                 )
@@ -2863,6 +2952,18 @@ class AgentRunner:
         )
         request_state.provider_compaction_applied |= response.provider_compaction_applied
         return recorded
+
+    @staticmethod
+    def _surface_definitions(
+        spec: AgentRunSpec, bindings: ToolRegistry,
+    ) -> list[dict[str, Any]]:
+        """Prepare the captured schemas for the current provider."""
+        surface = spec.tool_surface
+        if surface is None:
+            return bindings.get_definitions()
+        return surface.definitions_for_provider(
+            spec.runtime.provider, spec.runtime.model, registry=bindings,
+        )
 
     @staticmethod
     def _resolve_llm_timeout_s(spec: AgentRunSpec) -> float | None:
@@ -2958,12 +3059,11 @@ class AgentRunner:
             state.context_usage = ContextUsageSnapshot(
                 state.usage.context_tokens, window_tokens,
             )
-        from kohaku.providers.openai_compat_provider import OpenAICompatProvider
-
+        leaf = TokenMeter.unwrap_anchor_provider(spec.runtime.provider)
         reported = response.usage
         receipt = response.local_usage_receipt
         if (
-            type(spec.runtime.provider) is OpenAICompatProvider
+            getattr(leaf, "supports_usage_anchor", False) is True
             and recorded_response is not None
             and recorded_response.response is response
             and recorded_response.local_usage_anchor_eligible

@@ -234,7 +234,6 @@ class TestDispatch:
     async def test_run_logs_and_continues_after_leaked_cancelled_error(self, monkeypatch, tmp_path):
         loop, bus = _make_loop(tmp_path)
         loop.aclose = AsyncMock()
-        loop.auto_compact.check_expired = MagicMock()
         warnings: list[str] = []
         calls = 0
 

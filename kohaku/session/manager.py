@@ -34,12 +34,12 @@ from weakref import WeakValueDictionary
 from filelock import FileLock, Timeout
 from loguru import logger
 
-from kohaku.agent.memory_recovery import MEMORY_RECEIPT_FILENAME, require_memory_receipt_recovery
 from kohaku.attachments.context import media_paths_for_message
 from kohaku.config.paths import get_default_sessions_root, get_legacy_sessions_dir
+from kohaku.context.types import SessionPromptSnapshot
 from kohaku.providers.base import ProviderConversationState
 from kohaku.runtime_context import (
-    RUNTIME_CONTEXT_HISTORY_META,
+    model_history_message,
     public_history_message,
 )
 from kohaku.security.desktop_permissions import (
@@ -70,6 +70,7 @@ from kohaku.utils.helpers import (
     strip_think,
 )
 from kohaku.utils.subagent_channel_display import scrub_subagent_announce_body
+from kohaku.utils.workspace_lock import open_workspace_memory_lock
 from kohaku.webui.session_identity import is_webui_session_key
 from kohaku.workspace_access_recovery import (
     WorkspaceAccessRecord,
@@ -351,6 +352,7 @@ class Session:
     revision: int = 0
     generation: int = 0
     incarnation: str = field(default_factory=lambda: secrets.token_hex(16))
+    prompt_snapshot: SessionPromptSnapshot | None = field(default=None, repr=False, compare=False)
     _base_messages: list[dict[str, Any]] | None = field(default=None, repr=False, compare=False)
     _base_metadata: dict[str, Any] = field(default_factory=dict, repr=False, compare=False)
     _base_provider_state: ProviderConversationState | None = field(default=None, repr=False, compare=False)
@@ -818,12 +820,10 @@ class Session:
         for message in sliced:
             if message.get("_command"):
                 continue
-            has_persisted_runtime_context = isinstance(
-                message.get(RUNTIME_CONTEXT_HISTORY_META),
-                dict,
+            message = (
+                model_history_message(message) if include_runtime_context
+                else public_history_message(message)
             )
-            if not include_runtime_context:
-                message = public_history_message(message)
             content = message.get("content", "")
             role = message.get("role")
             if role == "assistant" and isinstance(content, str):
@@ -839,33 +839,6 @@ class Session:
                 content,
                 media_paths or None,
             )
-            cli_apps = cast(object, message.get("cli_apps"))
-            if (
-                include_runtime_context
-                and not has_persisted_runtime_context
-                and role == "user"
-                and isinstance(cli_apps, list)
-                and cli_apps
-                and isinstance(content, str)
-            ):
-                cli_lines: list[str] = []
-                for item in cast(list[object], cli_apps[:8]):
-                    if not isinstance(item, dict):
-                        continue
-                    item_data = cast(dict[object, object], item)
-                    name = str(item_data.get("name") or "").strip().lower()
-                    if not name:
-                        continue
-                    entry_point = (
-                        str(item_data.get("entry_point") or "unknown").strip() or "unknown"
-                    )
-                    cli_lines.append(
-                        f"[CLI App Attachment: @{name}; tool=run_cli_app; entry_point={entry_point}; "
-                        f"skill=skills/cli-app-{name}/SKILL.md]"
-                    )
-                if cli_lines:
-                    breadcrumbs = "\n".join(cli_lines)
-                    content = f"{content}\n{breadcrumbs}" if content else breadcrumbs
             if role == "assistant" and isinstance(content, str) and not content.strip():
                 if not any(key in message for key in ("tool_calls", "reasoning_content", "thinking_blocks")):
                     continue
@@ -1101,28 +1074,19 @@ class JsonlSessionStore:
         sessions_root: Path | None = None,
         _managed_access: "ManagedNamespaceAccess | None" = None,
     ):
-        from kohaku.agent.memory_recovery_startup_admission import (
-            admitted_startup_mutation,
-            require_startup_receipt_admission,
-        )
-
         canonical_workspace = Path(workspace).expanduser().resolve(strict=False)
         root = (Path(sessions_root).expanduser().resolve(strict=False)
                 if sessions_root is not None else get_default_sessions_root())
         from kohaku.session.mode_storage import preflight_store_construction
 
         preflight_store_construction(canonical_workspace, root, _managed_access)
-        receipt_path = canonical_workspace / "memory" / MEMORY_RECEIPT_FILENAME
-        require_startup_receipt_admission(canonical_workspace, sessions_root=root)
         if root == canonical_workspace or root.is_relative_to(canonical_workspace):
             raise RuntimeError(
                 "session storage must be outside the agent workspace; "
                 "move --config outside --workspace or choose a nested workspace directory"
             )
-        with admitted_startup_mutation(canonical_workspace, sessions_root=root) as memory_gate:
-            if memory_gate is not None:
-                memory_gate.require_current()
-            require_memory_receipt_recovery(receipt_path)
+        ensure_dir(canonical_workspace)
+        with open_workspace_memory_lock(canonical_workspace):
             ensure_dir(root)
             with suppress(OSError):
                 os.chmod(root, 0o700)
@@ -1136,9 +1100,6 @@ class JsonlSessionStore:
                 timeout=_SESSION_MIGRATION_LOCK_TIMEOUT_SECONDS,
             )
             with self._migration_lock:
-                if memory_gate is not None:
-                    memory_gate.require_current()
-                require_memory_receipt_recovery(receipt_path)
                 workspace_id = self._load_or_create_workspace_id(canonical_workspace, root)
                 workspace_id = self._claim_workspace_namespace(
                     root,
@@ -1153,9 +1114,6 @@ class JsonlSessionStore:
                     str(self.sessions_dir / _SESSION_FILES_LOCK_FILENAME)
                 )
                 with self._session_files_lock:
-                    if memory_gate is not None:
-                        memory_gate.require_current()
-                    require_memory_receipt_recovery(receipt_path)
                     if _managed_access is None:
                         self._migrate_from_workspace(canonical_workspace)
                     from kohaku.attachments._media import configured_custody

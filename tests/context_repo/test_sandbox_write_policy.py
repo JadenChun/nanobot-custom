@@ -29,7 +29,7 @@ def test_sandbox_reads_unlisted_paths_and_ignores_legacy_command_checkbox(tmp_pa
         policy.validate_path(store.path, "read")
 
 
-def test_folder_map_is_metadata_only_and_never_an_exclusive_write_list(tmp_path):
+def test_sandbox_guidance_does_not_preload_unselected_folders(tmp_path):
     from kohaku.agent.context import ContextBuilder
     from kohaku.context_repo.catalog import RepositoryCatalog, RepositoryEntry
     home, documents, reference = (tmp_path / name for name in ("home", "documents", "documents/reference"))
@@ -43,11 +43,11 @@ def test_folder_map_is_metadata_only_and_never_an_exclusive_write_list(tmp_path)
     catalog.update(RepositoryEntry(name="documents", path=str(documents), purpose="OMIT_THIS_MAP_DESCRIPTION", agent_map=False))
     catalog.update(RepositoryEntry(name="reference", path=str(reference), purpose="Only navigation metadata"))
     builder = ContextBuilder(home, resource_policy=policy, folder_grants=store.view)
-    builder.repositories = catalog
     prompt = builder.build_system_prompt(include_memory=False)
-    assert str(documents) in prompt
-    assert '"effective_access": "read_write"' in prompt
-    assert "Only navigation metadata" in prompt
+    assert "Sandbox Folder Rules" in prompt
+    assert "`repository_catalog`" in prompt
+    assert str(documents) not in prompt
+    assert "Only navigation metadata" not in prompt
     assert "OMIT_THIS_MAP_DESCRIPTION" not in prompt
     assert "CONTENTS_MUST_NOT_BE_PRELOADED" not in prompt
     policy.validate_path(documents / "unmapped/new.txt", "write")

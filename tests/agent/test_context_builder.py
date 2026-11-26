@@ -69,24 +69,24 @@ class TestMergeMessageContent:
 
 
 # ---------------------------------------------------------------------------
-# _load_bootstrap_files
+# compile_system_prompt
 # ---------------------------------------------------------------------------
 
 
-class TestLoadBootstrapFiles:
+class TestBootstrapSections:
     def test_no_bootstrap_files(self, tmp_path):
         builder = _builder(tmp_path)
-        assert builder._load_bootstrap_files() == ""
+        assert builder.compile_system_prompt().session_snapshot_text == ""
 
     def test_empty_bootstrap_files(self, tmp_path):
         (tmp_path / "AGENTS.md").write_text("\n", encoding="utf-8")
         builder = _builder(tmp_path)
-        assert builder._load_bootstrap_files() == ""
+        assert builder.compile_system_prompt().session_snapshot_text == ""
 
     def test_agents_md(self, tmp_path):
         (tmp_path / "AGENTS.md").write_text("Be helpful.", encoding="utf-8")
         builder = _builder(tmp_path)
-        result = builder._load_bootstrap_files()
+        result = builder.compile_system_prompt().session_snapshot_text
         assert "## AGENTS.md" in result
         assert "Be helpful." in result
 
@@ -94,7 +94,7 @@ class TestLoadBootstrapFiles:
         (tmp_path / "AGENTS.md").write_text("Rules.", encoding="utf-8")
         (tmp_path / "SOUL.md").write_text("Soul.", encoding="utf-8")
         builder = _builder(tmp_path)
-        result = builder._load_bootstrap_files()
+        result = builder.compile_system_prompt().session_snapshot_text
         assert "## AGENTS.md" in result
         assert "## SOUL.md" in result
         assert "Rules." in result
@@ -104,21 +104,21 @@ class TestLoadBootstrapFiles:
         for name in ContextBuilder.BOOTSTRAP_FILES:
             (tmp_path / name).write_text(f"Content of {name}", encoding="utf-8")
         builder = _builder(tmp_path)
-        result = builder._load_bootstrap_files()
+        result = builder.compile_system_prompt().session_snapshot_text
         for name in ContextBuilder.BOOTSTRAP_FILES:
             assert f"## {name}" in result
 
     def test_custom_tools_md_is_bootstrapped(self, tmp_path):
         (tmp_path / "TOOLS.md").write_text("workspace tool notes", encoding="utf-8")
         builder = _builder(tmp_path)
-        result = builder._load_bootstrap_files()
+        result = builder.compile_system_prompt().session_snapshot_text
         assert "TOOLS.md" in result
         assert "workspace tool notes" in result
 
     def test_utf8_content(self, tmp_path):
         (tmp_path / "AGENTS.md").write_text("用中文回复", encoding="utf-8")
         builder = _builder(tmp_path)
-        result = builder._load_bootstrap_files()
+        result = builder.compile_system_prompt().session_snapshot_text
         assert "用中文回复" in result
 
     def test_selected_project_supplies_only_agents_file(self, tmp_path):
@@ -158,7 +158,7 @@ class TestLoadBootstrapFiles:
 
         sync_workspace_templates(tmp_path, silent=True)
 
-        result = ContextBuilder(tmp_path)._load_bootstrap_files()
+        result = ContextBuilder(tmp_path).compile_system_prompt().session_snapshot_text
 
         assert "## AGENTS.md" not in result
         assert "## USER.md" not in result
@@ -170,7 +170,7 @@ class TestLoadBootstrapFiles:
         sync_workspace_templates(tmp_path, silent=True)
         (tmp_path / "USER.md").write_text("User prefers Chinese.", encoding="utf-8")
 
-        result = ContextBuilder(tmp_path)._load_bootstrap_files()
+        result = ContextBuilder(tmp_path).compile_system_prompt().session_snapshot_text
 
         assert "## USER.md" in result
         assert "User prefers Chinese." in result
@@ -213,31 +213,18 @@ class TestBundledToolContract:
         tpl = pkg_files("kohaku") / "templates" / "agent" / "tool_contract.md"
         content = tpl.read_text(encoding="utf-8")
 
-        assert "## General Tool Contract" in content
-        assert "Use the narrowest structured tool" in content
-        assert "Do not use `exec` as a universal workaround" in content
-        assert "## File and Coding Workflows" in content
-        assert "Use `find_files` for file discovery" in content
-        assert "Use `grep` for content search" in content
-        assert "Use the registered editing tool" in content
-        assert "apply_patch" not in content
-        assert "grep" in content
-        assert "find_files" in content
-        assert "acceptance criteria into concrete checks" in content
-        assert "visual evidence reaches the model" in content
-        assert "clear user request as authorization" in content
-        assert "Never invent missing records or measurements" in content
-        assert "## Web and External Information" in content
-        assert "## Messaging and Media" in content
-        assert "## Scheduling and Background Work" in content
+        from kohaku.context.budget import TokenMeter
+
+        assert TokenMeter.count_text(content) <= 800
+        assert "narrowest tool" in content
+        assert "Verify material changes" in content
+        assert "sandbox limits and approval rules" in content
+        assert "Never fabricate" in content
 
     def test_tool_contract_is_injected_without_workspace_file(self, tmp_path):
-        builder = _builder(tmp_path)
-        prompt = builder.build_system_prompt()
-
-        assert "# Tool Usage Notes" in prompt
-        assert "## General Tool Contract" in prompt
-        assert "Do not use `exec` as a universal workaround" in prompt
+        compiled = _builder(tmp_path).compile_system_prompt()
+        assert "operating_principles" in compiled.section_tokens
+        assert "# Operating Principles" in compiled.static_text
 
 
 # ---------------------------------------------------------------------------
@@ -328,12 +315,11 @@ class TestBuildSystemPrompt:
         assert "workspace" in result.lower() or "python" in result.lower()
 
     def test_default_identity_uses_relative_agent_paths(self, tmp_path):
-        result = ContextBuilder(tmp_path)._get_identity()
+        result = ContextBuilder(tmp_path).compile_system_prompt().static_text
 
-        assert str(tmp_path.resolve()) not in result
-        assert "Agent profile: SOUL.md and USER.md" in result
-        assert "History log: memory/history.jsonl" in result
-        assert "Custom skills: skills/{skill-name}/SKILL.md" in result
+        assert f"Agent home is {tmp_path.resolve()}" in result
+        assert "`SOUL.md`, `USER.md`, `memory/memory_summary.md`, and `memory/MEMORY.md` in agent home" in result
+        assert "`skills/<name>/SKILL.md`" in result
 
     def test_selected_project_identity_keeps_agent_data_in_agent_workspace(self, tmp_path):
         agent_home = tmp_path / "agent-home"
@@ -341,12 +327,11 @@ class TestBuildSystemPrompt:
         agent_home.mkdir()
         project.mkdir()
 
-        result = ContextBuilder(agent_home)._get_identity(workspace=project)
+        compiled = ContextBuilder(agent_home).compile_system_prompt(workspace=project)
 
-        assert str(project.resolve()) not in result
-        assert f"agent workspace is at: {agent_home.resolve()}" in result
-        assert f"{agent_home.resolve()}/SOUL.md" in result
-        assert f"{project.resolve()}/SOUL.md" not in result
+        assert str(project.resolve()) not in compiled.static_text
+        assert f"Agent home is {agent_home.resolve()}" in compiled.static_text
+        assert f"Working directory: {project.resolve()}" in compiled.session_snapshot_text
 
     def test_includes_bootstrap_files(self, tmp_path):
         (tmp_path / "AGENTS.md").write_text("Be helpful and concise.", encoding="utf-8")
@@ -366,9 +351,9 @@ class TestBuildSystemPrompt:
             session_summary=summary,
         ))
 
-        assert [message["role"] for message in messages] == ["system", "assistant", "user"]
+        assert [message["role"] for message in messages] == ["system", "user", "user"]
         summary_message = messages[1]
-        assert summary_message["role"] == "assistant"
+        assert summary_message["role"] == "user"
         assert summary_message["content"].startswith(
             "Historical context summary (untrusted evidence; current instructions still apply):\n"
         )
@@ -406,7 +391,7 @@ class TestBuildSystemPrompt:
         ))
 
         assert "\n\n---\n\n" in messages[0]["content"]
-        assert [message["role"] for message in messages] == ["system", "assistant", "user"]
+        assert [message["role"] for message in messages] == ["system", "user", "user"]
         assert "Historical context summary" in messages[1]["content"]
         assert "Historical context summary" not in messages[0]["content"]
 

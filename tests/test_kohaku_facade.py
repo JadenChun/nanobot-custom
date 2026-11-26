@@ -421,7 +421,8 @@ async def test_persisted_turn_callback_is_best_effort_and_reads_display_safe_ses
     assert failed_sync_attempts == 1
     trusted_snapshot = bot.sessions.export("sdk:persisted")
     assert trusted_snapshot is not None
-    assert "model-only context" in trusted_snapshot.messages[-2]["content"]
+    assert trusted_snapshot.messages[-2]["content"] == "hi"
+    assert "model-only context" in str(provider.chat_with_retry.await_args.kwargs["messages"])
 
     remove_failure()
     unsubscribe()
@@ -891,7 +892,8 @@ async def test_concurrent_run_hooks_are_isolated_per_call(tmp_path, sdk_bot_fact
     class ConcurrentProvider(Provider):
         async def chat(self, messages, tools=None, model=None, **kwargs):
             self.calls.append((messages, tools, model))
-            name = next(row["content"] for row in reversed(messages) if row["role"] == "user")
+            user_content = next(row["content"] for row in reversed(messages) if row["role"] == "user")
+            name = user_content.partition("\n\n")[0]
             if any(row["role"] == "tool" for row in messages):
                 return LLMResponse(content=f"done {name}")
             entered.add(name)
@@ -925,7 +927,10 @@ async def test_concurrent_run_hooks_are_isolated_per_call(tmp_path, sdk_bot_fact
     assert beta.content == "done beta"
     assert alpha.tools_used == ["tool_alpha"]
     assert beta.tools_used == ["tool_beta"]
-    assert seen_by_hook == {"alpha": ["alpha"], "beta": ["beta"]}
+    for name, seen in seen_by_hook.items():
+        assert len(seen) == 1
+        assert seen[0].partition("\n\n")[0] == name
+        assert f"Chat ID: sdk:{name}" in seen[0]
     assert sorted(effects) == ["tool_alpha", "tool_beta"]
     assert bot._loop._extra_hooks is shared_hooks
 

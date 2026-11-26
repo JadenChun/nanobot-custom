@@ -206,9 +206,6 @@ class TestMessageToolSchema:
     def test_schema_discourages_current_chat_replies(self) -> None:
         tool = MessageTool()
 
-        assert "Do not use this for the normal reply in the current chat" in tool.description
-        assert "generate_image creates images in the current chat" in tool.description
-        assert (
-            "Do not use this for a normal reply in the current chat"
-            in tool.parameters["properties"]["content"]["description"]
-        )
+        assert "Use a normal reply for text in the current chat" in tool.description
+        assert "Attach generated images with media" in tool.description
+        assert "paths returned by generate_image" in tool.parameters["properties"]["media"]["description"]

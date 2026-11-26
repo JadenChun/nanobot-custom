@@ -27,6 +27,9 @@ if TYPE_CHECKING:
 
 
 class RepositoryCatalogTool(Tool):
+    exposure = "deferred"
+    namespace = "workspace"
+    search_keywords = ("repositories", "projects", "catalog", "discover folders")
     @property
     def name(self) -> str:
         return "repository_catalog"
@@ -181,6 +184,9 @@ class RepositoryCatalogTool(Tool):
 
 
 class SaveKnowledgeTool(Tool):
+    exposure = "deferred"
+    namespace = "workspace"
+    search_keywords = ("save notes", "knowledge", "document decision")
     @property
     def name(self) -> str:
         return "save_knowledge"

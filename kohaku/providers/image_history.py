@@ -6,6 +6,9 @@ from typing import TypeGuard
 
 from kohaku.utils.media_tokens import MAX_IMAGE_TOKENS, estimate_image_tokens, inline_media_details
 
+MAX_TOOL_IMAGES_PER_BATCH = 6
+MAX_TOOL_IMAGE_BATCH_BYTES = 8 * 1024 * 1024
+
 IMAGE_HISTORY_OMISSION = (
     "[Earlier image omitted from model context; no image bytes are present. "
     "Reread its saved file with read_file under current access if needed; do not "
@@ -15,6 +18,7 @@ IMAGE_HISTORY_DEFERRED = (
     "[Image candidate unavailable in this request due to the review limit. "
     "Use the available images and any earlier observations.]"
 )
+PERSISTED_IMAGE_PLACEHOLDER = "[Image data unavailable in persisted source.]"
 
 
 def _blocks(value: object) -> TypeGuard[list[object]]:
@@ -25,8 +29,16 @@ def _mapping(value: object) -> TypeGuard[Mapping[object, object]]:
     return isinstance(value, Mapping)
 
 
-def _image(value: object) -> bool:
+def is_image_block(value: object) -> bool:
     return _mapping(value) and value.get("type") == "image_url"
+
+
+def is_inline_image_block(block: object) -> bool:
+    if not _mapping(block) or block.get("type") != "image_url":
+        return False
+    data = block.get("image_url")
+    url = data.get("url") if _mapping(data) else None
+    return isinstance(url, str) and url.startswith("data:image/")
 
 
 def _tool_image_cost(block: object) -> tuple[int, int]:
@@ -60,6 +72,8 @@ def recent_image_messages(
     *,
     max_tool_images: int | None = None,
     max_tool_image_bytes: int | None = None,
+    max_tool_image_tokens: int | None = MAX_IMAGE_TOKENS,
+    preserve_prior_batches: bool = False,
 ) -> list[dict[str, object]]:
     """Keep every image in the newest image-bearing batch, including tool output.
 
@@ -67,6 +81,7 @@ def recent_image_messages(
     parallel tool call. Text-only follow-ups do not advance the window. A caller
     can limit the newest tool batch by count, visual tokens and bytes. Keep
     the first image available for the transport's normal request validation.
+    Canonical requests can retain older batches until a pressure projection.
     Replacement blocks contain neither source paths nor guesses about omitted
     content. All other fields, tool structure and retained image metadata
     survive in a detached copy.
@@ -75,7 +90,7 @@ def recent_image_messages(
     newest = None
     for index, message in enumerate(prepared):
         content = message.get("content")
-        if _blocks(content) and any(_image(block) for block in content):
+        if _blocks(content) and any(is_image_block(block) for block in content):
             newest = index
     if newest is not None:
         batch_start = _newest_image_batch_start(prepared, newest)
@@ -89,9 +104,12 @@ def recent_image_messages(
                     continue
                 projected: list[object] = []
                 for block in content:
-                    if _image(block):
+                    if is_image_block(block):
                         tokens, size = _tool_image_cost(block)
-                        within_budget = retained_tokens + tokens <= MAX_IMAGE_TOKENS and (
+                        within_budget = (
+                            max_tool_image_tokens is None
+                            or retained_tokens + tokens <= max_tool_image_tokens
+                        ) and (
                             max_tool_image_bytes is None
                             or retained_bytes + size <= max_tool_image_bytes
                         )
@@ -107,11 +125,14 @@ def recent_image_messages(
                     else:
                         projected.append(block)
                 message["content"] = projected
+        if preserve_prior_batches:
+            return prepared
         for message in prepared[:batch_start]:
             content = message.get("content")
             if _blocks(content):
                 message["content"] = [
-                    {"type": "text", "text": IMAGE_HISTORY_OMISSION} if _image(block) else block
+                    {"type": "text", "text": IMAGE_HISTORY_OMISSION}
+                    if is_image_block(block) else block
                     for block in content
                 ]
     return prepared

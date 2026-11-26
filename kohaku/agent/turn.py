@@ -558,8 +558,8 @@ class TurnContext:
     metadata: dict[str, Any] = field(default_factory=dict)
     execution_owner: ExecutionOwner | None = field(default=None, repr=False)
     source_writer: SourceTurnWriter | None = field(default=None, repr=False)
-    trusted_foreground_activity: bool = field(default=False, init=False, repr=False)
     artifact_read_allowed: bool = False
+    is_user_turn: bool = True
     artifact_reader: ArtifactReader | None = field(default=None, repr=False)
     artifact_grants: ArtifactGrantSet | None = field(default=None, repr=False)
     artifact_handoff_notices: list[str] = field(default_factory=list, repr=False)

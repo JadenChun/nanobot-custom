@@ -107,7 +107,7 @@ async def test_claude_child_approval_and_stop_survive_parent_reconnect(
 
     sdk.script = script
     composition = RuntimeComposition.define(
-        config, sessions_root=runtime_dir / "sessions", startup_receipt_admitted=True,
+        config, sessions_root=runtime_dir / "sessions",
     )
     handle = await composition.acquire()
     await handle.agent.external_harness.shutdown()

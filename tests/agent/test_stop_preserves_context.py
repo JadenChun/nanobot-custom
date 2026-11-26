@@ -52,7 +52,6 @@ async def _cancel_after_completed_read(tmp_path, admitted_async, *, shutdown):
             model="test-model", session_manager=inputs.sessions, tool_registry=inputs.tools,
             cron_service=inputs.cron, turn_delivery_factory=inputs.delivery,
             tools_config=inputs.config.tools, restrict_to_workspace=True,
-            enable_legacy_auto_compact=False,
         )
 
     loop = await admitted_async(tmp_path, build, keys=("test:c1",))

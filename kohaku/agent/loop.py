@@ -6,7 +6,6 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
-import inspect
 import json
 import re
 import time
@@ -24,16 +23,14 @@ from contextlib import (
 from copy import deepcopy
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
-from enum import Enum, auto
 from functools import partial
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Awaitable, Callable, Protocol, TypeVar, Unpack, cast
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, TypeVar, Unpack, cast
 
 from loguru import logger
 
 from kohaku.agent import context as agent_context
 from kohaku.agent import model_presets as preset_helpers
-from kohaku.agent.autocompact import AutoCompact
 from kohaku.agent.automation_turns import publish_next_deferred_turn
 from kohaku.agent.child_backend import ChildApprovalResume, ChildTurnRequest
 from kohaku.agent.child_sessions import (
@@ -44,14 +41,13 @@ from kohaku.agent.child_sessions import (
     OriginalChatStopAdmission,
 )
 from kohaku.agent.context import ContextBuilder, PersistedPromptContextResolver, TranscriptInput
+from kohaku.agent.context_governance import SourceCompactionUnavailableError
 from kohaku.agent.cron_turns import CronTurnCoordinator
 from kohaku.agent.delegation import reset_current_turn_context, set_current_turn_context
 from kohaku.agent.direct_execution import DirectExecutionOptions
 from kohaku.agent.foreground import build_foreground_dependencies, validate_foreground_dependencies
 from kohaku.agent.hook import AgentHook, AgentTurnHookFactory
-from kohaku.agent.idle_lifecycle import IdleLifecycleIntegration
-from kohaku.agent.memory import Consolidator
-from kohaku.agent.memory_recovery_startup_admission import require_startup_receipt_admission
+from kohaku.agent.memory import Consolidator, MemoryStore
 from kohaku.agent.model_runtime import ModelRuntimeResolver
 from kohaku.agent.policy import CompositeToolPolicy, RiskyActionPolicy, ToolPolicy
 from kohaku.agent.run_store import RunStore
@@ -85,9 +81,11 @@ from kohaku.agent.tools.exec_session import ExecCompletionSink, ExecSessionManag
 from kohaku.agent.tools.file_state import FileStateStore, bind_file_states, reset_file_states
 from kohaku.agent.tools.message import capture_message_deliveries
 from kohaku.agent.tools.registry import (
+    MANAGED_WEBUI_TOOL_NAMES,
     ManagedToolDispatchGuard,
+    PolicyToolView,
     ToolRegistry,
-    managed_webui_tool_names,
+    is_managed_mcp_tool,
 )
 from kohaku.agent.tools.runtime_control import AgentRuntimeControl
 from kohaku.agent.trace import sanitize_trace
@@ -139,6 +137,11 @@ from kohaku.command import CommandContext, CommandRouter, register_builtin_comma
 from kohaku.command.builtin import USER_SHELL_COMMAND
 from kohaku.command.router import normalize_command_text
 from kohaku.config.schema import AgentDefaults, ModelPresetConfig
+from kohaku.context.compiler import PromptCompiler
+from kohaku.context.memory_pipeline import MemoryPipeline, MemorySearchTool
+from kohaku.context.tool_search import ToolSearchTool
+from kohaku.context.tool_surface import ACTIVATED_TOOLS_METADATA, ToolSurface, ToolSurfaceState
+from kohaku.context.types import TurnKind
 from kohaku.cron.session_turns import cron_trigger
 from kohaku.cron.types import CRON_MODEL_PRESET_UNAVAILABLE, cron_model_preset_unavailable
 from kohaku.events import NO_EVENTS, AgentEvent, EventSink
@@ -165,8 +168,14 @@ from kohaku.runtime_context import (
     RuntimeContextBlock,
     RuntimeContextProvider,
     append_runtime_context,
+    detach_runtime_context,
+    merge_runtime_history_markers,
     resolve_runtime_context,
+    routing_runtime_context,
     runtime_context_blocks_from_metadata,
+    runtime_history_metadata,
+    runtime_metadata_value,
+    wrap_runtime_context_lines,
 )
 from kohaku.security.desktop_permissions import (
     PermissionRetirementReason,
@@ -187,8 +196,10 @@ from kohaku.session import turn_continuation
 from kohaku.session.automation_turns import automation_history_overrides
 from kohaku.session.execution_owner import ExecutionOwner, acquire_execution
 from kohaku.session.goal_state import (
-    goal_state_runtime_lines,
+    active_goal_runtime_lines,
+    explicit_goal_requested,
     runner_wall_llm_timeout_s,
+    sustained_goal_turn,
 )
 from kohaku.session.harness_binding import external_binding
 from kohaku.session.history_visibility import HIDDEN_HISTORY_META
@@ -256,6 +267,7 @@ from kohaku.utils.document import reference_non_image_attachments
 from kohaku.utils.helpers import image_placeholder_text
 from kohaku.utils.llm_runtime import LLMRuntime
 from kohaku.utils.progress_events import output_events
+from kohaku.utils.prompt_templates import render_template
 from kohaku.utils.runtime import (
     EMPTY_FINAL_RESPONSE_MESSAGE,
 )
@@ -298,32 +310,6 @@ _T = TypeVar("_T")
 _SUBAGENT_PROVIDER_TASK_META = "subagent_provider_task_id"
 _SUBAGENT_TERMINAL_WAIT_SECONDS = 300.0
 _BUS_CLEANUP_TIMEOUT_SECONDS = 5.0
-_FOREGROUND_IDLE_SOURCES = frozenset({
-    TurnSource.DIRECT,
-    TurnSource.GATEWAY,
-    TurnSource.SDK,
-    TurnSource.API,
-})
-_ACTIVITY_ADMITTED_ATTRIBUTE = "_nanobot_activity_admitted"
-_ACTIVITY_NOTIFICATION_PENDING_ATTRIBUTE = "_nanobot_activity_notification_pending"
-_ACTIVITY_SOURCE_BINDING_ATTRIBUTE = "_nanobot_activity_source_binding"
-
-
-class ForegroundIdleIntegration(Protocol):
-    """Complete, explicitly injected seam for foreground idle cancellation."""
-
-    @property
-    def enabled(self) -> bool: ...
-
-    async def foreground_admitted(self, session_key: str) -> None:
-        """Cancel/discard idle work after durable activity is committed."""
-
-
-class TurnKind(Enum):
-    USER = auto()
-    SYSTEM = auto()
-
-
 @dataclass
 class TurnContext:
     msg: InboundMessage
@@ -376,6 +362,7 @@ class TurnContext:
     hook_factories: list[AgentTurnHookFactory] = field(default_factory=list)
     turn_scopes: list[AbstractContextManager[Any]] = field(default_factory=list)
     tools: ToolRegistry | None = None
+    tool_surface: ToolSurface | None = None
 
     turn_wall_started_at: float = field(default_factory=time.time)
     visible_run_started_at: float | None = None
@@ -420,21 +407,10 @@ class _ActivityAdmissionRequest:
 
 @dataclass(frozen=True)
 class _ForegroundActivityResult:
-    activity_committed: bool = False
-    callback_succeeded: bool = False
     callback_error: BaseException | None = None
     followup_pending: bool | None = None
     followup_duplicate: bool = False
     discarded_followup_ids: tuple[str, ...] = ()
-
-
-@dataclass(frozen=True)
-class _AdmittedActivityMessage:
-    """Internal identity proof for one committed queued activity update."""
-
-    message: InboundMessage
-    notification_succeeded: bool = False
-    source_binding: tuple[str, str, str, int] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -658,11 +634,7 @@ class _TurnExecutionOptions:
     on_admission_end: Callable[[str], Awaitable[None]] | None = None
     admission_scope: Callable[[str], AbstractAsyncContextManager[_AdmittedTurnIO]] | None = None
     inbound: InboundMessage | None = None
-    trusted_foreground_activity: bool = False
     approval_provenance: ApprovalProvenance | None = None
-    activity_already_recorded: bool = False
-    retry_activity_notification: bool = False
-    admitted_activity_marker: _AdmittedActivityMessage | None = None
     pending_followup_record: PendingFollowupRecord | None = None
     pending_followup_records: tuple[PendingFollowupRecord, ...] = ()
     pending_followup_records_to_admit: tuple[PendingFollowupRecord, ...] = ()
@@ -799,7 +771,6 @@ class AgentLoop:
         tool_registry: ToolRegistry | None = None,
         channels_config: ChannelsConfig | None = None,
         timezone: str | None = None,
-        session_ttl_minutes: int = 0,
         hooks: list[AgentHook] | None = None,
         hook_factories: list[AgentTurnHookFactory] | None = None,
         unified_session: bool = False,
@@ -818,20 +789,20 @@ class AgentLoop:
         runtime_model_publisher: Callable[[str, str | None], None] | None = None,
         restart_mode: str = "auto",
         local_trigger_store: LocalTriggerStore | None = None,
-        idle_compact_check_interval_seconds: int = 0,
-        source_compaction_idle_timeout_seconds: float = 300.0,
-        source_compaction_overall_timeout_seconds: float = 900.0,
-        source_compaction_pressure_trigger_ratio: float = 0.9,
-        source_compaction_target_ratio: float = 0.6,
+        source_compaction_idle_timeout_seconds: float = 45.0,
+        source_compaction_overall_timeout_seconds: float = 120.0,
+        source_compaction_pressure_trigger_ratio: float = 0.80,
+        source_compaction_target_ratio: float = 0.50,
         source_compaction_summary_generation_tokens: int | None = None,
+        compaction_model: str | None = None,
+        memory_phase2_threshold: int = 5,
+        max_rollout_summaries: int = 200,
         recovery_admission: RecoveryAdmission | None = None,
         fork_dependencies: ForkToolDependencies | None = None,
         _owns_fork_dependencies: bool = False,
         artifact_reader_factory: Callable[
             [SourceTurnWriter, bool, ReadFileTool], ArtifactReader | None
         ] | None = None,
-        idle_integration: ForegroundIdleIntegration | None = None,
-        enable_legacy_auto_compact: bool = True,
         media_root: Path | None = None,
         config_path: Path | None = None,
     ):
@@ -846,7 +817,6 @@ class AgentLoop:
             if sessions_root is not None and session_manager.sessions_root != effective_root:
                 raise ValueError("session manager sessions root must match explicit root")
             effective_root = session_manager.sessions_root
-        require_startup_receipt_admission(canonical_workspace, sessions_root=effective_root)
         from kohaku.config.schema import ToolsConfig
 
         _tc = tools_config or ToolsConfig()
@@ -863,9 +833,6 @@ class AgentLoop:
         self.channels_config = channels_config
         self.restart_mode = restart_mode
         self._runtime_model_publisher = runtime_model_publisher
-        # No production factory supplies this seam yet.  Keep it inert unless
-        # callers inject both an explicit enabled integration and its callback.
-        self._idle_integration = idle_integration
         self.workspace = workspace
         initial_model = model or provider.get_default_model()
         self.max_iterations = (
@@ -1013,11 +980,6 @@ class AgentLoop:
         # are routed here instead of creating a new task.
         self._pending_queues: dict[str, asyncio.Queue[InboundMessage]] = {}
         self._source_activity_admissions: dict[str, _SourceActivityAdmission] = {}
-        # Keep the message object alive while a source cleanup republishes it;
-        # object identity is the internal handoff proof for one already-admitted
-        # pending message and cannot be forged through inbound metadata.
-        self._admitted_activity_messages: dict[int, _AdmittedActivityMessage] = {}
-        self._activity_admission_token = object()
         self._pending_republish: dict[str, list[InboundMessage]] = {}
         self._stopped_pending_followup_ids: dict[str, set[str]] = {}
         self._bus_cleanup_tasks: dict[str, set[asyncio.Future[Any]]] = {}
@@ -1049,20 +1011,10 @@ class AgentLoop:
                 unified_session=unified_session,
             ),
         )
-        # The P5 production composition passes false so AutoCompact is absent
-        # from the process graph. Direct construction retains the historical
-        # test/embedding seam until its separate compatibility removal gate.
-        self.auto_compact = (
-            AutoCompact(
-                sessions=self.sessions,
-                consolidator=self.consolidator,
-                session_ttl_minutes=session_ttl_minutes,
-                bind_events=self._idle_events,
-            )
-            if enable_legacy_auto_compact
-            else None
+        self.compaction_model = compaction_model
+        self.memory_pipeline = MemoryPipeline(
+            self.context.memory, threshold=memory_phase2_threshold, max_rollouts=max_rollout_summaries,
         )
-        self._idle_compact_check_interval_s = idle_compact_check_interval_seconds
         self._source_compaction_idle_timeout_seconds = source_compaction_idle_timeout_seconds
         self._source_compaction_overall_timeout_seconds = source_compaction_overall_timeout_seconds
         self._source_compaction_pressure_trigger_ratio = source_compaction_pressure_trigger_ratio
@@ -1070,7 +1022,6 @@ class AgentLoop:
         self._source_compaction_summary_generation_tokens = (
             source_compaction_summary_generation_tokens
         )
-        self._next_idle_compact_check_at = time.monotonic()
         if model_preset:
             self.set_model_preset(model_preset, publish_update=False)
         self._register_default_tools(provider_snapshot_loader=provider_snapshot_loader)
@@ -1179,13 +1130,12 @@ class AgentLoop:
             )
             extra["_owns_fork_dependencies"] = True
         if config.artifacts.enabled and extra.get("artifact_reader_factory") is None:
+            from kohaku.session.artifact import ArtifactValidationError
             from kohaku.session.artifact_factory import ConfiguredArtifactReaderFactory
 
             root = config.artifacts.root
             if root is None:
-                if data_dir is None:
-                    raise ValueError("Enabled artifacts require a loaded config path or explicit root")
-                root = str(data_dir / "context-artifacts")
+                root = str((data_dir or effective_root.parent) / "context-artifacts")
             dependencies = extra["fork_dependencies"]
             manager = dependencies.resource_policy.context_manager
             sessions = extra["session_manager"]
@@ -1201,13 +1151,18 @@ class AgentLoop:
                 *(path for path in (target.path for target in manager.target_repos())
                   if path is not None),
             ]
-            extra["artifact_reader_factory"] = ConfiguredArtifactReaderFactory(
-                root=root,
-                max_blob_bytes=config.artifacts.max_blob_bytes,
-                max_namespace_bytes=config.artifacts.max_namespace_bytes,
-                static_roots=static_roots,
-                media_root=media_root,
-            )
+            try:
+                extra["artifact_reader_factory"] = ConfiguredArtifactReaderFactory(
+                    root=root,
+                    max_blob_bytes=config.artifacts.max_blob_bytes,
+                    max_namespace_bytes=config.artifacts.max_namespace_bytes,
+                    static_roots=static_roots,
+                    media_root=media_root,
+                )
+            except ArtifactValidationError:
+                if config.artifacts.root is not None:
+                    raise
+                logger.debug("The default artifact directory is unavailable.")
         return cls(
             bus=bus,
             provider=provider,
@@ -1224,8 +1179,6 @@ class AgentLoop:
             timezone=defaults.timezone,
             unified_session=defaults.unified_session,
             disabled_skills=defaults.disabled_skills,
-            session_ttl_minutes=defaults.session_ttl_minutes,
-            idle_compact_check_interval_seconds=defaults.idle_compact_check_interval_seconds,
             source_compaction_idle_timeout_seconds=(
                 defaults.source_compaction.idle_timeout_seconds
             ),
@@ -1239,6 +1192,9 @@ class AgentLoop:
             source_compaction_summary_generation_tokens=(
                 defaults.source_compaction.summary_generation_tokens
             ),
+            compaction_model=defaults.compaction_model,
+            memory_phase2_threshold=defaults.dream.phase2_threshold,
+            max_rollout_summaries=defaults.dream.max_rollout_summaries,
             tools_config=config.tools,
             model_presets=preset_helpers.configured_model_presets(config),
             model_preset=defaults.model_preset,
@@ -1255,6 +1211,101 @@ class AgentLoop:
     def _sync_subagent_runtime_limits(self) -> None:
         """Keep subagent runtime limits aligned with mutable loop settings."""
         self.subagents.max_iterations = self.max_iterations
+
+    def compaction_runtime(self, runtime: LLMRuntime) -> LLMRuntime:
+        selected = getattr(self, "compaction_model", None)
+        if selected and selected != runtime.model:
+            if selected in self.runtime_resolver.model_presets:
+                runtime = self.runtime_resolver.resolve_preset(selected, exact=True)
+            else:
+                runtime = runtime.with_route_identity(
+                    model=selected, context_window_tokens=runtime.context_window_tokens,
+                    capability_generation=runtime.capability_generation,
+                )
+        return replace(runtime, generation=replace(runtime.generation, reasoning_effort="none"))
+
+    async def consolidate_rollouts(self) -> str | None:
+        async def run(prompt: str, operation: str) -> object:
+            runtime = self.dream_runtime() or self.compaction_runtime(self.llm_runtime())
+            return await self.process_direct(
+                prompt, session_key=MemoryStore.dream_session_key(), ephemeral=True,
+                tools=self.context.memory.build_dream_tools(operation_id=operation),
+                runtime=runtime,
+            )
+
+        result = await self.memory_pipeline.consolidate_memories(run)
+        search = self.tools.get("memory_search")
+        if result is not None and isinstance(search, MemorySearchTool):
+            try:
+                await search.refresh_dream_index()
+            except Exception:
+                logger.exception("Could not refresh the Dream search index.")
+        return result
+
+    def queue_memory_rollout(self, session: Session, runtime: LLMRuntime) -> None:
+        pipeline = getattr(self, "memory_pipeline", None)
+        if pipeline is None or (rollout := pipeline.capture_rollout(session)) is None:
+            return
+
+        async def extract() -> None:
+            try:
+                pending = await pipeline.extract_session_rollout(rollout, runtime)
+                if pending >= pipeline.threshold:
+                    await self.consolidate_rollouts()
+            except Exception:
+                logger.exception("Workspace memory extraction failed.")
+
+        self.schedule_background(extract())
+
+    async def compact_owned_source(
+        self, writer: SourceTurnWriter, session: Session,
+        *, tools: ToolRegistry, events: EventSink = NO_EVENTS, force: bool = True,
+    ) -> bool:
+        from kohaku.agent.tools.artifact import ReadArtifactTool
+        from kohaku.agent.tools.filesystem import ReadFileTool
+        from kohaku.config.schema import SourceCompactionConfig
+
+        runtime = self.compaction_runtime(self.runtime_for_session(session))
+        compaction_tools = ToolRegistry()
+        factory = self._artifact_reader_factory or self.runner.artifact_reader_factory
+        read_file = tools.get("read_file")
+        if (
+            factory is not None and type(read_file) is ReadFileTool
+            and "read_artifact" not in session.policy.disabled_tools
+        ):
+            reader = factory(writer, False, read_file)
+            if reader is not None:
+                compaction_tools.register(ReadArtifactTool(reader))
+        settings = SourceCompactionConfig(
+            idle_timeout_seconds=self._source_compaction_idle_timeout_seconds,
+            overall_timeout_seconds=self._source_compaction_overall_timeout_seconds,
+            pressure_trigger_ratio=self._source_compaction_pressure_trigger_ratio,
+            target_ratio=self._source_compaction_target_ratio,
+            summary_generation_tokens=self._source_compaction_summary_generation_tokens,
+        )
+        compacted = await self.runner.context_governor.compact_now(
+            session.key, writer=writer, runtime=runtime, tools=compaction_tools,
+            settings=settings, events=events, force=force,
+            max_tool_result_chars=self.max_tool_result_chars,
+        )
+        if compacted:
+            self.context.refresh_prompt_snapshot(session.key)
+        self.queue_memory_rollout(writer.owner.read_snapshot().to_session(), runtime)
+        return compacted
+
+    async def compact_idle_source(self, key: str, before: datetime, min_messages: int) -> bool:
+        backend = self.sessions.source_backend(key)
+        if backend is None or self._has_active_turn_for_session(key):
+            return False
+        run_id = f"idle-compact-{time.time_ns()}"
+        async with acquire_execution(backend, key, run_id=run_id) as owner:
+            session = owner.read_snapshot().to_session()
+            updated = session.updated_at.astimezone(timezone.utc)
+            if updated > before or len(session.messages) < min_messages:
+                return False
+            writer = SourceTurnWriter(backend.source, owner, run_id=run_id)
+            await self.compact_owned_source(writer, session, tools=self.tools, force=False)
+            return True
 
     def invalidate_runtime_config(self) -> None:
         """Invalidate runtime config for lazy refresh at the next admission."""
@@ -1689,7 +1740,11 @@ class AgentLoop:
                     )
 
             on_approval_consumed = activate_resume
-        if request.artifact_input is not None and approval_resume is not None:
+        if (
+            approval_resume is not None
+            and request.artifact_input is not None
+            and request.artifact_input.references
+        ):
             raise RuntimeError(
                 "Artifact input cannot survive child approval resume; delegate again"
             )
@@ -2393,7 +2448,8 @@ class AgentLoop:
         ]
         content_value = cast(object, msg.content)
         has_text = isinstance(content_value, str) and content_value.strip()
-        if has_text or media_paths or runtime_context_blocks:
+        runtime_context_meta = runtime_history_metadata(runtime_context_blocks or ())
+        if has_text or media_paths or runtime_context_meta:
             extra: dict[str, Any] = ({"media": list(media_paths)} if media_paths else {}) | agent_context.session_extra(msg.metadata)
             extra.update(kwargs)
             text = content_value if isinstance(content_value, str) else ""
@@ -2401,10 +2457,6 @@ class AgentLoop:
             if text_override is not None:
                 text = text_override
             extra.update(automation_extra)
-            text, runtime_context_meta = append_runtime_context(
-                text,
-                runtime_context_blocks or (),
-            )
             if runtime_context_meta is not None:
                 extra[RUNTIME_CONTEXT_HISTORY_META] = runtime_context_meta
             extra.pop("_run_id", None)
@@ -2425,7 +2477,7 @@ class AgentLoop:
                     original = msg.content
                 _, automation = automation_history_overrides(msg.metadata)
                 source_extra = {key: value for key, value in extra.items()
-                                if key not in {RUNTIME_CONTEXT_HISTORY_META, "_run_id", "media"}}
+                                if key not in {"_run_id", "media"}}
                 retained_media = (
                     list(request.media)
                     if request is not None and request.media
@@ -2457,6 +2509,7 @@ class AgentLoop:
                     binding = writer.consume_pending_followup(
                         source_pending_followup_record(original_message),
                         {"role": "user", "content": original},
+                        runtime_history=runtime_context_meta,
                     )
                     activity_admission = self._source_activity_admissions.get(session.key)
                     if activity_admission is not None and binding.followup_id is not None:
@@ -2500,6 +2553,7 @@ class AgentLoop:
             media=ctx.msg.media if ctx.kind is TurnKind.USER and ctx.msg.media else None,
             session_summary=ctx.pending_summary,
             runtime_context_blocks=ctx.runtime_context_blocks,
+            include_skill_context=False,
         )
 
     def _request_context_for_turn(self, ctx: TurnContext) -> RequestContext:
@@ -2538,33 +2592,74 @@ class AgentLoop:
         ctx: TurnContext,
     ) -> list[RuntimeContextBlock]:
         assert ctx.request_context is not None
-        if (
-            ctx.run_context is not None
-            and ctx.run_context.internal_system_prompt is not None
-        ):
+        if ctx.run_context is not None and ctx.run_context.internal_system_prompt is not None:
+            return [routing_runtime_context(None, None, self.context.timezone)]
+        if ctx.kind is TurnKind.SYSTEM:
             return []
-        return await self._resolve_runtime_context_for_request(
+        normal_input = not turn_continuation.internal_continuation_inbound(ctx.msg.metadata)
+        blocks = await self._resolve_runtime_context_for_request(
             ctx.request_context,
             ctx.tools if ctx.tools is not None else self.tools,
+            include_routing_context=normal_input,
+            include_skill_context=(
+                normal_input
+                and (ctx.run_context is None or ctx.run_context.internal_include_skill_context)
+            ),
         )
+        surface = ctx.tool_surface
+        if surface is not None and normal_input:
+            if explicit_goal_requested(ctx.msg.metadata):
+                surface.activate(["create_goal", "update_goal"])
+            self._activate_request_tools(surface, ctx.request_context, blocks)
+        return blocks
+
+    @staticmethod
+    def _activate_request_tools(
+        surface: ToolSurface, request: RequestContext, blocks: list[RuntimeContextBlock],
+    ) -> None:
+        if any(block.source == "cli_apps" for block in blocks):
+            surface.activate(["run_cli_app"])
+        presets: object = request.metadata.get("mcp_presets")
+        if not isinstance(presets, list):
+            return
+        for item in cast(list[object], presets)[:8]:
+            if isinstance(item, dict):
+                name = cast(dict[object, object], item).get("name")
+                if isinstance(name, str) and re.fullmatch(r"[A-Za-z0-9_.-]{1,64}", name):
+                    surface.requested_namespaces.add(f"mcp:{name.lower()}")
+        if hints := surface.activate_requested_namespaces():
+            blocks.append(RuntimeContextBlock("tool_discovery", wrap_runtime_context_lines([
+                f'MCP preset attached. Use tool_search with namespace="{runtime_metadata_value(name)}".'
+                for name in hints
+            ])))
 
     async def _resolve_runtime_context_for_request(
         self,
         request: RequestContext,
         tools: ToolRegistry,
+        *,
+        include_skill_context: bool = True,
+        include_routing_context: bool = True,
     ) -> list[RuntimeContextBlock]:
         providers = [
             *tools.get_runtime_context_providers(),
             *self._runtime_context_providers,
         ]
-        blocks = runtime_context_blocks_from_metadata(request.metadata)
+        blocks: list[RuntimeContextBlock] = []
+        if include_routing_context:
+            blocks.append(routing_runtime_context(request.channel, request.chat_id, self.context.timezone))
+            if hint := render_template(
+                "agent/_snippets/format_hint.md", channel=request.channel
+            ).strip():
+                blocks.append(RuntimeContextBlock("channel_format", hint))
+        blocks.extend(runtime_context_blocks_from_metadata(request.metadata))
         blocks.extend(await resolve_runtime_context(providers, request))
-        skill_context = self.context.skills.build_explicit_skill_runtime_context(
-            request.original_user_text or ""
+        envelope = PromptCompiler.build_turn_envelope(
+            blocks, turn_kind=TurnKind.USER, include_skill_context=include_skill_context,
+            user_text=request.original_user_text or "",
+            explicit_skill=self.context.skills.build_explicit_skill_runtime_context,
         )
-        if skill_context is not None and skill_context not in blocks:
-            blocks.append(skill_context)
-        return blocks
+        return list(envelope.blocks)
 
     async def _dispatch_command_inline(
         self,
@@ -3261,6 +3356,7 @@ class AgentLoop:
             await self._cancel_active_tasks(key)
         finally:
             self.discard_session_file_state(key)
+            self.context.refresh_prompt_snapshot(key)
             self._discarding_sessions.discard(key)
 
     def discard_session_file_state(self, key: str) -> None:
@@ -3310,73 +3406,6 @@ class AgentLoop:
             session_key, reason="task_cancelled", active_turn=active_turn,
         )
 
-    def _idle_events(
-        self,
-        session_key: str,
-    ) -> EventSink:
-        """Bind one idle compaction to its current user-facing destination."""
-        session = self.sessions.get_or_create(session_key)
-        return self.turn_delivery_factory.session_events(
-            session_key, session.metadata,
-        )
-
-    def _configured_idle_integration(self) -> ForegroundIdleIntegration | None:
-        """Return only a complete, explicitly enabled idle integration.
-
-        The dormant coordinator is intentionally not constructed here.  This
-        adapter accepts a caller-owned coordinator (or equivalent) only when
-        it exposes the complete enabled flag and foreground notification
-        callback.  Missing or partial wiring remains a no-op.  The private
-        policy object is never consulted as an activation signal.
-        """
-
-        integration = getattr(self, "_idle_integration", None)
-        if integration is None:
-            return None
-        if type(integration) is IdleLifecycleIntegration:
-            try:
-                if integration.enabled is not True:
-                    return None
-                callback = integration.foreground_admitted
-            except Exception:
-                return None
-            return integration if callable(callback) else None
-        try:
-            enabled = getattr(integration, "enabled", None)
-            callback = getattr(integration, "foreground_admitted", None)
-        except Exception:
-            return None
-        if enabled is not True or not callable(callback):
-            return None
-        return cast(ForegroundIdleIntegration, integration)
-
-    async def scan_idle_once(self) -> int:
-        """Run one explicitly requested idle scan through injected lifecycle."""
-
-        if self._lifecycle_is_closing():
-            return 0
-        integration = getattr(self, "_idle_integration", None)
-        if integration is None:
-            return 0
-        try:
-            enabled = getattr(integration, "enabled", None)
-            scan = getattr(integration, "scan_once", None)
-            closed = getattr(integration, "closed", False)
-        except Exception:
-            return 0
-        if enabled is not True or closed is True or not callable(scan):
-            return 0
-        result = scan()
-        if not inspect.isawaitable(result):
-            return 0
-        try:
-            value = await cast(Awaitable[object], result)
-        except asyncio.CancelledError:
-            raise
-        except Exception:
-            return 0
-        return value if type(value) is int and value >= 0 else 0
-
     @staticmethod
     def _inbound_turn_source(msg: InboundMessage) -> TurnSource:
         """Classify trusted bus provenance without treating system input as gateway input."""
@@ -3422,153 +3451,12 @@ class AgentLoop:
             return ApprovalProvenance.TRUSTED_FOREGROUND
         return ApprovalProvenance.UNTRUSTED
 
-    async def _record_foreground_activity(
-        self,
-        context: RunTurnContext,
-        session_key: str,
-        *,
-        source: TurnSource,
-        sender_id: str,
-        trusted: bool,
-    ) -> _ForegroundActivityResult:
-        """Persist accepted foreground activity before any turn work starts."""
-
-        if self._lifecycle_is_closing():
-            return _ForegroundActivityResult(
-                callback_error=RuntimeError("agent loop is closing"),
-            )
-        if (
-            not trusted
-            or source not in _FOREGROUND_IDLE_SOURCES
-            or sender_id == "subagent"
-        ):
-            return _ForegroundActivityResult()
-        integration = self._configured_idle_integration()
-        if integration is None:
-            return _ForegroundActivityResult()
-        owner = context.execution_owner
-        writer = context.source_writer
-        # Activity belongs to the strict source substrate.  A legacy session
-        # has no current ExecutionOwner and therefore fails closed without a
-        # write or callback.
-        if owner is None or writer is None:
-            return _ForegroundActivityResult()
-        owner.validate_dispatch()
-        expected = owner.read_snapshot().state
-        writer.store.record_user_activity(
-            session_key,
-            expected,
-            accepted_foreground_user=True,
-            owner=owner,
-        )
-        # The source replacement above fsyncs before returning.  Only then may
-        # the coordinator cancel/discard dormant work; callback failures
-        # propagate and prevent the turn from reaching BUILD/RUN.
-        return await self._notify_foreground_activity(
-            session_key,
-            activity_committed=True,
-        )
-
-    async def _notify_foreground_activity(
-        self,
-        session_key: str,
-        *,
-        activity_committed: bool,
-    ) -> _ForegroundActivityResult:
-        """Notify injected idle work after a durable activity commit."""
-
-        if self._lifecycle_is_closing():
-            return _ForegroundActivityResult(
-                activity_committed=activity_committed,
-                callback_error=RuntimeError("agent loop is closing"),
-            )
-        integration = self._configured_idle_integration()
-        if integration is None:
-            return _ForegroundActivityResult(activity_committed=activity_committed)
-        try:
-            await integration.foreground_admitted(session_key)
-        except BaseException as exc:
-            return _ForegroundActivityResult(
-                activity_committed=activity_committed,
-                callback_error=exc,
-            )
-        return _ForegroundActivityResult(
-            activity_committed=activity_committed,
-            callback_succeeded=True,
-        )
-
-    def _remember_admitted_activity_message(
-        self,
-        msg: InboundMessage,
-        *,
-        notification_succeeded: bool = True,
-        source_binding: tuple[str, str, str, int] | None = None,
-    ) -> None:
-        """Retain one internal identity marker until notification succeeds."""
-
-        admitted_messages = getattr(self, "_admitted_activity_messages", None)
-        if admitted_messages is None:
-            admitted_messages = self._admitted_activity_messages = {}
-        token = getattr(self, "_activity_admission_token", None)
-        if token is not None:
-            setattr(msg, _ACTIVITY_ADMITTED_ATTRIBUTE, token)
-            setattr(
-                msg,
-                _ACTIVITY_NOTIFICATION_PENDING_ATTRIBUTE,
-                not notification_succeeded,
-            )
-            setattr(msg, _ACTIVITY_SOURCE_BINDING_ATTRIBUTE, source_binding)
-        admitted_messages[id(msg)] = _AdmittedActivityMessage(
-            msg,
-            notification_succeeded=notification_succeeded,
-            source_binding=source_binding,
-        )
-
-    def _take_admitted_activity_message(
-        self,
-        msg: InboundMessage,
-    ) -> _AdmittedActivityMessage | None:
-        """Read an identity marker without consuming its retry authority."""
-
-        admitted_messages = getattr(self, "_admitted_activity_messages", {})
-        marker = admitted_messages.get(id(msg))
-        already_recorded = marker is not None and marker.message is msg
-        token = getattr(self, "_activity_admission_token", None)
-        if not already_recorded and token is not None:
-            already_recorded = (
-                getattr(msg, _ACTIVITY_ADMITTED_ATTRIBUTE, None) is token
-            )
-        if already_recorded:
-            pending = bool(
-                getattr(msg, _ACTIVITY_NOTIFICATION_PENDING_ATTRIBUTE, False)
-            )
-            return marker or _AdmittedActivityMessage(
-                msg,
-                notification_succeeded=not pending,
-                source_binding=getattr(msg, _ACTIVITY_SOURCE_BINDING_ATTRIBUTE, None),
-            )
-        return None
-
-    def _ack_admitted_activity_message(self, msg: InboundMessage) -> None:
-        """Consume a marker only after its notification callback succeeds."""
-
-        admitted_messages = getattr(self, "_admitted_activity_messages", {})
-        marker = admitted_messages.get(id(msg))
-        if marker is not None and marker.message is msg:
-            admitted_messages.pop(id(msg), None)
-        with suppress(AttributeError):
-            delattr(msg, _ACTIVITY_ADMITTED_ATTRIBUTE)
-        with suppress(AttributeError):
-            delattr(msg, _ACTIVITY_NOTIFICATION_PENDING_ATTRIBUTE)
-        with suppress(AttributeError):
-            delattr(msg, _ACTIVITY_SOURCE_BINDING_ATTRIBUTE)
-
-    def _retain_admitted_activity_for_republish(
+    def _retain_pending_for_republish(
         self,
         session_key: str,
         msg: InboundMessage,
     ) -> None:
-        """Queue the exact committed message for another notification retry."""
+        """Queue the pending message for another delivery attempt."""
 
         followup_id = pending_followup_id(msg)
         if followup_id in self._stopped_pending_followup_ids.get(session_key, set()):
@@ -3580,24 +3468,6 @@ class AgentLoop:
         items = pending_republish.setdefault(session_key, [])
         if not any(item is msg for item in items):
             items.append(msg)
-
-    def _clear_admitted_activity_messages(self) -> None:
-        """Release markers when the loop shuts down without a republished turn."""
-
-        admitted_messages = getattr(self, "_admitted_activity_messages", {})
-        pending_republish = getattr(self, "_pending_republish", {})
-        messages = [marker.message for marker in admitted_messages.values()]
-        for pending_items in pending_republish.values():
-            messages.extend(pending_items)
-        for msg in messages:
-            with suppress(AttributeError):
-                delattr(msg, _ACTIVITY_ADMITTED_ATTRIBUTE)
-            with suppress(AttributeError):
-                delattr(msg, _ACTIVITY_NOTIFICATION_PENDING_ATTRIBUTE)
-            with suppress(AttributeError):
-                delattr(msg, _ACTIVITY_SOURCE_BINDING_ATTRIBUTE)
-        admitted_messages.clear()
-        pending_republish.clear()
 
     async def _admit_pending_activity(
         self,
@@ -3686,6 +3556,31 @@ class AgentLoop:
         if identifiers:
             self._stopped_pending_followup_ids.setdefault(key, set()).update(identifiers)
         return identifiers
+
+    def _apply_tool_surface(
+        self, tools: ToolRegistry, ctx: TurnContext,
+    ) -> tuple[ToolRegistry, ToolSurface | None]:
+        """Attach a per-session surface so deferred tools stay out of turn 1.
+
+        Activation persists on the session so a discovered tool stays visible for
+        later turns without reordering the stable direct prefix.
+        """
+        if not self.tools_config.mcp_servers and all(
+            tool.exposure == "direct" for tool in tools.iter_tools()
+        ):
+            return tools, None
+        session = ctx.require_session()
+        registered = PolicyToolView(tools, lambda tool: True)
+        saved: object = session.metadata.get(ACTIVATED_TOOLS_METADATA)
+        surface = ToolSurface(
+            registered,
+            ToolSurfaceState.from_metadata(saved) if not ctx.fresh_history else ToolSurfaceState(),
+        )
+        if sustained_goal_turn(session.metadata, message_metadata=ctx.msg.metadata):
+            surface.activate(["create_goal", "update_goal"])
+        search = ToolSearchTool(surface)
+        registered.register(search)
+        return registered, surface
 
     def _remember_session_route(
         self,
@@ -3832,6 +3727,7 @@ class AgentLoop:
         hook_factories: list[AgentTurnHookFactory] | None = None,
         turn_scopes: list[AbstractContextManager[Any]] | None = None,
         tools: ToolRegistry | None = None,
+        tool_surface: ToolSurface | None = None,
         request_context: RequestContext | None = None,
         provider_state: ProviderConversationState | None = None,
         run_context: RunTurnContext | None = None,
@@ -3915,6 +3811,7 @@ class AgentLoop:
                     image_paths=image_paths,
                 )
                 row: dict[str, Any] = {"role": "user", "content": user_content}
+                runtime_history: dict[str, Any] | None = None
                 metadata_value = cast(object, pending_msg.metadata)
                 metadata = (
                     pending_msg.metadata
@@ -3939,12 +3836,16 @@ class AgentLoop:
                         sender_id=pending_msg.sender_id,
                         turn_id=request_ctx.turn_id,
                         workspace=scope.project_path,
+                        persistent_session=request_ctx.persistent_session,
                         media_root=self.media_root,
                     )
                     blocks = await self._resolve_runtime_context_for_request(
                         pending_request,
                         effective_tools,
                     )
+                    if tool_surface is not None:
+                        self._activate_request_tools(tool_surface, pending_request, blocks)
+                    runtime_history = runtime_history_metadata(blocks)
                     row["content"], runtime_marker = append_runtime_context(
                         user_content,
                         blocks,
@@ -3997,7 +3898,6 @@ class AgentLoop:
                                         active_session_key,
                                         set(),
                                     ).add(identifier)
-                                self._ack_admitted_activity_message(pending_msg)
                                 return None
                             raise RuntimeError(
                                 "Canonical child follow-up authority changed before source consumption"
@@ -4006,6 +3906,7 @@ class AgentLoop:
                             run_context.child_followup_continuation = True
                         binding = source_writer.consume_pending_followup(
                             source_pending_followup_record(pending_msg), row,
+                            runtime_history=runtime_history,
                         )
                         activity_admission = (
                             self._source_activity_admissions.get(active_session_key)
@@ -4020,12 +3921,13 @@ class AgentLoop:
                         binding = source_writer.append_injection(
                             {"role": "user", "content": pending_msg.content,
                              **({"media": list(pending_msg.media)} if pending_msg.media else {}),
+                             **({RUNTIME_CONTEXT_HISTORY_META: runtime_history}
+                                if runtime_history is not None else {}),
                              **{name: row[name] for name in (
                                  HIDDEN_HISTORY_META, "injected_event", "subagent_task_id",
                              ) if name in row}},
                             row,
                         )
-                    self._ack_admitted_activity_message(pending_msg)
                     return binding
                 return row
 
@@ -4043,7 +3945,7 @@ class AgentLoop:
                     binding = await _to_user_message(pending_msg)
                 except BaseException:
                     if source_writer is not None and active_session_key is not None:
-                        self._retain_admitted_activity_for_republish(active_session_key, pending_msg)
+                        self._retain_pending_for_republish(active_session_key, pending_msg)
                     raise
                 if binding is not None and active_session_key is not None:
                     await self._publish_injection_committed(
@@ -4147,7 +4049,8 @@ class AgentLoop:
             channel=request_ctx.channel,
             workspace=self.workspace if managed_prompt else effective_scope.project_path,
             include_memory=include_memory,
-            tool_names=frozenset(effective_tools.tool_names),
+            tools=effective_tools,
+            session=session,
         )
         if request_context is None:
             request_ctx = dataclasses.replace(
@@ -4166,7 +4069,11 @@ class AgentLoop:
         turn_scope_stack = ExitStack()
         # Compute lazily because create_goal may create goal metadata during this run.
         def _goal_continue() -> str | None:
-            _goal_lines = goal_state_runtime_lines(session.metadata if session is not None else None)
+            if source_writer is not None:
+                metadata = source_writer.owner.read_snapshot().header["metadata"]
+            else:
+                metadata = session.metadata if session is not None else None
+            _goal_lines = active_goal_runtime_lines(metadata)
             if not _goal_lines:
                 return None
             return (
@@ -4296,8 +4203,7 @@ class AgentLoop:
                     is_closing=self._lifecycle_is_closing,
                     workspace_is_authorized=workspace_is_authorized,
                 )
-            source_transcript = None
-            if source_writer is not None:
+            def build_source_transcript(tools: ToolRegistry) -> SourceTranscript:
                 if run_context.source_history is None:
                     raise ValueError("Source run requires explicitly bound history")
                 source_transcript = self.context.build_source_transcript(
@@ -4305,7 +4211,7 @@ class AgentLoop:
                     input_event_id=run_context.source_input_event_id,
                     channel=request_ctx.channel, workspace=effective_scope.project_path,
                     include_memory=session.policy.persist if session is not None else True,
-                    tool_names=frozenset(effective_tools.tool_names),
+                    tools=tools, session=session,
                     system_prompt_override=run_context.internal_system_prompt,
                     include_skill_context=run_context.internal_include_skill_context)
                 instructions = run_context.internal_system_instructions
@@ -4315,11 +4221,14 @@ class AgentLoop:
                     if not isinstance(system, RuntimeNode) or system.message.get("role") != "system":
                         raise RuntimeError("canonical child context is missing its governing system prompt")
                     system_message = deepcopy(system.message)
+                    system_message.pop("_meta", None)
                     system_message["content"] = (
                         f"{system_message.get('content', '')}\n\n{instructions}"
                     )
                     nodes[0] = RuntimeNode(system.node_id, system_message)
                     source_transcript = SourceTranscript(tuple(nodes))
+                return source_transcript
+
             run_context.artifact_read_allowed = (
                 (
                     self._artifact_reader_factory is not None
@@ -4339,12 +4248,15 @@ class AgentLoop:
                 artifact_read_allowed=run_context.artifact_read_allowed,
                 canonical_child_artifact_input=run_context.canonical_child_artifact_input,
                 initial_messages=None,
-                source_transcript=source_transcript,
+                source_transcript_builder=(
+                    build_source_transcript if source_writer is not None else None
+                ),
                 source_isolated=fresh_history,
                 source_initial_eligible_ids=frozenset(
                     node.event_id for node in run_context.source_history.nodes if isinstance(node, SourceNode)
                 ) if run_context.source_history is not None else frozenset(),
                 tools=effective_tools,
+                tool_surface=tool_surface,
                 tool_policy=tool_policy,
                 turn_context=run_context,
                 fail_on_tool_error=True,
@@ -4372,20 +4284,28 @@ class AgentLoop:
                     run_context.pending_followup_acknowledgments,
                 ),
                 source_compaction_idle_timeout_seconds=(
-                    getattr(self, "_source_compaction_idle_timeout_seconds", 300.0)
+                    getattr(self, "_source_compaction_idle_timeout_seconds", 45.0)
                 ),
                 source_compaction_overall_timeout_seconds=(
-                    getattr(self, "_source_compaction_overall_timeout_seconds", 900.0)
+                    getattr(self, "_source_compaction_overall_timeout_seconds", 120.0)
                 ),
                 source_compaction_pressure_trigger_ratio=(
-                    getattr(self, "_source_compaction_pressure_trigger_ratio", 0.9)
+                    getattr(self, "_source_compaction_pressure_trigger_ratio", 0.80)
                 ),
                 source_compaction_target_ratio=(
-                    getattr(self, "_source_compaction_target_ratio", 0.6)
+                    getattr(self, "_source_compaction_target_ratio", 0.50)
                 ),
                 source_compaction_summary_generation_tokens=(
                     getattr(self, "_source_compaction_summary_generation_tokens", None)
                 ),
+                source_compaction_runtime=(
+                    self.compaction_runtime(runtime) if source_writer is not None else None
+                ),
+                on_source_checkpoint=(
+                    lambda snapshot: self.queue_memory_rollout(
+                        snapshot.to_session(), self.compaction_runtime(runtime),
+                    )
+                ) if not ephemeral and not fresh_history and source_writer is not None else None,
                 consolidate_history=(
                     partial(
                         self.consolidator.summarize_transcript,
@@ -4468,20 +4388,6 @@ class AgentLoop:
             logger.error("LLM returned error: {}", (result.final_content or "")[:200])
         return result
 
-    def _check_expired_sessions_if_due(self) -> None:
-        """Scan idle sessions no more often than the configured interval."""
-        if self.auto_compact is None:
-            return
-        now = time.monotonic()
-        if now < self._next_idle_compact_check_at:
-            return
-        self._next_idle_compact_check_at = now + self._idle_compact_check_interval_s
-        self.auto_compact.check_expired(
-            self.schedule_background,
-            self.runtime_for_session,
-            active_session_keys=self._pending_queues.keys(),
-        )
-
     async def run(self) -> None:
         """Run the agent loop, dispatching messages as tasks to stay responsive to /stop."""
         if self._lifecycle_is_closing():
@@ -4496,7 +4402,6 @@ class AgentLoop:
                 try:
                     msg = await asyncio.wait_for(self.bus.consume_inbound(), timeout=1.0)
                 except asyncio.TimeoutError:
-                    self._check_expired_sessions_if_due()
                     continue
                 except asyncio.CancelledError:
                     # Preserve real task cancellation so shutdown can complete cleanly.
@@ -4695,7 +4600,7 @@ class AgentLoop:
                             continue
                         if outcome.followup_pending is not True or outcome.callback_error is not None:
                             if outcome.followup_pending is True:
-                                self._retain_admitted_activity_for_republish(effective_key, pending_msg)
+                                self._retain_pending_for_republish(effective_key, pending_msg)
                             await self.bus.publish_outbound(OutboundMessage(
                                 channel=msg.channel, chat_id=msg.chat_id,
                                 content=("Follow-up saved for retry after this turn."
@@ -4727,25 +4632,6 @@ class AgentLoop:
                         )
                         msg = pending_msg
                     else:
-                        try:
-                            if not canonical_followup:
-                                await self._admit_pending_activity(effective_key, pending_msg)
-                        except asyncio.CancelledError:
-                            if task_is_cancelling():
-                                raise
-                            logger.warning(
-                                "Pending activity admission was cancelled for {}",
-                                effective_key,
-                            )
-                        except Exception:
-                            # Keep the pending message durable and queued.  The
-                            # source cleanup republishes it for a fresh owner,
-                            # where the normal admission path can retry the
-                            # callback before model work begins.
-                            logger.exception(
-                                "Pending activity admission failed for {}",
-                                effective_key,
-                            )
                         logger.info(
                             "Routed follow-up message to pending queue for session {}",
                             effective_key,
@@ -4881,10 +4767,8 @@ class AgentLoop:
                 items.append(pending.get_nowait())
             for index, item in enumerate(items):
                 if pending_child_followup(item) is not None:
-                    self._ack_admitted_activity_message(item)
                     continue
                 if pending_followup_id(item) in self._stopped_pending_followup_ids.get(key, set()):
-                    self._ack_admitted_activity_message(item)
                     continue
                 try:
                     self.bus.publish_inbound_nowait(item)
@@ -5278,7 +5162,6 @@ class AgentLoop:
         _compact_settlement: _CompactDispatchSettlement | None = None,
     ) -> None:
         """Adapt trusted bus ingress to canonical admission without another lock."""
-        activity_marker = self._take_admitted_activity_message(msg)
         registration_key = self._effective_session_key(msg)
         original = msg
         attempt = msg.metadata.get(INPUT_ATTEMPT_METADATA_KEY)
@@ -5334,14 +5217,7 @@ class AgentLoop:
                     inbound=msg,
                     admission_scope=admission_scope,
                     raise_errors=True,
-                    trusted_foreground_activity=self._trusted_foreground_inbound(msg),
                     approval_provenance=self._approval_provenance(msg),
-                    activity_already_recorded=activity_marker is not None,
-                    retry_activity_notification=(
-                        activity_marker is not None
-                        and not activity_marker.notification_succeeded
-                    ),
-                    admitted_activity_marker=activity_marker,
                     workspace_access_continuation=continuation,
                     workspace_full_reference=full_permission_from_message(msg),
                 ))
@@ -5513,21 +5389,7 @@ class AgentLoop:
             errors.append(exc)
         finally:
             getattr(self, "_background_tasks", set[asyncio.Task[Any]]()).clear()
-        self._clear_admitted_activity_messages()
-
-        idle_integration = getattr(self, "_idle_integration", None)
-        close_idle = (
-            getattr(idle_integration, "aclose", None)
-            if type(idle_integration) is IdleLifecycleIntegration
-            else None
-        )
-        if callable(close_idle):
-            try:
-                result = close_idle()
-                if inspect.isawaitable(result):
-                    await cast(Awaitable[object], result)
-            except BaseException as exc:
-                errors.append(exc)
+        getattr(self, "_pending_republish", {}).clear()
 
         owned_foreground = getattr(self, "_owned_foreground_manager", None)
         self._owned_foreground_manager = None
@@ -5998,36 +5860,13 @@ class AgentLoop:
                                         followup_pending=False,
                                     ))
                                 continue
-                        state = owner.read_snapshot().state
-                        outcome = await self._record_foreground_activity(
-                            context,
-                            key,
-                            source=self._inbound_turn_source(item.message),
-                            sender_id=item.message.sender_id,
-                            trusted=self._trusted_foreground_inbound(item.message),
-                        )
-                        outcome = _ForegroundActivityResult(
-                            activity_committed=outcome.activity_committed,
-                            callback_succeeded=outcome.callback_succeeded,
-                            callback_error=outcome.callback_error,
-                            followup_pending=followup_pending,
-                        )
                     except BaseException as exc:
                         outcome = _ForegroundActivityResult(
                             callback_error=exc,
                             followup_pending=followup_pending,
                         )
                     else:
-                        if outcome.activity_committed:
-                            # Mark from the owner-registered worker itself so
-                            # cancellation of the submitting bus task cannot
-                            # lose the duplicate-suppression proof.
-                            self._remember_admitted_activity_message(
-                                item.message,
-                                notification_succeeded=outcome.callback_succeeded,
-                                source_binding=(state.store_identity, state.session_key,
-                                                state.incarnation, state.generation),
-                            )
+                        outcome = _ForegroundActivityResult(followup_pending=followup_pending)
                     if item.followup_id is not None:
                         admission = self._source_activity_admissions.get(key)
                         if admission is not None:
@@ -6231,11 +6070,6 @@ class AgentLoop:
             context.workspace_full_reference = options.workspace_full_reference
             context.workspace_task_reference = options.workspace_task_reference
             context.canonical_child_artifact_input = options.canonical_child_artifact_input
-            context.trusted_foreground_activity = (
-                options.trusted_foreground_activity
-                and request.source in _FOREGROUND_IDLE_SOURCES
-                and request.sender_id != "subagent"
-            )
             record = RunRecord(run_id=run_id, source=request.source,
                 session_ref=SessionRunRef(session_key=key, run_id=run_id),
                 visible_session_key=(request.scheduled_link.visible_session_key
@@ -6454,49 +6288,6 @@ class AgentLoop:
                                 activated = await options.on_approval_consumed(context, action)
                                 if not activated:
                                     action = "stale"
-                            activity_marker = options.admitted_activity_marker
-                            if activity_marker is not None and context.execution_owner is not None:
-                                owner = context.execution_owner
-                                state = owner.read_snapshot().state
-                                current_binding = (state.store_identity, state.session_key,
-                                                   state.incarnation, state.generation)
-                                if activity_marker.source_binding != current_binding:
-                                    # Reset discarded the old activity, or an unbound
-                                    # marker cannot prove it in this source generation.
-                                    admission = self._source_activity_admissions[key]
-                                    try:
-                                        activity = await admission.submit(activity_marker.message)
-                                    except asyncio.CancelledError:
-                                        self._retain_admitted_activity_for_republish(
-                                            key, activity_marker.message,
-                                        )
-                                        raise
-                                    if activity.callback_error is not None:
-                                        self._retain_admitted_activity_for_republish(
-                                            key, activity_marker.message,
-                                        )
-                                        raise activity.callback_error
-                                    if not activity.activity_committed:
-                                        self._retain_admitted_activity_for_republish(
-                                            key, activity_marker.message,
-                                        )
-                                        raise RuntimeError("Queued activity was not admitted after source reset")
-                                    activity_marker = self._take_admitted_activity_message(
-                                        activity_marker.message,
-                                    )
-                            if activity_marker is not None:
-                                if not activity_marker.notification_succeeded:
-                                    activity = await self._notify_foreground_activity(
-                                        key,
-                                        activity_committed=True,
-                                    )
-                                    if activity.callback_error is not None:
-                                        self._retain_admitted_activity_for_republish(
-                                            key,
-                                            activity_marker.message,
-                                        )
-                                        raise activity.callback_error
-                                self._ack_admitted_activity_message(activity_marker.message)
                             if action in ('negative', 'stale', 'denied', 'approval_save_failed'):
                                 if action == 'negative':
                                     text = 'Cancelled the pending risky action.'
@@ -6516,23 +6307,6 @@ class AgentLoop:
                                     content=text, stop_reason=stop_reason,
                                     outbound=OutboundMessage(channel=target.channel, chat_id=target.chat_id or '', content=text))
                             else:
-                                if not options.activity_already_recorded:
-                                    activity = await self._record_foreground_activity(
-                                        context,
-                                        key,
-                                        source=request.source,
-                                        sender_id=request.sender_id,
-                                        trusted=context.trusted_foreground_activity,
-                                    )
-                                    if activity.callback_error is not None:
-                                        raise activity.callback_error
-                                elif options.retry_activity_notification and activity_marker is None:
-                                    activity = await self._notify_foreground_activity(
-                                        key,
-                                        activity_committed=True,
-                                    )
-                                    if activity.callback_error is not None:
-                                        raise activity.callback_error
                                 content = request.content
                                 if action == 'affirmative' and snapshot.pending is not None:
                                     record.resumed_run_id = snapshot.pending.run_id
@@ -6571,7 +6345,8 @@ class AgentLoop:
                                         suppress_channel_output=True,
                                     )
                                 effective_tools = _tools if _tools is not None else (
-                                    self.tools.filtered(list(request.tool_names)) if request.tool_names is not None else self.tools)
+                                    PolicyToolView(self.tools, lambda tool: tool.name in requested_tools)
+                                    if (requested_tools := request.tool_names) is not None else self.tools)
                                 io.message = msg
                                 stage = await self._process_turn(msg, session_key=key, run_context=context,
                                     session=admitted_session,
@@ -6820,6 +6595,8 @@ class AgentLoop:
     ) -> TurnContext:
         """Process a single inbound message and return the response."""
         kind = TurnKind.USER if msg.is_user_input else TurnKind.SYSTEM
+        if run_context is not None:
+            run_context.is_user_turn = kind is TurnKind.USER
         if kind is TurnKind.SYSTEM:
             destination = (
                 msg.chat_id.split(":", 1) if ":" in msg.chat_id else ("cli", msg.chat_id)
@@ -6891,7 +6668,6 @@ class AgentLoop:
 
         try:
             await self._run_turn_stage(ctx, "restore", self._restore_turn)
-            await self._run_turn_stage(ctx, "compact", self._compact_session)
             if await self._run_turn_stage(ctx, "command", self._dispatch_command):
                 return ctx
             await self._run_turn_stage(ctx, "build", self._build_turn)
@@ -7078,17 +6854,17 @@ class AgentLoop:
 
         require_legacy_h1_disposition(session.metadata)
         tools = ctx.tools if ctx.tools is not None else self.tools
+        route_channel = ctx.msg.channel if ctx.kind is TurnKind.USER else ctx.delivery.route.channel
         disabled_tools = set(session.policy.disabled_tools)
         if (
-            ctx.kind is not TurnKind.USER
-            or ctx.msg.channel != "websocket"
+            route_channel != "websocket"
             or not session.policy.persist
         ):
             disabled_tools.update({"select_workspace", "request_folder_access"})
         if not session.policy.persist:
             disabled_tools.update({"repository_catalog", "save_knowledge"})
         grants = self._fork_dependencies.resource_policy.folder_grants
-        managed_tool_names = managed_webui_tool_names(tools.iter_tools())
+        managed_tool_names = MANAGED_WEBUI_TOOL_NAMES
         run_context = ctx.run_context
         local_private_workspace_authority = False
         if (
@@ -7143,56 +6919,67 @@ class AgentLoop:
                 and owner.is_current_full_reference(full_reference)
             )
         if (
-            ctx.msg.channel == "websocket"
+            route_channel == "websocket"
             and grants is not None
             and (grants.is_managed or local_private_workspace_authority)
         ):
-            managed_registry = tools.filtered([
-                name for name in tools.tool_names
-                if name in managed_tool_names
-                and (name != "select_workspace" or ctx.kind is TurnKind.USER)
-            ])
-            if self.tools_config.file.enable and ctx.kind is TurnKind.USER:
+            managed_registry = PolicyToolView(
+                tools, lambda tool: tool.name in managed_tool_names or is_managed_mcp_tool(tool),
+            )
+            if self.tools_config.file.enable:
                 from kohaku.agent.tools.workspace import (
                     RequestFolderAccessTool,
                     SelectWorkspaceTool,
                 )
 
-                managed_registry.register(SelectWorkspaceTool(self._workspace_focus_owner()))
-                if ctx.msg.channel == "websocket" and session.policy.persist:
+                if not managed_registry.has("select_workspace"):
+                    managed_registry.register(SelectWorkspaceTool(self._workspace_focus_owner()))
+                if session.policy.persist and not managed_registry.has("request_folder_access"):
                     managed_registry.register(RequestFolderAccessTool(self._workspace_focus_owner()))
             tools = managed_registry
         elif (
             self.tools_config.file.enable
-            and ctx.kind is TurnKind.USER
-            and ctx.msg.channel == "websocket"
+            and route_channel == "websocket"
             and session.policy.persist
+            and not tools.has("request_folder_access")
         ):
             # Use a per-turn registry so this local-only tool cannot remain in a
             # shared registry or leak into a later API/background turn.
-            local_registry = tools.filtered(tools.tool_names)
+            local_registry = PolicyToolView(tools, lambda tool: True)
             from kohaku.agent.tools.workspace import RequestFolderAccessTool
 
             local_registry.register(RequestFolderAccessTool(self._workspace_focus_owner()))
             tools = local_registry
         if disabled_tools:
-            enabled_disabled_tools = disabled_tools.intersection(tools.tool_names)
-            if enabled_disabled_tools:
+            if disabled_tools.intersection(tools.tool_names) or self.tools_config.mcp_servers:
                 restricted = self.context.memory.filter_dream_tools(
-                    tools, frozenset(enabled_disabled_tools), self.context.memory.workspace,
+                    tools, frozenset(disabled_tools), self.context.memory.workspace,
                 )
                 if restricted is None:
-                    restricted = tools.filtered(
-                        [name for name in tools.tool_names if name not in enabled_disabled_tools]
-                    )
+                    restricted = PolicyToolView(tools, lambda tool: tool.name not in disabled_tools)
                 tools = restricted
+        # The root registry may be shared by concurrent turns.
+        issued_dream = ctx.ephemeral and self.context.memory.owns_dream_tools(
+            tools, self.context.memory.workspace,
+        )
+        admitted_tools = tools
+        if not issued_dream:
+            tools = PolicyToolView(admitted_tools, lambda tool: True)
         tools.set_dispatch_guard(
             ManagedToolDispatchGuard(
                 self._fork_dependencies.resource_policy.folder_grants,
                 allowed_names=managed_tool_names,
+                allowed_live=lambda name: (
+                    (tool := admitted_tools.get(name)) is not None and is_managed_mcp_tool(tool)
+                ),
             )
         )
+        apply_surface = getattr(self, "_apply_tool_surface", None)
+        surface = None
+        if apply_surface is not None and not issued_dream:
+            tools, surface = apply_surface(tools, ctx)
         ctx.tools = tools
+        ctx.tool_surface = surface
 
         if ctx.kind is TurnKind.SYSTEM:
             logger.info("Processing system message from {}", msg.sender_id)
@@ -7221,21 +7008,6 @@ class AgentLoop:
             and restore_pending_interruption(session)
         ):
             self.sessions.save(session)
-
-    async def _compact_session(self, ctx: TurnContext) -> None:
-        if (
-            self.auto_compact is None
-            or ctx.fresh_history
-            or (ctx.run_context is not None and ctx.run_context.source_writer is not None)
-        ):
-            ctx.pending_summary = None
-            return
-        session = ctx.require_session()
-        ctx.session, pending = self.auto_compact.prepare_session(
-            session,
-            ctx.session_key,
-        )
-        ctx.pending_summary = pending
 
     async def _dispatch_command(self, ctx: TurnContext) -> bool:
         request = ctx.run_context.request if ctx.run_context is not None else None
@@ -7317,6 +7089,8 @@ class AgentLoop:
             )
             return True
         if raw.lower() == '/new':
+            closed = writer.owner.read_snapshot().to_session()
+            runtime = self.compaction_runtime(ctx.runtime or self.runtime_for_session(closed))
             admission = self._source_activity_admissions.get(ctx.session_key)
             if admission is not None:
                 # The worker is registered with this owner. Drain it before
@@ -7324,6 +7098,8 @@ class AgentLoop:
                 await admission.close()
             await writer.owner.quiesce()
             self.sessions.reset_session(writer.owner.key, owner=writer.owner)
+            self.queue_memory_rollout(closed, runtime)
+            self.context.refresh_prompt_snapshot(ctx.session_key)
             await self.approval_admission.revoke(writer.owner.key)
             self.discard_session_file_state(ctx.session_key)
             self.sessions.invalidate(ctx.session_key)
@@ -7341,15 +7117,24 @@ class AgentLoop:
                         input_attempt_proof=admission.proof if admission is not None else None,
                         source_event_id=ctx.run_context.source_input_event_id,
                     )
-            if command in {'/help', '/model', '/history', '/status', USER_SHELL_COMMAND}:
+            if command in {'/help', '/model', '/history', '/status', '/goal', '/dream', USER_SHELL_COMMAND}:
                 result = await self.commands.dispatch(CommandContext(
                     msg=ctx.msg, session=ctx.session, key=ctx.session_key, raw=raw,
                     loop=self, runtime=ctx.runtime, is_user_turn=True, turn_scopes=ctx.turn_scopes))
+                if command == '/goal' and result is None:
+                    return False
                 text = result.content if result is not None else 'Command unavailable.'
                 if result is not None:
                     metadata = dict(result.metadata)
             elif command == '/compact':
-                text = 'Source checkpoint compaction is not available in this migration candidate yet.'
+                try:
+                    compacted = await self.compact_owned_source(
+                        writer, ctx.require_session(), tools=ctx.tools or self.tools, events=ctx.events,
+                    )
+                except SourceCompactionUnavailableError:
+                    text = "Compaction could not fit the session history."
+                else:
+                    text = "Session compacted." if compacted else "No complete history to compact."
             else:
                 text = 'This command is not available for source sessions in this migration candidate yet.'
             if command != USER_SHELL_COMMAND:
@@ -7362,7 +7147,8 @@ class AgentLoop:
                         input_attempt_proof=admission.proof if admission is not None else None,
                         source_event_id=ctx.run_context.source_input_event_id,
                     )
-            writer.append_message({'role': 'assistant', 'content': text, '_command': True})
+            if command != '/compact':
+                writer.append_message({'role': 'assistant', 'content': text, '_command': True})
             if WEBUI_DISPLAY_SOURCE_KEY in ctx.delivery.route.metadata:
                 metadata[WEBUI_DISPLAY_SOURCE_KEY] = (
                     ctx.delivery.route.metadata[WEBUI_DISPLAY_SOURCE_KEY]
@@ -7396,7 +7182,8 @@ class AgentLoop:
         ctx.request_context = self._request_context_for_turn(ctx)
         ctx.runtime_context_blocks = await self._resolve_runtime_context_for_turn(ctx)
         ctx.input_persisted_early = self._persist_user_message_early(
-            ctx.msg, session, run_id=ctx.run_context.run_id, trace_owner=ctx)
+            ctx.msg, session, runtime_context_blocks=ctx.runtime_context_blocks,
+            run_id=ctx.run_context.run_id, trace_owner=ctx)
         if ctx.kind is TurnKind.USER and ctx.input_persisted_early:
             admission = ctx.run_context.input_attempt_admission
             await ctx.delivery.input_committed(
@@ -7444,16 +7231,7 @@ class AgentLoop:
             )
         if ctx.on_runtime_admitted is not None:
             await ctx.on_runtime_admitted(runtime)
-        if self.auto_compact is not None and not ctx.ephemeral and not ctx.fresh_history:
-            ctx.session, ctx.pending_summary = self.auto_compact.prepare_session(
-                session,
-                ctx.session_key,
-            )
-            session = ctx.require_session()
-        elif not ctx.ephemeral and not ctx.fresh_history and not ctx.session_key.startswith("dream:"):
-            # Reading an accepted checkpoint is independent of enabling legacy
-            # background archival. The foreground gateway deliberately has no
-            # AutoCompact instance but must still replay persisted summaries.
+        if not ctx.ephemeral and not ctx.fresh_history and not ctx.session_key.startswith("dream:"):
             ctx.pending_summary = session_summary_from_metadata(
                 session.metadata, fallback_last_active=session.updated_at,
             )
@@ -7503,6 +7281,7 @@ class AgentLoop:
                 ctx.msg.content,
                 media=ctx.msg.media if ctx.kind is TurnKind.USER and ctx.msg.media else None,
                 runtime_context_blocks=ctx.runtime_context_blocks,
+                include_skill_context=False,
             )
             task_id = ctx.msg.metadata.get("subagent_task_id") if is_subagent else None
             already_staged = False
@@ -7536,7 +7315,7 @@ class AgentLoop:
                 not ctx.ephemeral
                 and (ctx.kind is TurnKind.USER or subagent_followup_persisted)
             ):
-                session.provider_state = ctx.provider_state
+                session.provider_state = None if ctx.runtime_context_blocks else ctx.provider_state
                 staged_provider_state = True
         elif stored_state is not None:
             session.provider_state = None
@@ -7576,6 +7355,7 @@ class AgentLoop:
                 pending_queue=None if ctx.fresh_history else ctx.pending_queue,
                 ephemeral=ctx.ephemeral,
                 run_extra_hooks_for_ephemeral=ctx.run_extra_hooks_for_ephemeral,
+                tool_surface=ctx.tool_surface,
                 hooks=ctx.hooks,
                 hook_factories=ctx.hook_factories,
                 turn_scopes=ctx.turn_scopes,
@@ -7632,6 +7412,10 @@ class AgentLoop:
                 raise
 
     async def _persist_turn(self, ctx: TurnContext) -> None:
+        if ctx.tool_surface is not None and not ctx.fresh_history:
+            activated = ctx.tool_surface.state.activated
+            if activated:
+                ctx.require_session().metadata[ACTIVATED_TOOLS_METADATA] = list(activated)
         if ctx.run_context is not None and ctx.run_context.source_writer is not None:
             if ctx.provider_state_settlement is not None:
                 ctx.provider_state_settlement.discard()
@@ -7729,6 +7513,7 @@ class AgentLoop:
         if (
             settlement is not None
             and not ctx.ephemeral
+            and not ctx.runtime_context_blocks
             and not transcript_rewritten
             and not ctx.provider_compaction_applied
             and ctx.summary_checkpoint is None
@@ -7978,17 +7763,24 @@ class AgentLoop:
                     entry["content"] = filtered
                     transcript_rewritten |= filtered != content
             elif role == "user":
+                if isinstance(runtime_context_meta, dict):
+                    marker = cast(dict[str, Any], runtime_context_meta)
+                    detached = detach_runtime_context(content, marker)
+                    if detached is not None:
+                        content = detached[0]
+                        entry["content"] = content
+                        transcript_rewritten = True
+                        if retained := merge_runtime_history_markers(marker):
+                            entry[RUNTIME_CONTEXT_HISTORY_META] = retained
                 if isinstance(content, list):
                     filtered = self._sanitize_persisted_blocks(
                         cast(list[object], content),
                     )
-                    if not filtered:
+                    if not filtered and RUNTIME_CONTEXT_HISTORY_META not in entry:
                         transcript_rewritten = True
                         continue
                     entry["content"] = filtered
                     transcript_rewritten |= filtered != content
-                if isinstance(runtime_context_meta, dict):
-                    entry[RUNTIME_CONTEXT_HISTORY_META] = runtime_context_meta
             entry.setdefault("timestamp", datetime.now().isoformat())
             # Attribution comes only from canonical admission, never provider fields.
             entry.pop("_run_id", None)
@@ -8165,12 +7957,7 @@ class AgentLoop:
             run_extra_hooks_for_ephemeral=_run_extra_hooks_for_ephemeral,
             hook_factories=tuple(hook_factories or ()), runtime=runtime,
             on_runtime_admitted=on_runtime_admitted, attributes=dict(attributes or {}),
-            raise_errors=True, on_admission_end=admission_ended,
-            trusted_foreground_activity=(
-                source in _FOREGROUND_IDLE_SOURCES
-                and sender_id != "subagent"
-                and not sender_id.startswith("system:")
-            ))
+            raise_errors=True, on_admission_end=admission_ended)
         result = await self.execute_turn(request, _tools=tools, _options=options)
         return result
 

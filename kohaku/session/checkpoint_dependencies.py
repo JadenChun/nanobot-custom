@@ -229,7 +229,7 @@ def _manifest_descriptors(snapshot: SourceSnapshot) -> dict[str, ArtifactDescrip
 def _validate_projection(snapshot: SourceSnapshot, candidate: SourceCompactionCandidate,
                          evidence: SummaryEvidence,
                          dependency: ProjectedArtifactDependency) -> ArtifactDescriptor:
-    from kohaku.session.artifact_projection import validate_artifact_projection
+    from kohaku.session.artifact_projection import validate_artifact_projections
 
     if (type(dependency) is not ProjectedArtifactDependency
             or type(dependency.binding) is not ArtifactProjectionBinding
@@ -238,9 +238,13 @@ def _validate_projection(snapshot: SourceSnapshot, candidate: SourceCompactionCa
     node = next((item for item in evidence.nodes if item.event_id == dependency.event_id), None)
     canonical = next((item for item in source_nodes(snapshot.events, stream_id=candidate.stream_id)
                       if item.event_id == dependency.event_id), None)
-    if node is None or canonical is None or node.artifact != dependency.binding:
+    if node is None or canonical is None or dependency.binding not in node.artifact_bindings:
         raise SourceValidationError('Projected artifact dependency is not consumed source evidence')
-    return validate_artifact_projection(node, canonical, snapshot)
+    descriptors = validate_artifact_projections(node, canonical, snapshot)
+    for descriptor in descriptors:
+        if descriptor.artifact_id == dependency.binding.artifact_id:
+            return descriptor
+    raise SourceValidationError('Artifact dependency is absent from the projection')
 
 
 def _validated_proof(proof: SummaryDependencyProof, snapshot: SourceSnapshot) -> _ValidatedProof:

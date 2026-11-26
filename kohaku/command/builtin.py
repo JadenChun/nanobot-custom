@@ -642,6 +642,7 @@ async def cmd_new(ctx: CommandContext) -> OutboundMessage:
         loop.sessions.save(session)
     if session.policy.persist:
         loop.sessions.invalidate(session.key)
+    _refresh_prompt_snapshot(loop, ctx.key)
     if archive_snapshot is not None and runtime is not None:
         loop.schedule_background(
             loop.consolidator.archive_session(  # pyright: ignore[reportUnknownMemberType]
@@ -678,6 +679,7 @@ async def cmd_compact(ctx: CommandContext) -> None:
         refreshed = loop.sessions.get_or_create(ctx.key)
         refreshed.provider_state = None
         loop.sessions.save(refreshed)
+        _refresh_prompt_snapshot(loop, ctx.key)
 
 
 def _format_preset_names(names: list[str]) -> str:
@@ -775,6 +777,13 @@ async def cmd_model(ctx: CommandContext) -> OutboundMessage:
     )
 
 
+def _refresh_prompt_snapshot(loop: AgentLoop, session_key: str) -> None:
+    context = getattr(loop, "context", None)
+    refresh = getattr(context, "refresh_prompt_snapshot", None)
+    if callable(refresh):
+        refresh(session_key)
+
+
 async def cmd_dream(ctx: CommandContext) -> OutboundMessage:
     """Manually trigger a Dream consolidation run."""
     import time
@@ -801,11 +810,22 @@ async def cmd_dream(ctx: CommandContext) -> OutboundMessage:
         settled = False
         t0 = time.monotonic()
         try:
+            from kohaku.context.memory_pipeline import MemoryPipeline
+
+            if isinstance(getattr(loop, "memory_pipeline", None), MemoryPipeline):
+                rollout_result = await loop.consolidate_rollouts()
+                if rollout_result is not None:
+                    loop.context.refresh_prompt_snapshot(ctx.key)
+                    await loop.bus.publish_outbound(OutboundMessage(
+                        channel=msg.channel, chat_id=msg.chat_id, content=rollout_result,
+                    ))
+                    return
             store.reconcile_dream_operation()
             cursor_before = store.get_last_dream_cursor()
             result = store.build_dream_prompt()
             if result is None:
                 content = _format_dream_no_input_message()
+                _refresh_prompt_snapshot(loop, ctx.key)
             else:
                 prompt, last_cursor = result
                 operation_id = store.reserve_dream_run(cursor_before, last_cursor)
@@ -834,6 +854,7 @@ async def cmd_dream(ctx: CommandContext) -> OutboundMessage:
                 )
                 settled = True
                 if completed:
+                    _refresh_prompt_snapshot(loop, ctx.key)
                     if diff_body:
                         content = f"Dream completed in {elapsed:.1f}s."
                     else:

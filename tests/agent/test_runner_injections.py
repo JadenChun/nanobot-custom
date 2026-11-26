@@ -732,7 +732,6 @@ async def test_pending_injection_resolves_its_own_runtime_context(tmp_path):
     from kohaku.runtime_context import (
         RUNTIME_CONTEXT_MESSAGE_META,
         RuntimeContextBlock,
-        public_history_message,
         wrap_runtime_context_lines,
     )
 
@@ -845,15 +844,13 @@ async def test_pending_injection_resolves_its_own_runtime_context(tmp_path):
     assert "telegram | group-1 | user-c | message-3" in str(model_messages)
     assert "Carol | topic-7" in str(model_messages)
     assert all(
-        message["_meta"][RUNTIME_CONTEXT_MESSAGE_META]["sources"] == ["identity"]
+        "identity" in message["_meta"][RUNTIME_CONTEXT_MESSAGE_META]["sources"]
         for message in injected
     )
 
     loop._save_turn(session, result.messages, skip=1)
     persisted = [message for message in session.messages if message.get("role") == "user"][-2:]
-    assert "telegram | group-1 | user-b | message-2" in str(persisted[0]["content"])
-    assert "telegram | group-1 | user-c | message-3" in str(persisted[1]["content"])
-    assert [public_history_message(message)["content"] for message in persisted] == [
+    assert [message["content"] for message in persisted] == [
         "follow-up from the second speaker",
         "another follow-up",
     ]
@@ -915,7 +912,8 @@ async def test_subagent_pending_injection_is_hidden_history_and_not_merged(tmp_p
     assert result.had_injections is True
     assert call_count["n"] == 2
     injected_users = [message for message in result.messages if message.get("role") == "user"][-2:]
-    assert [message["content"] for message in injected_users] == ["visible follow-up", payload]
+    assert injected_users[0]["content"].partition("\n\n")[0] == "visible follow-up"
+    assert injected_users[1]["content"] == payload
     assert injected_users[1][HIDDEN_HISTORY_META] == {
         "kind": "subagent_result",
         "subagent_task_id": "sub-1",

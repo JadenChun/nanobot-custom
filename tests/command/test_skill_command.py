@@ -47,7 +47,6 @@ async def _make_loop(tmp_path: Path, admitted_async: AsyncAdmittedFactory) -> Ag
             session_manager=inputs.sessions, tool_registry=inputs.tools,
             cron_service=inputs.cron, turn_delivery_factory=inputs.delivery,
             tools_config=inputs.config.tools, restrict_to_workspace=True,
-            enable_legacy_auto_compact=False,
         )
 
     return await admitted_async(tmp_path, build)
@@ -158,35 +157,6 @@ async def test_skill_command_registered_on_router(tmp_path: Path, admitted_async
     assert "No skills available." in out.content
 
 
-def test_skill_command_unadmitted_loop_refuses_before_effects(tmp_path, monkeypatch) -> None:
-    from kohaku.agent.memory_recovery_startup_admission import StartupReceiptAdmissionError
-    from kohaku.bus.queue import MessageBus
-    from kohaku.session.manager import SessionManager
-
-    provider = _provider()
-    bus = MessageBus()
-    workspace = tmp_path / "unadmitted"
-    pending = workspace / "memory" / ".consolidation.pending.json"
-    pending.parent.mkdir(parents=True)
-    pending.write_text("{broken", encoding="utf-8")
-
-    def denied(*_args, **_kwargs):
-        pytest.fail("unadmitted construction reached a session or directory effect")
-
-    monkeypatch.setattr(SessionManager, "__init__", denied)
-    monkeypatch.setattr(Path, "mkdir", denied)
-    before = tuple(tmp_path.iterdir())
-    with pytest.raises(StartupReceiptAdmissionError):
-        AgentLoop(
-            bus=bus, provider=provider, workspace=workspace,
-            sessions_root=tmp_path / "sessions",
-        )
-    assert tuple(tmp_path.iterdir()) == before
-    provider.chat.assert_not_called()
-    provider.chat_with_retry.assert_not_called()
-    assert not bus._pending
-
-
 @pytest.mark.asyncio
 async def test_skill_command_owned_workspace_listing_has_no_optional_activity(
     tmp_path, admitted_async,
@@ -206,7 +176,6 @@ async def test_skill_command_owned_workspace_listing_has_no_optional_activity(
     assert loop.sessions.has_managed_authority
     assert loop.turn_delivery_factory.bus is loop.bus
     assert loop.tools_config.restrict_to_workspace is True
-    assert loop.auto_compact is None
     assert not loop._background_tasks
     assert not loop.cron_service._running
 

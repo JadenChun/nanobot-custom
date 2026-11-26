@@ -11,12 +11,13 @@ import re
 from collections.abc import Awaitable, Callable, Iterator
 from typing import Any, cast
 
+from kohaku.context.compiler import use_native_system_blocks
 from kohaku.providers.base import (
-    FinalizedRequestBudgetExceeded,
     LLMProvider,
     LLMResponse,
     LLMUsage,
     ProviderCallContext,
+    ProviderRequestRejected,
     ToolCallRequest,
     parse_tool_arguments,
     resolve_stream_idle_timeout_s,
@@ -417,6 +418,14 @@ class BedrockProvider(LLMProvider):
             thinking["effort"] = effort
         return thinking
 
+    @staticmethod
+    def _supports_cache_points(model: str) -> bool:
+        model = model.lower()
+        return bool(re.search(
+            r"(?:^|\.)anthropic\.claude-(?:3-[57]-|(?:opus|sonnet|haiku)-[4-9]-)",
+            model,
+        )) or bool(re.search(r"(?:^|\.)amazon\.nova-(?:micro|lite|pro|premier|2-lite)-v", model))
+
     def _build_kwargs(
         self,
         messages: list[dict[str, Any]],
@@ -426,8 +435,10 @@ class BedrockProvider(LLMProvider):
         temperature: float,
         reasoning_effort: str | None,
         tool_choice: str | dict[str, Any] | None,
+        direct_tool_count: int | None = None,
     ) -> dict[str, Any]:
         model_id = self._strip_prefix(model or self.default_model)
+        messages, split_system = use_native_system_blocks(messages)
         system, bedrock_messages = self._convert_messages(self._sanitize_empty_content(messages))
         if not bedrock_messages:
             bedrock_messages = [{"role": "user", "content": [{"text": "(empty)"}]}]
@@ -437,7 +448,32 @@ class BedrockProvider(LLMProvider):
             "messages": bedrock_messages,
             "inferenceConfig": {"maxTokens": max(1, max_tokens)},
         }
+        cache_points = self._supports_cache_points(model_id)
+        cache_point = {"cachePoint": {"type": "default"}}
+        remaining = 4
+        bedrock_tools = self._convert_tools(tools)
+        tool_indices: list[int] = []
+        if cache_points and bedrock_tools and "anthropic.claude-" in model_id.lower():
+            tool_specs = [cast(dict[str, Any], item["toolSpec"]) for item in bedrock_tools]
+            tool_indices = self._tool_cache_marker_indices(tool_specs, direct_tool_count)
+        split_tools = direct_tool_count is not None and len(tool_indices) == 2
+        # Always prioritize the rolling conversation-history cache point so
+        # multi-turn history stays cached even when both system and tools split.
+        if cache_points and len(bedrock_messages) >= 3 and remaining > 0:
+            content = bedrock_messages[-2].get("content")
+            if isinstance(content, list) and content:
+                blocks = cast(list[dict[str, Any]], content)
+                if "cachePoint" not in blocks[-1]:
+                    blocks.append(cache_point)
+                remaining -= 1
         if system:
+            if cache_points and remaining > 0:
+                if split_system and len(system) == 2 and remaining >= 2:
+                    system.insert(1, cache_point)
+                    remaining -= 1
+                if "cachePoint" not in system[-1]:
+                    system.append(cache_point)
+                remaining -= 1
             kwargs["system"] = system
         if self._supports_temperature(model_id):
             kwargs["inferenceConfig"]["temperature"] = temperature
@@ -452,9 +488,13 @@ class BedrockProvider(LLMProvider):
         if additional:
             kwargs["additionalModelRequestFields"] = additional
 
-        bedrock_tools = self._convert_tools(tools)
         tool_config: dict[str, Any] | None = None
         if bedrock_tools:
+            # Nova Converse supports checkpoints in system and messages only.
+            if remaining > 0:
+                indices = tool_indices[:remaining] if split_tools else tool_indices[-remaining:]
+                for index in reversed(indices):
+                    bedrock_tools.insert(index + 1, cache_point)
             tool_config = {"tools": bedrock_tools}
             choice = self._convert_tool_choice(tool_choice)
             if choice:
@@ -760,7 +800,8 @@ class BedrockProvider(LLMProvider):
     ) -> LLMResponse:
         try:
             kwargs = self._build_kwargs(
-                messages, tools, model, max_tokens, temperature, reasoning_effort, tool_choice
+                messages, tools, model, max_tokens, temperature, reasoning_effort, tool_choice,
+                provider_context.direct_tool_count if provider_context else None,
             )
             self.validate_finalized_request(
                 kwargs, transport="bedrock_converse", model=str(kwargs.get("modelId") or ""),
@@ -771,7 +812,7 @@ class BedrockProvider(LLMProvider):
                 await asyncio.to_thread(self._client.converse, **kwargs),
             )
             return self._parse_response(response)
-        except FinalizedRequestBudgetExceeded:
+        except ProviderRequestRejected:
             raise
         except Exception as e:
             return self._handle_error(e)
@@ -800,7 +841,8 @@ class BedrockProvider(LLMProvider):
 
         try:
             kwargs = self._build_kwargs(
-                messages, tools, model, max_tokens, temperature, reasoning_effort, tool_choice
+                messages, tools, model, max_tokens, temperature, reasoning_effort, tool_choice,
+                provider_context.direct_tool_count if provider_context else None,
             )
             self.validate_finalized_request(
                 kwargs, transport="bedrock_converse_stream", model=str(kwargs.get("modelId") or ""),
@@ -844,7 +886,7 @@ class BedrockProvider(LLMProvider):
                 finish_reason="error",
                 error_kind="timeout",
             )
-        except FinalizedRequestBudgetExceeded:
+        except ProviderRequestRejected:
             raise
         except Exception as e:
             return self._handle_error(e)

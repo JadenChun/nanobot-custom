@@ -156,7 +156,7 @@ class SkillsLoader:
         except OSError:
             return []
         entries: list[dict[str, str]] = []
-        for skill_dir in base.iterdir():
+        for skill_dir in sorted(base.iterdir(), key=lambda entry: entry.name):
             if not skill_dir.is_dir():
                 continue
             resolved_dir = skill_dir
@@ -345,6 +345,8 @@ class SkillsLoader:
                 f"{content}\n"
                 "[/Active Skills]"
             ),
+            retention="ephemeral_body",
+            compact_summary="\n".join(f"[Used skill: {name}]" for name in skill_names),
         )
 
     def build_skills_summary(
@@ -352,6 +354,7 @@ class SkillsLoader:
         exclude: set[str] | None = None,
         *,
         workspace: Path | None = None,
+        compact: bool = False,
     ) -> str:
         """
         Build a summary of all skills (name, description, path, availability).
@@ -392,14 +395,14 @@ class SkillsLoader:
                 continue
 
             resolved_root = root.expanduser().resolve()
-            if source == "builtin":
+            if source == "builtin" or (compact and source == "workspace"):
                 display_root = Path("skills")
             elif use_relative_roots and source != "library":
                 display_root = Path("plugins" if source == "plugin" else "skills")
             else:
                 display_root = resolved_root
             lines = [f"### {label} (`{display_root}`)"]
-            if source == "builtin":
+            if source == "builtin" and not compact:
                 lines.append(
                     "Use `skills/<name>/SKILL.md` for these bundled skills. "
                     "The built-in `read_file` tool resolves that agents-relative path."
@@ -423,7 +426,13 @@ class SkillsLoader:
                 relative_path = Path(entry["path"]).relative_to(root).as_posix()
                 if source == "builtin":
                     relative_path = f"skills/{relative_path}"
-                lines.append(f"- **{skill_name}** — {desc}{suffix}  `{relative_path}`")
+                if compact and source in {"builtin", "workspace"}:
+                    description_text = " ".join(desc.split())
+                    if len(description_text) > 80:
+                        description_text = description_text[:79].rstrip() + "…"
+                    lines.append(f"- {skill_name} — {description_text}{suffix}")
+                else:
+                    lines.append(f"- **{skill_name}** — {desc}{suffix}  `{relative_path}`")
             sections.append("\n".join(lines))
         return "\n\n".join(sections)
 

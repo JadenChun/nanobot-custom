@@ -65,7 +65,7 @@ def test_selected_project_path_follows_shared_cache_prefix(tmp_path) -> None:
     prefix_b = prompt_b[: prompt_b.index(marker)]
 
     assert prefix_a == prefix_b
-    assert "# Tool Usage Notes" in prefix_a
+    assert "# Operating Principles" in prefix_a
     assert str(project_a.resolve()) not in prefix_a
     assert str(project_b.resolve()) not in prefix_b
     assert prompt_a == builder.build_system_prompt(workspace=project_a)
@@ -77,9 +77,8 @@ def test_system_prompt_reflects_current_dream_memory_contract(tmp_path) -> None:
 
     prompt = builder.build_system_prompt()
 
-    assert "memory/history.jsonl" in prompt
-    assert "automatically managed by Dream" in prompt
-    assert "do not edit directly" in prompt
+    assert "Dream manages `SOUL.md`, `USER.md`, `memory/memory_summary.md`, and `memory/MEMORY.md`" in prompt
+    assert "Use the memory skill for deep history." in prompt
 
 
 def test_provider_context_appended_after_user_content(tmp_path) -> None:
@@ -110,10 +109,9 @@ def test_execution_rules_in_system_prompt(tmp_path) -> None:
     builder = ContextBuilder(workspace)
 
     prompt = builder.build_system_prompt()
-    assert "clear user request" in prompt
-    assert "multi-step tasks" in prompt
-    assert "read-only discovery before writes" in prompt
-    assert "verify the result" in prompt
+    assert "Complete authorized work" in prompt
+    assert "Inspect current state before changing it" in prompt
+    assert "Verify material changes" in prompt
 
 
 def test_execution_rules_reach_existing_workspace_soul(tmp_path) -> None:
@@ -128,7 +126,7 @@ def test_execution_rules_reach_existing_workspace_soul(tmp_path) -> None:
     builder = ContextBuilder(workspace)
 
     prompt = builder.build_system_prompt()
-    current_rule = "Treat a clear user request as authorization"
+    current_rule = "Complete authorized work"
 
     assert legacy_rule not in prompt
     assert current_rule in prompt
@@ -143,10 +141,9 @@ def test_default_soul_template_keeps_execution_policy_in_tool_contract() -> None
     ).read_text(encoding="utf-8")
 
     assert "## Execution Rules" not in soul
-    assert "clear user request" not in soul
-    assert "clear user request" in contract
-    assert "multi-step tasks" in contract
-    assert "irreversible action needs confirmation" in contract
+    assert "Complete authorized work" not in soul
+    assert "Complete authorized work" in contract
+    assert "sandbox limits and approval rules" in contract
 
 
 def test_channel_format_hint_telegram(tmp_path) -> None:
@@ -201,10 +198,8 @@ def test_system_prompt_keeps_message_tool_out_of_current_chat_replies(tmp_path) 
 
     prompt = builder.build_system_prompt(channel="slack")
 
-    assert "Do not use the 'message' tool for normal replies in the current chat" in prompt
-    assert "When 'generate_image' creates images" in prompt
-    assert "call 'message' with the artifact paths in the 'media' parameter" in prompt
-    assert "Wait for the tool results, then answer once" in prompt
+    assert "Reply to the current chat normally. Use `message`" in prompt
+    assert "Give one clear, direct final response after the tool results." in prompt
 
 
 def test_memory_skill_is_lazy_loaded_from_skills_index(tmp_path) -> None:
@@ -215,7 +210,7 @@ def test_memory_skill_is_lazy_loaded_from_skills_index(tmp_path) -> None:
     prompt = builder.build_system_prompt()
 
     assert "### Skill: memory" not in prompt
-    assert "**memory**" in prompt
+    assert "- memory —" in prompt
     assert "Search Past Events" not in prompt
     assert "Examples (replace `keyword`)" not in prompt
 
@@ -232,7 +227,10 @@ def test_fresh_workspace_omits_default_prompt_scaffolding(tmp_path) -> None:
     assert "## USER.md" not in prompt
     assert "8281248569" not in prompt
     assert "(your name)" not in prompt
-    assert prompt.count("Do not use the 'message' tool for normal replies") == 1
+    assert "## TOOLS.md" not in prompt
+    assert "## IDENTITY.md" not in prompt
+    assert prompt.count("Reply to the current chat normally") == 1
+    assert len(prompt) <= 8000
 
 
 def test_template_memory_md_is_skipped(tmp_path) -> None:
@@ -249,7 +247,7 @@ def test_template_memory_md_is_skipped(tmp_path) -> None:
     assert "This file is automatically updated by nanobot" not in prompt
 
 
-def test_customized_memory_md_is_injected(tmp_path, monkeypatch) -> None:
+def test_customized_memory_md_is_injected(tmp_path) -> None:
     """A Dream-populated MEMORY.md should be injected normally."""
     workspace = _make_workspace(tmp_path)
     from kohaku.utils.helpers import sync_workspace_templates
@@ -260,17 +258,8 @@ def test_customized_memory_md_is_injected(tmp_path, monkeypatch) -> None:
     )
 
     builder = ContextBuilder(workspace)
-    read_memory = builder.memory.read_memory
-    calls = 0
 
-    def tracked_read_memory() -> str:
-        nonlocal calls
-        calls += 1
-        return read_memory()
-
-    monkeypatch.setattr(builder.memory, "read_memory", tracked_read_memory)
     prompt = builder.build_system_prompt()
 
     assert "# Memory\n\n## Long-term Memory" in prompt
     assert "User prefers dark mode" in prompt
-    assert calls == 1

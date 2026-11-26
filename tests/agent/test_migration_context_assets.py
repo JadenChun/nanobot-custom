@@ -12,7 +12,7 @@ def test_custom_profile_files_are_loaded_from_agent_workspace(tmp_path):
     (workspace / 'IDENTITY.md').write_text('custom identity')
     (project / 'AGENTS.md').write_text('project instructions')
     (project / 'IDENTITY.md').write_text('other identity')
-    text = ContextBuilder(workspace)._load_bootstrap_files(project)
+    text = ContextBuilder(workspace).compile_system_prompt(workspace=project).session_snapshot_text
     assert 'custom tool guidance' in text
     assert 'custom identity' in text
     assert 'project instructions' in text
@@ -48,7 +48,11 @@ def test_managed_repository_context_and_memory_reach_prompt(tmp_path):
     (repo / 'runs' / 'summaries.md').write_text('repository run summary')
     manager = ContextRepoManager.from_config(context_paths=[repo])
     builder = ContextBuilder(workspace, context_manager=manager)
-    text = builder.build_system_prompt(include_memory=False)
+    text = builder.build_system_prompt(workspace=repo)
     assert 'repository entrypoint' in text
     assert 'repository memory' in text
-    assert 'repository run summary' in text
+    assert 'repository run summary' not in text
+
+    private = builder.build_system_prompt(workspace=repo, include_memory=False)
+    assert 'repository entrypoint' in private
+    assert 'repository memory' not in private

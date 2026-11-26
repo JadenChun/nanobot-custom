@@ -387,7 +387,7 @@ def test_bundled_skills_use_agent_owned_paths(tmp_path: Path) -> None:
     update_setup = loader.load_skill("update-setup")
 
     assert memory is not None
-    assert "<history-log-path>" in memory
+    assert "memory_search" in memory
     assert 'path="memory/history.jsonl"' not in memory
     assert update_setup is not None
     assert "<agent-workspace>/skills/update/SKILL.md" in update_setup

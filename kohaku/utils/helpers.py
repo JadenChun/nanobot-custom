@@ -394,13 +394,15 @@ def timestamp() -> str:
     return datetime.now().isoformat()
 
 
-def current_time_str(timezone: str | None = None) -> str:
-    """Format legacy runtime time, falling back to the local zone on invalid input."""
+def current_time_str(timezone: str | None = None, *, hourly: bool = False) -> str:
+    """Format runtime time, falling back to the local zone on invalid input."""
     try:
         tz = ZoneInfo(timezone) if timezone else None
     except Exception:
         tz = None
     now = datetime.now(tz=tz) if tz else datetime.now().astimezone()
+    if hourly:
+        return now.strftime("%Y-%m-%d %H:00 (%A, %Z)")
     offset = now.strftime("%z")
     offset_fmt = f"{offset[:3]}:{offset[3:]}" if len(offset) == 5 else offset
     tz_name = timezone or (time.strftime("%Z") or "UTC")
@@ -445,7 +447,17 @@ def truncate_text(text: str, max_chars: int) -> str:
     return text[:max_chars] + _TRUNCATED_SUFFIX
 
 
-def truncate_text_to_tokens(text: str, max_tokens: int) -> str:
+def count_text_tokens(text: str) -> int:
+    """Measure text with the workspace tokenizer or a UTF-8 byte bound."""
+    try:
+        return len(_get_token_encoding().encode(text, disallowed_special=()))
+    except Exception:
+        return len(text.encode("utf-8"))
+
+
+def truncate_text_to_tokens(
+    text: str, max_tokens: int, *, suffix: str = _TRUNCATED_SUFFIX,
+) -> str:
     """Truncate text to a token budget with a stable suffix.
 
     Unlike :func:`truncate_text`, this measures actual tokens, so the cap holds
@@ -456,26 +468,26 @@ def truncate_text_to_tokens(text: str, max_tokens: int) -> str:
         return text
     try:
         enc = _get_token_encoding()
-        tokens = enc.encode(text)
+        tokens = enc.encode(text, disallowed_special=())
         if len(tokens) <= max_tokens:
             return text
-        suffix_tokens = enc.encode(_TRUNCATED_SUFFIX)
+        suffix_tokens = enc.encode(suffix, disallowed_special=())
         body_budget = max_tokens - len(suffix_tokens)
         if body_budget <= 0:
             return enc.decode(tokens[:max_tokens])
         for candidate_budget in range(body_budget, -1, -1):
-            result = enc.decode(tokens[:candidate_budget]) + _TRUNCATED_SUFFIX
-            if len(enc.encode(result)) <= max_tokens:
+            result = enc.decode(tokens[:candidate_budget]) + suffix
+            if len(enc.encode(result, disallowed_special=())) <= max_tokens:
                 return result
         return enc.decode(tokens[:max_tokens])
     except Exception:
         if len(text.encode("utf-8")) <= max_tokens:
             return text
-        suffix_bytes = len(_TRUNCATED_SUFFIX.encode("utf-8"))
+        suffix_bytes = len(suffix.encode("utf-8"))
         if max_tokens <= suffix_bytes:
             return _truncate_text_to_utf8_bytes(text, max_tokens)
         body = _truncate_text_to_utf8_bytes(text, max_tokens - suffix_bytes)
-        return body + _TRUNCATED_SUFFIX
+        return body + suffix
 
 
 def _truncate_text_to_utf8_bytes(text: str, max_bytes: int) -> str:
@@ -755,6 +767,21 @@ def build_assistant_message(
     return msg
 
 
+def _thinking_text(value: object) -> list[str]:
+    """Read the text of structured thinking blocks at the message boundary."""
+    if not isinstance(value, list):
+        return []
+    parts: list[str] = []
+    for item in cast(list[object], value):
+        if isinstance(item, dict):
+            block = cast(dict[object, object], item)
+            for key in ("thinking", "text"):
+                text = block.get(key)
+                if isinstance(text, str) and text:
+                    parts.append(text)
+    return parts
+
+
 def _estimate_prompt_tokens_with_source(
     messages: list[dict[str, Any]],
     tools: list[dict[str, Any]] | None = None,
@@ -764,7 +791,7 @@ def _estimate_prompt_tokens_with_source(
     """Estimate prompt tokens and identify the counter used.
 
     Counts all fields that providers send to the LLM: content, tool_calls,
-    reasoning_content, tool_call_id, name, plus per-message framing overhead.
+    reasoning_content, thinking_blocks, tool_call_id, name, and message framing.
     """
     parts: list[str] = []
     media_tokens = 0
@@ -792,6 +819,8 @@ def _estimate_prompt_tokens_with_source(
         if isinstance(rc, str) and rc:
             parts.append(rc)
 
+        parts.extend(_thinking_text(msg.get("thinking_blocks")))
+
         for key in ("name", "tool_call_id"):
             value = msg.get(key)
             if isinstance(value, str) and value:
@@ -810,8 +839,7 @@ def _estimate_prompt_tokens_with_source(
         if encoding_name is None:
             # Preserve the historical logical-pressure estimate for arbitrary
             # models, but label it as a compatibility estimate rather than the
-            # selected model's authoritative tokenizer. Final dispatch limits
-            # retain their stricter UTF-8 byte fallback for unknown names.
+            # selected model's authoritative tokenizer.
             encoding_name = "cl100k_base"
             counter_source = "tiktoken_compatibility"
         enc = _get_token_encoding(encoding_name)
@@ -890,6 +918,7 @@ def estimate_message_tokens(message: dict[str, Any]) -> int:
     if isinstance(rc, str) and rc:
         parts.append(rc)
 
+    parts.extend(_thinking_text(message.get("thinking_blocks")))
     payload = "\n".join(parts)
     if not payload:
         return max(4, media_tokens + 4)

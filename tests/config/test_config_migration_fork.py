@@ -291,14 +291,12 @@ def test_checked_wire_validators_preserve_objects_and_non_string_keys() -> None:
     from kohaku.config.schema import (
         AgentDefaults,
         ChannelsConfig,
-        IdleCompactionConfig,
         ToolsConfig,
     )
 
     marker = object()
     for validator in (
         ChannelsConfig.preserve_fork_activation_defaults,
-        IdleCompactionConfig.reject_alias_duplicates,
         AgentDefaults.reject_idle_compaction_alias_duplicates,
         ToolsConfig._select_image_configuration,
     ):
@@ -315,14 +313,7 @@ def test_checked_wire_validators_preserve_objects_and_non_string_keys() -> None:
     assert "taskUpdateMode" not in ChannelsConfig.preserve_fork_activation_defaults(explicit)
 
     mapping = MappingProxyType({marker: marker})
-    idle = IdleCompactionConfig.reject_alias_duplicates(mapping)
-    assert idle == {marker: marker}
-    assert idle is not mapping
     assert AgentDefaults.reject_idle_compaction_alias_duplicates(mapping) is mapping
-    with pytest.raises(ValueError, match="Specify only one"):
-        IdleCompactionConfig.reject_alias_duplicates(
-            MappingProxyType({"idle_ttl_seconds": 0, "idleTtlSeconds": 0})
-        )
     with pytest.raises(ValueError, match="Specify only one"):
         AgentDefaults.reject_idle_compaction_alias_duplicates(
             MappingProxyType({"idleCompaction": {}, "idle_compaction": {}})

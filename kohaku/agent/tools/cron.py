@@ -109,6 +109,9 @@ _CRON_PARAMETERS = tool_parameters_schema(
 
 @tool_parameters(_CRON_PARAMETERS)
 class CronTool(Tool):
+    exposure = "deferred"
+    namespace = "automation"
+    search_keywords = ("schedule", "reminder", "recurring", "timer", "job")
     """Tool to schedule reminders and recurring tasks."""
 
     def __init__(self, cron_service: CronService, default_timezone: str = "UTC"):

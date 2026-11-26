@@ -158,7 +158,10 @@ async def test_configured_context_repositories_reach_prompt_and_tool_policy(engi
     try:
         deps = loop._fork_dependencies
         assert deps.resource_policy.context_manager.paths == [repo]
-        assert 'shared repository instructions' in loop.context.build_system_prompt(include_memory=False)
+        assert 'shared repository instructions' not in loop.context.build_system_prompt(include_memory=False)
+        assert 'shared repository instructions' in loop.context.build_system_prompt(
+            workspace=repo, include_memory=False,
+        )
         assert loop.tools.get('read_file')._resource_policy is deps.resource_policy
     finally:
         await loop.aclose()

@@ -14,10 +14,6 @@ import typer
 from rich.console import Console
 
 from kohaku import __logo__
-from kohaku.agent.memory_recovery_startup_admission import (
-    admitted_startup_mutation,
-    require_startup_receipt_admission,
-)
 from kohaku.cli.log_control import (
     clear_compatibility_log_file,
     configure_agent_runtime_logs,
@@ -136,7 +132,6 @@ def agent(
         if runtime_config.runtime_data_dir is not None
         else get_default_sessions_root()
     )
-    require_startup_receipt_admission(runtime_config.workspace_path, sessions_root=sessions_root)
     theme = theme.strip().lower()
     if theme not in {"auto", "dark", "light"}:
         raise typer.BadParameter("must be auto, dark, or light", param_hint="--theme")
@@ -201,7 +196,7 @@ def agent(
         # Provider clients themselves are still created by the owned graph below.
         from kohaku.runtime_composition import runtime_preflight
 
-        runtime_preflight(runtime_config, sessions_root=sessions_root, startup_receipt_admitted=True)
+        runtime_preflight(runtime_config, sessions_root=sessions_root)
         validate_provider_setup(runtime_config)
         from kohaku.runtime_composition import RuntimeComposition, RuntimeFactories
 
@@ -224,7 +219,6 @@ def agent(
                 session_manager=sessions,
                 cron_service=cron,
                 turn_delivery_factory=delivery,
-                enable_legacy_auto_compact=False,
             )
             value.bus = bus
             value.sessions = sessions
@@ -241,7 +235,6 @@ def agent(
                 defaults.cron,
                 build_agent,
             ),
-            startup_receipt_admitted=True,
         )
     except ValueError as exc:
         clear_compatibility_log_file()
@@ -251,10 +244,10 @@ def agent(
         clear_compatibility_log_file()
         raise
     def _prepare_acquired_runtime() -> None:
-        with admitted_startup_mutation(
-            runtime_config.workspace_path,
-            sessions_root=sessions_root,
-        ):
+        from kohaku.utils.workspace_lock import open_workspace_memory_lock
+
+        runtime_config.workspace_path.mkdir(parents=True, exist_ok=True)
+        with open_workspace_memory_lock(runtime_config.workspace_path):
             sync_workspace_templates(runtime_config.workspace_path)
             if is_default_workspace(runtime_config.workspace_path):
                 _migrate_cron_store(runtime_config)

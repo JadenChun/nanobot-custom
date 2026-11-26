@@ -96,6 +96,9 @@ def _resolve_npx() -> str | None:
 
 
 class AgentDeviceTool(Tool):
+    exposure = "deferred"
+    namespace = "ui"
+    search_keywords = ("mobile", "android", "emulator", "simulator", "tap")
     """Execute local simulator/emulator automation tasks via agent-device."""
 
     def __init__(

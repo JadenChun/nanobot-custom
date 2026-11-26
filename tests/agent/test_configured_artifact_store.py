@@ -48,6 +48,7 @@ async def test_enabled_config_captures_default_root_and_registers_only_per_invoc
 
 
 async def test_disabled_config_never_constructs_private_artifact_storage(engine_config) -> None:
+    engine_config.artifacts.enabled = False
     data_dir = engine_config.runtime_data_dir
     assert data_dir is not None
     provider = ScriptedProvider([LLMResponse(content="done")])

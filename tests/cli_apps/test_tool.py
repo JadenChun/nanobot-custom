@@ -118,22 +118,29 @@ def test_run_cli_app_rejects_uninstalled_app(tmp_path: Path, monkeypatch) -> Non
     assert "not installed" in result
 
 
-def test_run_cli_app_description_names_only_settings_installed_apps(tmp_path: Path, monkeypatch) -> None:
+def test_run_cli_app_keeps_installed_inventory_in_runtime_context(tmp_path: Path, monkeypatch) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     data_dir = tmp_path / "data"
+    monkeypatch.setattr("kohaku.apps.cli.service.get_runtime_subdir", lambda _name: data_dir)
+    tool = CliAppsTool(workspace=workspace)
+    before = tool.description
     CliAppManager(workspace=workspace, data_dir=data_dir)._save_installed(
         {"drawio": {"entry_point": "cli-anything-drawio"}}
     )
-    monkeypatch.setattr("kohaku.apps.cli.service.get_runtime_subdir", lambda _name: data_dir)
 
-    tool = CliAppsTool(workspace=workspace)
-
-    assert "Settings CLI Apps: drawio" in tool.description
+    assert before == tool.description
     assert "ordinary system CLIs such as git, gh" in tool.description
+    provider = tool.runtime_context_provider()
+    blocks = asyncio.run(provider(RequestContext(
+        channel="cli", chat_id="chat", original_user_text="hello", workspace=workspace,
+    )))
+    assert blocks and blocks[0].source == "cli_apps_index"
+    assert "Installed CLI Apps: drawio" in blocks[0].content
 
 
-def test_cli_app_tool_provides_context_only_for_attachment(tmp_path: Path) -> None:
+def test_cli_app_tool_provides_attachment_context(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr("kohaku.apps.cli.service.get_runtime_subdir", lambda _name: tmp_path)
     tool = CliAppsTool(workspace=tmp_path)
     provider = tool.runtime_context_provider()
     assert provider is not None
@@ -158,6 +165,6 @@ def test_cli_app_tool_provides_context_only_for_attachment(tmp_path: Path) -> No
     )))
 
     assert empty is None
-    assert attached is not None
-    assert attached.source == "cli_apps"
-    assert "CLI App Attachment: @drawio" in attached.content
+    assert attached and len(attached) == 1
+    assert attached[0].source == "cli_apps"
+    assert "CLI App Attachment: @drawio" in attached[0].content

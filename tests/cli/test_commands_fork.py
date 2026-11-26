@@ -367,34 +367,6 @@ def test_artifacts_path_stops_before_config_when_migration_is_incomplete(tmp_pat
     assert not (tmp_path / "workspace").exists()
 
 
-def test_artifacts_clean_receipt_denial_keeps_workspace_files(tmp_path, monkeypatch):
-    from kohaku.agent.memory_recovery_startup_admission import StartupReceiptAdmissionError
-
-    runtime_config = Config()
-    runtime_config.agents.defaults.workspace = str(tmp_path / "workspace")
-    artifacts_root = runtime_config.workspace_path / "artifacts" / "browser-tests"
-    artifacts_root.mkdir(parents=True)
-    saved = artifacts_root / "notes.md"
-    saved.write_text("keep", encoding="utf-8")
-
-    def deny(_workspace, *, sessions_root):
-        raise StartupReceiptAdmissionError()
-
-    monkeypatch.setattr("kohaku.migration_guard.require_runtime_ready", lambda: None)
-    monkeypatch.setattr("kohaku.cli.process_identity._set_process_title", lambda _title: None)
-    monkeypatch.setattr("kohaku.cli.commands._load_runtime_config", lambda *_: runtime_config)
-    monkeypatch.setattr(
-        "kohaku.agent.memory_recovery_startup_admission.require_startup_receipt_admission",
-        deny,
-    )
-
-    result = runner.invoke(app, ["artifacts", "clean", "--yes"])
-
-    assert result.exit_code == 1
-    assert "memory recovery required" in result.stdout
-    assert saved.read_text(encoding="utf-8") == "keep"
-
-
 def test_make_provider_wraps_cli_fallback_chain_for_same_provider_models():
     config = Config()
     config.agents.defaults.model = "gemini-3-flash-preview"
@@ -920,7 +892,7 @@ async def test_cron_execution_uses_fresh_detail_and_links_exact_visible_pair(
             inputs.config, inputs.bus, provider=provider, model="synthetic-model",
             context_window_tokens=200_000, session_manager=inputs.sessions,
             tool_registry=inputs.tools, cron_service=inputs.cron,
-            turn_delivery_factory=inputs.delivery, enable_legacy_auto_compact=False,
+            turn_delivery_factory=inputs.delivery,
         )
 
     agent = await admitted_async(tmp_path, build, keys=(detail_key, "telegram:primary"))

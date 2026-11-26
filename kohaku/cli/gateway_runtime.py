@@ -17,10 +17,6 @@ from rich.console import Console
 
 from kohaku import __logo__, __version__
 from kohaku.agent.hook import AgentHook, AgentRunHookContext
-from kohaku.agent.memory_recovery_startup_admission import (
-    admitted_startup_mutation,
-    require_startup_receipt_admission,
-)
 from kohaku.agent.tools.mcp import MCPProvider
 from kohaku.cli.runtime_config import _migrate_cron_store
 from kohaku.cli.webui_support import (
@@ -357,7 +353,6 @@ def _run_gateway(
         if config.runtime_data_dir is not None
         else get_default_sessions_root()
     )
-    require_startup_receipt_admission(config.workspace_path, sessions_root=sessions_root)
     port = port if port is not None else config.gateway.port
 
     from kohaku.agent.hooks import create_file_edit_activity_hook
@@ -486,7 +481,6 @@ def _run_gateway(
             image_generation_provider_configs=image_gen_provider_configs(config),
             provider_snapshot_loader=load_gateway_provider_snapshot,
             preset_catalog_loader=load_model_preset_catalog,
-            enable_legacy_auto_compact=False,
             hooks=[_MCPReadinessHook(mcp)],
             hook_factories=[create_file_edit_activity_hook],
             recovery_admission=recovery,
@@ -511,12 +505,18 @@ def _run_gateway(
             route_policy=WebuiTurnRoutePolicy,
         ),
         channel_options=ChannelBuildOptions(factory=build_channels),
-        startup_receipt_admitted=True,
     )
 
     async def run() -> bool:
         handle = await composition.acquire()
         agent = handle.agent
+        idle_compaction = config.agents.defaults.idle_compaction
+        if idle_compaction.enabled:
+            from kohaku.context.compaction import run_idle_compaction
+
+            agent.schedule_background(run_idle_compaction(
+                agent.sessions, idle_compaction, agent.compact_idle_source,
+            ))
         channels = handle.channels
         assert channels is not None
         tasks: list[asyncio.Task[Any]] = []
@@ -591,7 +591,10 @@ def _run_gateway(
             instance = gateway_instance or GatewayInstance.resolve(config_path=config_path)
             gateway_runtime = GatewayRuntime(paths=instance.paths)
             if not desktop_managed:
-                with admitted_startup_mutation(config.workspace_path, sessions_root=sessions_root):
+                from kohaku.utils.workspace_lock import open_workspace_memory_lock
+
+                config.workspace_path.mkdir(parents=True, exist_ok=True)
+                with open_workspace_memory_lock(config.workspace_path):
                     sync_workspace_templates(config.workspace_path)
                     if is_default_workspace(config.workspace_path):
                         _migrate_cron_store(config)

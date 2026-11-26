@@ -20,7 +20,9 @@ _FILE_MAX_BYTES = 64 * 1024 * 1024
 _DIGEST_RE = re.compile(r"[0-9a-f]{64}\Z")
 _OBJECT_ID_RE = re.compile(r"[0-9a-f]{40}\Z")
 _OPERATION_ID_RE = re.compile(r"[0-9a-f]{32}\Z")
-_FIXED_PATHS = frozenset(("SOUL.md", "USER.md", "memory/MEMORY.md", "memory/.dream_cursor"))
+_FIXED_PATHS = frozenset((
+    "SOUL.md", "USER.md", "memory/MEMORY.md", "memory/memory_summary.md", "memory/.dream_cursor",
+))
 _MISSING = object()
 
 
@@ -100,15 +102,12 @@ def workspace_identity(workspace: Path) -> tuple[str, int, int]:
 def dream_workspace_lock(workspace: Path) -> Generator[None, None, None]:
     """Take the existing durable workspace-memory lock for one short transition."""
 
-    from kohaku.agent.memory_recovery_storage import (
-        MemoryStorageError,
-        open_workspace_memory_lock,
-    )
+    from kohaku.utils.workspace_lock import WorkspaceLockError, open_workspace_memory_lock
 
     try:
         with open_workspace_memory_lock(workspace):
             yield
-    except MemoryStorageError as exc:
+    except WorkspaceLockError as exc:
         raise DreamOperationStorageError("Dream workspace ownership is unavailable") from exc
 
 

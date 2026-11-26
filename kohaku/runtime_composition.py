@@ -71,7 +71,6 @@ class RuntimePreflight:
     sessions_root: Path
     sessions_root_exists: bool
     legacy_idle_ttl_minutes: int
-    idle_runtime_enabled: bool
     heartbeat_configured_enabled: bool
     dream_configured_enabled: bool
     session_modes: SessionModePreflight
@@ -184,9 +183,7 @@ def runtime_preflight(
     config: Config,
     *,
     sessions_root: Path | None = None,
-    startup_receipt_admitted: bool = False,
 ) -> RuntimePreflight:
-    from kohaku.agent.memory_recovery_startup_admission import require_startup_receipt_admission
     from kohaku.config.paths import get_default_sessions_root
 
     workspace = config.workspace_path.expanduser().resolve(strict=False)
@@ -196,22 +193,16 @@ def runtime_preflight(
         or get_default_sessions_root()
     ).expanduser().resolve(strict=False)
     ttl = config.agents.defaults.session_ttl_minutes
-    idle_enabled = config.agents.defaults.idle_compaction.enabled
     if ttl:
         raise RuntimePreflightError(
             "legacy idleCompactAfterMinutes/sessionTtlMinutes must be disabled before Stage 1 runtime construction"
         )
-    if idle_enabled:
-        raise RuntimePreflightError("idle compaction runtime is not activated in P5 Stage 1")
-    if not startup_receipt_admitted:
-        require_startup_receipt_admission(workspace, sessions_root=root)
     modes = inspect_session_modes(workspace, root)
     return RuntimePreflight(
         workspace=workspace,
         sessions_root=root,
         sessions_root_exists=root.exists(),
         legacy_idle_ttl_minutes=ttl,
-        idle_runtime_enabled=idle_enabled,
         heartbeat_configured_enabled=config.gateway.heartbeat.enabled,
         dream_configured_enabled=config.agents.defaults.dream.enabled,
         session_modes=modes,
@@ -294,7 +285,6 @@ class RuntimeFactories:
                 session_manager=sessions,
                 cron_service=cron,
                 turn_delivery_factory=delivery,
-                enable_legacy_auto_compact=False,
                 image_generation_provider_configs=image_gen_provider_configs(config),
                 hook_factories=[create_file_edit_activity_hook],
             )
@@ -401,14 +391,12 @@ class RuntimeComposition:
         session_authority: SessionAuthority | None = None,
         factories: RuntimeFactories | None = None,
         channel_options: ChannelBuildOptions | None = None,
-        startup_receipt_admitted: bool = False,
         cron_injection: CronRuntimeInjection | None = None,
     ) -> RuntimeComposition:
         """Perform read-only preflight and retain definitions only."""
         report = runtime_preflight(
             config,
             sessions_root=sessions_root,
-            startup_receipt_admitted=startup_receipt_admitted,
         )
         return cls(
             config=config,

@@ -69,7 +69,7 @@ async def test_a3_child_references_e2e(tmp_path, monkeypatch, unused_tcp_port):
     monkeypatch.setattr("kohaku.providers.factory.make_provider", lambda _config: DelegatingProvider())
 
     composition = RuntimeComposition.define(
-        config, sessions_root=runtime_dir / "sessions", startup_receipt_admitted=True,
+        config, sessions_root=runtime_dir / "sessions",
     )
     handle = await composition.acquire()
     ws_config = WebSocketConfig(enabled=True, allow_from=["*"], port=unused_tcp_port)

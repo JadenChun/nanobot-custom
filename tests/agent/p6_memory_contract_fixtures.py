@@ -6,7 +6,6 @@ transport; all durable files live under the caller's isolated test directory.
 
 from __future__ import annotations
 
-import hashlib
 import json
 from collections import deque
 from copy import deepcopy
@@ -112,60 +111,6 @@ async def prepare_source(state):
         state, state.source.transcript.messages(), source_view=state.source.transcript,
         transcript=state.source_compaction.raw_messages, tool_definitions=None,
     )
-
-
-def receipt_layout(root: Path, *, cursor=0, start=0, end=2, base=b"base memory\n",
-                   output="# Recovered\n", marker="receipt-marker"):
-    """Real authenticated layout; chunk digest is the exact legacy receipt digest."""
-    root.mkdir(parents=True, exist_ok=True)
-    workspace, sessions = root / "workspace", root / "sessions"
-    workspace.mkdir(mode=0o700)
-    sessions.mkdir(mode=0o700)
-    state = workspace / ".nanobot"
-    state.mkdir(mode=0o700)
-    workspace_id = "a" * 32
-    identity = state / "workspace-id"
-    identity.write_text(workspace_id + "\n")
-    identity.chmod(0o600)
-    namespace = sessions / workspace_id
-    namespace.mkdir(mode=0o700)
-    binding = namespace / ".workspace"
-    binding.write_text(str(workspace.resolve()) + "\n")
-    binding.chmod(0o600)
-    key = "cli:receipt"
-    events = [
-        {"role": "user", "content": "one", "_event_id": "event-one"},
-        {"role": "assistant", "content": "two", "_event_id": "event-two"},
-        {"role": "user", "content": "three", "_event_id": "event-three"},
-    ]
-    header = {
-        "_type": "metadata", "key": key, "created_at": "2026-09-25T00:00:00",
-        "updated_at": "2026-09-25T00:01:00", "revision": 7, "generation": 3,
-        "incarnation": "receipt-incarnation", "last_archived": cursor,
-        "last_consolidated": cursor, "metadata": {"source_schema_version": 1},
-    }
-    source = namespace / f"{JsonlSessionStore.storage_key(key)}.jsonl"
-    source.write_bytes(b"".join((json.dumps(row) + "\n").encode() for row in [header, *events]))
-    source.chmod(0o600)
-    memory = workspace / "memory"
-    memory.mkdir(mode=0o700)
-    (memory / "HISTORY.md").write_bytes(b"[2026-09-24 12:00] Prior note.\n\n")
-    (memory / "MEMORY.md").write_bytes(base)
-    chunk = json.dumps(events[start:end], ensure_ascii=False, sort_keys=True,
-                       separators=(",", ":"), default=str).encode()
-    receipt = {
-        "version": 1, "chunk_digest": hashlib.sha256(chunk).hexdigest(),
-        "history_marker_id": marker, "history_entry": "[2026-01-01] recovered summary",
-        "memory_output": output, "base_memory_digest": hashlib.sha256(base).hexdigest(),
-        "output_memory_digest": hashlib.sha256(output.encode()).hexdigest(),
-        "reference_only": False, "created_at": "2026-09-25T12:00:00Z",
-        "session_key": key, "start_offset": start, "end_offset": end, "session_generation": 3,
-        "metadata_sentinel": {"unknown": ["preserve", {"exact": True}]},
-    }
-    pending = memory / ".consolidation.pending.json"
-    pending.write_bytes(json.dumps(receipt, sort_keys=True).encode())
-    pending.chmod(0o600)
-    return workspace, sessions, source, pending
 
 
 def provider_limits(total):

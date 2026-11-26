@@ -849,6 +849,9 @@ def format_session_poll(session_id: str, poll: _SessionPoll) -> str:
     )
 )
 class ExecSessionTool(Tool):
+    exposure = "deferred"
+    namespace = "processes"
+    search_keywords = ("background process", "interactive", "poll output", "stdin", "tty", "session")
     """Interact with or wait for a running exec session."""
 
     _scopes = {"core", "subagent"}
@@ -1010,6 +1013,9 @@ class ExecSessionTool(Tool):
 
 @tool_parameters(tool_parameters_schema())
 class ListExecSessionsTool(Tool):
+    exposure = "deferred"
+    namespace = "processes"
+    search_keywords = ("list processes", "background jobs")
     """List active exec sessions."""
 
     _scopes = {"core", "subagent"}

@@ -145,6 +145,10 @@ class FallbackProvider(LLMProvider):
         self._primary_tripped_at: float | None = None
 
     @property
+    def anchor_provider(self) -> LLMProvider:
+        return self._primary
+
+    @property
     def generation(self) -> GenerationSettings:
         return self._primary.generation
 
@@ -220,9 +224,11 @@ class FallbackProvider(LLMProvider):
                     transport_receipt=None,
                     continuation_metadata_present=False,
                 )
-        if not states and response.local_usage_receipt is None:
-            return response
-        return replace(response, **states, local_usage_receipt=None)
+        if response.local_usage_receipt is not None and (
+            response.usage is None or response.finish_reason == "error"
+        ):
+            response = replace(response, local_usage_receipt=None)
+        return replace(response, **states) if states else response
 
     def _primary_call_context(
         self,
@@ -244,7 +250,6 @@ class FallbackProvider(LLMProvider):
             conversation_state=provider_context.conversation_state,
             request_limits=request_limits,
             context_window_tokens=context_window_tokens,
-            local_usage_anchor=None,
         )
 
     def _primary_available(self) -> bool:
@@ -293,7 +298,6 @@ class FallbackProvider(LLMProvider):
             conversation_state=state,
             request_limits=request_limits,
             context_window_tokens=context_window_tokens,
-            local_usage_anchor=None,
         )
 
     @staticmethod

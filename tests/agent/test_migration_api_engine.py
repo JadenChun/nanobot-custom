@@ -77,7 +77,8 @@ class _BlockingProvider(ScriptedProvider):
             for message in reversed(messages)
             if message.get("role") == "user"
         )
-        name = next(name for name in self.started if content.rstrip().endswith(name))
+        name = content.partition("\n\n")[0]
+        assert name in self.started
         self.calls.append(name)
         self.started[name].set()
         await self.release[name].wait()
@@ -190,6 +191,7 @@ class _ActiveProviderCall(ScriptedProvider):
             for message in reversed(messages)
             if message.get("role") == "user"
         )
+        content = content.partition("\n\n")[0]
         self.calls.append(content)
         if content == "provider timeout":
             self.started.set()
@@ -263,6 +265,7 @@ class _ActiveToolProvider(ScriptedProvider):
             for message in reversed(messages)
             if message.get("role") == "user"
         )
+        content = content.partition("\n\n")[0]
         self.calls.append(content)
         if content == "tool timeout":
             return LLMResponse(content=None, tool_calls=[ToolCallRequest(

@@ -7,9 +7,11 @@ for older sessions. Callers use ``goal_state_runtime_lines``, ``goal_state_ws_bl
 
 from __future__ import annotations
 
+import hashlib
 import json
 from typing import Any, Mapping, MutableMapping, cast
 
+from kohaku.runtime_context import runtime_metadata_value
 from kohaku.session.manager import SessionManager
 
 GOAL_STATE_KEY = "goal_state"
@@ -93,6 +95,28 @@ def goal_state_runtime_lines(metadata: Mapping[str, Any] | None) -> list[str]:
     if hint:
         out.append(f"Summary: {hint}")
     return out
+
+
+def active_goal_runtime_lines(metadata: Mapping[str, Any] | None) -> list[str]:
+    """Return the bounded pointer carried by an active goal's current turn."""
+    goal = parse_goal_state(_session_goal_raw(metadata))
+    if goal is None or goal.get("status") != "active":
+        return []
+
+    def line(value: object, limit: int) -> str:
+        encoded = runtime_metadata_value(" ".join(str(value or "").split()))
+        return encoded if len(encoded) <= limit else encoded[:limit - 1].rstrip() + "…"
+
+    started = str(goal.get("started_at") or goal.get("objective") or "")
+    identity = goal.get("id") or hashlib.sha256(started.encode("utf-8")).hexdigest()[:12]
+    objective = line(goal.get("objective"), 500) or "(unavailable)"
+    step = line(goal.get("current_step") or goal.get("ui_summary"), 120)
+    return [
+        "Active Goal",
+        f"Goal ID: {line(identity, 80)}",
+        f"Objective: {objective}",
+        f"Current step: {step or 'Continue from the saved context.'}",
+    ]
 
 
 def goal_state_ws_blob(metadata: Mapping[str, Any] | None) -> dict[str, Any]:

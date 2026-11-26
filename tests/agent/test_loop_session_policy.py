@@ -43,7 +43,7 @@ async def _loop(tmp_path, admitted_async, responses: list[str], **kwargs) -> Age
             bus=inputs.bus, provider=provider, workspace=inputs.config.workspace_path,
             model="test-model", session_manager=inputs.sessions,
             tool_registry=inputs.tools, cron_service=inputs.cron,
-            turn_delivery_factory=inputs.delivery, enable_legacy_auto_compact=False,
+            turn_delivery_factory=inputs.delivery,
             **kwargs,
         )
 
@@ -70,8 +70,10 @@ async def test_transient_session_keeps_history_without_persisting_or_durable_too
     assert "private durable memory" not in str(calls[0].kwargs["messages"])
     tool_names = {item["function"]["name"] for item in calls[0].kwargs["tools"]}
     assert "read_file" in tool_names
-    assert {"list_sessions", "search_sessions", "read_session"} <= tool_names
+    # Session tools stay discoverable through tool_search but are deferred out
+    # of the turn-1 schema. Disabled durable tools stay in no schema at all.
     assert {"create_goal", "update_goal", "spawn", "cron"}.isdisjoint(tool_names)
+    assert "tool_search" in tool_names
     assert "first answer" in str(calls[1].kwargs["messages"])
     session = loop.sessions.get_cached(key)
     assert session is not None

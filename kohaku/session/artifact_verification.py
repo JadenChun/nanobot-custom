@@ -1,10 +1,8 @@
 """Shared, owner-independent verification of already published artifacts.
 
-This module only verifies an artifact descriptor, its canonical source receipt,
-current filesystem policy, and its durable private blob.  It does not grant a
-caller a reader or a tool.  Invocation readers retain their own execution-owner
-and stream checks before calling this helper; dormant idle publication uses a
-sealed allowlist in :mod:`kohaku.session.idle_checkpoint`.
+Verify an artifact descriptor, its canonical source evidence and its private
+blob. For file artifacts, revalidate the current filesystem policy. Invocation
+readers apply their execution-owner and stream checks before calling this helper.
 """
 
 from __future__ import annotations
@@ -16,6 +14,7 @@ from kohaku.agent.tools.read_provenance import FilesystemReadReceipt, revalidate
 from kohaku.session.artifact import (
     ArtifactDescriptor,
     ArtifactValidationError,
+    ToolOutputArtifactOrigin,
     attested_artifact_origin,
     parse_artifact_descriptor,
     published_artifacts,
@@ -37,7 +36,7 @@ def verify_published_artifact(
     policy: ResourceAccessPolicy | None,
     resolve_read: Callable[[str], Path],
     root_history: bool = False,
-) -> FilesystemReadReceipt:
+) -> FilesystemReadReceipt | ToolOutputArtifactOrigin:
     """Verify one currently published descriptor under a held blob transaction.
 
     The helper deliberately has no execution-owner parameter and performs no
@@ -75,12 +74,13 @@ def verify_published_artifact(
     receipt = attested_artifact_origin(
         descriptor, snapshot, workspace_id=store.workspace_id
     )
-    revalidate_read_receipt(
-        receipt,
-        workspace=workspace,
-        policy=policy,
-        resolve_read=resolve_read,
-    )
+    if isinstance(receipt, FilesystemReadReceipt):
+        revalidate_read_receipt(
+            receipt,
+            workspace=workspace,
+            policy=policy,
+            resolve_read=resolve_read,
+        )
     if descriptor not in published_artifacts(snapshot, workspace_id=store.workspace_id):
         raise ArtifactValidationError("Artifact is not published")
     blobs.verify_durable(descriptor, store=store)

@@ -45,7 +45,6 @@ async def _make_loop(tmp_path, admitted_async, *, keys=(), max_iterations=None):
             session_manager=inputs.sessions, tool_registry=inputs.tools,
             cron_service=inputs.cron, turn_delivery_factory=inputs.delivery,
             tools_config=inputs.config.tools, restrict_to_workspace=True,
-            session_ttl_minutes=0,
         )
 
     loop = await admitted_async(tmp_path, build, keys=keys)

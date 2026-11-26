@@ -42,7 +42,6 @@ class ClassicCliRuntime:
             session_authority: SessionAuthority | None = None,
             factories: RuntimeFactories | None = None,
             channel_options: ChannelBuildOptions | None = None,
-            startup_receipt_admitted: bool = False,
             cron_injection: CronRuntimeInjection | None = None,
         ) -> RuntimeComposition:
             workspace = config.workspace_path
@@ -62,7 +61,7 @@ class ClassicCliRuntime:
             value = original_define(
                 cls, config, sessions_root=sessions_root, session_authority=session_authority,
                 factories=factories, channel_options=channel_options,
-                startup_receipt_admitted=startup_receipt_admitted, cron_injection=cron_injection,
+                cron_injection=cron_injection,
             )
             self.compositions.append(value)
             return value

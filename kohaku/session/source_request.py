@@ -68,18 +68,27 @@ class SourceRequestLedger:
             if isinstance(node, SourceNode):
                 if not node.event_id or node.event_id in source_ids:
                     raise SourceValidationError('Duplicate or missing source request identity')
-                if node.artifact is not None:
+                if type(node.block_artifacts) is not tuple:
+                    raise SourceValidationError('Invalid source artifact block references')
+                if node.artifact is not None and node.block_artifacts:
+                    raise SourceValidationError('Artifact projection combines scalar and block references')
+                selectors: set[int | None] = set()
+                for binding in node.artifact_bindings:
                     from kohaku.session.artifact import parse_artifact_reference
 
-                    binding = node.artifact
                     if (type(binding) is not ArtifactProjectionBinding or binding.event_id != node.event_id
                             or not isinstance(cast(object, binding.artifact_id), str)
                             or not isinstance(cast(object, binding.execution_id), str) or not binding.execution_id
-                            or binding.block_index is not None or not isinstance(cast(object, binding.content_sha256), str)
+                            or (binding.block_index is None) != (node.artifact is binding)
+                            or (binding.block_index is not None and
+                                (type(binding.block_index) is not int or binding.block_index < 0))
+                            or binding.block_index in selectors
+                            or not isinstance(cast(object, binding.content_sha256), str)
                             or len(binding.content_sha256) != 64
                             or any(c not in '0123456789abcdef' for c in binding.content_sha256)):
                         raise SourceValidationError('Invalid source artifact projection binding')
                     parse_artifact_reference('artifact:' + binding.artifact_id)
+                    selectors.add(binding.block_index)
                 source_ids.add(node.event_id)
             elif isinstance(node, RuntimeNode):
                 if not node.node_id or node.node_id in runtime_ids:

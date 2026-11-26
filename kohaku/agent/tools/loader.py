@@ -224,7 +224,7 @@ class ToolLoader:
                 if not isinstance(schema_value, dict):
                     raise ValueError
                 schema = cast(dict[str, Any], schema_value)
-                if ToolRegistry._schema_name(  # pyright: ignore[reportPrivateUsage]
+                if ToolRegistry.schema_name(
                     schema
                 ) != tool_name:
                     raise ValueError
@@ -333,7 +333,7 @@ class _LegacyErrorPrefixTool(Tool):
             if not isinstance(schema_value, dict):
                 raise ValueError
             schema = cast(dict[str, Any], schema_value)
-            valid = ToolRegistry._schema_name(  # pyright: ignore[reportPrivateUsage]
+            valid = ToolRegistry.schema_name(
                 schema
             ) == self._name
         except Exception:

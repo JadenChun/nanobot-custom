@@ -31,6 +31,7 @@ admitted_async = p6_admitted_fixtures.admitted_async
 async def test_canonical_pressure_threshold_preserves_source_and_current_input(store, offset):
     async with acquire_execution(store, "test:compact", run_id="run") as owner:
         state = pressure_state(SourceTurnWriter(store.source, owner, run_id="run"))
+        state.source_compaction.target_ratio = 0.6
         budget = ContextGovernor.input_budget(state.config)
         trigger = int(budget * state.source_compaction.pressure_trigger_ratio)
 
@@ -55,6 +56,7 @@ async def test_canonical_pressure_threshold_preserves_source_and_current_input(s
 async def test_pressure_below_summary_reserve_does_not_compact(store):
     async with acquire_execution(store, "test:compact", run_id="run") as owner:
         state = pressure_state(SourceTurnWriter(store.source, owner, run_id="run"))
+        state.source_compaction.target_ratio = 0.6
         budget = ContextGovernor.input_budget(state.config)
         reserve = ContextGovernor._summary_reserve(
             state.config, state.source_compaction, budget,
@@ -123,6 +125,7 @@ async def test_pressure_continues_below_trigger_but_stops_at_sixty_percent(
 ):
     async with acquire_execution(store, "test:compact", run_id="run") as owner:
         state = pressure_state(SourceTurnWriter(store.source, owner, run_id="run"))
+        state.source_compaction.target_ratio = 0.6
         budget = ContextGovernor.input_budget(state.config)
 
         def count(messages, tools, model):
@@ -152,6 +155,7 @@ async def test_pressure_continues_below_trigger_but_stops_at_sixty_percent(
 async def test_failed_pressure_does_not_publish_or_retry_in_background(store, failure):
     async with acquire_execution(store, "test:compact", run_id="run") as owner:
         state = pressure_state(SourceTurnWriter(store.source, owner, run_id="run"))
+        state.source_compaction.target_ratio = 0.6
         state.config.provider.response = (
             LLMResponse(content="") if failure == "empty" else asyncio.CancelledError()
         )
@@ -197,7 +201,7 @@ async def test_foreground_loop_compacts_before_main_call_without_background_arch
             return LLMResponse(content="Retained objective and evidence.")
         order.append("main")
         assert "Retained objective and evidence." in str(kwargs["messages"])
-        assert kwargs["messages"][-1]["content"] == "new correction"
+        assert kwargs["messages"][-1]["content"].partition("\n\n")[0] == "new correction"
         return LLMResponse(content="done")
 
     loop.provider.estimate_prompt_tokens.side_effect = count
@@ -206,7 +210,6 @@ async def test_foreground_loop_compacts_before_main_call_without_background_arch
     result = await loop.process_direct("new correction", session_key="cli:test")
     assert result.content == "done"
     assert order == ["summary", "main"]
-    assert loop.auto_compact is None
     loop.consolidator.compact_idle_session.assert_not_awaited()
     assert not loop._background_tasks
     saved = loop.sessions.get_or_create("cli:test")

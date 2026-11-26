@@ -73,24 +73,6 @@ def test_legacy_capacity_precedence_is_preserved():
     assert partial.agents.defaults.context_window_tokens == 24000
 
 
-def test_runtime_blocked_before_workspace_creation(tmp_path):
-    from kohaku.agent.loop import AgentLoop
-    from kohaku.agent.memory_recovery_startup_admission import StartupReceiptAdmissionError
-
-    workspace = tmp_path / 'workspace'
-    pending = workspace / 'memory' / '.consolidation.pending.json'
-    pending.parent.mkdir(parents=True)
-    pending.write_text('{broken', encoding='utf-8')
-    before = {path.relative_to(tmp_path): path.read_bytes()
-              for path in tmp_path.rglob('*') if path.is_file()}
-    with pytest.raises(StartupReceiptAdmissionError):
-        AgentLoop(bus=object(), provider=object(), workspace=workspace,
-                  sessions_root=tmp_path / 'sessions')
-    after = {path.relative_to(tmp_path): path.read_bytes()
-             for path in tmp_path.rglob('*') if path.is_file()}
-    assert after == before
-
-
 def test_loader_blocks_before_discovery(monkeypatch):
     from kohaku.agent.tools.loader import ToolLoader
     from kohaku.agent.tools.registry import ToolRegistry
