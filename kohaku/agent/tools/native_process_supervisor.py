@@ -1,4 +1,10 @@
-"""Linux subreaper that proves an unrestricted command tree is quiescent."""
+"""Supervisor that proves a command tree is quiescent.
+
+The I/O relay, launch gate, status protocol and receipt publication are shared.
+How a tree is launched, killed and proven comes from a SupervisorBackend. This
+module runs the Linux subreaper backend; native_process_supervisor_darwin reuses
+the relay with its Seatbelt backend.
+"""
 
 from __future__ import annotations
 
@@ -12,9 +18,10 @@ import subprocess
 import sys
 import threading
 import time
+from collections.abc import Callable
 from contextlib import suppress
 from pathlib import Path
-from typing import TypedDict, cast
+from typing import Protocol, TypedDict, cast
 
 from kohaku.security.native_admission import (
     QuiescenceReceipt,
@@ -38,6 +45,34 @@ class NativeLaunchConfig(TypedDict):
     login: bool
     launch_id: str
     receipt_dir: str
+
+
+class SupervisorBackend(Protocol):
+    """The platform half of one supervised launch."""
+
+    def prepare(self, payload: NativeLaunchConfig) -> None:
+        """Acquire ownership before the supervisor reports ready."""
+        ...
+
+    def spawn_root(self, payload: NativeLaunchConfig) -> subprocess.Popen[bytes]: ...
+
+    def filter_output(self, name: str, chunk: bytes) -> bytes:
+        """Observe, and optionally annotate, relayed command output."""
+        ...
+
+    def request_kill(self, child: subprocess.Popen[bytes]) -> None:
+        """React once to each kill request."""
+        ...
+
+    def kill_step(self, child: subprocess.Popen[bytes], *, root_reported: bool) -> None:
+        """Called every relay iteration after a kill request; may raise to give up."""
+        ...
+
+    def tree_quiescent(self, child: subprocess.Popen[bytes]) -> bool:
+        """True only once no descendant of this launch can still be running."""
+        ...
+
+    def close(self) -> None: ...
 
 
 def _send(status_fd: int, payload: dict[str, object]) -> None:
@@ -114,15 +149,20 @@ def _subreaper() -> None:
         raise OSError(code, os.strerror(code))
 
 
-def _spawn_root(payload: NativeLaunchConfig) -> subprocess.Popen[bytes]:
+def shell_argv(payload: NativeLaunchConfig) -> list[str]:
     shell = payload["shell_program"]
     command = payload["command"]
     args = [shell]
     if payload["login"] and Path(shell).name.lower() in {"bash", "zsh"}:
         args.append("-l")
     args.extend(("-c", command))
-    cwd = payload["cwd"]
-    env = payload["env"]
+    return args
+
+
+def spawn_command_root(
+    args: list[str], *, cwd: str, env: dict[str, str],
+) -> subprocess.Popen[bytes]:
+    """Start the command root in its own session with relayed streams."""
     return subprocess.Popen(
         args,
         stdin=subprocess.PIPE,
@@ -136,8 +176,40 @@ def _spawn_root(payload: NativeLaunchConfig) -> subprocess.Popen[bytes]:
     )
 
 
+def _spawn_root(payload: NativeLaunchConfig) -> subprocess.Popen[bytes]:
+    return spawn_command_root(shell_argv(payload), cwd=payload["cwd"], env=payload["env"])
+
+
+class _SubreaperBackend:
+    """Linux: adopt every orphan, so ECHILD proves the whole tree has exited."""
+
+    def prepare(self, payload: NativeLaunchConfig) -> None:
+        _subreaper()
+
+    def spawn_root(self, payload: NativeLaunchConfig) -> subprocess.Popen[bytes]:
+        return _spawn_root(payload)
+
+    def filter_output(self, name: str, chunk: bytes) -> bytes:
+        return chunk
+
+    def request_kill(self, child: subprocess.Popen[bytes]) -> None:
+        with suppress(OSError):
+            os.killpg(child.pid, signal.SIGKILL)
+
+    def kill_step(self, child: subprocess.Popen[bytes], *, root_reported: bool) -> None:
+        if root_reported:
+            _kill_adopted_children(child.pid)
+
+    def tree_quiescent(self, child: subprocess.Popen[bytes]) -> bool:
+        return _wait_for_all_children(child.pid)
+
+    def close(self) -> None:
+        pass
+
+
 def _supervise(
     payload: NativeLaunchConfig,
+    backend: SupervisorBackend,
     *,
     gate_fd: int,
     status_fd: int,
@@ -158,7 +230,7 @@ def _supervise(
     receipt_published = False
 
     try:
-        _subreaper()
+        backend.prepare(payload)
         _send(status_fd, {"type": "ready"})
         gate = bytearray()
         while not gate.endswith(b"\n"):
@@ -173,7 +245,7 @@ def _supervise(
         os.close(gate_fd)
         gate_fd = -1
 
-        child = _spawn_root(payload)
+        child = backend.spawn_root(payload)
         stdin_stream = child.stdin
         stdout_stream = child.stdout
         stderr_stream = child.stderr
@@ -270,8 +342,7 @@ def _supervise(
                                     ("child_output", output_name),
                                 )
                                 output_read_registered.add(output_name)
-                        with suppress(OSError):
-                            os.killpg(child.pid, signal.SIGKILL)
+                        backend.request_kill(child)
                 elif kind == "child_stdin":
                     try:
                         written = os.write(stdin_stream.fileno(), pending_input)
@@ -329,7 +400,7 @@ def _supervise(
                         output_open.discard(name)
                         output_streams[name].close()
                     elif not discard_output and name not in output_sinks_closed:
-                        output_buffers[name].extend(chunk)
+                        output_buffers[name].extend(backend.filter_output(name, chunk))
                         if name not in output_write_registered:
                             selector.register(
                                 output_fds[name],
@@ -378,11 +449,11 @@ def _supervise(
                         os.close(output_fd)
                     output_fds_closed.add(name)
 
+            if kill_requested:
+                backend.kill_step(child, root_reported=root_reported)
             if not root_reported:
                 continue
-            if kill_requested:
-                _kill_adopted_children(child.pid)
-            if not tree_quiescent and _wait_for_all_children(child.pid):
+            if not tree_quiescent and backend.tree_quiescent(child):
                 tree_quiescent = True
                 identity = current_host_identity()
                 supervisor_starttime = process_start_time(os.getpid())
@@ -451,6 +522,7 @@ def _supervise(
         return 125
     finally:
         selector.close()
+        backend.close()
         for fd in (gate_fd, status_fd, control_fd):
             if fd >= 0:
                 with suppress(OSError):
@@ -493,7 +565,8 @@ def _wait_for_all_children(root_pid: int) -> bool:
         return False
 
 
-def main() -> int:
+def run_supervisor(create_backend: Callable[[], SupervisorBackend]) -> int:
+    """Read the inherited launch descriptors and supervise one command."""
     args = sys.argv[1:]
     gate_fd = -1
     status_fd = -1
@@ -513,7 +586,14 @@ def main() -> int:
         if config_fd >= 0:
             with suppress(OSError):
                 os.close(config_fd)
-    return _supervise(payload, gate_fd=gate_fd, status_fd=status_fd, control_fd=control_fd)
+    return _supervise(
+        payload, create_backend(),
+        gate_fd=gate_fd, status_fd=status_fd, control_fd=control_fd,
+    )
+
+
+def main() -> int:
+    return run_supervisor(_SubreaperBackend)
 
 
 if __name__ == "__main__":
