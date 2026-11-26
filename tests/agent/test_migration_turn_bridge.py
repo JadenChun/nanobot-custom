@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from kohaku.agent.loop import AgentLoop
+from kohaku.agent.run_control import SessionRunController
 from kohaku.agent.runner import AgentRunResult
 from kohaku.agent.tools.file_state import FileStateStore
 from kohaku.agent.tools.registry import ToolRegistry
@@ -26,6 +27,7 @@ async def test_missing_policy_context_fails_before_runtime_access():
 async def test_loop_forwards_same_context_and_mandatory_policy(tmp_path, monkeypatch, failure, fresh):
     import kohaku.agent.loop as module
     loop = object.__new__(AgentLoop)
+    loop.run_control = SessionRunController()
     loop._fork_dependencies = SimpleNamespace(
         resource_policy=SimpleNamespace(folder_grants=None),
     )

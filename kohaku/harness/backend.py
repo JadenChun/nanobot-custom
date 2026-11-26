@@ -2,16 +2,16 @@
 
 from __future__ import annotations
 
-import asyncio
-import json
 from collections.abc import AsyncGenerator, Awaitable, Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal, Protocol
-from uuid import uuid4
+from typing import TYPE_CHECKING, Literal, Protocol, runtime_checkable
 
-from kohaku.agent.permission_rules import extract_saveable_sandbox_command
-from kohaku.agent.turn import ApprovalDecision
+from kohaku.agent.approvals import (
+    PendingTurnApproval,
+    TurnApprovalRegistry,
+    TurnApprovalSaveError,
+)
 from kohaku.events import NO_EVENTS, EventSink
 from kohaku.session.harness_binding import SessionHarnessBinding as SessionHarnessBinding
 
@@ -20,6 +20,11 @@ if TYPE_CHECKING:
     from kohaku.llm_usage.context import LLMUsageSource
     from kohaku.session.turn_writer import SourceTurnWriter
     from kohaku.utils.llm_runtime import LLMRuntime
+
+
+PendingExternalApproval = PendingTurnApproval
+ExternalApprovalRegistry = TurnApprovalRegistry
+ExternalApprovalSaveError = TurnApprovalSaveError
 
 
 class LoopbackBridgeHandle(Protocol):
@@ -74,6 +79,7 @@ class ExternalTurnRequest:
     max_turns: int | None = None
     approval_session_key: str | None = None
     authorize_tool: Callable[[str, dict[str, object]], bool] | None = None
+    drain_steer: Callable[[Callable[[], Awaitable[None]], bool], Awaitable[list[str]]] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -136,9 +142,20 @@ class ExternalToolBatchReady:
     """The SDK finished reporting the current model response."""
 
 
+@dataclass(frozen=True, slots=True)
+class ExternalSteerAvailable:
+    """The active run has guidance in its mailbox."""
+
+
+@dataclass(frozen=True, slots=True)
+class ExternalQueryFinished:
+    """One SDK response ended while another query remains active."""
+
+
 ExternalEvent = (
     ExternalSessionStarted | ExternalText | ExternalReasoning | ExternalToolIntent
     | ExternalToolResult | ExternalTurnFinished | ExternalToolBatchReady
+    | ExternalSteerAvailable | ExternalQueryFinished
 )
 ExternalApprovalAction = Literal["approve", "approve_and_save", "deny"]
 RequestApproval = Callable[[ExternalToolCall, str, bool], Awaitable[ExternalApprovalAction]]
@@ -152,133 +169,20 @@ class ExternalHarnessProcess(Protocol):
     async def close(self) -> None: ...
 
 
+@runtime_checkable
+class StreamingSteerProcess(Protocol):
+    """External process that accepts user input while a query is active."""
+
+    async def send_steer(self, prompt: str) -> bool: ...
+
+    def notify_steer(self) -> None: ...
+
+
 class SessionHarnessBackend(Protocol):
     async def start(
         self, request: ExternalTurnRequest, *, resume: str | None, fork_session: bool
     ) -> ExternalHarnessProcess: ...
 
 
-class ExternalApprovalSaveError(RuntimeError):
-    """The owner could not persist the approved exclusion."""
-
-
 class HarnessCapabilityError(RuntimeError):
     """The external harness is unavailable in this installation."""
-
-
-@dataclass(frozen=True, slots=True)
-class PendingExternalApproval:
-    approval_id: str
-    session_key: str
-    session_incarnation: str
-    run_id: str
-    runtime_generation: int
-    tool_call_id: str
-    tool_name: str
-    arguments_json: str
-    reason: str
-    save_exclusion_command: str | None
-
-
-@dataclass(slots=True)
-class _ApprovalWaiter:
-    approval: PendingExternalApproval
-    future: asyncio.Future[ExternalApprovalAction]
-    is_authorized: Callable[[], bool]
-    control_session_key: str
-
-
-class ExternalApprovalRegistry:
-    """Own live approvals and settle each server-issued ID once."""
-
-    def __init__(self, save_exclusion: Callable[[str], bool | None] | None = None) -> None:
-        self._pending: dict[str, _ApprovalWaiter] = {}
-        self._save_exclusion = save_exclusion
-
-    async def request(
-        self, request: ExternalTurnRequest, call: ExternalToolCall, reason: str, allow_save: bool
-    ) -> ExternalApprovalAction:
-        if request.on_approval is None or not request.is_authorized():
-            return "deny"
-        command = call.arguments.get("command")
-        saveable = (
-            extract_saveable_sandbox_command(command)
-            if allow_save and call.name == "exec" and self._save_exclusion is not None
-            and isinstance(command, str)
-            else None
-        )
-        approval = PendingExternalApproval(
-            uuid4().hex, request.session_key, request.writer.committed_state.incarnation,
-            request.run_id, request.binding.runtime_generation,
-            call.id, call.name, json.dumps(call.arguments, sort_keys=True), reason, saveable,
-        )
-        future: asyncio.Future[ExternalApprovalAction] = asyncio.get_running_loop().create_future()
-        self._pending[approval.approval_id] = _ApprovalWaiter(
-            approval, future, request.is_authorized, request.approval_session_key or request.session_key,
-        )
-        try:
-            await request.on_approval(approval)
-            decision = await future
-            return decision if request.is_authorized() else "deny"
-        finally:
-            self._pending.pop(approval.approval_id, None)
-            future.cancel()
-            if request.on_approval_closed is not None:
-                await request.on_approval_closed(approval.approval_id)
-
-    def owns(self, approval_id: str) -> bool:
-        return approval_id in self._pending
-
-    def resolve(
-        self, decision: ApprovalDecision, *, save_exclusion_command: str | None = None,
-        control_session_key: str | None = None,
-    ) -> bool:
-        waiter = self._pending.get(decision.approval_id)
-        if waiter is None or waiter.future.done():
-            return False
-        approval = waiter.approval
-        if (
-            (control_session_key or decision.session_key) != waiter.control_session_key
-            or decision.session_key != approval.session_key or decision.run_id != approval.run_id
-            or decision.generation != approval.runtime_generation
-            or (decision.session_incarnation is not None
-                and decision.session_incarnation != approval.session_incarnation)
-            or (decision.effect_id is not None and decision.effect_id != approval.tool_call_id)
-            or not waiter.is_authorized()
-        ):
-            return False
-        if decision.decision == "approve_and_save":
-            command = approval.save_exclusion_command
-            save = self._save_exclusion
-            if command is None or save is None or save_exclusion_command not in (None, command):
-                return False
-            if save(command) is False:
-                raise ExternalApprovalSaveError("Kohaku could not save the Sandbox exclusion.")
-        elif save_exclusion_command is not None:
-            return False
-        self._pending.pop(approval.approval_id)
-        action: ExternalApprovalAction = (
-            "approve_and_save" if decision.decision == "approve_and_save"
-            else "approve" if decision.decision == "approve" else "deny"
-        )
-        waiter.future.set_result(action)
-        return True
-
-    def pending_tool_calls(self, run_id: str) -> frozenset[str]:
-        return frozenset(
-            waiter.approval.tool_call_id for waiter in self._pending.values()
-            if waiter.approval.run_id == run_id and not waiter.future.done()
-        )
-
-    def cancel_for_run(self, run_id: str) -> None:
-        self._cancel(lambda approval: approval.run_id == run_id)
-
-    def cancel_for_session(self, session_key: str) -> None:
-        self._cancel(lambda approval: approval.session_key == session_key)
-
-    def _cancel(self, matches: Callable[[PendingExternalApproval], bool]) -> None:
-        for key, waiter in tuple(self._pending.items()):
-            if matches(waiter.approval):
-                del self._pending[key]
-                if not waiter.future.done():
-                    waiter.future.set_result("deny")

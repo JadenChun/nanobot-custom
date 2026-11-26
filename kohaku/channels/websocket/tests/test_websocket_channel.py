@@ -1038,6 +1038,8 @@ async def test_webui_stop_control_message_is_not_persisted_as_user_bubble(
     conn = AsyncMock()
     conn.remote_address = ("127.0.0.1", 50123)
 
+    _authenticate_local_webui_connection(channel, conn)
+
     await channel._dispatch_envelope(
         conn,
         "webui-client",

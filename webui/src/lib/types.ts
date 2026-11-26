@@ -122,6 +122,19 @@ export interface StopExpectation {
   pending_work_digest: string;
 }
 
+export type RunLifecycleState = "running" | "waiting_approval" | "stopping";
+
+/** Current root run identity and the controls available to the attached user. */
+export interface RunState {
+  state: RunLifecycleState;
+  turn_id: string | null;
+  run_id: string | null;
+  source_incarnation: string | null;
+  started_at: number | null;
+  can_stop: boolean;
+  can_steer: boolean;
+}
+
 export interface DelegatedChildPayload {
   history_kind?: "canonical";
   parent_session_key?: string;
@@ -1895,6 +1908,8 @@ export type InboundEvent =
       recovery_state?: RecoveryState;
       usage?: TurnUsage;
       stop_target?: StopExpectation | null;
+      run_state?: RunState | null;
+      live_turn_controls?: true;
       /** Confirmed active model/effort from the session projection. */
       model_preset?: string | null;
       reasoning_effort?: string | null;
@@ -1966,6 +1981,11 @@ export type InboundEvent =
       event: "stop_target";
       chat_id: string;
       stop_target: StopExpectation | null;
+    }
+  | {
+      event: "run_state";
+      chat_id: string;
+      run_state: RunState | null;
     }
   | {
       event: "user_message";
@@ -2296,6 +2316,7 @@ export interface WebuiThreadPersistedPayload {
   /** Exact active turn when supplied by a current gateway. */
   active_turn_id?: string | null;
   stop_target?: StopExpectation | null;
+  run_state?: RunState | null;
   read_only?: boolean;
   history_kind?: "canonical" | "summary";
   harness?: ChatHarness;
@@ -2325,6 +2346,7 @@ export type WebuiThreadControlsPayload = Pick<
   WebuiThreadPersistedPayload,
   | "sessionKey"
   | "stop_target"
+  | "run_state"
   | "workspace_access_request"
   | "workspace_permissions"
   | "workspace_scope"
@@ -2427,6 +2449,7 @@ export type Outbound =
       request_settings_version?: 1;
       request_intent?: "new" | "steer";
       target_turn_id?: string;
+      live_turn_controls?: true;
       approval_decision?: ApprovalDecisionPayload;
       stop_expectation?: StopExpectation;
       /** Marks messages sent by the embedded WebUI, without changing the

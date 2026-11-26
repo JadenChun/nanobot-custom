@@ -830,7 +830,19 @@ describe("useSessions", () => {
 
   it.each([
     ["idle root", { sessionKey: "websocket:activity", active_turn_id: null, has_pending_tool_calls: false }, true],
-    ["active root", { active_turn_id: "live", has_pending_tool_calls: true }, true],
+    ["active root", {
+      active_turn_id: "live",
+      has_pending_tool_calls: true,
+      run_state: {
+        state: "running",
+        turn_id: "live",
+        run_id: "run-live",
+        source_incarnation: "incarnation-live",
+        started_at: 1_700_000_000,
+        can_stop: true,
+        can_steer: true,
+      },
+    }, true],
     ["null Stop only", { stop_target: null }, false],
     ["missing pending", { active_turn_id: null }, false],
     ["invalid pending", { active_turn_id: null, has_pending_tool_calls: "false" }, false],
@@ -846,6 +858,7 @@ describe("useSessions", () => {
     });
     await waitFor(() => expect(result.current.loading).toBe(false));
     expect(result.current.activitySnapshotAvailable).toBe(expected);
+    if ("run_state" in fields) expect(result.current.runState).toEqual(fields.run_state);
   });
 
   it("preserves an explicit null Stop target from authenticated history", async () => {

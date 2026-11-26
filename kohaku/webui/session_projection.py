@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any, Protocol, cast
 
 from loguru import logger as default_logger
 
+from kohaku.bus.outbound_events import RunState
 from kohaku.harness.claude_sdk import harness_capabilities
 from kohaku.providers.base import LLMUsage
 from kohaku.session.goal_state import goal_state_ws_blob
@@ -40,11 +41,15 @@ class WebUISessionProjection:
         sessions: SessionMetadataReader | None,
         *,
         stop_target_for_key: Callable[[str], dict[str, object] | None] | None = None,
+        run_state_for_key: Callable[[str], RunState | None] | None = None,
+        live_turn_controls: bool = False,
         log: Any = default_logger,
     ) -> None:
         self._sessions = sessions
         self._stop_target_for_key = stop_target_for_key
+        self._run_state_for_key = run_state_for_key
         self._log = log
+        self._live_turn_controls = live_turn_controls
 
     def attach_fields(
         self, session_key: str, *, source: SourceSnapshot | None = None,
@@ -61,6 +66,8 @@ class WebUISessionProjection:
         metadata = cast(dict[str, object], raw_metadata) if isinstance(raw_metadata, dict) else None
 
         fields: dict[str, Any] = {}
+        if self._live_turn_controls:
+            fields["live_turn_controls"] = True
         if (binding := external_binding(metadata)) is not None:
             fields["harness_binding"] = binding.payload()
             fields["harness_capabilities"] = harness_capabilities()
@@ -68,6 +75,8 @@ class WebUISessionProjection:
             self._stop_target_for_key(session_key)
             if self._stop_target_for_key is not None else None
         )
+        if self._run_state_for_key is not None:
+            fields["run_state"] = self._run_state_for_key(session_key)
         try:
             fields["model_preset"] = model_preset_from_metadata(metadata)
         except ValueError:
@@ -131,6 +140,12 @@ class WebUISessionProjection:
                 "event": "stop_target",
                 "chat_id": chat_id,
                 "stop_target": self._stop_target_for_key(session_key),
+            })
+        if self._run_state_for_key is not None:
+            events.append({
+                "event": "run_state",
+                "chat_id": chat_id,
+                "run_state": self._run_state_for_key(session_key),
             })
         return tuple(events)
 

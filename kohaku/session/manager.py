@@ -47,6 +47,7 @@ from kohaku.security.desktop_permissions import (
     WorkspacePermissionConflictError,
 )
 from kohaku.session.history_visibility import HIDDEN_HISTORY_META, is_hidden_history_message
+from kohaku.session.live_folder_access import LiveFolderAccess
 from kohaku.session.model_selection import SESSION_MODEL_PRESET_METADATA_KEY
 from kohaku.session.persistence_metadata import (
     BUSY_INBOX_METADATA_KEY,
@@ -2967,6 +2968,7 @@ class SessionManager:
         self._cache: OrderedDict[str, Session] = OrderedDict()
         # Gateway controllers and loop wrappers share this one volatile owner.
         self.desktop_permissions = DesktopPermissionOwner()
+        self.live_folder_access: dict[str, LiveFolderAccess] = {}
         self._mode_bindings: dict[str, tuple[str, int, str, str, int] | None] = {}
         # Preserve identity for sessions held by active callers without retaining idle ones.
         self._overflow_cache: WeakValueDictionary[str, Session] = WeakValueDictionary()

@@ -130,6 +130,7 @@ from kohaku.webui.native_folder_picker import (
     native_folder_picker_available,
     pick_native_folder,
 )
+from kohaku.webui.outbound_wire import ExternalApprovalWirePayload
 from kohaku.webui.session_automations import (
     all_automations_payload,
     serialize_automation_jobs,
@@ -459,6 +460,7 @@ for _ext, _ctype in _MIME_FIXES.items():
 
 if TYPE_CHECKING:
     from kohaku.agent.stop_target import StopTargetReader
+    from kohaku.bus.outbound_events import RunState
     from kohaku.bus.queue import MessageBus
     from kohaku.channels.websocket.runtime import WebSocketConfig
     from kohaku.cron.service import CronService
@@ -570,6 +572,8 @@ class GatewayHTTPHandler:
     services owned by the composition layer.
     """
 
+    run_state_for_key: Callable[[str], RunState | None] | None = None
+
     def __init__(
         self,
         *,
@@ -603,6 +607,7 @@ class GatewayHTTPHandler:
             Callable[[str, dict[str, Any]], Awaitable[dict[str, Any]]] | None
         ) = None,
         stop_target_for_key: StopTargetReader | None = None,
+        run_state_for_key: Callable[[str], RunState | None] | None = None,
         log: Any = logger,
     ) -> None:
         self.config = config
@@ -656,6 +661,8 @@ class GatewayHTTPHandler:
         self.skill_state_action = skill_state_action
         self.recovery_action = recovery_action
         self.stop_target_for_key = stop_target_for_key
+        self.run_state_for_key = run_state_for_key
+        self.live_approvals_for_key: Callable[[str], list[ExternalApprovalWirePayload]] | None = None
         self._skill_install_lock = asyncio.Lock()
         self._folder_picker_lock = asyncio.Lock()
         self.cron_service = cron_service
@@ -851,6 +858,7 @@ class GatewayHTTPHandler:
     ) -> tuple[int, dict[str, Any]]:
         """Project the thread in a worker and read its Stop target on the owning loop."""
         snapshot: SourceSnapshot | None = None
+        run_state_key: str | None = None
 
         def defer_stop_target(
             _key: str, *, source_snapshot: SourceSnapshot | None = None,
@@ -858,13 +866,22 @@ class GatewayHTTPHandler:
             nonlocal snapshot
             snapshot = source_snapshot
 
+        def defer_run_state(session_key: str) -> None:
+            nonlocal run_state_key
+            run_state_key = session_key
+
         read_stop_target = self.stop_target_for_key
         status, payload = await asyncio.to_thread(
             self.mobile_thread_payload, key, query, owner=owner,
             stop_target_reader=defer_stop_target if read_stop_target is not None else None,
+            run_state_reader=defer_run_state if self.run_state_for_key is not None else None,
         )
         if status == 200 and snapshot is not None and read_stop_target is not None:
             payload["stop_target"] = read_stop_target(snapshot.state.session_key, source_snapshot=snapshot)
+        if status == 200 and run_state_key is not None and self.run_state_for_key is not None:
+            payload["run_state"] = self.run_state_for_key(run_state_key)
+        if status == 200 and owner and run_state_key is not None and self.live_approvals_for_key is not None:
+            payload["pending_approvals"] = self.live_approvals_for_key(run_state_key)
         return status, payload
 
     def mobile_thread_payload(
@@ -874,6 +891,7 @@ class GatewayHTTPHandler:
         *,
         owner: bool = False,
         stop_target_reader: StopTargetReader | None = None,
+        run_state_reader: Callable[[str], RunState | None] | None = None,
     ) -> tuple[int, dict[str, Any]]:
         """Project the requested thread view after the mobile edge checks scope."""
         suffix = f"?{urlencode(query, doseq=True)}" if query else ""
@@ -886,6 +904,7 @@ class GatewayHTTPHandler:
             allow_remote_permissions=True,
             remote_owner=owner,
             stop_target_reader=stop_target_reader,
+            run_state_reader=run_state_reader,
         )
         try:
             body = json.loads(response.body)
@@ -1817,7 +1836,8 @@ class GatewayHTTPHandler:
     ) -> Response:
         """Project the desktop thread off the event loop and resolve Stop on the loop."""
         read_stop_target = self.stop_target_for_key
-        if read_stop_target is None:
+        read_run_state = self.run_state_for_key
+        if read_stop_target is None and read_run_state is None:
             return await asyncio.to_thread(
                 self._handle_webui_thread_get,
                 request,
@@ -1825,6 +1845,7 @@ class GatewayHTTPHandler:
                 connection=connection,
             )
         snapshot: SourceSnapshot | None = None
+        run_state_key: str | None = None
 
         def defer_stop_target(
             _key: str, *, source_snapshot: SourceSnapshot | None = None,
@@ -1832,20 +1853,33 @@ class GatewayHTTPHandler:
             nonlocal snapshot
             snapshot = source_snapshot
 
+        def defer_run_state(session_key: str) -> None:
+            nonlocal run_state_key
+            run_state_key = session_key
+
         result = await asyncio.to_thread(
             self._build_webui_thread_payload,
             request,
             key,
             connection=connection,
-            stop_target_reader=defer_stop_target,
+            stop_target_reader=defer_stop_target if read_stop_target is not None else None,
+            run_state_reader=defer_run_state if read_run_state is not None else None,
         )
         if isinstance(result, Response):
             return result
-        if snapshot is not None:
+        if snapshot is not None and read_stop_target is not None:
             result["stop_target"] = read_stop_target(
                 snapshot.state.session_key,
                 source_snapshot=snapshot,
             )
+        if run_state_key is not None and read_run_state is not None:
+            result["run_state"] = read_run_state(run_state_key)
+        if (
+            run_state_key is not None
+            and self.live_approvals_for_key is not None
+            and (attached_mobile_identity(connection) is None or _typed_owner_identity(connection))
+        ):
+            result["pending_approvals"] = self.live_approvals_for_key(run_state_key)
         accept_encoding = _combined_list_header(request.headers, "Accept-Encoding")
         return await asyncio.to_thread(
             _http_json_response,
@@ -1862,6 +1896,7 @@ class GatewayHTTPHandler:
         allow_remote_permissions: bool = False,
         remote_owner: bool = False,
         stop_target_reader: StopTargetReader | None = None,
+        run_state_reader: Callable[[str], RunState | None] | None = None,
     ) -> Response:
         result = self._build_webui_thread_payload(
             request,
@@ -1870,6 +1905,7 @@ class GatewayHTTPHandler:
             allow_remote_permissions=allow_remote_permissions,
             remote_owner=remote_owner,
             stop_target_reader=stop_target_reader,
+            run_state_reader=run_state_reader,
         )
         if isinstance(result, Response):
             return result
@@ -1887,6 +1923,7 @@ class GatewayHTTPHandler:
         allow_remote_permissions: bool = False,
         remote_owner: bool = False,
         stop_target_reader: StopTargetReader | None = None,
+        run_state_reader: Callable[[str], RunState | None] | None = None,
     ) -> dict[str, Any] | Response:
         if not self.check_api_token(request):
             return _http_error(401, "Unauthorized")
@@ -2014,6 +2051,7 @@ class GatewayHTTPHandler:
                 snapshot=snapshot, scope=scope, connection=connection,
                 allow_remote_permissions=allow_remote_permissions, remote_owner=remote_owner,
                 stop_target_reader=stop_target_reader,
+                run_state_reader=run_state_reader,
             )
         allow_folder_grants = self.workspaces.folder_grants_allowed_for_session(scope_key)
         if (
@@ -2202,6 +2240,9 @@ class GatewayHTTPHandler:
             data["view"] = "history"
             if source_state is not None:
                 data["source"] = _source_origin_payload(source_state)
+            read_run_state = run_state_reader or self.run_state_for_key
+            if read_run_state is not None:
+                data["run_state"] = read_run_state(decoded_key)
             if remote_owner:
                 if snapshot is None and source_state is not None and sessions is not None:
                     try:
@@ -2229,6 +2270,7 @@ class GatewayHTTPHandler:
             snapshot=snapshot, scope=scope, connection=connection,
             allow_remote_permissions=allow_remote_permissions, remote_owner=remote_owner,
             stop_target_reader=stop_target_reader,
+            run_state_reader=run_state_reader,
         )
 
     def _read_saved_history_source(
@@ -2289,6 +2331,7 @@ class GatewayHTTPHandler:
         allow_remote_permissions: bool,
         remote_owner: bool,
         stop_target_reader: StopTargetReader | None,
+        run_state_reader: Callable[[str], RunState | None] | None,
     ) -> Response:
         result = self._thread_with_controls_payload(
             request,
@@ -2300,6 +2343,7 @@ class GatewayHTTPHandler:
             allow_remote_permissions=allow_remote_permissions,
             remote_owner=remote_owner,
             stop_target_reader=stop_target_reader,
+            run_state_reader=run_state_reader,
         )
         if isinstance(result, Response):
             return result
@@ -2320,6 +2364,7 @@ class GatewayHTTPHandler:
         allow_remote_permissions: bool,
         remote_owner: bool,
         stop_target_reader: StopTargetReader | None,
+        run_state_reader: Callable[[str], RunState | None] | None,
     ) -> dict[str, Any] | Response:
         """Read current control state, without using any display transcript facts."""
         # Emit the key only for a session whose Stop target this gateway can
@@ -2332,6 +2377,9 @@ class GatewayHTTPHandler:
             data["stop_target"] = read_stop_target(
                 decoded_key, source_snapshot=snapshot,
             )
+        read_run_state = run_state_reader or self.run_state_for_key
+        if read_run_state is not None:
+            data["run_state"] = read_run_state(decoded_key)
         data["workspace_scope"] = self.workspaces.scope_payload(scope)
         _add_thread_harness_fields(data, snapshot)
         next_scope_fn = getattr(self.workspaces, "next_scope_for_session_key", None)

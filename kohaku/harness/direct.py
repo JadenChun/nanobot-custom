@@ -28,7 +28,7 @@ from kohaku.session.harness_binding import (
 from kohaku.session.source import validate_execution_links
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Awaitable, Callable
 
     from kohaku.agent.child_backend import ChildTurnRequest
     from kohaku.agent.hook import AgentHook
@@ -67,6 +67,8 @@ async def run_direct_turn(
     workspace_is_authorized: Callable[[], bool],
     child: ChildTurnRequest | None = None,
     approval_events: EventSink | None = None,
+    on_approval_state: Callable[[bool], Awaitable[None]] | None = None,
+    drain_steer: Callable[[Callable[[], Awaitable[None]], bool], Awaitable[list[str]]] | None = None,
     authorize_tool: Callable[[str, dict[str, object]], bool] | None = None,
 
 ) -> AgentRunResult:
@@ -84,6 +86,7 @@ async def run_direct_turn(
     def is_authorized() -> bool:
         return (
             active and not task.cancelling() and not is_closing()
+            and not (context.explicit_stop_requested and context.explicit_stop_requested())
             and (full is None or permissions.is_current_full_reference(full))
             and workspace_is_authorized()
         )
@@ -92,12 +95,16 @@ async def run_direct_turn(
     child_id = child.admission.child_id if child is not None else None
 
     async def approval_requested(approval: PendingExternalApproval) -> None:
+        if on_approval_state is not None:
+            await on_approval_state(True)
         await approvals.emit(ExternalApprovalEvent(
             approval_id=approval.approval_id, approval=approval, child_id=child_id,
         ))
 
     async def approval_closed(approval_id: str) -> None:
         await approvals.emit(ExternalApprovalEvent(approval_id=approval_id, child_id=child_id))
+        if on_approval_state is not None:
+            await on_approval_state(False)
 
     first_turn = binding.locked_workspace is None
     binding = replace(
@@ -135,7 +142,7 @@ async def run_direct_turn(
             authorize_tool=authorize_tool,
             approval_session_key=child.admission.root_key if child is not None else None,
             prior_external_session_id=child.prior_external_session_id if child is not None else None,
-            on_approval_closed=approval_closed, retain_process=False,
+            on_approval_closed=approval_closed, retain_process=False, drain_steer=drain_steer,
         ))
         acknowledge = context.followup_request_acknowledged
         if child is not None and outcome.status == "completed" and acknowledge is not None:

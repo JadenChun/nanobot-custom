@@ -177,6 +177,15 @@ async def test_runtime_typed_refusal_uses_existing_error_event_and_turn_identity
 async def test_channel_manager_wires_live_callback_to_attach_hydration_and_thread(tmp_path):
     target = target_value()
     keys = []
+    run = {
+        "state": "waiting_approval",
+        "turn_id": "live-turn",
+        "run_id": "live-run",
+        "source_incarnation": "live-source",
+        "started_at": 100,
+        "can_stop": True,
+        "can_steer": True,
+    }
 
     def current(key, *, source_snapshot=None):
         if source_snapshot is not None:
@@ -204,16 +213,22 @@ async def test_channel_manager_wires_live_callback_to_attach_hydration_and_threa
     manager = await ChannelManager(
         config, MessageBus(), session_manager=sessions, webui_static_dist=False,
         webui_stop_target_for_key=current,
+        webui_run_state_for_key=lambda _key: run,
     ).acquire()
     channel = manager.channels["websocket"]
     projection = channel.gateway.session_projection
-    assert projection.attach_fields("websocket:exact-stop")["stop_target"] == target
-    assert projection.hydration_events("websocket:exact-stop", "exact-stop")[-1]["stop_target"] == target
+    attached = projection.attach_fields("websocket:exact-stop")
+    assert attached["stop_target"] == target
+    assert attached["run_state"] == run
+    hydration = projection.hydration_events("websocket:exact-stop", "exact-stop")
+    assert next(frame["stop_target"] for frame in hydration if "stop_target" in frame) == target
+    assert next(frame["run_state"] for frame in hydration if "run_state" in frame) == run
     http_channel = InProcessHttpChannel(channel.config, manager.bus, gateway=channel.gateway)
     try:
         response = await http_get(_thread_url(http_channel, "websocket:exact-stop"), headers=_auth_headers(http_channel))
         assert response.status_code == 200, response.text
         assert response.json()["stop_target"] == target
+        assert response.json()["run_state"] == run
         assert keys == ["websocket:exact-stop"] * 3
     finally:
         await http_channel.stop()

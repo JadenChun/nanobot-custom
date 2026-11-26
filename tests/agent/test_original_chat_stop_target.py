@@ -8,6 +8,7 @@ import sys
 from copy import deepcopy
 from dataclasses import replace
 from types import ModuleType, SimpleNamespace
+from typing import Any
 from unittest.mock import Mock
 from uuid import UUID
 
@@ -369,7 +370,7 @@ async def test_matching_bus_root_uses_dispatch_task_and_discards_before_cancel(m
         assert agent.stop_target_for_key(key) is None
 
 
-@pytest.mark.parametrize("change", ["queue", "activity-source", "held-add", "held-remove", "child-run"])
+@pytest.mark.parametrize("change", ["queue", "activity-source"])
 async def test_real_bus_stale_stop_has_no_owner_mutation(monkeypatch, tmp_path, change):
     provider = _ScriptedProvider([LLMResponse(content="unused")], block_first=True)
     async with _running_composition(_config(tmp_path), provider, monkeypatch) as (handle, run):
@@ -393,15 +394,6 @@ async def test_real_bus_stale_stop_has_no_owner_mutation(monkeypatch, tmp_path, 
             channel="websocket", sender_id="webui", chat_id="exact-stop", content="saved pending input",
         ))
         await asyncio.wait_for(pending_admitted.wait(), timeout=5)
-        child = None
-        if change in {"held-remove", "child-run"}:
-            child = await tree.reserve(
-                parent=handle.sessions.get_or_create(key), parent_key=key,
-                assignment="owned work", attempt_id="child-original",
-            )
-            if change == "child-run":
-                child = await tree.register_run(child.child_id, "original-child-run")
-                assert child is not None
         target = agent.stop_target_for_key(key)
         assert target is not None
         original_queue = agent._pending_queues[key]
@@ -411,16 +403,6 @@ async def test_real_bus_stale_stop_has_no_owner_mutation(monkeypatch, tmp_path, 
             agent._pending_queues[key] = asyncio.Queue()
         elif change == "activity-source":
             activity.source_state = replace(original_state, generation=original_state.generation + 1)
-        elif change == "held-add":
-            child = await tree.reserve(
-                parent=handle.sessions.get_or_create(key), parent_key=key,
-                assignment="new owned work", attempt_id="child-added",
-            )
-        elif change == "held-remove":
-            await tree.complete(child.child_id, outcome="completed")
-        else:
-            replacement = await tree.register_run(child.child_id, "replacement-child-run")
-            assert replacement is not None and replacement.run_sequence == child.run_sequence + 1
         backend = handle.sessions.source_backend(key)
         assert backend.source.load_source_snapshot(key).header["metadata"][SOURCE_PENDING_FOLLOWUPS_METADATA_KEY]
         source_before = backend.get_session_path(key).read_bytes()
@@ -463,7 +445,336 @@ async def test_real_bus_stale_stop_has_no_owner_mutation(monkeypatch, tmp_path, 
             assert (await agent.approval_admission.snapshot_decision(key, None)).pending is pending_approval
         finally:
             activity.source_state = original_state
-            agent._pending_queues[key] = original_queue
+            if change == "queue":
+                agent._pending_queues[key] = original_queue
+
+
+@pytest.mark.parametrize("change", ["held-add", "held-remove", "child-run"])
+async def test_root_stop_accepts_stale_mutable_snapshot_during_child_progress(
+    monkeypatch,
+    tmp_path,
+    change,
+):
+    from kohaku.agent.run_control import RunStopTarget
+    from kohaku.bus.runtime_events import TurnCompleted
+
+    provider = _ScriptedProvider([LLMResponse(content="unused")], block_first=True)
+    async with _running_composition(_config(tmp_path), provider, monkeypatch) as (handle, _run):
+        completed = []
+        handle.bus.subscribe(completed.append, TurnCompleted)
+        key = "websocket:exact-stop"
+        await handle.bus.publish_inbound(InboundMessage(
+            channel="websocket", sender_id="webui", chat_id="exact-stop", content="first",
+            metadata={"webui_turn_id": "exact-steer-turn"},
+        ))
+        await asyncio.wait_for(provider.first_started.wait(), timeout=5)
+        agent = handle.agent
+        tree = agent._fork_dependencies.foreground_manager._delegation_tree
+        child = None
+        if change in {"held-remove", "child-run"}:
+            child = await tree.reserve(
+                parent=handle.sessions.get_or_create(key), parent_key=key,
+                assignment="owned work", attempt_id="child-original",
+            )
+            if change == "child-run":
+                child = await tree.register_run(child.child_id, "original-child-run")
+                assert child is not None
+        target = agent.stop_target_for_key(key)
+        assert target is not None
+        run = agent.run_state_for_key(key)
+        assert run is not None and run["can_steer"]
+        steer = RunStopTarget(
+            "exact-stop", run["source_incarnation"], run["turn_id"], run["run_id"],
+        )
+        assert await agent.steer_run_target(steer, "Queued steer marker")
+        _, steered = handle.sessions.read_existing_canonical_source(key)
+        assert "Queued steer marker" in json.dumps(
+            steered.header["metadata"][SOURCE_PENDING_FOLLOWUPS_METADATA_KEY],
+        )
+        if change == "held-add":
+            await tree.reserve(
+                parent=handle.sessions.get_or_create(key), parent_key=key,
+                assignment="new owned work", attempt_id="child-added",
+            )
+        elif change == "held-remove":
+            await tree.complete(child.child_id, outcome="completed")
+        elif change == "child-run":
+            replacement = await tree.register_run(child.child_id, "replacement-child-run")
+            assert replacement is not None and replacement.run_sequence == child.run_sequence + 1
+
+        stale = parse_stop_expectation(target)
+        stale = replace(
+            stale,
+            source=replace(stale.source, generation=stale.source.generation + 1),
+            children=stale.children,
+            pending_work_digest=("1" if stale.pending_work_digest[0] != "1" else "2") * 64,
+        )
+        reply = await cmd_stop(CommandContext(
+            msg=stop_message(stale.to_dict()),
+            session=None,
+            key=key,
+            raw="/stop",
+            loop=agent,
+        ))
+        assert reply.event is None and reply.content.startswith("Stopped")
+        assert provider.first_cancelled.is_set()
+        terminal = [
+            event for event in completed
+            if event.context.session_key == key and event.outcome == "cancelled"
+        ]
+        assert len(terminal) == 1
+
+        followup = await asyncio.wait_for(
+            agent.process_direct(
+                "after stop",
+                session_key=key,
+                channel="websocket",
+                chat_id="exact-stop",
+            ),
+            timeout=5,
+        )
+        assert followup is not None and followup.content == "unused"
+
+
+async def test_native_stop_settles_clean_open_tool_and_accepts_followup(monkeypatch, tmp_path):
+    from kohaku.bus.runtime_events import TurnCompleted
+    from kohaku.session.webui_turns import (
+        activate_queued_websocket_turn,
+        register_queued_websocket_turn_if_idle,
+    )
+
+    class CleanStopTool(Tool):
+        def __init__(self):
+            self.started = asyncio.Event()
+            self.torn_down = asyncio.Event()
+
+        @property
+        def name(self) -> str:
+            return "clean_stop_probe"
+
+        @property
+        def description(self) -> str:
+            return "Wait for Stop and finish local cleanup."
+
+        @property
+        def parameters(self) -> dict[str, Any]:
+            return {"type": "object", "properties": {}, "additionalProperties": False}
+
+        @property
+        def read_only(self) -> bool:
+            return True
+
+        async def execute(self, **_kwargs: object) -> str:
+            self.started.set()
+            try:
+                await asyncio.Event().wait()
+            finally:
+                self.torn_down.set()
+            return "completed"
+
+    provider = _ScriptedProvider([
+        LLMResponse(
+            content=None,
+            tool_calls=[ToolCallRequest(
+                id="clean-stop-call", name="clean_stop_probe", arguments={},
+            )],
+        ),
+        LLMResponse(content="The next request was accepted."),
+    ])
+    async with _running_composition(_config(tmp_path), provider, monkeypatch) as (handle, _run):
+        key = "websocket:exact-stop"
+        tool = CleanStopTool()
+        handle.tools.register(tool)
+        completed = []
+        handle.bus.subscribe(completed.append, TurnCompleted)
+        turn_owner = register_queued_websocket_turn_if_idle(
+            "exact-stop", "native-clean-turn", publish=False,
+        )
+        activate_queued_websocket_turn("exact-stop", turn_owner)
+        await handle.bus.publish_inbound(InboundMessage(
+            channel="websocket",
+            sender_id="webui",
+            chat_id="exact-stop",
+            content="Run the clean probe",
+            metadata={
+                "webui": True,
+                "webui_turn_id": "native-clean-turn",
+                "_websocket_turn_owner": turn_owner,
+            },
+        ))
+        await asyncio.wait_for(tool.started.wait(), timeout=5)
+
+        target = handle.agent.stop_target_for_key(key)
+        assert target is not None
+        reply = await asyncio.wait_for(stop_direct(handle.agent, target), timeout=15)
+        assert reply.content.startswith("Stopped")
+        assert tool.torn_down.is_set()
+
+        cancelled = [
+            event for event in completed
+            if event.context.session_key == key and event.outcome == "cancelled"
+        ]
+        assert len(cancelled) == 1
+        backend = handle.sessions.source_backend(key)
+        assert backend is not None
+        snapshot = backend.source.load_source_snapshot(key)
+        assistant_call = next(
+            event for event in snapshot.events
+            if event.get("role") == "assistant"
+            and isinstance(event.get("tool_calls"), list)
+            and any(
+                isinstance(call, dict) and call.get("id") == "clean-stop-call"
+                for call in event["tool_calls"]
+            )
+        )
+        tool_result = [
+            event for event in snapshot.events
+            if event.get("role") == "tool" and event.get("tool_call_id") == "clean-stop-call"
+        ]
+        assert len(tool_result) == 1
+        assert tool_result[0]["_outcome_status"] == "cancelled"
+        assert tool_result[0]["_dispatched"] is True
+        assert snapshot.header["metadata"].get("execution_recovery_required") is not True
+        assistant_calls = assistant_call["tool_calls"]
+        assert isinstance(assistant_calls, list)
+        assistant_link = next(
+            call for call in assistant_calls
+            if isinstance(call, dict) and call.get("id") == "clean-stop-call"
+        )
+        assert assistant_link["id"] == tool_result[0]["tool_call_id"]
+
+        followup = await asyncio.wait_for(handle.agent.execute_turn(TurnRequest(
+            content="Continue after Stop", session_key=key,
+        )), timeout=5)
+        assert followup.content == "The next request was accepted."
+
+
+async def test_native_stop_stays_cancelled_when_tool_teardown_raises(monkeypatch, tmp_path):
+    from kohaku.bus.runtime_events import TurnCompleted
+    from kohaku.session.webui_turns import (
+        activate_queued_websocket_turn,
+        register_queued_websocket_turn_if_idle,
+    )
+
+    class RaisingTeardownTool(Tool):
+        def __init__(self):
+            self.started = asyncio.Event()
+            self.teardown_started = asyncio.Event()
+
+        @property
+        def name(self) -> str:
+            return "raising_teardown_probe"
+
+        @property
+        def description(self) -> str:
+            return "Raise during cancellation cleanup."
+
+        @property
+        def parameters(self) -> dict[str, Any]:
+            return {"type": "object", "properties": {}, "additionalProperties": False}
+
+        @property
+        def read_only(self) -> bool:
+            return True
+
+        async def execute(self, **_kwargs: object) -> str:
+            self.started.set()
+            try:
+                await asyncio.Event().wait()
+            finally:
+                self.teardown_started.set()
+                raise RuntimeError("tool teardown failed")
+
+    class CompletingSiblingTool(Tool):
+        def __init__(self):
+            self.started = asyncio.Event()
+            self.teardown_completed = asyncio.Event()
+
+        @property
+        def name(self) -> str:
+            return "clean_sibling_probe"
+
+        @property
+        def description(self) -> str:
+            return "Finish cleanup when Stop cancels this tool."
+
+        @property
+        def parameters(self) -> dict[str, Any]:
+            return {"type": "object", "properties": {}, "additionalProperties": False}
+
+        @property
+        def read_only(self) -> bool:
+            return True
+
+        async def execute(self, **_kwargs: object) -> str:
+            self.started.set()
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                self.teardown_completed.set()
+                return "sibling cleanup completed"
+
+    provider = _ScriptedProvider([
+        LLMResponse(content=None, tool_calls=[
+            ToolCallRequest(
+                id="raising-call", name="raising_teardown_probe", arguments={},
+            ),
+            ToolCallRequest(
+                id="sibling-call", name="clean_sibling_probe", arguments={},
+            ),
+        ]),
+    ])
+    async with _running_composition(_config(tmp_path), provider, monkeypatch) as (handle, _run):
+        key = "websocket:exact-stop"
+        raising = RaisingTeardownTool()
+        sibling = CompletingSiblingTool()
+        handle.tools.register(raising)
+        handle.tools.register(sibling)
+        completed = []
+        handle.bus.subscribe(completed.append, TurnCompleted)
+        turn_owner = register_queued_websocket_turn_if_idle(
+            "exact-stop", "native-teardown-turn", publish=False,
+        )
+        activate_queued_websocket_turn("exact-stop", turn_owner)
+        await handle.bus.publish_inbound(InboundMessage(
+            channel="websocket",
+            sender_id="webui",
+            chat_id="exact-stop",
+            content="Run both probes",
+            metadata={
+                "webui": True,
+                "webui_turn_id": "native-teardown-turn",
+                "_websocket_turn_owner": turn_owner,
+            },
+        ))
+        await asyncio.wait_for(asyncio.gather(
+            raising.started.wait(), sibling.started.wait(),
+        ), timeout=5)
+
+        target = handle.agent.stop_target_for_key(key)
+        assert target is not None
+        reply = await asyncio.wait_for(stop_direct(handle.agent, target), timeout=15)
+        assert reply.content.startswith("Stopped")
+        assert raising.teardown_started.is_set()
+        assert sibling.teardown_completed.is_set()
+        cancelled = [
+            event for event in completed
+            if event.context.session_key == key and event.outcome == "cancelled"
+        ]
+        assert len(cancelled) == 1
+
+        backend = handle.sessions.source_backend(key)
+        assert backend is not None
+        snapshot = backend.source.load_source_snapshot(key)
+        tool_results = {
+            event.get("tool_call_id"): event
+            for event in snapshot.events
+            if event.get("role") == "tool"
+        }
+        assert set(tool_results) == {"raising-call", "sibling-call"}
+        assert tool_results["raising-call"]["_outcome_status"] == "cancelled"
+        assert tool_results["sibling-call"]["_outcome_status"] == "ok"
+        assert snapshot.header["metadata"].get("execution_recovery_required") is not True
 
 
 async def test_idle_pending_only_stop_discards_exact_durable_input(monkeypatch, tmp_path):
@@ -1264,3 +1575,78 @@ async def test_kohaku_stop_without_matching_original_proof_stays_guarded(
         ))
         assert followup.error == "Source session requires recovery before execution"
         assert len(provider.requests) == 2
+
+
+@pytest.mark.parametrize("raise_where", ["provider", "turn_teardown"])
+async def test_native_stop_settles_as_cancelled_even_when_teardown_raises(
+    monkeypatch, tmp_path, raise_where,
+):
+    from kohaku.agent.turn import RunStatus
+    from kohaku.bus.runtime_events import TurnCompleted
+
+    provider = _ScriptedProvider([LLMResponse(content="Next turn works.")])
+    first_started = asyncio.Event()
+    original_chat = provider.chat
+
+    async def raising_on_cancel_chat(*args, **kwargs):
+        if not first_started.is_set():
+            first_started.set()
+            try:
+                await asyncio.Future()
+            except asyncio.CancelledError as exc:
+                if raise_where == "provider":
+                    raise RuntimeError("transport teardown failed after cancel") from exc
+                raise
+        return await original_chat(*args, **kwargs)
+
+    monkeypatch.setattr(provider, "chat", raising_on_cancel_chat)
+    async with _running_composition(_config(tmp_path), provider, monkeypatch) as (handle, _run):
+        if raise_where == "turn_teardown":
+            original_run_turn = handle.agent._run_turn
+
+            async def failing_teardown_run_turn(ctx):
+                try:
+                    return await original_run_turn(ctx)
+                except asyncio.CancelledError as exc:
+                    raise RuntimeError("cleanup boom after cancel") from exc
+
+            monkeypatch.setattr(handle.agent, "_run_turn", failing_teardown_run_turn)
+
+        chat_id = f"stop-teardown-error-{raise_where}"
+        key = f"websocket:{chat_id}"
+        completions: list[TurnCompleted] = []
+        handle.bus.subscribe(completions.append, TurnCompleted)
+        await handle.bus.publish_inbound(InboundMessage(
+            channel="websocket",
+            sender_id="webui",
+            chat_id=chat_id,
+            content="Run something slow",
+            metadata={"webui": True, "webui_turn_id": "turn-teardown", "live_turn_controls": True},
+        ))
+        await asyncio.wait_for(first_started.wait(), timeout=5)
+        active = handle.agent.run_control.active_run(key)
+        assert active is not None
+        stopped_run_id = active.run_id
+        target = handle.agent.stop_target_for_key(key)
+        assert target is not None
+        await stop_direct(handle.agent, target, chat_id=chat_id)
+        async with asyncio.timeout(5):
+            while not completions:
+                await asyncio.sleep(0)
+        assert completions[0].outcome == "cancelled"
+        record = handle.agent.run_store.load(stopped_run_id)
+        assert record is not None
+        assert record.status is RunStatus.CANCELLED
+        assert record.stop_reason == "cancelled"
+        outbound_texts: list[str] = []
+        while not handle.bus.outbound.empty():
+            item = handle.bus.outbound.get_nowait()
+            if isinstance(item.content, str):
+                outbound_texts.append(item.content)
+        assert not any("Sorry, I encountered an error" in text for text in outbound_texts)
+
+        followup = await handle.agent.execute_turn(TurnRequest(
+            content="Follow up after stop", session_key=key,
+        ))
+        assert followup.status is RunStatus.COMPLETED
+        assert followup.content == "Next turn works."

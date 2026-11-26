@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import json
 import os
 import shutil
@@ -18,6 +19,8 @@ from pathlib import Path
 from types import ModuleType
 from typing import Any, Literal, cast
 
+from loguru import logger
+
 from kohaku.agent.permission_rules import (
     extract_saveable_sandbox_command,
     matches_sandbox_excluded_command,
@@ -27,8 +30,10 @@ from kohaku.agent.tools.sandbox import managed_bwrap_available
 from kohaku.harness.backend import (
     BridgeFactory,
     ExternalEvent,
+    ExternalQueryFinished,
     ExternalReasoning,
     ExternalSessionStarted,
+    ExternalSteerAvailable,
     ExternalText,
     ExternalToolBatchReady,
     ExternalToolCall,
@@ -124,11 +129,21 @@ class ClaudeSDKBackend:
                 raise HarnessCapabilityError("Claude Code Sandbox requires Linux or macOS.")
         self._state_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
         bridge = await self._bridge_factory(request.runtime, request.usage_source)
+        process: _ClaudeProcess | None = None
         try:
             process = _ClaudeProcess(sdk, bridge, request, self._state_dir, resume, fork_session)
             await process.connect()
         except BaseException:
-            await bridge.close()
+            if process is None:
+                try:
+                    await bridge.close()
+                except BaseException as cleanup_error:
+                    logger.warning(
+                        "Claude SDK bridge cleanup failed after connect stopped: {}",
+                        type(cleanup_error).__name__,
+                    )
+            else:
+                await process.close()
             raise
         return process
 
@@ -204,6 +219,22 @@ class _SDKTurn:
     trackers: dict[str, FileEditTracker] = field(default_factory=dict)
     edits: dict[str, dict[str, object]] = field(default_factory=dict)
     denied: set[str] = field(default_factory=set)
+    pending_responses: int = 1
+
+
+@dataclass(slots=True)
+class _SDKCommand:
+    request: ExternalTurnRequest
+    approve: RequestApproval
+    events: asyncio.Queue[object]
+
+
+@dataclass(frozen=True, slots=True)
+class _SDKFailure:
+    error: BaseException
+
+
+_SDK_END = object()
 
 
 class _ClaudeProcess:
@@ -282,22 +313,93 @@ class _ClaudeProcess:
         )
         self._transport = _RestrictedTransport(options, env, self._workspace)
         self._client: Any = sdk.ClaudeSDKClient(options=options, transport=self._transport)
+        self._owner_task: asyncio.Task[None] | None = None
+        self._owner_ready: asyncio.Future[None] | None = None
+        self._commands: asyncio.Queue[_SDKCommand] = asyncio.Queue()
+        self._turn_events: asyncio.Queue[object] | None = None
+        self._running = False
+        self._closing = False
 
     async def connect(self) -> None:
+        if self._owner_task is not None:
+            raise RuntimeError("The Claude Code process is already connected.")
+        self._owner_ready = asyncio.get_running_loop().create_future()
+        self._owner_task = asyncio.create_task(
+            self._own_sdk_lifecycle(), context=contextvars.Context(),
+        )
         try:
-            await self._client.connect()
+            await asyncio.shield(self._owner_ready)
         except BaseException:
-            await self._transport.close()
+            await self.close()
             raise
 
     async def close(self) -> None:
+        self._closing = True
+        owner = self._owner_task
+        if owner is not None and not owner.done():
+            owner.cancel()
+        if owner is not None:
+            try:
+                await asyncio.shield(owner)
+            except asyncio.CancelledError:
+                if not owner.cancelled():
+                    raise
+            except BaseException as cleanup_error:
+                logger.warning(
+                    "Claude SDK lifecycle owner stopped with an error: {}",
+                    type(cleanup_error).__name__,
+                )
+
+    async def _own_sdk_lifecycle(self) -> None:
+        ready = self._owner_ready
+        active_events: asyncio.Queue[object] | None = None
+        command: _SDKCommand | None = None
         try:
-            await self._client.disconnect()
+            await self._client.connect()
+            if ready is not None and not ready.done():
+                ready.set_result(None)
+            while not self._closing:
+                command = await self._commands.get()
+                active_events = command.events
+                try:
+                    async for event in self._run_turn(command.request, command.approve):
+                        await command.events.put(event)
+                except asyncio.CancelledError:
+                    raise
+                except BaseException as exc:
+                    await command.events.put(_SDKFailure(exc))
+                finally:
+                    await command.events.put(_SDK_END)
+                    active_events = None
+                    command = None
+        except BaseException as exc:
+            if ready is not None and not ready.done():
+                ready.set_exception(exc)
+            elif active_events is not None:
+                await active_events.put(_SDKFailure(exc))
+                await active_events.put(_SDK_END)
         finally:
             try:
+                await self._client.disconnect()
+            except BaseException as cleanup_error:
+                logger.warning(
+                    "Claude SDK disconnect failed during lifecycle cleanup: {}",
+                    type(cleanup_error).__name__,
+                )
+            try:
                 await self._transport.close()
-            finally:
+            except BaseException as cleanup_error:
+                logger.warning(
+                    "Claude SDK transport failed during lifecycle cleanup: {}",
+                    type(cleanup_error).__name__,
+                )
+            try:
                 await self._bridge.close()
+            except BaseException as cleanup_error:
+                logger.warning(
+                    "Claude SDK bridge failed during lifecycle cleanup: {}",
+                    type(cleanup_error).__name__,
+                )
 
     async def _pre_tool(
         self, hook_input: object, _tool_use_id: object, _context: object,
@@ -378,6 +480,45 @@ class _ClaudeProcess:
     async def run(
         self, request: ExternalTurnRequest, approve: RequestApproval,
     ) -> AsyncGenerator[ExternalEvent, None]:
+        if self._closing or self._owner_task is None or self._owner_task.done():
+            raise RuntimeError("The Claude Code process is closed.")
+        if self._running:
+            raise RuntimeError("The Claude Code process already has an active turn.")
+        self._running = True
+        events: asyncio.Queue[object] = asyncio.Queue()
+        self._turn_events = events
+        await self._commands.put(_SDKCommand(request, approve, events))
+        try:
+            while True:
+                event = await events.get()
+                if event is _SDK_END:
+                    return
+                if isinstance(event, _SDKFailure):
+                    raise event.error
+                yield cast(ExternalEvent, event)
+        finally:
+            self._running = False
+            self._turn_events = None
+
+    def notify_steer(self) -> None:
+        events = self._turn_events
+        if events is not None:
+            events.put_nowait(ExternalSteerAvailable())
+
+    async def send_steer(self, prompt: str) -> bool:
+        """Submit input on the same SDK stream and keep its response in this run."""
+        active = self._active
+        if self._closing or active is None or not active.pending_responses:
+            return False
+        if not active.request.is_authorized():
+            return False
+        active.pending_responses += 1
+        await self._client.query(prompt)
+        return True
+
+    async def _run_turn(
+        self, request: ExternalTurnRequest, approve: RequestApproval,
+    ) -> AsyncGenerator[ExternalEvent, None]:
         if self._active is not None:
             raise RuntimeError("The Claude Code process already has an active turn.")
         # A saved exclusion is live for this turn. The next admission supplies
@@ -393,74 +534,96 @@ class _ClaudeProcess:
         session_id = None
         try:
             await self._client.query(request.prompt)
-            async for message in self._client.receive_response():
-                if getattr(message, "parent_tool_use_id", None) is not None:
-                    continue
-                observed_id = _string(getattr(message, "session_id", None))
-                if isinstance(message, sdk.SystemMessage) and message.subtype == "init":
-                    observed_id = _string(_object(message.data).get("session_id"))
-                if observed_id and observed_id != session_id:
-                    if observed_id == self._fork_parent_id:
-                        yield ExternalTurnFinished(error="Claude Code did not create a distinct fork.")
-                        return
-                    session_id = observed_id
-                    yield ExternalSessionStarted(observed_id)
-                if isinstance(message, sdk.StreamEvent):
-                    raw = _object(message.event)
-                    if raw.get("type") == "message_stop":
-                        yield ExternalToolBatchReady()
-                    index = raw.get("index")
-                    if not isinstance(index, int):
+            while active.pending_responses:
+                had_text = False
+                async for message in self._client.receive_response():
+                    if getattr(message, "parent_tool_use_id", None) is not None:
                         continue
-                    if raw.get("type") == "content_block_start":
-                        kind = _string(_object(raw.get("content_block")).get("type"))
-                        if kind in partial:
-                            parts: list[str] = []
-                            current_blocks[index] = kind, parts
-                            partial[kind].append(parts)
-                    elif index in current_blocks:
-                        kind, parts = current_blocks[index]
-                        if raw.get("type") == "content_block_delta":
-                            delta = _string(_object(raw.get("delta")).get(kind))
-                            if delta:
-                                parts.append(delta)
-                                yield ExternalText(delta) if kind == "text" else ExternalReasoning(delta)
-                        elif raw.get("type") == "content_block_stop":
-                            del current_blocks[index]
-                            if kind == "thinking" and parts:
-                                yield ExternalReasoning(None)
-                elif isinstance(message, sdk.AssistantMessage):
-                    for block in message.content:
-                        if isinstance(block, sdk.TextBlock):
-                            text = _remaining(_string(block.text), partial["text"])
-                            if text:
-                                yield ExternalText(text)
-                        elif isinstance(block, sdk.ThinkingBlock):
-                            thinking = _remaining(_string(block.thinking), partial["thinking"])
-                            if thinking:
-                                yield ExternalReasoning(thinking)
-                                yield ExternalReasoning(None)
-                        elif isinstance(block, sdk.ToolUseBlock):
-                            yield ExternalToolIntent(ExternalToolCall(
-                                _string(block.id), _string(block.name), _object(block.input),
-                            ))
-                elif isinstance(message, sdk.UserMessage):
-                    content: object = message.content
-                    if isinstance(content, list):
-                        for block in cast(list[object], content):
-                            if isinstance(block, sdk.ToolResultBlock):
-                                call_id = _string(getattr(block, "tool_use_id", None))
-                                yield ExternalToolResult(
-                                    call_id, getattr(block, "content", None),
-                                    bool(getattr(block, "is_error", False)),
-                                    call_id not in active.denied, active.edits.pop(call_id, None),
-                                )
-                elif isinstance(message, sdk.ResultMessage):
-                    yield ExternalTurnFinished(
-                        error="Claude Code reported a turn error." if message.is_error else None,
-                        cancelled=message.terminal_reason in {"aborted_streaming", "aborted_tools"},
-                        final_text=_string(message.result) or None,
-                    )
+                    observed_id = _string(getattr(message, "session_id", None))
+                    if isinstance(message, sdk.SystemMessage) and message.subtype == "init":
+                        observed_id = _string(_object(message.data).get("session_id"))
+                    if observed_id and observed_id != session_id:
+                        if observed_id == self._fork_parent_id:
+                            yield ExternalTurnFinished(error="Claude Code did not create a distinct fork.")
+                            return
+                        session_id = observed_id
+                        yield ExternalSessionStarted(observed_id)
+                    if isinstance(message, sdk.StreamEvent):
+                        raw = _object(message.event)
+                        if raw.get("type") == "message_stop":
+                            yield ExternalToolBatchReady()
+                        index = raw.get("index")
+                        if not isinstance(index, int):
+                            continue
+                        if raw.get("type") == "content_block_start":
+                            kind = _string(_object(raw.get("content_block")).get("type"))
+                            if kind in partial:
+                                parts: list[str] = []
+                                current_blocks[index] = kind, parts
+                                partial[kind].append(parts)
+                        elif index in current_blocks:
+                            kind, parts = current_blocks[index]
+                            if raw.get("type") == "content_block_delta":
+                                delta = _string(_object(raw.get("delta")).get(kind))
+                                if delta:
+                                    parts.append(delta)
+                                    if kind == "text":
+                                        had_text = True
+                                        yield ExternalText(delta)
+                                    else:
+                                        yield ExternalReasoning(delta)
+                            elif raw.get("type") == "content_block_stop":
+                                del current_blocks[index]
+                                if kind == "thinking" and parts:
+                                    yield ExternalReasoning(None)
+                    elif isinstance(message, sdk.AssistantMessage):
+                        for block in message.content:
+                            if isinstance(block, sdk.TextBlock):
+                                text = _remaining(_string(block.text), partial["text"])
+                                if text:
+                                    had_text = True
+                                    yield ExternalText(text)
+                            elif isinstance(block, sdk.ThinkingBlock):
+                                thinking = _remaining(_string(block.thinking), partial["thinking"])
+                                if thinking:
+                                    yield ExternalReasoning(thinking)
+                                    yield ExternalReasoning(None)
+                            elif isinstance(block, sdk.ToolUseBlock):
+                                yield ExternalToolIntent(ExternalToolCall(
+                                    _string(block.id), _string(block.name), _object(block.input),
+                                ))
+                    elif isinstance(message, sdk.UserMessage):
+                        content: object = message.content
+                        if isinstance(content, list):
+                            for block in cast(list[object], content):
+                                if isinstance(block, sdk.ToolResultBlock):
+                                    call_id = _string(getattr(block, "tool_use_id", None))
+                                    yield ExternalToolResult(
+                                        call_id, getattr(block, "content", None),
+                                        bool(getattr(block, "is_error", False)),
+                                        call_id not in active.denied, active.edits.pop(call_id, None),
+                                    )
+                    elif isinstance(message, sdk.ResultMessage):
+                        active.pending_responses -= 1
+                        if active.pending_responses and not message.is_error and message.terminal_reason not in {
+                            "aborted_streaming", "aborted_tools",
+                        }:
+                            if not had_text:
+                                text = _string(message.result)
+                                if text:
+                                    yield ExternalText(text)
+                            partial = {"text": deque(), "thinking": deque()}
+                            current_blocks.clear()
+                            yield ExternalQueryFinished()
+                            break
+                        active.pending_responses = 0
+                        yield ExternalTurnFinished(
+                            error="Claude Code reported a turn error." if message.is_error else None,
+                            cancelled=message.terminal_reason in {"aborted_streaming", "aborted_tools"},
+                            final_text=_string(message.result) or None,
+                        )
+                        return
+                else:
                     return
         finally:
             self._active = None

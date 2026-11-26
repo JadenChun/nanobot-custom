@@ -163,6 +163,10 @@ _WORKSPACE_BOUNDARY_NOTE = (
 )
 
 
+class ExecProcessStopped(asyncio.CancelledError):
+    """Report that a cancelled foreground command has no live processes."""
+
+
 class ExecToolConfig(Base):
     """Shell exec tool configuration."""
     enable: bool = True
@@ -863,8 +867,10 @@ class ExecTool(Tool):
             except asyncio.TimeoutError:
                 await self.kill_process_tree(process)
                 return ToolResult.error(f"Error: Command timed out after {prepared.timeout} seconds")
-            except asyncio.CancelledError:
+            except asyncio.CancelledError as exc:
                 await self.kill_process_tree(process)
+                if await self.process_tree_quiescent(process):
+                    raise ExecProcessStopped() from exc
                 raise
 
             # Safety-net reap: asyncio *should* have reaped the child via

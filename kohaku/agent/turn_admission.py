@@ -133,7 +133,8 @@ class ApprovalAdmission:
         return bool(pending.expires_at and pending.expires_at <= time.time())
 
     def _issue(self, pending: PendingApproval, context: TurnContext,
-               source_is_current: Callable[[], bool] | None) -> EffectApprovalAuthority:
+               source_is_current: Callable[[], bool] | None, *,
+               same_run: bool = False) -> EffectApprovalAuthority:
         used = False
         run_id = context.run_id
 
@@ -147,7 +148,7 @@ class ApprovalAdmission:
             # Owner/source checks finish before the short authority lock. No
             # await separates them from the atomic one-use decision below.
             if (
-                context.run_id != run_id or not self._context_matches(pending, context)
+                context.run_id != run_id or not self._context_matches(pending, context, same_run=same_run)
                 or (spend and dispatched_context is not context)
                 or (source_is_current is not None and not source_is_current())
             ):
@@ -245,7 +246,9 @@ class ApprovalAdmission:
             )
 
     @staticmethod
-    def _context_matches(pending: PendingApproval, context: TurnContext) -> bool:
+    def _context_matches(
+        pending: PendingApproval, context: TurnContext, *, same_run: bool = False,
+    ) -> bool:
         if context.cancelled or not context.run_id or context.session_key != pending.session_key:
             return False
         owner = context.execution_owner
@@ -259,7 +262,23 @@ class ApprovalAdmission:
                 return False
             if pending.generation is not None and pending.generation != state.generation:
                 return False
-        return pending.run_id != context.run_id
+        return (pending.run_id == context.run_id) is same_run
+
+    def issue_live_effect(
+        self,
+        pending: PendingApproval,
+        context: TurnContext,
+        source_is_current: Callable[[], bool],
+    ) -> EffectApprovalAuthority | None:
+        """Bind one approved effect to its still-active turn."""
+        if (
+            not self._context_matches(pending, context, same_run=True)
+            or not source_is_current()
+            or not pending.effect_id
+            or not re.fullmatch(r"[0-9a-f]{64}", pending.effect_id)
+        ):
+            return None
+        return self._issue(pending, context, source_is_current, same_run=True)
 
     async def consume(self, snapshot: ApprovalSnapshot, *, context: TurnContext | None = None,
                       source_is_current: Callable[[], bool] | None = None,

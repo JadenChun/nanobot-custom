@@ -65,7 +65,7 @@ from kohaku.webui.outbound_wire import (
     WebUIWirePayload,
     WebUIWirePersistence,
 )
-from kohaku.webui.session_identity import is_valid_webui_chat_id, webui_session_key
+from kohaku.webui.session_identity import is_valid_webui_chat_id, webui_chat_id, webui_session_key
 from kohaku.webui.transcript import WEBUI_TRANSCRIPT_INCOMPLETE_KEY
 from kohaku.webui.websocket_logging import websockets_server_logger
 from kohaku.webui.ws_http import attached_mobile_identity
@@ -447,6 +447,7 @@ class WebSocketChannel(BaseChannel):
         self._outbound = WebUIOutboundProjector(self, self._session_projection)
 
         self._external_approvals: dict[str, dict[str, ExternalApprovalWirePayload]] = {}
+        self.gateway.http.live_approvals_for_key = self._live_approvals_for_key
         self._stream_text_buffers: dict[tuple[str, str], list[str]] = {}
         self._reasoning_text_buffers: dict[tuple[str, str], list[str]] = {}
 
@@ -519,6 +520,10 @@ class WebSocketChannel(BaseChannel):
         label: str = "",
     ) -> None:
         await self._safe_send_to(connection, raw, label=label)
+
+    def _live_approvals_for_key(self, key: str) -> list[ExternalApprovalWirePayload]:
+        chat_id = webui_chat_id(key)
+        return list(self._external_approvals.get(chat_id or "", {}).values())
 
     async def webui_dispatch_message(
         self,

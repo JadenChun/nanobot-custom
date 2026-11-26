@@ -18,6 +18,7 @@ import type {
   WorkspacePermissionProjection,
   WebUIMutationOutcome,
   StopExpectation,
+  RunState,
   InputAttemptBinding,
   InputAttemptCapability,
   InputAttemptProof,
@@ -423,6 +424,7 @@ export class KohakuClient {
   private readyChatId: string | null = null;
   private claudeAvailable = false;
   private harnessAvailabilityHandlers = new Set<(available: boolean) => void>();
+  private liveTurnControls = new Set<string>();
   private externalApprovals = new Map<string, Map<string, Extract<InboundEvent, { event: "external_approval" }>>>();
   private harnessBindings = new Map<string, HarnessBinding>();
   private attachedModelPresets = new Map<string, string | null>();
@@ -550,6 +552,20 @@ export class KohakuClient {
   /** Canonical lifecycle turn currently owning the run for *chatId*, if known. */
   getRunTurnId(chatId: string): string | null {
     return this.latestRunTurnIdByChatId.get(chatId) ?? null;
+  }
+
+  /** Restore the canonical active turn for controls and live completion. */
+  hydrateActiveRun(chatId: string, state: RunState | null | undefined): void {
+    if (!state?.turn_id) return;
+    const turnId = state.turn_id;
+    if (this.canonicalCompletedTurnIdsByChatId.get(chatId)?.has(turnId)) return;
+    const previous = this.runStartedAtByChatId.get(chatId);
+    if (previous !== undefined && state.started_at !== null && state.started_at < previous) return;
+    if (this.getRunTurnId(chatId) !== turnId) this.advanceRunGeneration(chatId, turnId);
+    if (state.started_at === null) return;
+    this.runStartedAtByTurnKey.set(this.runSendKey(chatId, turnId), state.started_at);
+    this.runStartedAtByChatId.set(chatId, state.started_at);
+    if (previous !== state.started_at) this.emitRunStatus(chatId, state.started_at);
   }
 
   /** Clear the optimistic run state immediately after the user stops a turn. */
@@ -1744,6 +1760,9 @@ export class KohakuClient {
             request_intent: options?.requestIntent ?? "new",
             ...(options?.targetTurnId ? { target_turn_id: options.targetTurnId } : {}),
           }),
+      ...(this.liveTurnControls.has(chatId) && options?.startsNewRun !== false
+        ? { live_turn_controls: true as const }
+        : {}),
       webui: true,
     };
     if (!this.frameFitsTransport(frame)) {
@@ -1805,6 +1824,28 @@ export class KohakuClient {
       return;
     }
     this.queueSend(frame);
+  }
+
+  async sendLiveApprovalDecision(
+    chatId: string,
+    approval: ApprovalDecisionPayload,
+  ): Promise<string | null> {
+    try {
+      await this.requestMutation("run.approve", { chat_id: chatId, approval });
+      return null;
+    } catch (error) {
+      if (!(error instanceof WebUIMutationError)
+        || error.status !== 404
+        || error.outcome !== "not_applied"
+        || error.message !== "unknown WebUI mutation action") throw error;
+    }
+    return this.sendApprovalDecision(chatId, approval.approval_id, approval.decision, {
+      sessionKey: approval.session_key,
+      sessionIncarnation: approval.session_incarnation,
+      runId: approval.run_id,
+      generation: approval.generation,
+      effectId: approval.effect_id,
+    });
   }
 
   sendApprovalDecision(
@@ -2214,7 +2255,10 @@ export class KohakuClient {
     }
 
     if (parsed.event === "attached") {
+      this.hydrateActiveRun(parsed.chat_id, parsed.run_state);
       this.externalApprovals.delete(parsed.chat_id);
+      if (parsed.live_turn_controls === true) this.liveTurnControls.add(parsed.chat_id);
+      else this.liveTurnControls.delete(parsed.chat_id);
       if (parsed.harness_binding) this.harnessBindings.set(parsed.chat_id, parsed.harness_binding);
       if ("model_preset" in parsed) {
         this.attachedModelPresets.set(parsed.chat_id, parsed.model_preset ?? null);
@@ -2356,6 +2400,7 @@ export class KohakuClient {
       // Check before consuming the running state. A legacy synthesized ID,
       // duplicate terminal frame, or reconnect's idle snapshot is display
       // evidence only and cannot release a new input from the queue.
+      if (parsed.event === "run_state") this.hydrateActiveRun(chatId, parsed.run_state);
       const liveNaturalCompletion = parsed.event === "turn_end"
         && this.status_ === "open"
         && receivedTurnId !== null

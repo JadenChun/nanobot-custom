@@ -342,6 +342,7 @@ class AgentRunSpec:
     consolidate_history: HistoryConsolidator | None = None
     consolidate_provider_compaction: ProviderCompactionConsolidator | None = None
     injection_callback: InjectionCallback | None = None
+    drain_before_first_request: bool = False
     terminal_injection_callback: InjectionCallback | None = None
     llm_timeout_s: float | None = None
     continuation_callback: ContinuationCallback | None = None
@@ -857,6 +858,31 @@ class AgentRunner:
             result = await self._run_core(spec, hook, messages, request_state)
         except asyncio.CancelledError as exc:
             if spec.source_writer is not None:
+                explicit_stop = False
+                turn_context = spec.turn_context
+                if turn_context is not None and turn_context.explicit_stop_requested is not None:
+                    try:
+                        explicit_stop = turn_context.explicit_stop_requested()
+                    except Exception as state_error:
+                        logger.warning(
+                            "Explicit Stop state could not be read: {}",
+                            type(state_error).__name__,
+                        )
+                if explicit_stop:
+                    try:
+                        await spec.source_writer.settle_cancelled_tool_results()
+                    except asyncio.CancelledError:
+                        # Source writes must stay on the registered execution-owner
+                        # task. A repeated cancellation leaves unresolved links for
+                        # the source close path to protect with recovery metadata.
+                        logger.warning(
+                            "Cancelled tool results were interrupted by another Stop",
+                        )
+                    except Exception as settlement_error:
+                        logger.warning(
+                            "Cancelled tool results could not be settled: {}",
+                            type(settlement_error).__name__,
+                        )
                 spec.source_writer.fail()
             context.messages = deepcopy(messages)
             context.stop_reason = "cancelled"
@@ -1059,6 +1085,11 @@ class AgentRunner:
                 session_key=spec.session_key,
             )
             await hook.before_iteration(context)
+            if iteration == 0 and spec.drain_before_first_request:
+                had_injections, injection_cycles = await self._try_drain_injections(
+                    spec, messages, None, injection_cycles, source=request_state.source,
+                    phase="before first model request",
+                )
             request_message_count = len(messages)
             request_messages = (
                 request_state.compaction.request_messages(messages)
@@ -1202,6 +1233,10 @@ class AgentRunner:
                         tool_result_callback=(record_result if source_writer is not None
                                               else spec.tool_result_callback),
                         tool_intent_bindings=tool_intent_bindings,
+                        tool_dispatch_callback=(
+                            source_writer.mark_tool_dispatched
+                            if source_writer is not None else None
+                        ),
                     )
                 finally:
                     if turn_context is not None:

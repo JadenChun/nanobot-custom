@@ -17,6 +17,7 @@ from kohaku.bus.outbound_events import (
     ProgressEvent,
     RetryStatusEvent,
     RetryWaitEvent,
+    RunStateEvent,
     RuntimeModelUpdatedEvent,
     SessionUpdatedEvent,
     StopTargetEvent,
@@ -38,6 +39,7 @@ from kohaku.webui.outbound_wire import (
     WebUIWirePersistence,
     encode_delegated_child,
     encode_external_approval,
+    encode_run_state,
     encode_stop_target,
     encode_turn_end,
     project_notification,
@@ -219,6 +221,17 @@ class WebUIOutboundProjector:
                     persistence="transient",
                 )
                 continue
+            if event["event"] == "run_state":
+                await self._transport.send_payload(
+                    chat_id,
+                    cast(WebUIWirePayload, {
+                        "event": "run_state",
+                        "chat_id": chat_id,
+                        "run_state": event.get("run_state"),
+                    }),
+                    persistence="transient",
+                )
+                continue
             await self._transport.send_goal_status(
                 chat_id,
                 "running",
@@ -250,6 +263,7 @@ class WebUIOutboundProjector:
                 GoalStateSyncEvent,
                 ContextCompactionEvent,
                 WebUIAdmissionRejectedEvent,
+                RunStateEvent,
             )
             log = (
                 logger.debug
@@ -289,6 +303,13 @@ class WebUIOutboundProjector:
             await self._transport.send_payload(
                 msg.chat_id,
                 cast(WebUIWirePayload, encode_stop_target(msg.chat_id, event)),
+                persistence="transient",
+            )
+            return
+        if isinstance(event, RunStateEvent):
+            await self._transport.send_payload(
+                msg.chat_id,
+                cast(WebUIWirePayload, encode_run_state(msg.chat_id, event)),
                 persistence="transient",
             )
             return

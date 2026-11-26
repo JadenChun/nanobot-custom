@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import json
 from collections.abc import AsyncGenerator
 from contextlib import aclosing
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Literal
+
+from loguru import logger
 
 from kohaku.agent.hook import AgentHookContext, AgentRunHookContext
 from kohaku.agent.tools.execution import KnownToolResult
@@ -18,8 +21,10 @@ from kohaku.harness.backend import (
     ExternalApprovalRegistry,
     ExternalEvent,
     ExternalHarnessProcess,
+    ExternalQueryFinished,
     ExternalReasoning,
     ExternalSessionStarted,
+    ExternalSteerAvailable,
     ExternalText,
     ExternalToolBatchReady,
     ExternalToolCall,
@@ -29,6 +34,7 @@ from kohaku.harness.backend import (
     ExternalTurnRequest,
     HarnessCapabilityError,
     SessionHarnessBackend,
+    StreamingSteerProcess,
 )
 
 CLAUDE_TOOL_NAMES = {
@@ -64,9 +70,25 @@ class _Session:
             self.idle_timer.cancel()
             self.idle_timer = None
         if self.process is not None:
-            self.closing = asyncio.create_task(self.process.close())
+            # Do not copy anyio task-local cancel scopes from a turn that has
+            # just been cancelled into SDK teardown. Idle cleanup runs outside
+            # the turn owner and must have an independent context.
+            self.closing = asyncio.create_task(
+                self.process.close(), context=contextvars.Context(),
+            )
             self.process = None
         return self.closing
+
+    async def close_process_inline(self) -> None:
+        """Join process shutdown in the caller so Stop keeps its outcome."""
+        if self.idle_timer is not None:
+            self.idle_timer.cancel()
+            self.idle_timer = None
+        await self.wait_closed()
+        if self.process is not None:
+            process = self.process
+            self.process = None
+            await process.close()
 
     async def wait_closed(self) -> None:
         if (closing := self.closing) is not None:
@@ -141,7 +163,7 @@ class ExternalHarnessRunner:
 
         try:
             if session.incarnation != incarnation:
-                session.close_process()
+                await session.close_process_inline()
                 session.incarnation = incarnation
                 session.workspace = workspace
                 session.session_id = binding.external_session_id
@@ -153,7 +175,7 @@ class ExternalHarnessRunner:
                 binding.harness, binding.runtime_generation,
             )
             if session.launch_key != launch_key:
-                session.close_process()
+                await session.close_process_inline()
             await session.wait_closed()
             if not request.is_authorized():
                 raise PermissionError("The session has no current permission to run.")
@@ -166,7 +188,18 @@ class ExternalHarnessRunner:
                 session.launch_key = launch_key
             turn.persist_binding(session.session_id)
             await request.hook.before_run(turn.run_context)
-            await turn.consume(session, session.process.run(request, approve))
+            process = session.process
+            next_request = request
+            while True:
+                await turn.consume(session, process.run(next_request, approve))
+                if turn.status != "completed" or session.stopping or not request.is_authorized():
+                    break
+                prompts = turn.unsent_guidance + await turn.drain_guidance(terminal=not turn.unsent_guidance)
+                turn.unsent_guidance.clear()
+                if not prompts:
+                    break
+                turn.status = "failed"
+                next_request = replace(request, prompt="\n\n".join(prompts))
             outcome = await turn.finish(session.session_id)
             reusable = (
                 request.retain_process and outcome.status == "completed" and session.session_id is not None
@@ -179,6 +212,15 @@ class ExternalHarnessRunner:
                 turn.record_unapproved_call(call_id)
             raise
         except Exception as exc:
+            if session.stopping:
+                turn.status = "cancelled"
+                turn.error = None
+                for call_id in self.approvals.pending_tool_calls(request.run_id):
+                    turn.record_unapproved_call(call_id)
+                logger.warning(
+                    "External harness failed after Stop: {}", type(exc).__name__,
+                )
+                raise asyncio.CancelledError() from exc
             turn.status = "failed"
             turn.run_context.exception = exc
             if isinstance(exc, HarnessCapabilityError):
@@ -188,10 +230,25 @@ class ExternalHarnessRunner:
             self.approvals.cancel_for_run(request.run_id)
             try:
                 if not reusable:
-                    session.close_process()
-                    await session.wait_closed()
+                    try:
+                        await session.close_process_inline()
+                    except Exception as exc:
+                        if not session.stopping:
+                            raise
+                        logger.warning(
+                            "External harness cleanup failed after Stop: {}",
+                            type(exc).__name__,
+                        )
                 if not turn.settled and not writer.failed:
-                    await turn.finish(session.session_id)
+                    try:
+                        await turn.finish(session.session_id)
+                    except Exception as exc:
+                        if not session.stopping:
+                            raise
+                        logger.warning(
+                            "External harness finalization failed after Stop: {}",
+                            type(exc).__name__,
+                        )
             finally:
                 session.active = None
                 done.set_result(None)
@@ -201,6 +258,11 @@ class ExternalHarnessRunner:
                     session.idle_timer = asyncio.get_running_loop().call_later(
                         self._idle_timeout, session.close_process,
                     )
+
+    def notify_steer(self, session_key: str) -> None:
+        session = self._sessions.get(session_key)
+        if session is not None and not session.stopping and isinstance(session.process, StreamingSteerProcess):
+            session.process.notify_steer()
 
     async def stop(self, session_key: str) -> None:
         self.approvals.cancel_for_session(session_key)
@@ -240,6 +302,8 @@ class _Turn:
     status: Literal["completed", "failed", "cancelled"] = "failed"
     error: str | None = None
     reasoning: bool = False
+    unsent_guidance: list[str] = field(default_factory=list)
+    query_text_start: int = 0
     settled: bool = False
 
     def __post_init__(self) -> None:
@@ -251,6 +315,23 @@ class _Turn:
         payload = binding.payload()
         if writer.owner.read_snapshot().header["metadata"].get("harness_binding") != payload:
             writer.store.update_metadata(self.request.session_key, {"harness_binding": payload})
+
+    async def drain_guidance(self, *, terminal: bool = False) -> list[str]:
+        drain = self.request.drain_steer
+        if drain is None or self.active_calls or self.queued_calls:
+            return []
+        if self.segment and self.status != "completed":
+            return []
+        return await drain(self.commit_query_segment, terminal)
+
+    async def commit_query_segment(self) -> None:
+        await self.end_reasoning()
+        if self.segment:
+            entry = self.request.writer.append_message({
+                "role": "assistant", "content": "".join(self.segment),
+            })
+            await self.end_segment(entry["_event_id"], resuming=True)
+        self.query_text_start = len(self.text)
 
     async def consume(self, session: _Session, events: AsyncGenerator[ExternalEvent, None]) -> None:
         async with aclosing(events):
@@ -279,18 +360,36 @@ class _Turn:
                 elif isinstance(event, ExternalToolBatchReady):
                     if self.queued_calls and not self.active_calls:
                         await self.write_batch()
-                else:
-                    if event.final_text and not self.text:
+                elif isinstance(event, ExternalQueryFinished):
+                    if not (self.active_calls or self.queued_calls):
+                        await self.commit_query_segment()
+                elif not isinstance(event, ExternalSteerAvailable):
+                    if event.final_text and len(self.text) == self.query_text_start:
                         await self.add_text(event.final_text)
                     self.error = event.error
-                    if event.cancelled:
+                    if session.stopping:
+                        self.error = None
+                        self.status = "cancelled"
+                    elif event.cancelled:
                         self.status = "cancelled"
                     elif event.error is None and not (self.active_calls or self.queued_calls):
                         self.status = "completed"
                     else:
                         self.error = event.error or "Claude Code did not report every tool result."
                     return
-        self.error = "Claude Code closed the stream before the turn finished."
+                if (
+                    isinstance(event, (ExternalSessionStarted, ExternalToolResult, ExternalSteerAvailable))
+                    and isinstance(session.process, StreamingSteerProcess)
+                    and not session.stopping and self.request.is_authorized()
+                ):
+                    prompts = await self.drain_guidance()
+                    if prompts and not await session.process.send_steer("\n\n".join(prompts)):
+                        self.unsent_guidance.extend(prompts)
+        if session.stopping:
+            self.status = "cancelled"
+            self.error = None
+        else:
+            self.error = "Claude Code closed the stream before the turn finished."
 
     async def add_text(self, text: str) -> None:
         await self.end_reasoning()

@@ -511,7 +511,7 @@ async def test_streaming_sibling_controls_do_not_touch_parent_and_stop_remains_r
             assert child_completions_after_stop == child_completions_before_stop
             assert len(parent_completed) == 1
             assert parent_completed[0].context.metadata[WEBUI_TURN_METADATA_KEY] == "parent-turn"
-            assert parent_completed[0].outcome == "completed"
+            assert parent_completed[0].outcome == "cancelled"
             record = loop.run_store.load(parent_run_id)
             assert record.status.value == "cancelled" and record.stop_reason == "cancelled"
             completed_messages = []
@@ -527,7 +527,7 @@ async def test_streaming_sibling_controls_do_not_touch_parent_and_stop_remains_r
                 if frame.get("event") == "turn_end" and frame.get("turn_id") == "parent-turn"
             ]
             assert len(completed_frames) == 1
-            assert "outcome" not in completed_frames[0]
+            assert completed_frames[0]["outcome"] == "cancelled"
             persisted_turn_ends = [
                 row for row in read_transcript_lines(KEY)
                 if row.get("event") == "turn_end" and row.get("turn_id") == "parent-turn"

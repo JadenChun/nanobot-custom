@@ -11,6 +11,7 @@ import {
   toolTraceLinesFromEvents,
 } from "@/lib/tool-traces";
 import { hasPendingAgentActivity } from "@/lib/activity-timeline";
+import { parseRunState } from "@/lib/run-state";
 import {
   delegatedChildMatchesRoot,
   mergeDelegatedChildRows,
@@ -51,6 +52,7 @@ import type {
   GoalStateWsPayload,
   MessageDeliveryStatus,
   RecoveryState,
+  RunState,
   RetryStatus,
   ToolProgressEvent,
   UIMediaAttachment,
@@ -267,6 +269,50 @@ function eventTurnId(ev: InboundEvent): string | undefined {
   return "turn_id" in ev && typeof ev.turn_id === "string" ? ev.turn_id : undefined;
 }
 
+function runIdentity(state: RunState | null | undefined): string | null {
+  return state ? JSON.stringify([
+    state.source_incarnation,
+    state.turn_id,
+    state.run_id,
+  ]) : null;
+}
+
+function sameStopTarget(a: StopExpectation, b: StopExpectation): boolean {
+  const identity = (target: StopExpectation) => JSON.stringify([
+    target.source.store_identity,
+    target.source.session_key,
+    target.source.incarnation,
+    target.source.generation,
+    target.control_epoch,
+    target.active_root_present,
+    target.active_turn_id,
+    target.active_root_run_ids,
+    target.children.map((child) => [
+      child.child_id,
+      child.source.store_identity,
+      child.source.session_key,
+      child.source.incarnation,
+      child.source.generation,
+      child.child_run_id,
+      child.run_sequence,
+      child.control_epoch,
+    ]),
+    target.pending_work_digest,
+  ]);
+  return identity(a) === identity(b);
+}
+
+function isMutationError(
+  error: unknown,
+  expected: { status: number; message: string; outcome?: string },
+): boolean {
+  if (typeof error !== "object" || error === null) return false;
+  const row = error as Record<string, unknown>;
+  return row.status === expected.status
+    && row.message === expected.message
+    && (expected.outcome === undefined || row.outcome === expected.outcome);
+}
+
 function transitionTurnDelivery(
   messages: UIMessage[],
   turnId: string,
@@ -337,6 +383,7 @@ export function useKohakuStream(
   onProjectionRefreshNeeded?: () => void,
   initialStopTargetSnapshotAvailable = initialStopTarget !== null,
   requireVerifiedStopTarget = false,
+  initialRunStateInput: RunState | null | undefined = undefined,
 ): {
   messages: UIMessage[];
   /** Whether ``messages`` belongs to the current ``chatId`` after a session switch. */
@@ -351,6 +398,7 @@ export function useKohakuStream(
   stopFeedback: string | null;
   dismissStopNotice: () => void;
   stopTarget: StopExpectation | null;
+  runState: RunState | null | undefined;
   connectionOpen: boolean;
   /** At least one input still awaits exact owner disposition, independent of activity. */
   hasUnknownMessageSend: boolean;
@@ -391,7 +439,9 @@ export function useKohakuStream(
   const consumeQueuedAttempt = useCallback((binding: QueuedAttemptBinding) => (
     chatId ? client.consumeQueuedAttempt(chatId, binding) : false
   ), [chatId, client]);
-  const initialRunStartedAt = chatId ? client.getRunStartedAt(chatId) : null;
+  const initialRunStartedAt = initialRunStateInput !== undefined
+    ? initialRunStateInput?.started_at ?? null
+    : (chatId ? client.getRunStartedAt(chatId) : null);
   const [messages, setMessages] = useState<UIMessage[]>(initialMessages);
   const messagesRef = useRef(messages);
   messagesRef.current = messages;
@@ -399,12 +449,16 @@ export function useKohakuStream(
   /** If history ends in unfinished agent activity, keep the loading spinner alive. */
   const initialStreaming = hasPendingAgentActivity(initialMessages);
   const [isStreaming, setIsStreaming] = useState(
-    initialStreaming || hasPendingToolCalls || initialRunStartedAt !== null,
+    initialStreaming
+    || hasPendingToolCalls
+    || initialRunStartedAt !== null
+    || (initialRunStateInput !== undefined && initialRunStateInput !== null),
   );
   /** Unix epoch seconds when the current user turn started; cleared on ``idle``. */
   const [runStartedAt, setRunStartedAt] = useState<number | null>(initialRunStartedAt);
   const [retryStatus, setRetryStatus] = useState<RetryStatus | null>(null);
   const [goalState, setGoalState] = useState<GoalStateWsPayload | undefined>(undefined);
+  const [runState, setRunState] = useState<RunState | null | undefined>(initialRunStateInput);
   const [recoveryState, setRecoveryState] = useState<RecoveryState | null>(null);
   const [streamError, setStreamError] = useState<StreamError | null>(null);
   const [stopTarget, setStopTarget] = useState<StopExpectation | null>(initialStopTarget);
@@ -412,9 +466,9 @@ export function useKohakuStream(
     initialStopTargetSnapshotAvailable,
   );
   const [stopPending, setStopPending] = useState(false);
+  const stopPendingRef = useRef(stopPending);
   const [stopNotice, setStopNotice] = useState<"stale_target" | "unavailable" | null>(null);
   const [stopFeedback, setStopFeedback] = useState<{ text: string; turnId?: string } | null>(null);
-  const [stopTargetRequiresRefresh, setStopTargetRequiresRefresh] = useState(false);
   const [connectionStatus, setConnectionStatus] = useState(client.status);
   const [unknownMessageSend, setUnknownMessageSend] = useState(() => ({
     chatId,
@@ -440,14 +494,19 @@ export function useKohakuStream(
   const deferredAnswersRef = useRef(new Map<string | undefined, string>());
   const sideChannelTurnIdsRef = useRef<Set<string>>(new Set());
   const liveStopTargetSeenRef = useRef(false);
+  const liveRunStateSeenRef = useRef(false);
   const stopTargetRef = useRef(stopTarget);
+  const runStateRef = useRef(runState);
   const stoppedTurnIdRef = useRef<string | null>(null);
   const [queueCompletion, setQueueCompletion] =
     useState<{ chatId: string; turnId: string } | null>(null);
   const admissionWaitersRef = useRef(new Map<string, (admitted: boolean) => void>());
   const trustedStopSourceRef = useRef(initialStopTarget?.source ?? null);
-  const stopTargetRequiresRefreshRef = useRef(false);
-  const stopTargetRefreshBaselineRef = useRef<StopExpectation | null>(null);
+  const retiredRunIdentitiesRef = useRef(new Set<string>());
+  const staleStopTargetRef = useRef<StopExpectation | null>(null);
+  const staleStopTargetHistoryBaselineRef = useRef<StopExpectation | null>(null);
+  const pendingStopRunIdentityRef = useRef<string | null>(null);
+  const staleRunStateRefreshPendingRef = useRef(false);
   const childRowsRef = useRef<UIMessage[]>(
     initialMessages.filter((message) => message.kind === "delegated_child"),
   );
@@ -455,6 +514,7 @@ export function useKohakuStream(
   const childOwnedWorkRef = useRef(false);
   stopTargetRef.current = stopTarget;
   projectionRefreshRef.current = onProjectionRefreshNeeded;
+  stopPendingRef.current = stopPending;
 
   const childOwnedWork = useMemo(() => {
     const rootSource = stopTarget?.source ?? null;
@@ -469,25 +529,114 @@ export function useKohakuStream(
     });
   }, [messages, stopTarget]);
   childOwnedWorkRef.current = childOwnedWork;
-  const hasOwnedWork = stopTarget !== null || childOwnedWork;
+  runStateRef.current = runState;
+  const hasActiveRun = runState !== undefined && runState !== null;
+  const hasOwnedWork = hasActiveRun || stopTarget !== null || childOwnedWork || stopPending;
   const connectionOpen = connectionStatus === "open";
   const hasModernStopTargetSnapshot = stopTargetSnapshotAvailable || liveStopTargetSeenRef.current;
   const legacyTargetTurnId = chatId ? client.getRunTurnId(chatId) : null;
+  const runStateTargetTurnId = runState && typeof runState.turn_id === "string"
+    && runState.turn_id.trim().length > 0
+    ? runState.turn_id
+    : null;
   const hasLegacyTargetTurnId = typeof legacyTargetTurnId === "string"
     && legacyTargetTurnId.trim().length > 0;
+  const canSendRunStateStop = runState !== undefined
+    && runState !== null
+    && runState.state !== "stopping"
+    && runState.can_stop
+    && runStateTargetTurnId !== null;
+  const stopTargetCanStop = stopTarget !== null && (
+    !stopTarget.active_root_present
+    || runState === undefined
+    || (
+      runState !== null
+      && runState.state !== "stopping"
+      && runState.can_stop
+    )
+  );
   const stopCanBeSent = connectionOpen
     && !stopPending
-    && (stopTarget !== null || (
-      !requireVerifiedStopTarget
-      && !hasModernStopTargetSnapshot
-      && isStreaming
-      && !childOwnedWork
-      && !stopTargetRequiresRefresh
-      && hasLegacyTargetTurnId
-    ));
+    && (
+      canSendRunStateStop
+      || stopTargetCanStop
+      || (
+        runState === undefined
+        && !liveRunStateSeenRef.current
+        && !staleRunStateRefreshPendingRef.current
+        && !requireVerifiedStopTarget
+        && !hasModernStopTargetSnapshot
+        && isStreaming
+        && !childOwnedWork
+        && hasLegacyTargetTurnId
+      )
+    );
 
   const dismissStreamError = useCallback(() => setStreamError(null), []);
   const dismissStopNotice = useCallback(() => setStopNotice(null), []);
+  const acceptRunState = useCallback((value: unknown, source: "history" | "attached" | "live") => {
+    const candidate = parseRunState(value);
+    if (candidate === undefined) return;
+    const current = runStateRef.current;
+    const currentIdentity = runIdentity(current);
+    const candidateIdentity = runIdentity(candidate);
+    if (candidateIdentity && retiredRunIdentitiesRef.current.has(candidateIdentity)) return;
+    if (
+      candidate
+      && current?.state === "stopping"
+      && candidateIdentity === currentIdentity
+      && candidate.state !== "stopping"
+      && source !== "attached"
+    ) return;
+    if (
+      candidate
+      && current?.state === "stopping"
+      && candidateIdentity === currentIdentity
+      && candidate.state !== "stopping"
+      && source === "attached"
+      && pendingStopRunIdentityRef.current === currentIdentity
+    ) pendingStopRunIdentityRef.current = null;
+    if (candidate && current && candidateIdentity !== currentIdentity) {
+      if (
+        current.started_at !== null
+        && candidate.started_at !== null
+        && candidate.started_at < current.started_at
+      ) return;
+      if (currentIdentity) retiredRunIdentitiesRef.current.add(currentIdentity);
+      if (pendingStopRunIdentityRef.current === currentIdentity) {
+        pendingStopRunIdentityRef.current = null;
+        setStopPending(false);
+      }
+    } else if (candidate === null && currentIdentity) {
+      retiredRunIdentitiesRef.current.add(currentIdentity);
+      if (current?.state !== "stopping"
+        && pendingStopRunIdentityRef.current === currentIdentity) {
+        pendingStopRunIdentityRef.current = null;
+      }
+    }
+    if (source !== "history") liveRunStateSeenRef.current = true;
+    staleRunStateRefreshPendingRef.current = false;
+    runStateRef.current = candidate;
+    setRunState(candidate);
+    if (candidate === null) {
+      setRunStartedAt(null);
+      const wasStopping = current?.state === "stopping";
+      setIsStreaming(wasStopping);
+      if (!wasStopping && !childOwnedWorkRef.current) setStopPending(false);
+      return;
+    }
+    setRunStartedAt(candidate.started_at);
+    setIsStreaming(true);
+    stoppedTurnIdRef.current = candidate.state === "stopping" ? candidate.turn_id : null;
+    setStopPending(candidate.state === "stopping");
+  }, []);
+
+  useEffect(() => {
+    if (!chatId || liveRunStateSeenRef.current || initialRunStateInput === undefined) return;
+    client.hydrateActiveRun(chatId, initialRunStateInput);
+    acceptRunState(initialRunStateInput, "history");
+  }, [acceptRunState, chatId, client, initialRunStateInput]);
+
   const resolveAdmission = useCallback((turnId: string | null | undefined, admitted: boolean) => {
     if (!turnId) return;
     const resolve = admissionWaitersRef.current.get(turnId);
@@ -503,42 +652,40 @@ export function useKohakuStream(
   }), [client, refreshUnknownMessageSend]);
 
   useEffect(() => {
-    if (!chatId || liveStopTargetSeenRef.current) return;
+    if (!chatId) return;
+    const afterStaleTarget = staleStopTargetRef.current !== null
+      && initialStopTarget !== staleStopTargetHistoryBaselineRef.current;
+    if ((liveStopTargetSeenRef.current || liveRunStateSeenRef.current) && !afterStaleTarget) return;
     setStopTargetSnapshotAvailable((current) => current || initialStopTargetSnapshotAvailable);
     if (
       initialStopTarget
       && expectedRootSessionKey
       && initialStopTarget.source.session_key !== expectedRootSessionKey
     ) return;
-    trustedStopSourceRef.current = initialStopTarget?.source ?? null;
-    setStopTarget(initialStopTarget);
-    if (initialStopTarget) setStopNotice(null);
-  }, [
-    chatId,
-    expectedRootSessionKey,
-    initialStopTarget,
-    initialStopTargetSnapshotAvailable,
-  ]);
-
-  useEffect(() => {
-    if (!chatId || !stopTargetRequiresRefreshRef.current) return;
-    if (initialStopTarget === stopTargetRefreshBaselineRef.current) return;
-    const target = initialStopTarget
-      && (!expectedRootSessionKey
-        || initialStopTarget.source.session_key === expectedRootSessionKey)
-      ? initialStopTarget
-      : null;
+    let target = initialStopTarget;
+    const currentRun = runStateRef.current;
+    if (target && currentRun !== undefined && (
+      (currentRun === null && target.active_root_present)
+      || (
+        currentRun !== null
+        && currentRun.source_incarnation !== null
+        && currentRun.source_incarnation !== target.source.incarnation
+      )
+      || (
+        currentRun !== null
+        && target.active_root_present
+        && currentRun.turn_id !== null
+        && currentRun.turn_id !== target.active_turn_id
+      )
+    )) target = null;
     trustedStopSourceRef.current = target?.source ?? null;
     stopTargetRef.current = target;
     setStopTarget(target);
-    setStopTargetSnapshotAvailable((current) => (
-      current || initialStopTargetSnapshotAvailable || target !== null
-    ));
-    stopTargetRequiresRefreshRef.current = false;
-    stopTargetRefreshBaselineRef.current = null;
-    setStopTargetRequiresRefresh(false);
+    if (afterStaleTarget) {
+      staleStopTargetRef.current = null;
+      staleStopTargetHistoryBaselineRef.current = null;
+    }
     if (target) setStopNotice(null);
-    else if (childOwnedWorkRef.current) setStopNotice("unavailable");
   }, [
     chatId,
     expectedRootSessionKey,
@@ -952,6 +1099,10 @@ export function useKohakuStream(
         setIsStreaming(true);
         return;
       }
+      if (
+        (runStateRef.current !== undefined && runStateRef.current !== null)
+        || pendingStopRunIdentityRef.current !== null
+      ) return;
       flushPendingStreamEvents();
       buffer.current = null;
       activeAssistantRef.current = null;
@@ -969,28 +1120,37 @@ export function useKohakuStream(
   // ``initialMessages`` update: a brand-new chat can receive an empty/404
   // history response after the optimistic first message has already rendered.
   useEffect(() => {
-    const restoredRunStartedAt = chatId ? client.getRunStartedAt(chatId) : null;
+    const restoredRunState = initialRunStateInput;
+    const restoredRunStartedAt = restoredRunState !== undefined
+      ? restoredRunState?.started_at ?? null
+      : (chatId ? client.getRunStartedAt(chatId) : null);
     setMessages(initialMessages);
     setMessageOwnerChatId(chatId);
     setIsStreaming(
       hasPendingAgentActivity(initialMessages)
       || hasPendingToolCalls
-      || restoredRunStartedAt !== null,
+      || restoredRunStartedAt !== null
+      || (restoredRunState !== undefined && restoredRunState !== null),
     );
     setStreamError(null);
     refreshUnknownMessageSend();
     setRunStartedAt(restoredRunStartedAt);
     setRetryStatus(null);
     setGoalState(chatId ? client.getGoalState(chatId) : undefined);
+    setRunState(restoredRunState);
+    runStateRef.current = restoredRunState;
     setRecoveryState(null);
     setStopTarget(initialStopTarget);
     setStopTargetSnapshotAvailable(initialStopTargetSnapshotAvailable);
     stopTargetRef.current = initialStopTarget;
     trustedStopSourceRef.current = initialStopTarget?.source ?? null;
-    stopTargetRequiresRefreshRef.current = false;
-    stopTargetRefreshBaselineRef.current = null;
-    setStopTargetRequiresRefresh(false);
     liveStopTargetSeenRef.current = false;
+    liveRunStateSeenRef.current = false;
+    retiredRunIdentitiesRef.current.clear();
+    staleStopTargetRef.current = null;
+    staleStopTargetHistoryBaselineRef.current = null;
+    pendingStopRunIdentityRef.current = null;
+    staleRunStateRefreshPendingRef.current = false;
     stoppedTurnIdRef.current = null;
     setQueueCompletion(null);
     setStopPending(false);
@@ -1026,19 +1186,38 @@ export function useKohakuStream(
       if (value !== null && target === null) {
         stopTargetRef.current = null;
         setStopTarget(null);
-        stopTargetRequiresRefreshRef.current = true;
-        stopTargetRefreshBaselineRef.current = initialStopTarget;
-        setStopTargetRequiresRefresh(true);
         setStopNotice("unavailable");
         setStopPending(false);
         projectionRefreshRef.current?.();
         return;
       }
-      if (target && stopTargetRequiresRefreshRef.current) {
-        // Once a source change or stale response is observed, only a fresh
-        // parent history snapshot can reauthorize the next Stop target.
+      const currentRun = runStateRef.current;
+      if (target && currentRun !== undefined && (
+        (currentRun === null && target.active_root_present)
+        || (
+          currentRun !== null
+          && currentRun.source_incarnation !== null
+          && currentRun.source_incarnation !== target.source.incarnation
+        )
+        || (
+          currentRun !== null
+          && target.active_root_present
+          && currentRun.turn_id !== null
+          && currentRun.turn_id !== target.active_turn_id
+        )
+      )) {
         stopTargetRef.current = null;
         setStopTarget(null);
+        setStopPending(false);
+        projectionRefreshRef.current?.();
+        return;
+      }
+      if (
+        target
+        && staleStopTargetRef.current
+        && sameStopTarget(target, staleStopTargetRef.current)
+      ) {
+        projectionRefreshRef.current?.();
         return;
       }
       const trustedSource = trustedStopSourceRef.current;
@@ -1050,18 +1229,20 @@ export function useKohakuStream(
           || trustedSource.incarnation !== target.source.incarnation
           || trustedSource.generation !== target.source.generation
         );
-      if (sourceChanged && target) {
+      if (sourceChanged && target && currentRun === undefined) {
+        // A current run state validates a live source replacement. Older
+        // peers need a fresh history snapshot because they have no identity.
+        staleStopTargetRef.current = target;
+        staleStopTargetHistoryBaselineRef.current = initialStopTarget;
         stopTargetRef.current = null;
         setStopTarget(null);
-        stopTargetRequiresRefreshRef.current = true;
-        stopTargetRefreshBaselineRef.current = initialStopTarget;
-        setStopTargetRequiresRefresh(true);
         setStopNotice("unavailable");
         setStopPending(false);
         projectionRefreshRef.current?.();
         return;
       }
       if (target) trustedStopSourceRef.current = target.source;
+      if (target && staleStopTargetRef.current) staleStopTargetRef.current = null;
       stopTargetRef.current = target;
       setStopTarget(target);
       if (target) {
@@ -1069,7 +1250,11 @@ export function useKohakuStream(
         return;
       }
       if (target === null) {
-        if (stopPending) setStopPending(false);
+        if (
+          runStateRef.current?.state !== "stopping"
+          && pendingStopRunIdentityRef.current === null
+          && stopPendingRef.current
+        ) setStopPending(false);
         if (childOwnedWorkRef.current) {
           projectionRefreshRef.current?.();
         }
@@ -1100,11 +1285,19 @@ export function useKohakuStream(
           || ev.detail === "invalid_stop_expectation"
           || ev.reason === "invalid_stop_expectation"
         ) {
+          staleStopTargetRef.current = stopTargetRef.current;
+          staleStopTargetHistoryBaselineRef.current = initialStopTarget;
           stopTargetRef.current = null;
           setStopTarget(null);
-          stopTargetRequiresRefreshRef.current = true;
-          stopTargetRefreshBaselineRef.current = initialStopTarget;
-          setStopTargetRequiresRefresh(true);
+          const attemptedRunIdentity = pendingStopRunIdentityRef.current;
+          if (attemptedRunIdentity && runIdentity(runStateRef.current) === attemptedRunIdentity) {
+            retiredRunIdentitiesRef.current.add(attemptedRunIdentity);
+            runStateRef.current = undefined;
+            setRunState(undefined);
+            liveRunStateSeenRef.current = false;
+            staleRunStateRefreshPendingRef.current = true;
+            pendingStopRunIdentityRef.current = null;
+          }
           setStopPending(false);
           setStopNotice("stale_target");
           projectionRefreshRef.current?.();
@@ -1364,6 +1557,11 @@ export function useKohakuStream(
         return;
       }
 
+      if (ev.event === "run_state") {
+        acceptRunState(ev.run_state, "live");
+        return;
+      }
+
       if (ev.event === "delegated_child") {
         const child = parseDelegatedChildPayload(ev);
         if (!child || !expectedRootSessionKey) {
@@ -1394,6 +1592,12 @@ export function useKohakuStream(
       }
 
       if (ev.event === "goal_status") {
+        const activeRun = runStateRef.current;
+        if (pendingStopRunIdentityRef.current !== null && ev.status === "idle") return;
+        if (
+          activeRun?.turn_id
+          && (ev.turn_id === undefined || ev.turn_id !== activeRun.turn_id)
+        ) return;
         if (ev.status === "running" && typeof ev.started_at === "number") {
           if (!unresolvedAdmission) setStreamError(null);
           setRunStartedAt(ev.started_at);
@@ -1449,11 +1653,22 @@ export function useKohakuStream(
 
       if (ev.event === "turn_end") {
         const completedTurnId = typeof ev.turn_id === "string" ? ev.turn_id : null;
+        const activeRun = runStateRef.current;
+        const wasStopping = activeRun?.state === "stopping"
+          || pendingStopRunIdentityRef.current !== null;
+        if (
+          completedTurnId
+          && activeRun?.turn_id
+          && completedTurnId !== activeRun.turn_id
+        ) return;
+        if (activeRun !== undefined) acceptRunState(null, "live");
+        pendingStopRunIdentityRef.current = null;
         if (
           liveNaturalCompletion
+          && !wasStopping
           && completedTurnId
           && completedTurnId !== stoppedTurnIdRef.current
-          && !stopPending
+          && !stopPendingRef.current
         ) {
           setQueueCompletion({ chatId, turnId: completedTurnId });
         }
@@ -1465,10 +1680,12 @@ export function useKohakuStream(
         }
         setRunStartedAt(null);
         setRetryStatus(null);
+        setRunState(null);
+        runStateRef.current = null;
         // Definitive signal that the turn is fully complete, so stop the
         // loading indicator immediately.
         setIsStreaming(false);
-        if (!childOwnedWorkRef.current && stopTargetRef.current === null) {
+        if (wasStopping || (!childOwnedWorkRef.current && stopTargetRef.current === null)) {
           setStopPending(false);
         }
         const modelRequestFailed = ev.outcome === "failed" && ev.failure_kind === "model";
@@ -1576,6 +1793,7 @@ export function useKohakuStream(
       }
 
       if (ev.event === "attached") {
+        if ("run_state" in ev) acceptRunState(ev.run_state, "attached");
         if ("stop_target" in ev) acceptStopTarget(ev.stop_target);
         setRecoveryState(ev.recovery_state ?? null);
         if (ev.recovery_state?.status === "resuming") {
@@ -1820,6 +2038,7 @@ export function useKohakuStream(
     };
   }, [
     applyStreamError,
+    acceptRunState,
     chatId,
     closeActiveAssistantStream,
     client,
@@ -1835,7 +2054,6 @@ export function useKohakuStream(
     schedulePendingStreamFlush,
     expectedRootSessionKey,
     initialStopTarget,
-    stopPending,
   ]);
 
   const send = useCallback(
@@ -1972,60 +2190,132 @@ export function useKohakuStream(
       return;
     }
     const target = stopTargetRef.current;
-    const childWork = childOwnedWorkRef.current;
-    const legacyTargetTurnId = !target ? client.getRunTurnId(chatId) : null;
+    const currentRun = runStateRef.current;
+    const canStopRun = currentRun !== undefined
+      && currentRun !== null
+      && currentRun.state !== "stopping"
+      && currentRun.can_stop;
+    const targetCanStop = target !== null && (
+      !target.active_root_present
+      || currentRun === undefined
+      || (
+        currentRun !== null
+        && currentRun.state !== "stopping"
+        && currentRun.can_stop
+      )
+    );
+    const completeRunIdentity = canStopRun
+      && typeof currentRun.turn_id === "string"
+      && currentRun.turn_id.trim().length > 0
+      && typeof currentRun.run_id === "string"
+      && currentRun.run_id.trim().length > 0
+      && typeof currentRun.source_incarnation === "string"
+      && currentRun.source_incarnation.trim().length > 0;
+    const currentRunTurnId = currentRun && typeof currentRun.turn_id === "string"
+      && currentRun.turn_id.trim().length > 0
+      ? currentRun.turn_id
+      : null;
+    const legacyTargetTurnId = canStopRun
+      ? currentRunTurnId
+      : currentRun === undefined
+        ? client.getRunTurnId(chatId)
+        : null;
     const hasValidLegacyTargetTurnId = typeof legacyTargetTurnId === "string"
       && legacyTargetTurnId.trim().length > 0;
     const hasModernSnapshot = stopTargetSnapshotAvailable || liveStopTargetSeenRef.current;
-    if (!target && (
-      requireVerifiedStopTarget
-      || hasModernSnapshot
-      || !isStreaming
-      || childWork
-      || stopTargetRequiresRefreshRef.current
-      || !hasValidLegacyTargetTurnId
-    )) {
+    const legacyFallbackAllowed = currentRun === undefined
+      && !liveRunStateSeenRef.current
+      && !staleRunStateRefreshPendingRef.current
+      && !requireVerifiedStopTarget
+      && !hasModernSnapshot
+      && isStreaming
+      && !childOwnedWorkRef.current
+      && hasValidLegacyTargetTurnId;
+    const legacyTarget = targetCanStop ? target : null;
+    if (!completeRunIdentity && !legacyTarget && !(
+      canStopRun && hasValidLegacyTargetTurnId
+    ) && !legacyFallbackAllowed) {
       setStopNotice("unavailable");
       projectionRefreshRef.current?.();
       return;
     }
-    if (target && expectedRootSessionKey && target.source.session_key !== expectedRootSessionKey) {
+    if (legacyTarget && expectedRootSessionKey
+      && legacyTarget.source.session_key !== expectedRootSessionKey) {
       stopTargetRef.current = null;
       setStopTarget(null);
       setStopNotice("unavailable");
       projectionRefreshRef.current?.();
       return;
     }
-    stoppedTurnIdRef.current = target?.active_turn_id ?? legacyTargetTurnId;
+    flushPendingStreamEvents();
+    const capturedRunIdentity = canStopRun ? runIdentity(currentRun) : null;
+    stoppedTurnIdRef.current = canStopRun
+      ? currentRun.turn_id
+      : legacyTarget?.active_turn_id ?? legacyTargetTurnId;
     setQueueCompletion(null);
     setStopPending(true);
     setStopNotice(null);
     setStopFeedback(null);
-    client.sendMessage(
-      chatId,
-      "/stop",
-      undefined,
-      target
-        ? { stopExpectation: target }
-        : { targetTurnId: legacyTargetTurnId! },
-    );
-    if (!target) {
-      // Older gateways only support the root-turn guard. Preserve their
-      // immediate local stop behavior while guarded owned-work Stop waits for
-      // canonical settlement before changing activity state.
-      client.finishRunLocally(chatId);
-      setRunStartedAt(null);
-      setIsStreaming(false);
+    if (canStopRun && currentRun) {
+      const stoppingRun = { ...currentRun, state: "stopping" as const };
+      runStateRef.current = stoppingRun;
+      setRunState(stoppingRun);
+      setRunStartedAt(stoppingRun.started_at);
+      setIsStreaming(true);
+      pendingStopRunIdentityRef.current = capturedRunIdentity;
+    }
+    if (completeRunIdentity && currentRun) {
+      const captured = currentRun;
+      void client.requestMutation("run.stop", {
+        chat_id: chatId,
+        source_incarnation: captured.source_incarnation,
+        turn_id: captured.turn_id,
+        run_id: captured.run_id,
+      }).catch((error: unknown) => {
+        if (runIdentity(runStateRef.current) !== capturedRunIdentity) return;
+        if (isMutationError(error, {
+          status: 404,
+          outcome: "not_applied",
+          message: "unknown WebUI mutation action",
+        })) {
+          client.sendMessage(chatId, "/stop", undefined, { targetTurnId: captured.turn_id! });
+          return;
+        }
+        setStopPending(false);
+        if (isMutationError(error, { status: 409, message: "stale_stop_target" })) {
+          staleStopTargetHistoryBaselineRef.current = initialStopTarget;
+          staleStopTargetRef.current = stopTargetRef.current;
+          retiredRunIdentitiesRef.current.add(capturedRunIdentity!);
+          runStateRef.current = undefined;
+          setRunState(undefined);
+          liveRunStateSeenRef.current = false;
+          staleRunStateRefreshPendingRef.current = true;
+          stopTargetRef.current = null;
+          setStopTarget(null);
+          pendingStopRunIdentityRef.current = null;
+          setStopNotice("stale_target");
+          projectionRefreshRef.current?.();
+          return;
+        }
+        setStopNotice("unavailable");
+      });
+      return;
+    }
+    if (legacyTarget) {
+      client.sendMessage(chatId, "/stop", undefined, { stopExpectation: legacyTarget });
+    } else if (hasValidLegacyTargetTurnId) {
+      client.sendMessage(chatId, "/stop", undefined, { targetTurnId: legacyTargetTurnId! });
     }
   }, [
     chatId,
     client,
     connectionOpen,
     expectedRootSessionKey,
+    flushPendingStreamEvents,
     isStreaming,
+    initialStopTarget,
     requireVerifiedStopTarget,
     stopTargetSnapshotAvailable,
-    stopTargetRequiresRefresh,
   ]);
 
   const reconcileTurnComplete = useCallback(() => {
@@ -2082,6 +2372,7 @@ export function useKohakuStream(
     ) ? stopFeedback.text : null,
     dismissStopNotice,
     stopTarget,
+    runState,
     connectionOpen,
     hasUnknownMessageSend: unknownMessageSend.chatId === chatId
       ? unknownMessageSend.value

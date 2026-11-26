@@ -49,7 +49,20 @@ from kohaku.agent.foreground import build_foreground_dependencies, validate_fore
 from kohaku.agent.hook import AgentHook, AgentTurnHookFactory
 from kohaku.agent.memory import Consolidator, MemoryStore
 from kohaku.agent.model_runtime import ModelRuntimeResolver
-from kohaku.agent.policy import CompositeToolPolicy, RiskyActionPolicy, ToolPolicy
+from kohaku.agent.policy import (
+    CompositeToolPolicy,
+    RiskyActionPolicy,
+    ToolPolicy,
+    ToolPolicyDecision,
+)
+from kohaku.agent.run_control import (
+    ActiveRunHandle,
+    ExternalTaskRunControlAdapter,
+    RunStateSnapshot,
+    RunStopTarget,
+    SessionRunController,
+    TaskRunControlAdapter,
+)
 from kohaku.agent.run_store import RunStore
 from kohaku.agent.runner import (
     _MAX_INJECTIONS_PER_TURN,
@@ -98,6 +111,7 @@ from kohaku.agent.turn import (
     RunRecord,
     RunStatus,
     SessionRunRef,
+    ToolOutcome,
     TraceMode,
     TurnCallbacks,
     TurnRequest,
@@ -109,6 +123,8 @@ from kohaku.agent.turn_admission import (
     ApprovalAdmission,
     ApprovalProvenance,
     ApprovalSnapshot,
+    EffectApprovalAuthority,
+    PendingApproval,
 )
 from kohaku.agent.turn_delivery import (
     TurnDelivery,
@@ -117,6 +133,7 @@ from kohaku.agent.turn_delivery import (
 from kohaku.agent.turn_delivery import TurnRoute as TurnRoute
 from kohaku.agent.turn_hooks import AgentTurnHookSpec, build_agent_turn_hook
 from kohaku.bus.events import (
+    INBOUND_META_RUN_STOP_TARGET,
     INBOUND_META_STOP_CLIENT,
     INBOUND_META_USER_SHELL,
     CommittedUserInput,
@@ -125,6 +142,8 @@ from kohaku.bus.events import (
 )
 from kohaku.bus.outbound_events import (
     DelegatedChildEvent,
+    ExternalApprovalEvent,
+    RunStateEvent,
     SessionUpdatedEvent,
     StopTargetEvent,
     StreamDeltaEvent,
@@ -155,7 +174,7 @@ from kohaku.harness.claude_sdk import ClaudeSDKBackend
 from kohaku.harness.direct import run_direct_turn, start_bridge
 from kohaku.harness.runner import CLAUDE_TOOL_NAMES, ExternalHarnessRunner
 from kohaku.llm_usage.context import source_from_request
-from kohaku.providers.base import LLMProvider, LLMUsage, ProviderConversationState
+from kohaku.providers.base import LLMProvider, LLMUsage, ProviderConversationState, ToolCallRequest
 from kohaku.providers.conversation_state import (
     ConversationRequestBinding,
     ProviderStateSettlement,
@@ -190,6 +209,7 @@ from kohaku.security.workspace_access import (
     WorkspaceScopeResolver,
     bind_workspace_scope,
     build_workspace_scope,
+    current_workspace_focus,
     reset_workspace_scope,
 )
 from kohaku.session import turn_continuation
@@ -212,6 +232,7 @@ from kohaku.session.input_attempt import (
     find_input_attempt,
 )
 from kohaku.session.keys import UNIFIED_SESSION_KEY, remember_last_channel
+from kohaku.session.live_folder_access import LiveFolderAccess, LiveFolderSelection
 from kohaku.session.manager import SESSION_CACHE_MAX_SIZE, Session, SessionManager
 from kohaku.session.model_selection import (
     SESSION_MODEL_PRESET_METADATA_KEY,
@@ -925,6 +946,7 @@ class AgentLoop:
             self.approval_admission.revoke,
         )
         self.run_store = RunStore(workspace, self.sessions)
+        self.run_control = SessionRunController()
         self.external_harness = ExternalHarnessRunner(
             ClaudeSDKBackend(start_bridge, state_dir=effective_root / ".claude-sdk"),
             approvals=ExternalApprovalRegistry(self._save_sandbox_exclusion),
@@ -2361,6 +2383,167 @@ class AgentLoop:
         ))
         await self._publish_stop_target_for_key(child.root_key)
 
+    def run_state_for_key(self, key: str) -> RunStateSnapshot | None:
+        """Return the same-process lifecycle state for one admitted root run."""
+        handle = self.run_control.active_run(key)
+        return self.run_control.snapshot(key) if handle is not None and handle.steer_mailbox is not None else None
+
+    async def _publish_run_state_for_key(self, key: str) -> None:
+        """Publish the current run identity or an idle state to the WebUI bus."""
+        chat_id = webui_chat_id(key)
+        handle = self.run_control.active_run(key)
+        if chat_id is None or (handle is not None and handle.steer_mailbox is None):
+            return
+        try:
+            await self.bus.publish_event(
+                RunStateEvent(run_state=self.run_state_for_key(key)),
+                channel="websocket",
+                chat_id=chat_id,
+            )
+        except Exception:
+            logger.debug("Run lifecycle event could not be queued for {}", key)
+
+    async def _update_run_approval_state(self, key: str, run_id: str, waiting: bool) -> None:
+        state = "waiting_approval" if waiting else "running"
+        if self.run_control.set_state(key, run_id, state) is not None:
+            await self._publish_run_state_for_key(key)
+
+    def resolve_run_approval(self, key: str, decision: ApprovalDecision) -> bool:
+        """Resolve an exact decision from an authenticated control route."""
+        return self.external_harness.approvals.resolve(decision, control_session_key=key)
+
+    async def steer_run_target(self, target: RunStopTarget, prompt: str) -> bool:
+        """Route an authenticated Steer request to the exact session run."""
+        key = webui_session_key(target.chat_id)
+        handle = self.run_control.active_run(key)
+        if handle is None:
+            return False
+        metadata: dict[str, Any] = {
+            "webui": True,
+            WEBUI_REQUEST_INTENT_METADATA_KEY: "steer",
+            WEBUI_TARGET_TURN_METADATA_KEY: target.turn_id,
+            WEBUI_DISPLAY_ON_COMMIT_KEY: True,
+        }
+        if handle.workspace_scope is not None:
+            metadata[WORKSPACE_SCOPE_METADATA_KEY] = handle.workspace_scope
+        message = InboundMessage(
+            channel="websocket", sender_id="webui", chat_id=target.chat_id,
+            content=prompt, metadata=metadata,
+        )
+        return await self.run_control.enqueue_steer(
+            key, message, turn_id=target.turn_id, exact_target=target,
+        )
+
+    async def _admit_run_steer(
+        self, key: str, run_id: str, message: InboundMessage,
+    ) -> bool:
+        """Save guidance with the active source owner before putting it in the mailbox."""
+        handle = self.run_control.active_run(key)
+        if handle is None or handle.run_id != run_id:
+            return False
+        async with handle.steer_admission:
+            if self.run_control.active_run(key) is not handle or handle.cancel_requested or not handle.can_steer:
+                return False
+            mailbox = handle.steer_mailbox
+            if mailbox is None or mailbox.full():
+                return False
+            if handle.workspace_scope is not None:
+                scope = message.metadata.get(WORKSPACE_SCOPE_METADATA_KEY)
+                if scope is not None and scope != handle.workspace_scope:
+                    return False
+                message.metadata[WORKSPACE_SCOPE_METADATA_KEY] = handle.workspace_scope
+            admission = self._source_activity_admissions.get(key)
+            identifier: str | None = None
+            if admission is not None:
+                from kohaku.webui.metadata import WEBUI_SOURCE_TOKEN_METADATA_KEY
+
+                token = message.metadata.get(WEBUI_SOURCE_TOKEN_METADATA_KEY)
+                if token is not None and token != InputAttemptSource.from_state(admission.source_state).token:
+                    return False
+                identifier = mint_pending_followup_id(message)
+                try:
+                    outcome = await self._admit_pending_activity(key, message, followup_id=identifier)
+                except Exception:
+                    logger.exception("Steer admission failed for {}", key)
+                    return False
+                if outcome.followup_pending is not True:
+                    return False
+                if outcome.followup_duplicate and identifier in admission.followup_queued:
+                    return True
+            if self.run_control.active_run(key) is not handle or handle.cancel_requested:
+                return False
+            try:
+                mailbox.put_nowait(message)
+            except asyncio.QueueFull:
+                if admission is not None:
+                    self._pending_republish.setdefault(key, []).append(message)
+                    return True
+                return False
+            if admission is not None and identifier is not None:
+                admission.mark_followup_enqueued(identifier)
+            return True
+
+    async def stop_run_target(self, target: RunStopTarget) -> bool:
+        """Route an authenticated WebUI identity through the existing Stop owner."""
+        key = webui_session_key(target.chat_id)
+        handle = self.run_control.active_run(key)
+        if (
+            handle is None
+            or handle.state == "stopping"
+            or handle.source_incarnation != target.source_incarnation
+            or handle.turn_id != target.turn_id
+            or handle.run_id != target.run_id
+        ):
+            return False
+        current_target = self.stop_target_for_key(key)
+        try:
+            expectation = parse_stop_expectation(current_target) if current_target is not None else None
+        except (TypeError, ValueError):
+            expectation = None
+        transient_session = self.sessions.get_cached(key)
+        transient_identity = (
+            current_target is None
+            and transient_session is not None
+            and not transient_session.policy.persist
+            and transient_session.incarnation == target.source_incarnation
+        )
+        if expectation is None:
+            if not transient_identity:
+                return False
+        elif (
+            not expectation.active_root_present
+            or expectation.active_turn_id != target.turn_id
+            or expectation.active_root_run_ids != (target.run_id,)
+            or expectation.source.incarnation != target.source_incarnation
+        ):
+            return False
+        from kohaku.bus.events import INBOUND_META_STOP_EXPECTATION
+        from kohaku.command.builtin import cmd_stop
+
+        metadata: dict[str, object] = {
+            WEBUI_TURN_METADATA_KEY: target.turn_id,
+            WEBUI_TARGET_TURN_METADATA_KEY: target.turn_id,
+            INBOUND_META_RUN_STOP_TARGET: target,
+        }
+        if expectation is not None:
+            metadata[INBOUND_META_STOP_CLIENT] = True
+            metadata[INBOUND_META_STOP_EXPECTATION] = expectation
+        message = InboundMessage(
+            channel="websocket",
+            sender_id="webui",
+            chat_id=target.chat_id,
+            content="/stop",
+            metadata=metadata,
+        )
+        response = await cmd_stop(CommandContext(
+            msg=message,
+            session=None,
+            key=key,
+            raw="/stop",
+            loop=self,
+        ))
+        return response.metadata.get("webui_run_stop_status") == "accepted"
+
     def _workspace_focus_owner(self) -> WorkspaceFocusOwner | None:
         from kohaku.context_repo.catalog import RepositoryCatalog
         from kohaku.session.workspace_focus import WorkspaceFocusOwner
@@ -2829,8 +3012,22 @@ class AgentLoop:
         expected: StopExpectation,
         current: StopExpectation | None,
     ) -> bool:
-        """Require every typed snapshot fact to match the current owner view."""
-        return current is not None and current == expected
+        """Fence the same admitted root without binding mutable inventory projections."""
+        if current is None or expected.active_root_present != current.active_root_present:
+            return False
+        if expected.source.session_key != current.source.session_key:
+            return False
+        if (
+            expected.source.store_identity != current.source.store_identity
+            or expected.source.incarnation != current.source.incarnation
+        ):
+            return False
+        if expected.active_root_present:
+            return (
+                expected.active_turn_id == current.active_turn_id
+                and expected.active_root_run_ids == current.active_root_run_ids
+            )
+        return current == expected
 
     def _stop_pending_inventory(
         self,
@@ -3212,6 +3409,7 @@ class AgentLoop:
         key: str,
         *,
         _stop_admission: OriginalChatStopAdmission | None = None,
+        _explicit_stop: bool = False,
     ) -> int:
         """Cancel and await all active work for *key*.
 
@@ -3263,6 +3461,34 @@ class AgentLoop:
             manager.abort_original_chat_stop(_stop_admission)
             self._release_original_chat_stop_followups(key, _stop_admission)
             return 0
+        controller_cancelled = 0
+        control_stop_task: asyncio.Task[None] | None = None
+        if _explicit_stop:
+            handle = self.run_control.active_run(key)
+            if (
+                handle is not None
+                and handle.active_task is not None
+                and (
+                    _stop_admission is None
+                    or handle.active_task in _stop_admission.active_root_identity
+                )
+            ):
+                stopped = await self.run_control.request_stop(
+                    key,
+                    expected_incarnation=handle.source_incarnation,
+                    expected_turn_id=handle.turn_id,
+                    expected_run_id=handle.run_id,
+                    on_state_change=lambda: self._publish_run_state_for_key(key),
+                )
+                if not stopped:
+                    if _stop_admission is not None:
+                        manager.abort_original_chat_stop(_stop_admission)
+                        self._release_original_chat_stop_followups(key, _stop_admission)
+                    return 0
+                controller_cancelled = 1
+                adapter_stop_task = getattr(handle.adapter, "stop_task", None)
+                if isinstance(adapter_stop_task, asyncio.Task):
+                    control_stop_task = cast(asyncio.Task[None], adapter_stop_task)
         settlements = tuple(
             (task, state) for task, state in getattr(self, "_compact_dispatches", {}).items()
             if state.key == key
@@ -3281,7 +3507,9 @@ class AgentLoop:
             if _stop_admission is not None
             else None
         )
-        cancelled = sum(1 for t in tasks if not t.done() and not t.cancelling() and t.cancel())
+        cancelled = controller_cancelled + sum(
+            1 for t in tasks if not t.done() and not t.cancelling() and t.cancel()
+        )
 
         async def join_and_settle() -> int:
             errors: list[BaseException] = []
@@ -3306,6 +3534,13 @@ class AgentLoop:
                 for task in done:
                     with suppress(asyncio.CancelledError, Exception):
                         await task
+                if control_stop_task is not None and not control_stop_task.done():
+                    assert settle_deadline is not None
+                    remaining = max(0.0, settle_deadline - asyncio.get_running_loop().time())
+                    await asyncio.wait({control_stop_task}, timeout=remaining)
+                if control_stop_task is not None and control_stop_task.done():
+                    with suppress(asyncio.CancelledError, Exception):
+                        await control_stop_task
             else:
                 for task in tasks:
                     with suppress(asyncio.CancelledError, Exception):
@@ -3712,6 +3947,76 @@ class AgentLoop:
             },
         )
 
+    async def _await_live_tool_approval(
+        self,
+        context: RunTurnContext,
+        events: EventSink,
+        decision: ToolPolicyDecision,
+        call: ToolCallRequest,
+    ) -> EffectApprovalAuthority | None:
+        from kohaku.agent.approvals import PendingTurnApproval
+
+        key = context.session_key
+        owner = context.execution_owner
+        if key is None or owner is None:
+            return None
+        run = self.run_control.active_run(key)
+        if run is None or run.run_id != context.run_id:
+            return None
+        effect = decision.metadata.get("effect_id")
+        summary = decision.metadata.get("summary")
+        if not isinstance(effect, str) or not isinstance(summary, str):
+            return None
+        source = owner.read_snapshot().state
+        pending = PendingApproval(
+            summary=summary,
+            created_at=time.time(),
+            session_key=key,
+            approval_id=uuid.uuid4().hex,
+            session_incarnation=source.incarnation,
+            run_id=context.run_id,
+            turn_id=run.turn_id,
+            effect_id=effect,
+            generation=source.generation,
+            source_state=source,
+            save_exclusion_command=decision.metadata.get("save_exclusion_command")
+            if isinstance(decision.metadata.get("save_exclusion_command"), str) else None,
+        )
+        command = call.arguments.get("command")
+        approval = PendingTurnApproval(
+            pending.approval_id, key, source.incarnation, context.run_id, source.generation,
+            effect, call.name,
+            json.dumps({"command": command} if isinstance(command, str) else {}),
+            summary, pending.saveable_command(),
+        )
+
+        def current_run() -> bool:
+            return (
+                self.run_control.active_run(key) is run
+                and not run.cancel_requested
+                and not context.cancelled
+                and not self._lifecycle_is_closing()
+            )
+
+        async def requested(approval: PendingTurnApproval) -> None:
+            self.run_control.set_state(key, run.run_id, "waiting_approval")
+            await self._publish_run_state_for_key(key)
+            await events.emit(ExternalApprovalEvent(approval_id=approval.approval_id, approval=approval))
+
+        async def closed(approval_id: str) -> None:
+            await events.emit(ExternalApprovalEvent(approval_id=approval_id))
+            if not self.external_harness.approvals.pending_tool_calls(run.run_id):
+                self.run_control.set_state(key, run.run_id, "running")
+                await self._publish_run_state_for_key(key)
+
+        action = await self.external_harness.approvals.wait_for_decision(
+            approval, is_authorized=current_run, control_session_key=key,
+            on_approval=requested, on_closed=closed, require_exact_identity=True,
+        )
+        if action == "deny":
+            return None
+        return self.approval_admission.issue_live_effect(pending, context, current_run)
+
     async def _run_agent_loop(
         self,
         transcript_input: TranscriptInput,
@@ -3762,6 +4067,16 @@ class AgentLoop:
             effect_authority=run_context.policy.effect_authority,
             permissions=self.tools_config.permissions,
         )
+        request = run_context.request
+        live_controls = request.metadata.get("live_turn_controls") if request is not None else None
+        if (
+            request is not None
+            and request.source is TurnSource.GATEWAY
+            and (live_controls is True or live_controls == "approval")
+            and source_writer is not None
+            and webui_chat_id(run_context.session_key or "") is not None
+        ):
+            run_context.request_live_approval = partial(self._await_live_tool_approval, run_context, events)
         tool_policy: ToolPolicy = risky_policy
         if run_context.internal_tool_policy is not None:
             tool_policy = CompositeToolPolicy((run_context.internal_tool_policy, risky_policy))
@@ -3790,10 +4105,14 @@ class AgentLoop:
             *,
             limit: int = _MAX_INJECTIONS_PER_TURN,
             first_msg: InboundMessage | None = None,
+            before_first: Callable[[], Awaitable[None]] | None = None,
+            for_external: bool = False,
         ) -> list[SourceInjectionBinding | dict[str, object]]:
             """Drain only messages that are already available."""
             if pending_queue is None:
                 return []
+            if before_first is not None and (first_msg is not None or not pending_queue.empty()):
+                await before_first()
 
             async def _to_user_message(
                 pending_msg: InboundMessage,
@@ -3806,9 +4125,11 @@ class AgentLoop:
                         image_paths,
                     )
                     image_paths = image_paths or None
+                if for_external and image_paths:
+                    content += "\n\nAttachments:\n" + "\n".join(image_paths)
                 user_content = self.context.build_user_content(
                     content,
-                    image_paths=image_paths,
+                    image_paths=None if for_external else image_paths,
                 )
                 row: dict[str, Any] = {"role": "user", "content": user_content}
                 runtime_history: dict[str, Any] | None = None
@@ -3934,7 +4255,14 @@ class AgentLoop:
             async def convert(
                 pending_msg: InboundMessage,
             ) -> SourceInjectionBinding | dict[str, object] | None:
-                steering_rejection = self._webui_steering_rejection(pending_msg)
+                active_run = (
+                    self.run_control.active_run(active_session_key)
+                    if active_session_key is not None else None
+                )
+                steering_rejection = (
+                    None if active_run is not None and active_run.steer_mailbox is pending_queue
+                    else self._webui_steering_rejection(pending_msg)
+                )
                 if steering_rejection is not None:
                     await self._reject_webui_admission(
                         pending_msg,
@@ -3975,6 +4303,35 @@ class AgentLoop:
 
             return items
 
+        async def _drain_or_close_steer(
+            *, limit: int = _MAX_INJECTIONS_PER_TURN,
+            before_first: Callable[[], Awaitable[None]] | None = None,
+            for_external: bool = False,
+        ) -> list[SourceInjectionBinding | dict[str, object]]:
+            handle = (
+                self.run_control.active_run(active_session_key)
+                if active_session_key is not None else None
+            )
+            if handle is None or handle.steer_mailbox is None or handle.steer_mailbox is not pending_queue:
+                return await _drain_pending(limit=limit, before_first=before_first, for_external=for_external)
+            async with handle.steer_admission:
+                if handle.steer_mailbox.empty():
+                    handle.can_steer = False
+                    return []
+            return await _drain_pending(limit=limit, before_first=before_first, for_external=for_external)
+
+        async def _drain_external_steer(
+            before_first: Callable[[], Awaitable[None]], terminal: bool,
+        ) -> list[str]:
+            drain = _drain_or_close_steer if terminal else _drain_pending
+            prompts: list[str] = []
+            for item in await drain(before_first=before_first, for_external=True):
+                row = item.message if isinstance(item, SourceInjectionBinding) else item
+                content = row.get("content")
+                if isinstance(content, str) and content.strip():
+                    prompts.append(content)
+            return prompts
+
         terminal_wait_deadline: float | None = None
 
         async def _wait_for_pending(
@@ -3985,20 +4342,20 @@ class AgentLoop:
             nonlocal terminal_wait_deadline
 
             items = await _drain_pending(limit=limit)
+            if items:
+                return items
             if (
-                items
-                or pending_queue is None
-                or session is None
+                pending_queue is None or session is None
                 or self.subagents.get_running_count_by_session(session.key) == 0
             ):
-                return items
+                return await _drain_or_close_steer(limit=limit)
 
             now = asyncio.get_running_loop().time()
             if terminal_wait_deadline is None:
                 terminal_wait_deadline = now + _SUBAGENT_TERMINAL_WAIT_SECONDS
             remaining = terminal_wait_deadline - now
             if remaining <= 0:
-                return []
+                return await _drain_or_close_steer(limit=limit)
 
             try:
                 msg = await asyncio.wait_for(pending_queue.get(), timeout=remaining)
@@ -4007,7 +4364,7 @@ class AgentLoop:
                     "Timeout waiting for sub-agent completion before session {} exits",
                     session.key,
                 )
-                return []
+                return await _drain_or_close_steer(limit=limit)
 
             return await _drain_pending(limit=limit, first_msg=msg)
 
@@ -4202,6 +4559,10 @@ class AgentLoop:
                     private_roots=grants.sandbox_private_roots if grants is not None else (),
                     is_closing=self._lifecycle_is_closing,
                     workspace_is_authorized=workspace_is_authorized,
+                    on_approval_state=partial(
+                        self._update_run_approval_state, active_session_key, run_context.run_id,
+                    ) if active_session_key is not None else None,
+                    drain_steer=_drain_external_steer if pending_queue is not None else None,
                 )
             def build_source_transcript(tools: ToolRegistry) -> SourceTranscript:
                 if run_context.source_history is None:
@@ -4327,6 +4688,12 @@ class AgentLoop:
                     else None
                 ),
                 injection_callback=_drain_pending,
+                drain_before_first_request=(
+                    active_session_key is not None
+                    and (active_run := self.run_control.active_run(active_session_key)) is not None
+                    and active_run.steer_mailbox is pending_queue
+                    and pending_queue is not None
+                ),
                 terminal_injection_callback=_wait_for_pending,
                 # Sustained goals may legitimately exceed KOHAKU_LLM_TIMEOUT_S; idle stall
                 # is still capped by KOHAKU_STREAM_IDLE_TIMEOUT_S in streaming providers.
@@ -4385,6 +4752,22 @@ class AgentLoop:
                 await events.publish(StreamDeltaEvent(content=stream_content))
                 await events.publish(StreamEndEvent())
         elif result.stop_reason == "error":
+            session_key = run_context.session_key
+            active_run = (
+                self.run_control.active_run(session_key)
+                if session_key is not None
+                else None
+            )
+            if (
+                active_run is not None
+                and active_run.run_id == run_context.run_id
+                and active_run.cancel_requested
+            ):
+                logger.warning(
+                    "LLM returned error after explicit Stop for {}; settling as cancelled",
+                    session_key,
+                )
+                raise asyncio.CancelledError()
             logger.error("LLM returned error: {}", (result.final_content or "")[:200])
         return result
 
@@ -4439,9 +4822,22 @@ class AgentLoop:
                     msg, effective_key,
                 ):
                     continue
-                steering_rejection = self._webui_steering_rejection(msg)
-                if steering_rejection is not None:
-                    await self._reject_webui_admission(msg, *steering_rejection)
+                if (
+                    msg.channel == "websocket"
+                    and msg.metadata.get(WEBUI_REQUEST_INTENT_METADATA_KEY) == "steer"
+                ):
+                    target_turn_id = msg.metadata.get(WEBUI_TARGET_TURN_METADATA_KEY)
+                    if (
+                        msg.metadata.get(INBOUND_META_USER_SHELL) is not True
+                        and self.commands.is_dispatchable_command(raw)
+                        and self._webui_steering_rejection(msg) is None
+                    ):
+                        await self._dispatch_command_inline(msg, effective_key, raw, self.commands.dispatch)
+                        continue
+                    if not isinstance(target_turn_id, str) or not await self.run_control.enqueue_steer(
+                        effective_key, msg, turn_id=target_turn_id,
+                    ):
+                        await self._reject_webui_admission(msg, "not_admitted", "steering_target_changed")
                     continue
                 continuation = workspace_access_continuation(msg, session_key=effective_key)
                 normalized_cmd = normalize_command_text(raw).lower()
@@ -4673,7 +5069,15 @@ class AgentLoop:
             suppress_channel_output=suppress_channel_output,
             admitted_source=root_binding.source_state if root_binding is not None else None,
         )
-        pending: asyncio.Queue[InboundMessage] = asyncio.Queue(maxsize=20)
+        active_run = self.run_control.active_run(key)
+        run_for_task = (
+            active_run
+            if active_run is not None and active_run.active_task is current else None
+        )
+        mailbox = run_for_task.steer_mailbox if run_for_task is not None else None
+        pending: asyncio.Queue[InboundMessage] = (
+            mailbox if mailbox is not None else asyncio.Queue(maxsize=20)
+        )
         io = _AdmittedTurnIO(pending_queue=pending, delivery=delivery)
         activity_admission = self._source_activity_admissions.get(key)
         if activity_admission is not None:
@@ -4777,21 +5181,19 @@ class AgentLoop:
                     logger.warning('Retained unpublished pending input for {}', key)
                     break
             self._stopped_pending_followup_ids.pop(key, None)
+            idle_published = False
             try:
                 if not continuing() and cancellation_cleanup_ready is None:
                     await bounded(delivery.idle())
+                    idle_published = True
             except Exception:
                 logger.warning('Bus idle publication failed for {}', key)
             try:
-                if not continuing() and cancellation_cleanup_ready is None:
-                    self.runtime_event_publisher.clear_turn(key)
-                elif (
-                    not continuing()
-                    and cancellation_cleanup_ready
-                    and await settle_cancellation_operation(
+                if not continuing() and cancellation_cleanup_ready is not None:
+                    idle_published = await settle_cancellation_operation(
                         delivery.idle(), 'Cancellation idle publication',
                     )
-                ):
+                if idle_published:
                     self.runtime_event_publisher.clear_turn(key)
             except Exception:
                 logger.warning('Bus turn clearing failed for {}', key)
@@ -4799,6 +5201,41 @@ class AgentLoop:
                 await bounded(self._publish_next_deferred_automation_turn(key))
             except Exception:
                 logger.warning('Deferred automation publication failed for {}', key)
+
+        async def settle_cancelled_turn() -> None:
+            nonlocal cancellation_cleanup_ready
+            cancellation_cleanup_ready = False
+            notify(asyncio.CancelledError())
+            await settle_cancellation_operation(
+                delivery.abort_stream(), 'Stream abort',
+            )
+            if stage_entered and key not in self._discarding_sessions and not self._preserve_inflight_turns_on_shutdown:
+                try:
+                    session = self.sessions.get_or_create(key)
+                    if restore_runtime_checkpoint(session):
+                        self._clear_pending_user_turn(session)
+                        self.sessions.save(session)
+                except Exception:
+                    logger.warning('Cancelled checkpoint restoration failed for {}', key)
+            is_compact = normalize_command_text(msg.content).lower() == '/compact'
+            ordinary_terminal_required = (
+                stage_entered
+                and io.result is None
+                and key not in self._discarding_sessions
+                and not continuing()
+            )
+            if is_compact:
+                cancellation_cleanup_ready = await settle_cancellation_operation(
+                    delivery.complete(None, publish_completion=True),
+                    'Cancelled compact completion',
+                )
+            elif ordinary_terminal_required:
+                cancellation_cleanup_ready = await settle_cancellation_operation(
+                    delivery.publish_cancelled_terminal(),
+                    'Cancelled terminal publication',
+                )
+            else:
+                cancellation_cleanup_ready = True
 
         try:
             if settlement is not None:
@@ -4819,41 +5256,13 @@ class AgentLoop:
             await self._publish_stop_target_for_key(key)
             yield io
         except asyncio.CancelledError:
-            cancellation_cleanup_ready = False
-            notify(asyncio.CancelledError())
-            abort_succeeded = await settle_cancellation_operation(
-                delivery.abort_stream(), 'Stream abort',
-            )
-            if stage_entered and key not in self._discarding_sessions and not self._preserve_inflight_turns_on_shutdown:
-                try:
-                    session = self.sessions.get_or_create(key)
-                    if restore_runtime_checkpoint(session):
-                        self._clear_pending_user_turn(session)
-                        self.sessions.save(session)
-                except Exception:
-                    logger.warning('Cancelled checkpoint restoration failed for {}', key)
-            is_compact = normalize_command_text(msg.content).lower() == '/compact'
-            ordinary_terminal_required = (
-                stage_entered
-                and io.result is None
-                and key not in self._discarding_sessions
-                and not continuing()
-            )
-            if abort_succeeded:
-                if is_compact:
-                    cancellation_cleanup_ready = await settle_cancellation_operation(
-                        delivery.complete(None, publish_completion=True),
-                        'Cancelled compact completion',
-                    )
-                elif ordinary_terminal_required:
-                    cancellation_cleanup_ready = await settle_cancellation_operation(
-                        delivery.publish_cancelled_terminal(),
-                        'Cancelled terminal publication',
-                    )
-                else:
-                    cancellation_cleanup_ready = True
+            await settle_cancelled_turn()
             raise
         except Exception as exc:
+            if run_for_task is not None and run_for_task.cancel_requested:
+                logger.warning('Turn raised {} after explicit Stop for {}', type(exc).__name__, key)
+                await settle_cancelled_turn()
+                raise asyncio.CancelledError() from exc
             notify(exc)
             try:
                 await bounded(delivery.fail(publish_completion=not continuing(), error=exc))
@@ -5606,7 +6015,7 @@ class AgentLoop:
         context: RunTurnContext,
         *,
         persistent: bool = True,
-        admitted: Callable[[], None] | None = None,
+        admitted: Callable[[], Awaitable[None]] | None = None,
         workspace_access_continuation: WorkspaceAccessContinuationReference | None = None,
         workspace_full_reference: WorkspaceFullAccessReference | None = None,
         expected_source_state: SourceState | None = None,
@@ -5697,7 +6106,7 @@ class AgentLoop:
             if workspace_access_continuation is not None or workspace_full_reference is not None:
                 raise RuntimeError("workspace permission source is unavailable")
             if admitted is not None:
-                admitted()
+                await admitted()
             yield None
             return
         from kohaku.webui.metadata import WEBUI_SOURCE_TOKEN_METADATA_KEY
@@ -5898,7 +6307,7 @@ class AgentLoop:
             self._source_activity_admissions[key] = activity_admission
             try:
                 if admitted is not None:
-                    admitted()
+                    await admitted()
                 yield None
             finally:
                 if self._source_activity_admissions.get(key) is activity_admission:
@@ -6079,9 +6488,10 @@ class AgentLoop:
                 delivery_target=target, scheduled_link=request.scheduled_link)
             record.metadata.pop("source_stream_id", None)
             run_admitted = False
+            active_run_handle: ActiveRunHandle | None = None
 
-            def persist_admitted_run() -> None:
-                nonlocal run_admitted
+            async def persist_admitted_run() -> None:
+                nonlocal run_admitted, active_run_handle
                 root_task = asyncio.current_task()
                 source_writer = context.source_writer
                 owner = context.execution_owner
@@ -6120,6 +6530,67 @@ class AgentLoop:
                         # Execution remains compatible; typed Stop simply cannot
                         # claim an invocation whose source binding is unavailable.
                         self._active_root_bindings.pop(root_task, None)
+                source_state = (
+                    owner.read_snapshot().state
+                    if owner is not None
+                    else None
+                )
+                source_incarnation = source_state.incarnation if source_state is not None else None
+                if source_incarnation is None and request.source is TurnSource.GATEWAY:
+                    transient_session = self.sessions.get_cached(key)
+                    if transient_session is not None and not transient_session.policy.persist:
+                        source_incarnation = transient_session.incarnation
+                turn_id_value = request.metadata.get(WEBUI_TURN_METADATA_KEY)
+                turn_id = turn_id_value if isinstance(turn_id_value, str) and turn_id_value else None
+                source_metadata: object = (
+                    owner.read_snapshot().header["metadata"]
+                    if owner is not None
+                    else {}
+                )
+                harness = external_binding(source_metadata)
+                scope_value = request.metadata.get(WORKSPACE_SCOPE_METADATA_KEY)
+                workspace_scope = (
+                    deepcopy(cast(dict[str, object], scope_value))
+                    if isinstance(scope_value, dict)
+                    else None
+                )
+                task = cast(asyncio.Task[object] | None, root_task)
+                steerable = (
+                    options.admission_scope is not None and turn_id is not None
+                    and source_incarnation is not None
+                    and normalize_command_text(request.content).lower().split(maxsplit=1)[:1] != ["/compact"]
+                )
+                admit_steer = partial(self._admit_run_steer, key, run_id) if steerable else None
+                adapter = (
+                    ExternalTaskRunControlAdapter(self.external_harness, key, admit_steer=admit_steer)
+                    if harness is not None
+                    else TaskRunControlAdapter(task, admit_steer=admit_steer)
+                ) if task is not None else None
+                active_run_handle = ActiveRunHandle(
+                    run_id=run_id,
+                    turn_id=turn_id,
+                    source_incarnation=source_incarnation,
+                    state="running",
+                    cancel_requested=False,
+                    active_task=task,
+                    workspace_scope=workspace_scope,
+                    started_at=time.time(),
+                    harness_kind="claude_sdk" if harness is not None else "native",
+                    adapter=adapter,
+                    steer_mailbox=asyncio.Queue(maxsize=20) if steerable else None,
+                    can_steer=steerable,
+                )
+                mailbox = active_run_handle.steer_mailbox
+                activity = self._source_activity_admissions.get(key)
+                if mailbox is not None and activity is not None and root_task is not None and source_state is not None:
+                    if not activity.bind_root_queue(
+                        mailbox, root_task=root_task, run_id=run_id, source_state=source_state,
+                    ):
+                        raise RuntimeError("Run mailbox could not bind to its source owner")
+                    self._pending_queues[key] = mailbox
+                self.run_control.register(key, active_run_handle)
+                context.explicit_stop_requested = lambda handle=active_run_handle: handle.cancel_requested
+                await self._publish_run_state_for_key(key)
 
             result: TurnResult | None = None
             try:
@@ -6459,6 +6930,23 @@ class AgentLoop:
                     record.metadata['delivery_error_type'] = 'CancelledError'
                 raise
             except Exception as exc:
+                if active_run_handle is not None and active_run_handle.cancel_requested:
+                    logger.warning(
+                        'Canonical turn raised {} after explicit Stop for {}',
+                        type(exc).__name__,
+                        key,
+                    )
+                    context.cancelled = True
+                    if result is None:
+                        result = TurnResult(
+                            run_id=run_id,
+                            status=RunStatus.CANCELLED,
+                            stop_reason='cancelled',
+                            sent_messages=tuple(context.delivery.sent_messages),
+                        )
+                    else:
+                        record.metadata['delivery_error_type'] = 'CancelledError'
+                    raise asyncio.CancelledError() from exc
                 result = TurnResult(run_id=run_id, status=RunStatus.ERROR, stop_reason='error',
                     error=str(exc), sent_messages=tuple(context.delivery.sent_messages))
                 if options.raise_errors:
@@ -6500,6 +6988,13 @@ class AgentLoop:
                     record.error_type = result.status.value if result.error else None
                     record.completed_at = record.updated_at = datetime.now(timezone.utc).isoformat()
                     result.record = self.run_store.save(record)
+                if active_run_handle is not None:
+                    mailbox = active_run_handle.steer_mailbox
+                    if mailbox is not None and self._pending_queues.get(key) is mailbox:
+                        self._pending_queues.pop(key, None)
+                    self.run_control.unregister(key, active_run_handle)
+                    if mailbox is not None:
+                        await self._publish_run_state_for_key(key)
             assert result is not None
             callback = (
                 request.callbacks.on_error if result.error else request.callbacks.on_complete
@@ -7338,6 +7833,62 @@ class AgentLoop:
         ctx.transcript_input = self._build_transcript_input(ctx)
 
 
+    async def _await_live_folder_access(
+        self, ctx: TurnContext, outcome: ToolOutcome,
+    ) -> dict[str, object]:
+        from kohaku.session.workspace_access_recovery import persist_folder_access_request
+        from kohaku.workspace_access_recovery import parse_folder_access_need
+
+        key = ctx.session_key
+        run = self.run_control.active_run(key)
+        context = ctx.run_context
+        denied: dict[str, object] = {"status": "denied", "reason": "folder_access_not_granted"}
+        if run is None or context is None or context.run_id != run.run_id:
+            return denied
+        if key in self.sessions.live_folder_access:
+            return denied
+        try:
+            need = parse_folder_access_need(outcome.policy_metadata.get("folder_access"))
+        except (TypeError, ValueError):
+            return denied
+        request = persist_folder_access_request(self.sessions, ctx, live_need=need)
+        if request is None:
+            return denied
+        decision: asyncio.Future[LiveFolderSelection | None] = (
+            asyncio.get_running_loop().create_future()
+        )
+        waiter = LiveFolderAccess(request["access_request_id"], run.run_id, decision)
+        self.sessions.live_folder_access[key] = waiter
+        try:
+            self.run_control.set_state(key, run.run_id, "waiting_approval")
+            await self._publish_run_state_for_key(key)
+            await ctx.events.emit(SessionUpdatedEvent(scope="metadata", workspace_access_request=request))
+            selected = await decision
+            if selected is None or run.cancel_requested:
+                return denied
+            focus = current_workspace_focus()
+            focus_owner = self._workspace_focus_owner()
+            if focus is None or focus_owner is None:
+                return denied
+            current_access = focus_owner.effective_access(
+                selected.scope.project_path, permission_reference=selected.task_reference,
+            )
+            if not current_access["read"]:
+                return denied
+            focus.replace(selected.scope)
+            focus.task_reference = selected.task_reference
+            context.workspace_task_reference = selected.task_reference
+            run.workspace_scope = dict[str, object](selected.scope.metadata())
+            return {"status": "allowed", "project_path": str(selected.scope.project_path)}
+        finally:
+            if self.sessions.live_folder_access.get(key) is waiter:
+                self.sessions.live_folder_access.pop(key)
+            if (
+                not self.external_harness.approvals.pending_tool_calls(run.run_id)
+                and self.run_control.set_state(key, run.run_id, "running") is not None
+            ):
+                await self._publish_run_state_for_key(key)
+
     async def _run_turn(self, ctx: TurnContext) -> None:
         runtime = ctx.require_runtime()
         if ctx.visible_run_started_at is None:
@@ -7346,6 +7897,9 @@ class AgentLoop:
         assert ctx.transcript_input is not None
         if ctx.run_context is not None:
             ctx.sent_messages = ctx.run_context.delivery.sent_messages
+            request = ctx.run_context.request
+            if request is not None and request.metadata.get("live_turn_controls") is True:
+                ctx.run_context.request_live_folder_access = partial(self._await_live_folder_access, ctx)
         with capture_message_deliveries(ctx.sent_messages) as message_sends:
             result = await self._run_agent_loop(
                 ctx.transcript_input,
