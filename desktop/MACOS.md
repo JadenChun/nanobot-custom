@@ -42,6 +42,11 @@ available. Reopen chat from the Dock or choose **Open Chat** in the menu bar.
 If the gateway stops, the icon disappears; the Dock still opens the status
 window. Readiness changes never restore the window or take focus.
 
+When the optional desktop-use tool is enabled, the app-managed gateway sets a
+background-only AppKit activation policy. Screen and input operations still use
+the existing macOS permissions, but the gateway does not add a separate Python
+icon to the Dock or app switcher.
+
 If the matching profile is already running under `kohaku gateway --foreground`,
 Desktop connects to that gateway without starting a second one or taking over
 its lifecycle. It reconnects when the same profile comes back. **Quit Kohaku**

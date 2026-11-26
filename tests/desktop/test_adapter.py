@@ -8,6 +8,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, Callable
 
 import pytest
@@ -728,6 +729,65 @@ def test_child_resolves_environment_references_before_provider_and_gateway(
     assert observed == ["child-resolved-provider-secret"]
     assert started == ["child-resolved-provider-secret"]
     assert config_path.read_bytes() == before
+
+
+@pytest.mark.parametrize(
+    ("platform", "desktop_use", "outcome", "activation_attempted", "warns"),
+    [
+        ("darwin", True, "accepted", True, False),
+        ("darwin", True, "denied", True, True),
+        ("darwin", True, "error", True, True),
+        ("darwin", True, "uninstalled", False, False),
+        ("darwin", False, "accepted", False, False),
+        ("linux", True, "accepted", False, False),
+    ],
+)
+def test_child_sets_macos_background_policy_before_gateway_start(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    platform: str,
+    desktop_use: bool,
+    outcome: str,
+    activation_attempted: bool,
+    warns: bool,
+) -> None:
+    import kohaku.desktop.gateway_child as child
+
+    config_path = tmp_path / "profile" / "config.json"
+    _prepared_config(config_path, tmp_path / "workspace")
+    config = json.loads(config_path.read_text(encoding="utf-8"))
+    config["tools"] = {"desktopUse": {"enabled": desktop_use}}
+    config_path.write_text(json.dumps(config), encoding="utf-8")
+    phases: list[str] = []
+    prohibited = 2
+
+    def set_activation_policy(policy: int) -> bool:
+        phases.append(f"activation:{policy}")
+        if outcome == "error":
+            raise RuntimeError("appkit-error-sentinel")
+        return outcome == "accepted"
+
+    appkit = SimpleNamespace(
+        NSApplication=SimpleNamespace(
+            sharedApplication=lambda: SimpleNamespace(setActivationPolicy_=set_activation_policy),
+        ),
+        NSApplicationActivationPolicyProhibited=prohibited,
+    )
+    monkeypatch.setitem(sys.modules, "AppKit", None if outcome == "uninstalled" else appkit)
+    monkeypatch.setattr(child, "sys", SimpleNamespace(platform=platform, stderr=sys.stderr))
+    monkeypatch.setattr(child, "runtime_preflight", lambda *_a, **_kw: phases.append("preflight"))
+    monkeypatch.setattr(child, "_run_gateway", lambda *_a, **_kw: phases.append("gateway"))
+
+    assert child.main(["--config", str(config_path)]) == 0
+
+    expected = ["preflight", f"activation:{prohibited}", "gateway"] if activation_attempted else [
+        "preflight", "gateway",
+    ]
+    assert phases == expected
+    stderr = capsys.readouterr().err
+    assert ("macos_background_policy_unavailable" in stderr) == warns
+    assert "appkit-error-sentinel" not in stderr
 
 
 @pytest.mark.skipif(

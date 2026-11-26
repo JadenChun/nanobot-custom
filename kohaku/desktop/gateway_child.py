@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sys
+from importlib import import_module
 from pathlib import Path
 
 from kohaku.channels.websocket.runtime import WebSocketConfig
@@ -63,6 +64,27 @@ def _validate(config: Config) -> None:
     runtime_preflight(config, sessions_root=sessions_root)
 
 
+def _set_macos_background_policy() -> None:
+    """Keep AppKit's screen queries from making this helper a foreground app."""
+    try:
+        appkit = import_module("AppKit")
+        policy: object = getattr(appkit, "NSApplicationActivationPolicyProhibited", None)
+        application_class: object = getattr(appkit, "NSApplication", None)
+        shared_application: object = getattr(application_class, "sharedApplication", None)
+        if isinstance(policy, int) and callable(shared_application):
+            application: object = shared_application()
+            set_policy: object = getattr(application, "setActivationPolicy_", None)
+            if callable(set_policy) and set_policy(policy) is True:
+                return
+    except ImportError:
+        # PyObjC is optional; desktop-use retains its normal missing-dependency error.
+        return
+    except Exception:
+        # A presentation failure must not prevent the gateway or scheduler from starting.
+        pass
+    sys.stderr.write("Kohaku Desktop gateway child: macos_background_policy_unavailable\n")
+
+
 def main(argv: list[str] | None = None) -> int:
     """Start the configured gateway after independent child-side admission."""
     parsed = _arguments(sys.argv[1:] if argv is None else argv)
@@ -86,6 +108,8 @@ def main(argv: list[str] | None = None) -> int:
             config_path=config_path,
             workspace=workspace_selector,
         )
+        if sys.platform == "darwin" and config.tools.desktop_use.enabled:
+            _set_macos_background_policy()
         _run_gateway(
             config,
             gateway_instance=instance,
