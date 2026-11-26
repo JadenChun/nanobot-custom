@@ -77,8 +77,8 @@ def test_system_prompt_reflects_current_dream_memory_contract(tmp_path) -> None:
 
     prompt = builder.build_system_prompt()
 
-    assert "Dream manages `SOUL.md`, `USER.md`, and `memory/MEMORY.md`" in prompt
-    assert "Use the memory skill for history." in prompt
+    assert "Dream manages `SOUL.md`, `USER.md`, `memory/memory_summary.md`, and `memory/MEMORY.md`" in prompt
+    assert "Use the memory skill for deep history." in prompt
 
 
 def test_provider_context_appended_after_user_content(tmp_path) -> None:
@@ -198,8 +198,8 @@ def test_system_prompt_keeps_message_tool_out_of_current_chat_replies(tmp_path) 
 
     prompt = builder.build_system_prompt(channel="slack")
 
-    assert "Reply to the current chat normally. Use `message` for a separate delivery." in prompt
-    assert "Give one final response after the tool results." in prompt
+    assert "Reply to the current chat normally. Use `message`" in prompt
+    assert "Give one clear, direct final response after the tool results." in prompt
 
 
 def test_memory_skill_is_lazy_loaded_from_skills_index(tmp_path) -> None:
@@ -230,7 +230,7 @@ def test_fresh_workspace_omits_default_prompt_scaffolding(tmp_path) -> None:
     assert "## TOOLS.md" not in prompt
     assert "## IDENTITY.md" not in prompt
     assert prompt.count("Reply to the current chat normally") == 1
-    assert len(prompt) <= 4800
+    assert len(prompt) <= 8000
 
 
 def test_template_memory_md_is_skipped(tmp_path) -> None:

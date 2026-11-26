@@ -215,10 +215,11 @@ class TestBundledToolContract:
 
         from kohaku.context.budget import TokenMeter
 
-        assert TokenMeter.count_text(content) <= 550
+        assert TokenMeter.count_text(content) <= 800
         assert "narrowest tool" in content
         assert "Verify material changes" in content
         assert "sandbox limits and approval rules" in content
+        assert "Never fabricate" in content
 
     def test_tool_contract_is_injected_without_workspace_file(self, tmp_path):
         compiled = _builder(tmp_path).compile_system_prompt()
@@ -317,7 +318,7 @@ class TestBuildSystemPrompt:
         result = ContextBuilder(tmp_path).compile_system_prompt().static_text
 
         assert f"Agent home is {tmp_path.resolve()}" in result
-        assert "`SOUL.md`, `USER.md`, and `memory/MEMORY.md` in agent home" in result
+        assert "`SOUL.md`, `USER.md`, `memory/memory_summary.md`, and `memory/MEMORY.md` in agent home" in result
         assert "`skills/<name>/SKILL.md`" in result
 
     def test_selected_project_identity_keeps_agent_data_in_agent_workspace(self, tmp_path):

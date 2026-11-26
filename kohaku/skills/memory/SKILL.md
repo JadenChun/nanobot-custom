@@ -16,9 +16,10 @@ Use `memory_search` with the terms you expect to find. For example, search for
 `auth redirect bug` to find those terms in the same passage. Set the scope to
 `memory`, `rollouts`, `sessions`, or `knowledge` to narrow the results.
 
-Use `read_file` to follow a result with a file path. Use `read_session` to follow
-a result with a session key. If you need an exact line from older memory history,
-use `grep` with the History log path in the system prompt.
+Use `read_file` to follow a result with a file path. To read a full past session
+by session key, load `read_session` via `tool_search`. If you need an exact line
+from older memory logs, search under `memory/` in agent home (e.g. `memory/HISTORY.md`
+if present).
 
 Dream manages the index, handbook, profile, and style files. Run `/dream-log` to
 see the changes Dream recorded.

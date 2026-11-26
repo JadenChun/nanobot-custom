@@ -25,8 +25,7 @@ Use this file for project-specific preferences, recurring workflow conventions, 
 
 `HEARTBEAT.md` is checked periodically by the protected heartbeat cron job that `kohaku gateway` registers when `gateway.heartbeat.enabled` is true. Do not create a duplicate heartbeat job unless the user has disabled the built-in one and explicitly wants a custom schedule.
 
-- Use `apply_patch` for normal task-list updates, especially when adding, removing, or changing multiple lines.
-- Use `edit_file` only for small exact replacements copied from the current `HEARTBEAT.md`.
+- Use `edit_file` for targeted updates copied from the current `HEARTBEAT.md`.
 - Use `write_file` for first creation or intentional full-file rewrites.
 
 When the user asks for a recurring/periodic heartbeat task, or for a periodic background check that should only notify on actionable changes, update `HEARTBEAT.md` instead of creating a one-time reminder. Use the built-in `cron` tool for explicit reminders, scheduled tasks that should report every run, or custom schedules that should not be part of the heartbeat task list.

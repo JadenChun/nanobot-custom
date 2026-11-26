@@ -34,6 +34,7 @@ from kohaku.context.types import (
 )
 from kohaku.context_repo import ContextRepoManager
 from kohaku.context_repo.policy import ResourceAccessPolicy
+from kohaku.harness.claude_sdk import claude_sdk_available
 from kohaku.runtime_context import (
     RUNTIME_CONTEXT_MESSAGE_META,
     RUNTIME_CONTEXT_TAG,
@@ -115,12 +116,27 @@ class TranscriptInput:
         return 1 + summary_count + len(self.history) + (self.current_message is not None)
 
 
-# Recognize the original scaffold files after the bundled defaults change.
-_LEGACY_BOOTSTRAP_DIGESTS = {
-    "memory/MEMORY.md": "6632103aee2f6cec744dee940e69a2e5080ea85dbbd026bc484f73272f8f23fc",
-    "USER.md": "2cdf850d2f0b25bd27cb357f8b7a60034b56de4eeaf3de8fa1eda34eb1d3a094",
-    "AGENTS.md": "0fc3ed4f125fb51540ada6189db8b0dbd653cfd36ea87395fc27e01a56762218",
-    "IDENTITY.md": "8519eb8862f0bb9c3774d8f607e14370213039c38739fec45b021ac7a02ef694",
+# Recognize earlier scaffold files after bundled defaults change.
+_LEGACY_BOOTSTRAP_DIGESTS: dict[str, frozenset[str]] = {
+    "memory/MEMORY.md": frozenset({
+        "6632103aee2f6cec744dee940e69a2e5080ea85dbbd026bc484f73272f8f23fc",
+    }),
+    "USER.md": frozenset({
+        "2cdf850d2f0b25bd27cb357f8b7a60034b56de4eeaf3de8fa1eda34eb1d3a094",
+    }),
+    "AGENTS.md": frozenset({
+        "0fc3ed4f125fb51540ada6189db8b0dbd653cfd36ea87395fc27e01a56762218",
+        "68b91afdd8958d20de7e913cba598d0bc2f4aaf0cdd70d73d306e1816a4ca906",
+    }),
+    "TOOLS.md": frozenset({
+        "4c56f2fc92ac5dbd43c011f62acb148b76872ce1a72717552bf9ea02a75deafd",
+    }),
+    "SOUL.md": frozenset({
+        "59cb9a0583a0ae7401160af13f95c5627be3dbaef2aec2ec210a361abdfc5623",
+    }),
+    "IDENTITY.md": frozenset({
+        "8519eb8862f0bb9c3774d8f607e14370213039c38739fec45b021ac7a02ef694",
+    }),
 }
 
 
@@ -196,7 +212,7 @@ class ContextBuilder:
             PromptSection(
                 "operating_principles", "static",
                 render_template("agent/tool_contract.md"),
-                max_tokens=550, priority=20,
+                max_tokens=800, priority=20,
             ),
             PromptSection(
                 "untrusted_content", "static",
@@ -230,9 +246,49 @@ class ContextBuilder:
             ),
             PromptSection(
                 "chat_delivery", "static",
-                "Reply to the current chat normally. Use `message` for a separate delivery.",
+                "Reply to the current chat normally. Use `message` (load via `tool_search` "
+                "if deferred) only for a separate delivery or media attachment.",
                 requires_all_tools=frozenset({"message"}),
                 priority=48,
+            ),
+            PromptSection(
+                "memory_recall", "static",
+                "Use `memory_search` to check past sessions, user preferences, and prior "
+                "decisions before guessing.",
+                requires_all_tools=frozenset({"memory_search"}),
+                priority=49,
+            ),
+            PromptSection(
+                "scheduling_guidance", "static",
+                "For reminders or scheduled tasks, load and use `cron` (follow the `cron` "
+                "skill). For periodic silent checks that notify only on actionable changes, "
+                "update `HEARTBEAT.md`. Do not just write reminders to `MEMORY.md`.",
+                requires_all_tools=frozenset({"cron"}),
+                priority=50,
+            ),
+            PromptSection(
+                "coding_delegation", "static",
+                (
+                    "For substantial coding, codebase investigation, debugging, or implementation "
+                    "work, load the `delegation` tools via `tool_search` and use "
+                    "`harness=\"claude_sdk\"` so Claude Code handles the engineering work; "
+                    "handle quick, self-contained reads or edits directly."
+                    if claude_sdk_available()
+                    else "For substantial multi-file work or broad investigation, load the "
+                    "`delegation` tools via `tool_search` to keep the main context focused."
+                ),
+                requires_any_tools=frozenset({"delegate_task", "explore"}),
+                priority=51,
+            ),
+            PromptSection(
+                "web_research", "static",
+                "For current, time-sensitive, or unfamiliar external facts (news, prices, "
+                "schedules, releases, policies, or APIs), search the web and open primary "
+                "sources when details matter instead of guessing from memory. Cross-check "
+                "important claims, apply the findings directly to the user's request, and "
+                "cite key source URLs.",
+                requires_any_tools=frozenset({"web_search", "web_fetch"}),
+                priority=52,
             ),
             *snapshot.sections,
             *(self._tool_namespace_sections(tools) if tools is not None else ()),
@@ -498,7 +554,10 @@ class ContextBuilder:
             if not path.is_file():
                 continue
             text = validate(path).read_text(encoding="utf-8")
-            if name == "SOUL.md" and self._is_template_content(text, "legacy/SOUL.md"):
+            if name == "SOUL.md" and (
+                self._is_template_content(text, "legacy/SOUL.md")
+                or self._matches_legacy_digest(text, "SOUL.md")
+            ):
                 text = load_bundled_template("SOUL.md") or text
             if not text.strip() or (
                 name in self._SKIPPABLE_DEFAULTS and self._is_template_content(text, name)
@@ -526,16 +585,18 @@ class ContextBuilder:
         return resolved
 
     @staticmethod
+    def _matches_legacy_digest(content: str, template_path: str) -> bool:
+        digests = _LEGACY_BOOTSTRAP_DIGESTS.get(template_path)
+        return bool(digests and sha256(content.strip().encode("utf-8")).hexdigest() in digests)
+
+    @staticmethod
     def _is_template_content(content: str, template_path: str) -> bool:
         """Check if *content* is identical to the bundled template (user hasn't customized it)."""
         content = content.strip()
         template = load_bundled_template(template_path)
         if template is not None and content == template.strip():
             return True
-        return (
-            template_path in _LEGACY_BOOTSTRAP_DIGESTS
-            and sha256(content.encode("utf-8")).hexdigest() == _LEGACY_BOOTSTRAP_DIGESTS[template_path]
-        )
+        return ContextBuilder._matches_legacy_digest(content, template_path)
 
     def build_messages(
         self,

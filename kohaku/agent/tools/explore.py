@@ -16,7 +16,7 @@ if TYPE_CHECKING:
 class ExploreTool(Tool):
     exposure = "deferred"
     namespace = "delegation"
-    search_keywords = ("explore codebase", "search repository", "investigate")
+    search_keywords = ("explore codebase", "search repository", "investigate", "claude_sdk", "coding")
     """Run a focused read-only exploration pass in separate context."""
 
     @property

@@ -45,8 +45,8 @@ def _skill(workspace, name, body, *, always=False):
 def test_empty_workspace_prompt_budget_and_tiers(tmp_path):
     builder = ContextBuilder(tmp_path)
     empty = builder.compile_system_prompt()
-    assert len(empty.full_system_text) <= 4_800
-    assert empty.section_tokens["operating_principles"] <= 550
+    assert len(empty.full_system_text) <= 8_000
+    assert empty.section_tokens["operating_principles"] <= 800
     (tmp_path / "AGENTS.md").write_text("Use the fixture workflow.", encoding="utf-8")
     compiled = builder.compile_system_prompt()
     assert len(compiled.system_blocks()) == 2
