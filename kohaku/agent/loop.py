@@ -4752,6 +4752,22 @@ class AgentLoop:
                 await events.publish(StreamDeltaEvent(content=stream_content))
                 await events.publish(StreamEndEvent())
         elif result.stop_reason == "error":
+            session_key = run_context.session_key
+            active_run = (
+                self.run_control.active_run(session_key)
+                if session_key is not None
+                else None
+            )
+            if (
+                active_run is not None
+                and active_run.run_id == run_context.run_id
+                and active_run.cancel_requested
+            ):
+                logger.warning(
+                    "LLM returned error after explicit Stop for {}; settling as cancelled",
+                    session_key,
+                )
+                raise asyncio.CancelledError()
             logger.error("LLM returned error: {}", (result.final_content or "")[:200])
         return result
 
@@ -5054,10 +5070,11 @@ class AgentLoop:
             admitted_source=root_binding.source_state if root_binding is not None else None,
         )
         active_run = self.run_control.active_run(key)
-        mailbox = (
-            active_run.steer_mailbox
+        run_for_task = (
+            active_run
             if active_run is not None and active_run.active_task is current else None
         )
+        mailbox = run_for_task.steer_mailbox if run_for_task is not None else None
         pending: asyncio.Queue[InboundMessage] = (
             mailbox if mailbox is not None else asyncio.Queue(maxsize=20)
         )
@@ -5185,25 +5202,8 @@ class AgentLoop:
             except Exception:
                 logger.warning('Deferred automation publication failed for {}', key)
 
-        try:
-            if settlement is not None:
-                current = asyncio.current_task()
-                if (current is None or self._compact_dispatches.get(current) is not settlement
-                        or settlement.key != key):
-                    raise RuntimeError("compact dispatch settlement identity mismatch")
-                settlement.claimed = True
-            delivery = self.turn_delivery_factory.create(
-                msg,
-                key,
-                enable_stream=True,
-                suppress_channel_output=suppress_channel_output,
-                admitted_source=root_binding.source_state if root_binding is not None else None,
-            )
-            io.delivery = delivery
-            stage_entered = True
-            await self._publish_stop_target_for_key(key)
-            yield io
-        except asyncio.CancelledError:
+        async def settle_cancelled_turn() -> None:
+            nonlocal cancellation_cleanup_ready
             cancellation_cleanup_ready = False
             notify(asyncio.CancelledError())
             await settle_cancellation_operation(
@@ -5236,8 +5236,33 @@ class AgentLoop:
                 )
             else:
                 cancellation_cleanup_ready = True
+
+        try:
+            if settlement is not None:
+                current = asyncio.current_task()
+                if (current is None or self._compact_dispatches.get(current) is not settlement
+                        or settlement.key != key):
+                    raise RuntimeError("compact dispatch settlement identity mismatch")
+                settlement.claimed = True
+            delivery = self.turn_delivery_factory.create(
+                msg,
+                key,
+                enable_stream=True,
+                suppress_channel_output=suppress_channel_output,
+                admitted_source=root_binding.source_state if root_binding is not None else None,
+            )
+            io.delivery = delivery
+            stage_entered = True
+            await self._publish_stop_target_for_key(key)
+            yield io
+        except asyncio.CancelledError:
+            await settle_cancelled_turn()
             raise
         except Exception as exc:
+            if run_for_task is not None and run_for_task.cancel_requested:
+                logger.warning('Turn raised {} after explicit Stop for {}', type(exc).__name__, key)
+                await settle_cancelled_turn()
+                raise asyncio.CancelledError() from exc
             notify(exc)
             try:
                 await bounded(delivery.fail(publish_completion=not continuing(), error=exc))
@@ -6905,6 +6930,23 @@ class AgentLoop:
                     record.metadata['delivery_error_type'] = 'CancelledError'
                 raise
             except Exception as exc:
+                if active_run_handle is not None and active_run_handle.cancel_requested:
+                    logger.warning(
+                        'Canonical turn raised {} after explicit Stop for {}',
+                        type(exc).__name__,
+                        key,
+                    )
+                    context.cancelled = True
+                    if result is None:
+                        result = TurnResult(
+                            run_id=run_id,
+                            status=RunStatus.CANCELLED,
+                            stop_reason='cancelled',
+                            sent_messages=tuple(context.delivery.sent_messages),
+                        )
+                    else:
+                        record.metadata['delivery_error_type'] = 'CancelledError'
+                    raise asyncio.CancelledError() from exc
                 result = TurnResult(run_id=run_id, status=RunStatus.ERROR, stop_reason='error',
                     error=str(exc), sent_messages=tuple(context.delivery.sent_messages))
                 if options.raise_errors:
@@ -7836,12 +7878,15 @@ class AgentLoop:
             focus.replace(selected.scope)
             focus.task_reference = selected.task_reference
             context.workspace_task_reference = selected.task_reference
+            run.workspace_scope = dict[str, object](selected.scope.metadata())
             return {"status": "allowed", "project_path": str(selected.scope.project_path)}
         finally:
             if self.sessions.live_folder_access.get(key) is waiter:
                 self.sessions.live_folder_access.pop(key)
-            if not self.external_harness.approvals.pending_tool_calls(run.run_id):
-                self.run_control.set_state(key, run.run_id, "running")
+            if (
+                not self.external_harness.approvals.pending_tool_calls(run.run_id)
+                and self.run_control.set_state(key, run.run_id, "running") is not None
+            ):
                 await self._publish_run_state_for_key(key)
 
     async def _run_turn(self, ctx: TurnContext) -> None:

@@ -1468,7 +1468,8 @@ class WorkspaceAccessRecoveryOwner:
                 key, chat_id, latest, replacement, current_scope,
                 permission_reference=task_reference,
             )
-            live.decision.set_result(LiveFolderSelection(current_scope, task_reference))
+            if not live.decision.done():
+                live.decision.set_result(LiveFolderSelection(current_scope, task_reference))
             return result
 
         from kohaku.bus.events import InboundMessage

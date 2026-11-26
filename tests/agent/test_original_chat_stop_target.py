@@ -1575,3 +1575,78 @@ async def test_kohaku_stop_without_matching_original_proof_stays_guarded(
         ))
         assert followup.error == "Source session requires recovery before execution"
         assert len(provider.requests) == 2
+
+
+@pytest.mark.parametrize("raise_where", ["provider", "turn_teardown"])
+async def test_native_stop_settles_as_cancelled_even_when_teardown_raises(
+    monkeypatch, tmp_path, raise_where,
+):
+    from kohaku.agent.turn import RunStatus
+    from kohaku.bus.runtime_events import TurnCompleted
+
+    provider = _ScriptedProvider([LLMResponse(content="Next turn works.")])
+    first_started = asyncio.Event()
+    original_chat = provider.chat
+
+    async def raising_on_cancel_chat(*args, **kwargs):
+        if not first_started.is_set():
+            first_started.set()
+            try:
+                await asyncio.Future()
+            except asyncio.CancelledError as exc:
+                if raise_where == "provider":
+                    raise RuntimeError("transport teardown failed after cancel") from exc
+                raise
+        return await original_chat(*args, **kwargs)
+
+    monkeypatch.setattr(provider, "chat", raising_on_cancel_chat)
+    async with _running_composition(_config(tmp_path), provider, monkeypatch) as (handle, _run):
+        if raise_where == "turn_teardown":
+            original_run_turn = handle.agent._run_turn
+
+            async def failing_teardown_run_turn(ctx):
+                try:
+                    return await original_run_turn(ctx)
+                except asyncio.CancelledError as exc:
+                    raise RuntimeError("cleanup boom after cancel") from exc
+
+            monkeypatch.setattr(handle.agent, "_run_turn", failing_teardown_run_turn)
+
+        chat_id = f"stop-teardown-error-{raise_where}"
+        key = f"websocket:{chat_id}"
+        completions: list[TurnCompleted] = []
+        handle.bus.subscribe(completions.append, TurnCompleted)
+        await handle.bus.publish_inbound(InboundMessage(
+            channel="websocket",
+            sender_id="webui",
+            chat_id=chat_id,
+            content="Run something slow",
+            metadata={"webui": True, "webui_turn_id": "turn-teardown", "live_turn_controls": True},
+        ))
+        await asyncio.wait_for(first_started.wait(), timeout=5)
+        active = handle.agent.run_control.active_run(key)
+        assert active is not None
+        stopped_run_id = active.run_id
+        target = handle.agent.stop_target_for_key(key)
+        assert target is not None
+        await stop_direct(handle.agent, target, chat_id=chat_id)
+        async with asyncio.timeout(5):
+            while not completions:
+                await asyncio.sleep(0)
+        assert completions[0].outcome == "cancelled"
+        record = handle.agent.run_store.load(stopped_run_id)
+        assert record is not None
+        assert record.status is RunStatus.CANCELLED
+        assert record.stop_reason == "cancelled"
+        outbound_texts: list[str] = []
+        while not handle.bus.outbound.empty():
+            item = handle.bus.outbound.get_nowait()
+            if isinstance(item.content, str):
+                outbound_texts.append(item.content)
+        assert not any("Sorry, I encountered an error" in text for text in outbound_texts)
+
+        followup = await handle.agent.execute_turn(TurnRequest(
+            content="Follow up after stop", session_key=key,
+        ))
+        assert followup.status is RunStatus.COMPLETED
+        assert followup.content == "Next turn works."
