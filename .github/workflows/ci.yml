@@ -334,6 +334,11 @@ jobs:
           tests/agent/test_executor_capability_parity.py
           tests/security/test_darwin_proc.py
           tests/agent/test_seatbelt_tracking.py
+          tests/agent/test_macos_seatbelt_switch.py
+          tests/agent/test_native_process_supervisor_darwin.py
+          tests/agent/test_native_supervisor_give_up.py
+          tests/agent/test_native_process_io.py
+          tests/tools/test_exec_session_deadline_tree.py
 
   webui:
     needs: changes
