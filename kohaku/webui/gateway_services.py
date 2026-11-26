@@ -26,7 +26,9 @@ from kohaku.webui.workspaces import WebUIWorkspaceController
 from kohaku.webui.ws_http import GatewayHTTPHandler
 
 if TYPE_CHECKING:
+    from kohaku.agent.run_control import RunStopTarget
     from kohaku.agent.stop_target import StopTargetReader
+    from kohaku.bus.outbound_events import RunState
     from kohaku.bus.queue import MessageBus
     from kohaku.channels.websocket.runtime import WebSocketConfig
     from kohaku.config.schema import RemoteAccessConfig
@@ -52,6 +54,7 @@ class GatewayServices:
     session_projection: WebUISessionProjection
     session_manager: SessionManager | None
     child_control: Callable[[str, str, str, str | None], Awaitable[dict[str, Any]]] | None
+    run_stop_target: Callable[[RunStopTarget], Awaitable[bool]] | None
     cron_service: CronService | None
     local_trigger_store: LocalTriggerStore | None
     cron_pending_job_ids: Callable[[str], set[str]] | None
@@ -65,6 +68,8 @@ def build_gateway_services(
     bus: MessageBus,
     session_manager: SessionManager | None,
     stop_target_for_key: StopTargetReader | None = None,
+    run_state_for_key: Callable[[str], RunState | None] | None = None,
+    run_stop_target: Callable[[RunStopTarget], Awaitable[bool]] | None = None,
     child_control: Callable[[str, str, str, str | None], Awaitable[dict[str, Any]]] | None = None,
     static_dist_path: Path | None = None,
     workspace_path: Path,
@@ -162,6 +167,7 @@ def build_gateway_services(
     session_projection = WebUISessionProjection(
         session_manager,
         stop_target_for_key=stop_target_for_key,
+        run_state_for_key=run_state_for_key,
         log=logger,
     )
     http = GatewayHTTPHandler(
@@ -193,6 +199,7 @@ def build_gateway_services(
         skill_state_action=skill_state_action,
         recovery_action=recovery_action,
         stop_target_for_key=stop_target_for_key,
+        run_state_for_key=run_state_for_key,
         log=logger,
     )
     remote_owner = None
@@ -237,6 +244,7 @@ def build_gateway_services(
         session_projection=session_projection,
         session_manager=session_manager,
         child_control=child_control,
+        run_stop_target=run_stop_target,
         cron_service=cron_service,
         local_trigger_store=local_trigger_store,
         cron_pending_job_ids=cron_pending_job_ids,

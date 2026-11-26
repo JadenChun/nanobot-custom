@@ -21,6 +21,7 @@ import {
   parseSourceOrigin,
   parseStopExpectation,
 } from "@/lib/delegated-child-projection";
+import { parseRunState } from "@/lib/run-state";
 import { deriveTitle } from "@/lib/format";
 import {
   clearCachedSessionPage,
@@ -41,6 +42,7 @@ import type {
   SourceOrigin,
   UIMessage,
   StopExpectation,
+  RunState,
   WorkspacePermissionProjection,
   WorkspaceScopePayload,
 } from "@/lib/types";
@@ -588,6 +590,8 @@ export function useSessionHistory(key: string | null): {
   stopTarget: StopExpectation | null;
   /** True when an authenticated control snapshot supplied Stop, even when null. */
   stopTargetSnapshotAvailable: boolean;
+  /** Root run identity from the matching thread snapshot; undefined means unsupported. */
+  runState: RunState | null | undefined;
   /** Child activity is hydrated separately; it cannot delay root history or permissions. */
   delegatedChildren: DelegatedChildReference[];
   delegatedChildrenLoading: boolean;
@@ -684,6 +688,7 @@ export function useSessionHistory(key: string | null): {
     activitySnapshotAvailable: boolean;
     stopTarget: StopExpectation | null;
     stopTargetSnapshotAvailable: boolean;
+    runState: RunState | null | undefined;
     delegatedChildren: DelegatedChildReference[];
     delegatedChildrenLoading: boolean;
     delegatedChildrenError: boolean;
@@ -723,6 +728,7 @@ export function useSessionHistory(key: string | null): {
     activitySnapshotAvailable: false,
     stopTarget: null,
     stopTargetSnapshotAvailable: false,
+    runState: undefined,
     delegatedChildren: [],
     delegatedChildrenLoading: false,
     delegatedChildrenError: false,
@@ -746,11 +752,13 @@ export function useSessionHistory(key: string | null): {
       if (!current()) return;
       const permissions = normalizeWorkspacePermissionProjection(body.workspace_permissions);
       const stopTarget = parseStopExpectation(body.stop_target);
+      const runState = parseRunState(body.run_state);
       setState((prev) => prev.key === requestedKey && !prev.historyAccessDenied && current()
         ? {
           ...prev,
           stopTarget,
           stopTargetSnapshotAvailable: stopTarget !== null || body.stop_target === null,
+          ...(runState !== undefined ? { runState } : {}),
           ...(body.next_workspace_scope !== undefined
             ? { nextWorkspaceScope: body.next_workspace_scope }
             : {}),
@@ -853,6 +861,7 @@ export function useSessionHistory(key: string | null): {
           activitySnapshotAvailable: false,
           stopTarget: null,
           stopTargetSnapshotAvailable: false,
+          runState: undefined,
           delegatedChildren: [],
           delegatedChildrenLoading: false,
           delegatedChildrenError: false,
@@ -939,6 +948,7 @@ export function useSessionHistory(key: string | null): {
         activitySnapshotAvailable: false,
         stopTarget: null,
         stopTargetSnapshotAvailable: false,
+        runState: undefined,
         delegatedChildren: [],
         delegatedChildrenLoading: false,
         delegatedChildrenError: false,
@@ -1050,6 +1060,7 @@ export function useSessionHistory(key: string | null): {
             activitySnapshotAvailable: false,
             stopTarget: null,
             stopTargetSnapshotAvailable: false,
+            runState: undefined,
             delegatedChildren: [],
             delegatedChildrenLoading: false,
             delegatedChildrenError: false,
@@ -1110,6 +1121,7 @@ export function useSessionHistory(key: string | null): {
             activitySnapshotAvailable: false,
             stopTarget: null,
             stopTargetSnapshotAvailable: false,
+            runState: undefined,
             delegatedChildren: [],
             delegatedChildrenLoading: true,
             delegatedChildrenError: false,
@@ -1146,6 +1158,17 @@ export function useSessionHistory(key: string | null): {
         const permissionProjection = normalizeWorkspacePermissionProjection(body?.workspace_permissions);
         const threadStopTargetSnapshotAvailable = body !== null && "stop_target" in body;
         const threadStopTarget = parseStopExpectation(body?.stop_target);
+        const threadRunState = parseRunState(body?.run_state);
+        const threadIdentityMatches = body !== null
+          && (body.sessionKey === undefined || body.sessionKey === key)
+          && (body.source === undefined || body.source === null || body.source.session_key === key)
+          && body.history_kind !== "summary"
+          && body.parent_session_key === undefined
+          && (body.root_key === undefined || body.root_key === key);
+        const threadRunStateSnapshotAvailable = body !== null
+          && threadIdentityMatches
+          && "run_state" in body
+          && threadRunState !== undefined;
         const hasPending = hasPendingToolCallsFromThread(body, ui);
         const forkBoundary = typeof body?.fork_boundary_message_count === "number"
           ? Math.max(0, Math.min(body.fork_boundary_message_count, ui.length))
@@ -1210,11 +1233,7 @@ export function useSessionHistory(key: string | null): {
           const applyRequest = !separateControls && accessRequestReadVersion === accessRequestReadVersionRef.current;
           const applyPermissions = !separateControls && permissionReadVersion === permissionReadVersionRef.current;
           const activitySnapshotAvailable = body !== null
-            && (body.sessionKey === undefined || body.sessionKey === key)
-            && (body.source === undefined || body.source === null || body.source.session_key === key)
-            && body.history_kind !== "summary"
-            && body.parent_session_key === undefined
-            && (body.root_key === undefined || body.root_key === key)
+            && threadIdentityMatches
             && (body.active_turn_id === null || typeof body.active_turn_id === "string")
             && typeof body.has_pending_tool_calls === "boolean";
           const nextActiveTurnId = typeof body?.active_turn_id === "string"
@@ -1237,6 +1256,7 @@ export function useSessionHistory(key: string | null): {
               sourceOrigin: incomingOrigin ?? prev.sourceOrigin,
               activeTurnId: nextActiveTurnId,
               activitySnapshotAvailable,
+              ...(threadRunStateSnapshotAvailable ? { runState: threadRunState } : {}),
               stopTarget: separateControls ? prev.stopTarget : threadStopTarget,
               stopTargetSnapshotAvailable: separateControls
                 ? prev.stopTargetSnapshotAvailable
@@ -1325,6 +1345,11 @@ export function useSessionHistory(key: string | null): {
               : responseVersion,
             activeTurnId: nextActiveTurnId,
             activitySnapshotAvailable,
+            runState: threadRunStateSnapshotAvailable
+              ? threadRunState
+              : separateControls && prev.key === key
+                ? prev.runState
+                : undefined,
             stopTarget: separateControls && prev.key === key ? prev.stopTarget : threadStopTarget,
             stopTargetSnapshotAvailable: separateControls && prev.key === key
               ? prev.stopTargetSnapshotAvailable
@@ -1726,6 +1751,7 @@ export function useSessionHistory(key: string | null): {
       }
       const nextHasMoreAfter = body.page?.has_more_after === true;
       const nextAfterCursor = nextHasMoreAfter ? (body.page?.after_cursor ?? null) : null;
+      const nextRunState = parseRunState(body.run_state);
       if (!nextHasMoreAfter) {
         historyVersionRef.current += 1;
       }
@@ -1754,6 +1780,7 @@ export function useSessionHistory(key: string | null): {
             activeTurnId: typeof body.active_turn_id === "string"
               ? body.active_turn_id
               : prev.activeTurnId,
+            ...(nextRunState !== undefined ? { runState: nextRunState } : {}),
           } : {}),
         };
       });
@@ -1996,6 +2023,7 @@ export function useSessionHistory(key: string | null): {
       const responseVersion = historyVersionRef.current;
       const incomingOrigin = parseSourceOrigin(body.source);
       const pending = hasPendingToolCallsFromThread(body, ui);
+      const runState = parseRunState(body.run_state);
       const nextHasMoreAfter = body.page?.has_more_after === true;
       const nextAfterCursor = nextHasMoreAfter ? (body.page?.after_cursor ?? null) : null;
       if (typeof body.page?.total_turn_count === "number") {
@@ -2031,6 +2059,7 @@ export function useSessionHistory(key: string | null): {
             activeTurnId: typeof body.active_turn_id === "string"
               ? body.active_turn_id
               : null,
+            ...(runState !== undefined ? { runState } : {}),
           }
         : prev));
       setPendingReveal({
@@ -2130,6 +2159,7 @@ export function useSessionHistory(key: string | null): {
       const responseVersion = historyVersionRef.current;
       const incomingOrigin = parseSourceOrigin(body.source);
       const pending = hasPendingToolCallsFromThread(body, ui);
+      const runState = parseRunState(body.run_state);
       if (typeof body.page?.total_turn_count === "number") {
         setTotalTurnCount(body.page.total_turn_count);
       }
@@ -2163,6 +2193,7 @@ export function useSessionHistory(key: string | null): {
             activeTurnId: typeof body.active_turn_id === "string"
               ? body.active_turn_id
               : null,
+            ...(runState !== undefined ? { runState } : {}),
           }
         : prev));
       return true;
@@ -2222,6 +2253,7 @@ export function useSessionHistory(key: string | null): {
       activitySnapshotAvailable: false,
       stopTarget: null,
       stopTargetSnapshotAvailable: false,
+      runState: undefined,
       delegatedChildren: [],
       delegatedChildrenLoading: false,
       delegatedChildrenError: false,
@@ -2289,6 +2321,7 @@ export function useSessionHistory(key: string | null): {
       activitySnapshotAvailable: false,
       stopTarget: null,
       stopTargetSnapshotAvailable: false,
+      runState: undefined,
       delegatedChildren: [],
       delegatedChildrenLoading: true,
       delegatedChildrenError: false,
@@ -2356,6 +2389,7 @@ export function useSessionHistory(key: string | null): {
     activitySnapshotAvailable: state.activitySnapshotAvailable,
     stopTarget: state.stopTarget,
     stopTargetSnapshotAvailable: state.stopTargetSnapshotAvailable,
+    runState: state.key === key ? state.runState : undefined,
     delegatedChildren: state.delegatedChildren,
     delegatedChildrenLoading: state.delegatedChildrenLoading,
     delegatedChildrenError: state.delegatedChildrenError,

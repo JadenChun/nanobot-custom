@@ -433,6 +433,8 @@ def _run_gateway(
             webui_recovery_action=recovery.handle_action,
             webui_child_control=agent.control_delegated_child,
             webui_stop_target_for_key=agent.stop_target_for_key,
+            webui_run_state_for_key=agent.run_state_for_key,
+            webui_run_stop_target=agent.stop_run_target,
             config_path=Path(config_path),
         )
 

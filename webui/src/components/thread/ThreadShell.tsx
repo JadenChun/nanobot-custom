@@ -1224,6 +1224,7 @@ export function ThreadShell({
     activitySnapshotAvailable: historyActivitySnapshotAvailable,
     stopTarget: historyStopTarget,
     stopTargetSnapshotAvailable: historyStopTargetSnapshotAvailable,
+    runState: historyRunState,
     delegatedChildren,
     delegatedChildrenLoading,
     delegatedChildrenError,
@@ -1642,6 +1643,7 @@ export function ThreadShell({
     refreshStopState,
     historyStopTargetSnapshotAvailable,
     separateControls,
+    historyRunState,
   );
 
   useEffect(() => {

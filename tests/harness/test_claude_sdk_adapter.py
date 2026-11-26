@@ -1,7 +1,8 @@
 """Qualify the optional SDK boundary with a scripted Claude client."""
 
+import asyncio
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from types import ModuleType, SimpleNamespace
 
 import pytest
@@ -34,15 +35,19 @@ class FakeSDKClient:
     def __init__(self, options, *, transport):
         self.options = options
         self.transport = transport
+        self.connect_task = None
+        self.query_tasks = []
+        self.disconnect_task = None
         sdk.clients.append(self)
 
     async def connect(self):
-        pass
+        self.connect_task = asyncio.current_task()
 
     async def disconnect(self):
-        pass
+        self.disconnect_task = asyncio.current_task()
 
     async def query(self, prompt):
+        self.query_tasks.append(asyncio.current_task())
         self.prompt = prompt
 
     async def receive_response(self):
@@ -97,6 +102,87 @@ async def test_missing_sdk_fails_only_at_launch(tmp_path, monkeypatch):
     backend = ClaudeSDKBackend(should_not_start, state_dir=tmp_path / "state")
     with pytest.raises(HarnessCapabilityError, match="Claude Agent SDK"):
         await backend.start(request_for(tmp_path), resume=None, fork_session=False)
+
+
+async def test_connect_cancellation_survives_transport_cleanup_failure(
+    tmp_path, monkeypatch, sdk_boundary,
+):
+    backend, bridge = sdk_boundary
+
+    class CancellingClient(FakeSDKClient):
+        async def connect(self):
+            async def fail_cleanup():
+                raise RuntimeError("transport cleanup failed")
+
+            self.transport.close = fail_cleanup
+            raise asyncio.CancelledError
+
+    monkeypatch.setattr(sdk, "ClaudeSDKClient", CancellingClient)
+    with pytest.raises(asyncio.CancelledError):
+        await backend.start(request_for(tmp_path), resume=None, fork_session=False)
+    assert bridge.closed
+
+
+async def test_disconnect_failure_still_closes_transport_and_bridge(
+    tmp_path, sdk_boundary,
+):
+    backend, bridge = sdk_boundary
+    process = await backend.start(request_for(tmp_path), resume=None, fork_session=False)
+    transport_closed = asyncio.Event()
+
+    async def fail_disconnect():
+        raise RuntimeError("SDK disconnect failed")
+
+    async def track_transport_close():
+        transport_closed.set()
+
+    sdk.clients[0].disconnect = fail_disconnect
+    process._transport.close = track_transport_close
+    await process.close()
+    assert transport_closed.is_set()
+    assert bridge.closed
+
+
+async def test_retained_process_uses_one_sdk_owner_and_current_turn_authority(
+    tmp_path, sdk_boundary,
+):
+    backend, bridge = sdk_boundary
+    request = request_for(tmp_path)
+    denied_request = replace(request, run_id="next", is_authorized=lambda: False)
+    process = await backend.start(request, resume=None, fork_session=False)
+    client = sdk.clients[0]
+    decisions = []
+    runs = 0
+
+    async def script(options):
+        nonlocal runs
+        runs += 1
+        result = await options.can_use_tool(
+            "Read", {"file_path": str(request.workspace / "file.txt")},
+            SimpleNamespace(tool_use_id=f"read-{runs}"),
+        )
+        decisions.append(isinstance(result, sdk.PermissionResultAllow))
+        yield sdk.ResultMessage(
+            session_id=f"session-{runs}", is_error=False, terminal_reason=None, result=None,
+        )
+
+    async def approve(*args):
+        pytest.fail("A read-only tool cannot require approval")
+
+    sdk.script = script
+    try:
+        first = [event async for event in process.run(request, approve)]
+        second = [event async for event in process.run(denied_request, approve)]
+        assert first[0] == ExternalSessionStarted("session-1")
+        assert second[0] == ExternalSessionStarted("session-2")
+        assert decisions == [True, False]
+    finally:
+        await process.close()
+
+    assert client.connect_task is client.disconnect_task
+    assert client.query_tasks == [client.connect_task, client.connect_task]
+    assert client.connect_task is not asyncio.current_task()
+    assert bridge.closed
 
 
 @pytest.mark.parametrize("dependency", ["bwrap", "socat"])

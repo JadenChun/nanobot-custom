@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Any, Protocol, cast
 from loguru import logger
 from websockets.asyncio.server import ServerConnection
 
+from kohaku.agent.run_control import parse_run_stop_payload
 from kohaku.agent.stop_target import StopExpectation, parse_stop_expectation
 from kohaku.agent.turn import ApprovalDecision
 from kohaku.attachments.models import AttachmentRecord
@@ -38,6 +39,7 @@ from kohaku.security.workspace_access import (
     WorkspaceScope,
     WorkspaceScopeError,
 )
+from kohaku.session.execution_owner import ExecutionBusyError
 from kohaku.session.input_attempt import (
     INPUT_ATTEMPT_METADATA_KEY,
     InputAttempt,
@@ -83,7 +85,7 @@ from kohaku.webui.session_identity import (
     webui_session_key,
 )
 from kohaku.webui.sidebar_state import write_webui_sidebar_state
-from kohaku.webui.temporary_chats import TemporaryChatError
+from kohaku.webui.temporary_chats import TemporaryChatError, TemporaryChatMessagePolicy
 from kohaku.webui.transcription_ws import webui_transcription_event
 from kohaku.workspace_access_recovery import FolderAccessRequest, WorkspaceScopePayload
 
@@ -1203,6 +1205,112 @@ class WebUICommandRouter:
             return ("not_admitted", "attempt_payload_changed")
         return None
 
+    async def _dispatch_legacy_stop(
+        self,
+        connection: ServerConnection,
+        client_id: str,
+        envelope: dict[str, Any],
+        *,
+        chat_id: str,
+        turn_id: str | None,
+        target_turn_id: str | None,
+        stop_expectation: StopExpectation | None,
+        temporary_policy: TemporaryChatMessagePolicy | None,
+    ) -> None:
+        """Send an authenticated legacy Stop without new-turn workspace authority."""
+        rejection_fields = {"chat_id": chat_id, **({"turn_id": turn_id} if turn_id else {})}
+        if not self._owner_chat_controls_available(connection):
+            await self._transport.webui_send_event(
+                connection,
+                "error",
+                detail="access_denied",
+                **rejection_fields,
+            )
+            return
+        mobile_identity = _typed_mobile_identity(connection)
+        if mobile_identity is not None:
+            if (
+                not _mobile_mutation_allowed(connection, "run.stop")
+                or not await self._transport.revalidate_mobile_connection(connection)
+            ):
+                await self._transport.webui_send_event(
+                    connection,
+                    "error",
+                    detail="scope_denied",
+                    **rejection_fields,
+                )
+                return
+
+        session_key = (
+            temporary_policy.session_key
+            if temporary_policy is not None
+            else webui_session_key(chat_id)
+        )
+
+        try:
+            scope = (
+                self._workspaces.scope_for_temporary_message(
+                    envelope,
+                    temporary_policy.workspace_scope,
+                )
+                if temporary_policy is not None
+                else self._workspaces.scope_for_session_key(session_key)
+            )
+        except Exception:
+            await self._transport.webui_send_event(
+                connection,
+                "error",
+                detail="not_admitted",
+                reason="stop_scope_unavailable",
+                **rejection_fields,
+            )
+            return
+
+        metadata: dict[str, Any] = {
+            "remote": getattr(connection, "remote_address", None),
+            "webui": True,
+            **self._transcripts.client_turn_metadata(turn_id),
+            INBOUND_META_STOP_CLIENT: True,
+        }
+        if stop_expectation is not None:
+            metadata[INBOUND_META_STOP_EXPECTATION] = stop_expectation
+        if target_turn_id is not None:
+            metadata[WEBUI_TARGET_TURN_METADATA_KEY] = target_turn_id
+
+        self._transport.webui_attach(connection, chat_id)
+        await self._transport.webui_dispatch_message(
+            sender_id=client_id,
+            chat_id=chat_id,
+            content="/stop",
+            media=None,
+            attachments=None,
+            metadata=metadata,
+            is_dm=False,
+            session_key=(
+                session_key
+                if temporary_policy is not None
+                or self._workspaces.has_external_harness(session_key)
+                else None
+            ),
+            # A canonical parent can have live children after its cache entry expires.
+            # Stop verifies the current source and child owners at the command boundary.
+            require_existing_session=(
+                temporary_policy.require_existing_session
+                if temporary_policy is not None
+                else False
+            ),
+            workspace_scope=scope,
+            permission_reference=None,
+        )
+        if turn_id:
+            await self._transport.webui_send_event(
+                connection,
+                "message_accepted",
+                chat_id=chat_id,
+                turn_id=turn_id,
+                starts_turn=False,
+            )
+
     async def _dispatch_message(
         self,
         connection: ServerConnection,
@@ -1280,9 +1388,6 @@ class WebUICommandRouter:
             return
         request_intent = envelope.get("request_intent")
         temporary_owned = self._temporary_chats.owns(connection, chat_id)
-        current_source_token = (
-            None if temporary_owned else self._workspaces.source_token(chat_id)
-        )
         settings_error = request_settings_error(
             envelope,
             active_turn_id=websocket_turn_id(chat_id),
@@ -1297,6 +1402,65 @@ class WebUICommandRouter:
                 **rejection_fields,
             )
             return
+        if is_stop and envelope.get("webui") is True:
+            if not isinstance(content, str):
+                await self._transport.webui_send_event(
+                    connection,
+                    "error",
+                    detail="missing content",
+                    **rejection_fields,
+                )
+                return
+            if (
+                "input_attempt" in envelope
+                or request_intent == "steer"
+                or "approval_decision" in envelope
+                or "approval_decision" in duplicate_keys
+                or duplicate_keys
+                or envelope.get("media") not in (None, [])
+                or envelope.get("attachments") not in (None, [])
+            ):
+                await self._transport.webui_send_event(
+                    connection,
+                    "error",
+                    detail="not_admitted",
+                    reason="invalid_stop_control",
+                    **rejection_fields,
+                )
+                return
+            temporary_policy = None
+            try:
+                temporary_policy = self._temporary_chats.message_policy(
+                    connection,
+                    chat_id,
+                    content,
+                )
+            except TemporaryChatError as exc:
+                await self._transport.webui_send_event(
+                    connection,
+                    "error",
+                    detail=exc.detail,
+                    **rejection_fields,
+                )
+                return
+            await self._dispatch_legacy_stop(
+                connection,
+                client_id,
+                envelope,
+                chat_id=chat_id,
+                turn_id=turn_id,
+                target_turn_id=(
+                    envelope.get("target_turn_id")
+                    if isinstance(envelope.get("target_turn_id"), str)
+                    else None
+                ),
+                stop_expectation=stop_expectation,
+                temporary_policy=temporary_policy,
+            )
+            return
+        current_source_token = (
+            None if temporary_owned else self._workspaces.source_token(chat_id)
+        )
         if negotiated:
             try:
                 permitted = {"type", "chat_id", "content", "turn_id", "webui", "request_settings_version",
@@ -1921,7 +2085,11 @@ class WebUICommandRouter:
                             chat_id, scope, skip_if_unchanged=True,
                         )
 
-                    await asyncio.to_thread(_persist_scope_and_defaults)
+                    try:
+                        await asyncio.to_thread(_persist_scope_and_defaults)
+                    except ExecutionBusyError:
+                        # The admitted turn now owns the source and persists its scope.
+                        logger.debug("The accepted turn owns the workspace scope for {}", chat_id)
 
         finally:
             if not accepted and queued_owner is not None:
@@ -1995,6 +2163,27 @@ class WebUICommandRouter:
             return
 
         typed_payload = cast(dict[str, Any], payload)
+        if action == "run.stop":
+            try:
+                stop_target = parse_run_stop_payload(typed_payload)
+            except ValueError:
+                await self.send_webui_response(
+                    connection,
+                    request_id,
+                    status=400,
+                    message="invalid_run_stop_target",
+                    outcome="not_applied",
+                )
+                return
+            if stop_target.chat_id not in self._transport.webui_connection_chats(connection):
+                await self.send_webui_response(
+                    connection,
+                    request_id,
+                    status=403,
+                    message="chat_not_attached",
+                    outcome="not_applied",
+                )
+                return
         source_binding_captured = False
         if (
             action == _PREPARE_FULL_ACTION
@@ -2554,6 +2743,74 @@ class WebUICommandRouter:
     ) -> WebUIRequestResult:
         if action == "delegation.child.control":
             return await self._control_delegated_child(connection, payload)
+        if action == "run.stop":
+            try:
+                target = parse_run_stop_payload(payload)
+            except ValueError:
+                return WebUIRequestResult(
+                    status=400,
+                    message="invalid_run_stop_target",
+                    outcome="not_applied",
+                )
+            if target.chat_id not in self._transport.webui_connection_chats(connection):
+                return WebUIRequestResult(
+                    status=403,
+                    message="chat_not_attached",
+                    outcome="not_applied",
+                )
+            sessions = self.gateway.session_manager
+            transient_session = (
+                sessions.get_cached(webui_session_key(target.chat_id))
+                if sessions is not None
+                else None
+            )
+            if (
+                transient_session is not None
+                and not transient_session.policy.persist
+                and not self._temporary_chats.owns(connection, target.chat_id)
+            ):
+                return WebUIRequestResult(
+                    status=403,
+                    message="temporary_chat_unavailable",
+                    outcome="not_applied",
+                )
+            if _typed_mobile_identity(connection) is not None and not await (
+                self._transport.revalidate_mobile_connection(connection)
+            ):
+                return WebUIRequestResult(
+                    status=403,
+                    message="scope_denied",
+                    outcome="not_applied",
+                )
+            stop = self.gateway.run_stop_target
+            if stop is None:
+                return WebUIRequestResult(
+                    status=503,
+                    message="run_stop_unavailable",
+                    outcome="not_applied",
+                )
+            lock = self.request_locks.setdefault(connection, asyncio.Lock())
+            try:
+                async with lock:
+                    accepted = await asyncio.wait_for(stop(target), timeout=30.0)
+            except TimeoutError:
+                return WebUIRequestResult(
+                    status=504,
+                    message="timeout",
+                    outcome="uncertain",
+                )
+            if accepted:
+                return WebUIRequestResult(
+                    status=200,
+                    message="accepted",
+                    result={"accepted": True},
+                    outcome="applied",
+                )
+            return WebUIRequestResult(
+                status=409,
+                message="stale_stop_target",
+                outcome="not_applied",
+            )
         timeout_s = 30.0
         try:
             from kohaku.remote.operations import load_registry

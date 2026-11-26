@@ -27,6 +27,8 @@ CHAT_MUTATIONS = frozenset({
 
 def mobile_mutation_allowed(scopes: Collection[str], action: str) -> bool:
     """Intersect the operation allowlist with the live grant's action scope."""
+    if action == "run.stop":
+        return "owner" in scopes and "chat.write" in scopes
     spec = load_registry().mutations.get(action)
     if spec is None or not spec.enabled:
         return False

@@ -554,6 +554,7 @@ class TurnContext:
     tool_results: list[Any] = field(default_factory=list)
     tools_used: list[str] = field(default_factory=list)
     cancelled: bool = False
+    explicit_stop_requested: Callable[[], bool] | None = field(default=None, repr=False)
     lock_owner: str = ""
     metadata: dict[str, Any] = field(default_factory=dict)
     execution_owner: ExecutionOwner | None = field(default=None, repr=False)

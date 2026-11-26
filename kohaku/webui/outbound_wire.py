@@ -14,6 +14,8 @@ from kohaku.bus.outbound_events import (
     ExternalApprovalEvent,
     RecoveryStateEvent,
     RetryStatusEvent,
+    RunState,
+    RunStateEvent,
     StopTargetEvent,
     TurnEndEvent,
 )
@@ -111,6 +113,12 @@ class StopTargetWirePayload(TypedDict):
     stop_target: dict[str, object] | None
 
 
+class RunStateWirePayload(TypedDict):
+    event: Literal["run_state"]
+    chat_id: str
+    run_state: RunState | None
+
+
 class ExternalApprovalPayload(TypedDict):
     session_key: str
     session_incarnation: str
@@ -159,6 +167,7 @@ WebUIWirePayload: TypeAlias = (
     | TurnEndWirePayload
     | DelegatedChildWirePayload
     | StopTargetWirePayload
+    | RunStateWirePayload
     | ExternalApprovalWirePayload
 )
 WebUIWirePersistence: TypeAlias = Literal[
@@ -254,6 +263,15 @@ def encode_stop_target(chat_id: str, event: StopTargetEvent) -> StopTargetWirePa
         "event": "stop_target",
         "chat_id": chat_id,
         "stop_target": event.stop_target,
+    }
+
+
+def encode_run_state(chat_id: str, event: RunStateEvent) -> RunStateWirePayload:
+    """Encode one transient active-run projection for WebUI control."""
+    return {
+        "event": "run_state",
+        "chat_id": chat_id,
+        "run_state": event.run_state,
     }
 
 

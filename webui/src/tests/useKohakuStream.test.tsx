@@ -11,6 +11,7 @@ import type {
   DelegatedChildSummaryPayload,
   GoalStateWsPayload,
   InboundEvent,
+  RunState,
   StopExpectation,
   UIMessage,
 } from "@/lib/types";
@@ -3344,7 +3345,7 @@ describe("useKohakuStream", () => {
     expect(result.current.messages[2].content).toBe('read_file({"path":"generated.png"})');
   });
 
-  it("stops the active turn without adding a user slash command bubble", () => {
+  it("keeps legacy Stop pending until cancellation without adding a slash command bubble", () => {
     const fake = fakeClient();
     const { result } = renderHook(() => useKohakuStream("chat-stop", EMPTY_MESSAGES), {
       wrapper: wrap(fake.client),
@@ -3369,10 +3370,215 @@ describe("useKohakuStream", () => {
       undefined,
       { targetTurnId: activeTurnId },
     );
-    expect(fake.client.finishRunLocally).toHaveBeenCalledWith("chat-stop");
-    expect(result.current.isStreaming).toBe(false);
+    expect(fake.client.finishRunLocally).not.toHaveBeenCalled();
+    expect(result.current.isStreaming).toBe(true);
+    expect(result.current.stopPending).toBe(true);
     expect(result.current.messages).toHaveLength(1);
     expect(result.current.messages[0].content).toBe("long task");
+
+    act(() => fake.emit("chat-stop", {
+      event: "turn_end",
+      chat_id: "chat-stop",
+      turn_id: activeTurnId,
+      outcome: "cancelled",
+    }));
+
+    expect(result.current.isStreaming).toBe(false);
+    expect(result.current.stopPending).toBe(false);
+    expect(result.current.messages[0].content).toBe("long task");
+    expect(result.current.messages.some((message) => message.kind === "run_stopped")).toBe(true);
+  });
+
+  it("C6 restores attached run identity after reconnect and targets Stop to that run", () => {
+    const fake = fakeClient();
+    const chatId = "chat-attached-run-state";
+    const activeRun: RunState = {
+      state: "running",
+      turn_id: "attached-turn",
+      run_id: "attached-run",
+      source_incarnation: "attached-incarnation",
+      started_at: 1_700_000_000,
+      can_stop: true,
+      can_steer: true,
+    };
+    const { result } = renderHook(
+      () => useKohakuStream(
+        chatId,
+        EMPTY_MESSAGES,
+        false,
+        undefined,
+        chatId,
+        null,
+        undefined,
+        true,
+        false,
+        activeRun,
+      ),
+      { wrapper: wrap(fake.client) },
+    );
+
+    expect(result.current.runState).toEqual(activeRun);
+    act(() => fake.emitStatus("reconnecting"));
+    act(() => fake.emitStatus("open"));
+    act(() => fake.emit(chatId, {
+      event: "attached",
+      chat_id: chatId,
+      run_state: activeRun,
+      stop_target: null,
+    }));
+
+    expect(result.current.runState).toEqual(activeRun);
+    expect(result.current.isStreaming).toBe(true);
+    expect(result.current.stopCanBeSent).toBe(true);
+
+    act(() => result.current.stop());
+
+    expect(fake.requestMutation).toHaveBeenCalledWith("run.stop", {
+      chat_id: chatId,
+      source_incarnation: "attached-incarnation",
+      turn_id: "attached-turn",
+      run_id: "attached-run",
+    });
+    expect(result.current.runState?.state).toBe("stopping");
+    expect(result.current.stopPending).toBe(true);
+
+    act(() => fake.emit(chatId, {
+      event: "turn_end",
+      chat_id: chatId,
+      turn_id: "attached-turn",
+      outcome: "cancelled",
+    }));
+    expect(result.current.messages.filter((message) => message.kind === "run_stopped")).toHaveLength(1);
+  });
+
+  it("C2 keeps a delayed R1 Stop bound to R1 after R2 becomes active", async () => {
+    const fake = fakeClient();
+    const chatId = "chat-replaced-run";
+    const r1: RunState = {
+      state: "running",
+      turn_id: "turn-r1",
+      run_id: "run-r1",
+      source_incarnation: "same-incarnation",
+      started_at: 1_700_000_000,
+      can_stop: true,
+      can_steer: true,
+    };
+    const r2: RunState = {
+      ...r1,
+      turn_id: "turn-r2",
+      run_id: "run-r2",
+      started_at: 1_700_000_001,
+    };
+    let rejectR1Stop: ((error: unknown) => void) | undefined;
+    fake.requestMutation.mockImplementationOnce(() => new Promise((_resolve, reject) => {
+      rejectR1Stop = reject;
+    }));
+    const { result } = renderHook(
+      () => useKohakuStream(chatId, EMPTY_MESSAGES, false, undefined, chatId),
+      { wrapper: wrap(fake.client) },
+    );
+
+    act(() => fake.emit(chatId, {
+      event: "attached",
+      chat_id: chatId,
+      run_state: r1,
+      stop_target: null,
+    }));
+    act(() => result.current.stop());
+    expect(fake.requestMutation).toHaveBeenCalledWith("run.stop", {
+      chat_id: chatId,
+      source_incarnation: "same-incarnation",
+      turn_id: "turn-r1",
+      run_id: "run-r1",
+    });
+
+    act(() => fake.emit(chatId, {
+      event: "run_state",
+      chat_id: chatId,
+      run_state: r2,
+    }));
+    await act(async () => {
+      rejectR1Stop?.({ status: 409, message: "stale_stop_target" });
+    });
+
+    expect(result.current.runState).toEqual(r2);
+    expect(result.current.stopCanBeSent).toBe(true);
+    expect(result.current.stopPending).toBe(false);
+    expect(fake.requestMutation).toHaveBeenCalledTimes(1);
+    expect(fake.client.sendMessage).not.toHaveBeenCalled();
+    expect(result.current.messages.some((message) => message.kind === "run_stopped")).toBe(false);
+  });
+
+  it("C3 keeps streamed partial output after the current run is cancelled", () => {
+    const fake = fakeClient();
+    const chatId = "chat-cancelled-partial-output";
+    const activeRun: RunState = {
+      state: "running",
+      turn_id: "partial-turn",
+      run_id: "partial-run",
+      source_incarnation: "partial-incarnation",
+      started_at: 1_700_000_000,
+      can_stop: true,
+      can_steer: true,
+    };
+    const { result } = renderHook(
+      () => useKohakuStream(chatId, EMPTY_MESSAGES, false, undefined, chatId),
+      { wrapper: wrap(fake.client) },
+    );
+
+    act(() => fake.emit(chatId, {
+      event: "attached",
+      chat_id: chatId,
+      run_state: activeRun,
+      stop_target: null,
+    }));
+    act(() => fake.emit(chatId, {
+      event: "delta",
+      chat_id: chatId,
+      text: "partial model output",
+      turn_id: "partial-turn",
+    }));
+    act(() => result.current.stop());
+
+    expect(fake.requestMutation).toHaveBeenCalledWith("run.stop", {
+      chat_id: chatId,
+      source_incarnation: "partial-incarnation",
+      turn_id: "partial-turn",
+      run_id: "partial-run",
+    });
+    expect(result.current.stopPending).toBe(true);
+
+    act(() => fake.emit(chatId, {
+      event: "turn_end",
+      chat_id: chatId,
+      turn_id: "partial-turn",
+      outcome: "cancelled",
+    }));
+
+    expect(result.current.isStreaming).toBe(false);
+    expect(result.current.messages.some((message) => (
+      message.role === "assistant" && message.content === "partial model output"
+    ))).toBe(true);
+    expect(result.current.messages.filter((message) => message.kind === "run_stopped")).toHaveLength(1);
+
+    let followUp: ReturnType<typeof result.current.send> | null = null;
+    act(() => {
+      followUp = result.current.send("follow-up");
+    });
+    expect(followUp).not.toBeNull();
+    act(() => fake.emit(chatId, {
+      event: "message_admitted",
+      chat_id: chatId,
+      turn_id: followUp!.turnId,
+      starts_turn: true,
+      active_turn_id: followUp!.turnId,
+      started_at: 1_700_000_001,
+    }));
+    expect(result.current.messages.some((message) => (
+      message.role === "user"
+      && message.turnId === followUp!.turnId
+      && message.deliveryStatus === "accepted"
+    ))).toBe(true);
   });
 
   it.each(["attached", "stop_target"] as const)(

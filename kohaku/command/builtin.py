@@ -296,6 +296,35 @@ async def cmd_stop(ctx: CommandContext) -> OutboundMessage:
     loop = ctx.loop
     msg = ctx.msg
     metadata = dict(msg.metadata or {})
+    from kohaku.agent.run_control import RunStopTarget
+    from kohaku.bus.events import INBOUND_META_RUN_STOP_TARGET
+
+    raw_run_stop_target = metadata.get(INBOUND_META_RUN_STOP_TARGET)
+    run_stop_request = raw_run_stop_target is not None
+    run_stop_target = (
+        raw_run_stop_target
+        if type(raw_run_stop_target) is RunStopTarget
+        else None
+    )
+    if run_stop_request and run_stop_target is None:
+        metadata["webui_run_stop_status"] = "stale"
+        return OutboundMessage(
+            channel=msg.channel, chat_id=msg.chat_id, content="", metadata=metadata,
+        )
+    if run_stop_target is not None:
+        handle = loop.run_control.active_run(ctx.key)
+        if (
+            run_stop_target.chat_id != str(msg.chat_id)
+            or handle is None
+            or handle.state == "stopping"
+            or handle.source_incarnation != run_stop_target.source_incarnation
+            or handle.turn_id != run_stop_target.turn_id
+            or handle.run_id != run_stop_target.run_id
+        ):
+            metadata["webui_run_stop_status"] = "stale"
+            return OutboundMessage(
+                channel=msg.channel, chat_id=msg.chat_id, content="", metadata=metadata,
+            )
     from kohaku.session.webui_turns import websocket_turn_id
     from kohaku.webui.metadata import (
         WEBUI_STOP_FEEDBACK_TURN_METADATA_KEY,
@@ -309,6 +338,8 @@ async def cmd_stop(ctx: CommandContext) -> OutboundMessage:
     if protocol_client:
         raw_expectation = metadata.get(INBOUND_META_STOP_EXPECTATION)
         if expectation_present and type(raw_expectation) is not StopExpectation:
+            if run_stop_target is not None:
+                metadata["webui_run_stop_status"] = "stale"
             return _webui_admission_rejection(
                 msg,
                 metadata,
@@ -323,6 +354,8 @@ async def cmd_stop(ctx: CommandContext) -> OutboundMessage:
                 or not target_turn_id
                 or current_turn_id != target_turn_id
             ):
+                if run_stop_target is not None:
+                    metadata["webui_run_stop_status"] = "stale"
                 return _webui_admission_rejection(msg, metadata, "stale_stop_target")
         else:
             current_target_fn = getattr(type(loop), "stop_target_for_key", None)
@@ -338,21 +371,27 @@ async def cmd_stop(ctx: CommandContext) -> OutboundMessage:
                 )
             except (TypeError, ValueError):
                 current_expectation = None
+            matches_target = getattr(type(loop), "_stop_target_matches", None)
             if (
                 current_expectation is None
-                or current_expectation != raw_expectation
+                or not callable(matches_target)
+                or not matches_target(raw_expectation, current_expectation)
                 or (
                     isinstance(target_turn_id, str)
                     and target_turn_id
                     and websocket_turn_id(str(msg.chat_id)) != target_turn_id
                 )
             ):
+                if run_stop_target is not None:
+                    metadata["webui_run_stop_status"] = "stale"
                 return _webui_admission_rejection(msg, metadata, "stale_stop_target")
             feedback_turn_id = current_expectation.active_turn_id
     if isinstance(target_turn_id, str) and target_turn_id:
         current_turn_id = websocket_turn_id(str(msg.chat_id))
         if current_turn_id != target_turn_id:
             # A repeated or late Stop must not stop a later turn.
+            if run_stop_target is not None:
+                metadata["webui_run_stop_status"] = "stale"
             return OutboundMessage(
                 channel=msg.channel,
                 chat_id=msg.chat_id,
@@ -376,6 +415,8 @@ async def cmd_stop(ctx: CommandContext) -> OutboundMessage:
     except Exception:
         logger.exception("Stop request could not capture its source lifetime for {}", ctx.key)
         if protocol_client:
+            if run_stop_target is not None:
+                metadata["webui_run_stop_status"] = "stale"
             return _webui_admission_rejection(msg, metadata, "stale_stop_target")
         return OutboundMessage(
             channel=msg.channel,
@@ -384,6 +425,8 @@ async def cmd_stop(ctx: CommandContext) -> OutboundMessage:
             metadata=metadata,
         )
     if protocol_client and stop_admission is None:
+        if run_stop_target is not None:
+            metadata["webui_run_stop_status"] = "stale"
         return _webui_admission_rejection(msg, metadata, "stale_stop_target")
     pending_at_admission = getattr(loop, "_pending_queues", {}).get(ctx.key)
 
@@ -398,6 +441,8 @@ async def cmd_stop(ctx: CommandContext) -> OutboundMessage:
             loop.sessions.invalidate_workspace_access_request(ctx.key)
         except Exception:
             logger.exception("Admitted Stop could not retire workspace authority for {}", ctx.key)
+            if run_stop_target is not None:
+                metadata["webui_run_stop_status"] = "failed"
             return OutboundMessage(
                 channel=msg.channel, chat_id=msg.chat_id,
                 content="Could not complete the stop request. Please retry.", metadata=metadata,
@@ -414,14 +459,20 @@ async def cmd_stop(ctx: CommandContext) -> OutboundMessage:
     await project("stopping")
     try:
         if stop_admission is None:
-            total = await loop._cancel_active_tasks(ctx.key)  # pyright: ignore[reportPrivateUsage]
+            total = await loop._cancel_active_tasks(  # pyright: ignore[reportPrivateUsage]
+                ctx.key,
+                _explicit_stop=True,
+            )
         else:
             total = await loop._cancel_active_tasks(  # pyright: ignore[reportPrivateUsage]
                 ctx.key,
                 _stop_admission=stop_admission,
+                _explicit_stop=True,
             )
     except PendingFollowupStopError:
         logger.exception("Stop request failed for session {}", ctx.key)
+        if run_stop_target is not None:
+            metadata["webui_run_stop_status"] = "failed"
         return OutboundMessage(
             channel=msg.channel, chat_id=msg.chat_id,
             content="Could not complete the stop request. Please retry.",
@@ -437,6 +488,8 @@ async def cmd_stop(ctx: CommandContext) -> OutboundMessage:
             and not queue_replaced
         )
         if not stop_is_current:
+            if run_stop_target is not None:
+                metadata["webui_run_stop_status"] = "stale"
             return OutboundMessage(
                 channel=msg.channel,
                 chat_id=msg.chat_id,
@@ -498,6 +551,8 @@ async def cmd_stop(ctx: CommandContext) -> OutboundMessage:
             publication = publish_target(loop, ctx.key)
             if inspect.isawaitable(publication):
                 await publication
+    if run_stop_target is not None:
+        metadata["webui_run_stop_status"] = "accepted"
     return OutboundMessage(
         channel=msg.channel, chat_id=msg.chat_id, content=content,
         metadata=metadata

@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any, Protocol, cast
 
 from loguru import logger as default_logger
 
+from kohaku.bus.outbound_events import RunState
 from kohaku.harness.claude_sdk import harness_capabilities
 from kohaku.providers.base import LLMUsage
 from kohaku.session.goal_state import goal_state_ws_blob
@@ -40,10 +41,12 @@ class WebUISessionProjection:
         sessions: SessionMetadataReader | None,
         *,
         stop_target_for_key: Callable[[str], dict[str, object] | None] | None = None,
+        run_state_for_key: Callable[[str], RunState | None] | None = None,
         log: Any = default_logger,
     ) -> None:
         self._sessions = sessions
         self._stop_target_for_key = stop_target_for_key
+        self._run_state_for_key = run_state_for_key
         self._log = log
 
     def attach_fields(
@@ -68,6 +71,8 @@ class WebUISessionProjection:
             self._stop_target_for_key(session_key)
             if self._stop_target_for_key is not None else None
         )
+        if self._run_state_for_key is not None:
+            fields["run_state"] = self._run_state_for_key(session_key)
         try:
             fields["model_preset"] = model_preset_from_metadata(metadata)
         except ValueError:
@@ -131,6 +136,12 @@ class WebUISessionProjection:
                 "event": "stop_target",
                 "chat_id": chat_id,
                 "stop_target": self._stop_target_for_key(session_key),
+            })
+        if self._run_state_for_key is not None:
+            events.append({
+                "event": "run_state",
+                "chat_id": chat_id,
+                "run_state": self._run_state_for_key(session_key),
             })
         return tuple(events)
 

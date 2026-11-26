@@ -14,6 +14,7 @@ from kohaku.harness.backend import (
     ExternalReasoning,
     ExternalSessionStarted,
     ExternalText,
+    ExternalToolBatchReady,
     ExternalToolCall,
     ExternalToolIntent,
     ExternalToolPolicy,
@@ -51,6 +52,7 @@ class ScriptedProcess:
         self.script = script
         self.session_id = session_id
         self.closed = asyncio.Event()
+        self.close_task = None
 
     async def run(self, request, approve):
         yield ExternalSessionStarted(self.session_id)
@@ -58,6 +60,7 @@ class ScriptedProcess:
             yield event
 
     async def close(self):
+        self.close_task = asyncio.current_task()
         self.closed.set()
 
 
@@ -237,6 +240,123 @@ async def test_stop_closes_process_and_dismisses_pending_approval(store):
         ))
         events = store.source.load_source_snapshot("test:external").events
         assert events[-1]["_external_outcome"] == "cancelled"
+    finally:
+        await runner.shutdown()
+
+
+async def test_explicit_stop_preserves_partial_output_and_admits_followup(store):
+    entered = asyncio.Event()
+
+    async def script(request, approve):
+        if request.run_id == "stop":
+            yield ExternalText("partial output")
+            entered.set()
+            try:
+                await asyncio.Future()
+            except asyncio.CancelledError:
+                return
+        else:
+            yield ExternalText("follow-up")
+            yield ExternalTurnFinished()
+
+    backend = ScriptedBackend(script)
+    runner = ExternalHarnessRunner(backend)
+    requests = []
+
+    async def stopped_turn():
+        async with request_for(store, "stop") as request:
+            requests.append(request)
+            return await runner.run(request)
+
+    task = asyncio.create_task(stopped_turn())
+    try:
+        await asyncio.wait_for(entered.wait(), 3)
+        await runner.stop("test:external")
+        outcome = await task
+        assert outcome.status == "cancelled"
+
+        events = store.source.load_source_snapshot("test:external").events
+        assert events[-1]["_external_outcome"] == "cancelled"
+        assert requests[0].hook.text == ["partial output"]
+        assert backend.processes[0].closed.is_set()
+        assert backend.processes[0].close_task is task
+
+        async with request_for(store, "follow-up") as request:
+            outcome = await runner.run(request)
+        assert outcome.status == "completed"
+        assert outcome.content == "follow-up"
+    finally:
+        await runner.shutdown()
+
+
+async def test_explicit_stop_stays_cancelled_when_process_teardown_raises(store):
+    entered = asyncio.Event()
+
+    async def script(request, approve):
+        yield ExternalText("partial output")
+        yield ExternalToolIntent(ExternalToolCall(
+            "completed", "Write", {"file_path": "done.txt", "content": "done"},
+        ))
+        yield ExternalToolBatchReady()
+        yield ExternalToolResult("completed", "persisted tool output")
+        yield ExternalToolIntent(ExternalToolCall(
+            "pending", "Bash", {"command": "make another change"},
+        ))
+        yield ExternalToolBatchReady()
+        entered.set()
+        await asyncio.Future()
+
+    backend = ScriptedBackend(script)
+    runner = ExternalHarnessRunner(backend)
+
+    async def stopped_turn():
+        async with request_for(store, "stop") as request:
+            return await runner.run(request)
+
+    task = asyncio.create_task(stopped_turn())
+    try:
+        await asyncio.wait_for(entered.wait(), 3)
+        process = backend.processes[0]
+
+        async def fail_close():
+            process.close_task = asyncio.current_task()
+            process.closed.set()
+            raise RuntimeError("SDK teardown failed")
+
+        process.close = fail_close
+        await runner.stop("test:external")
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+        events = store.source.load_source_snapshot("test:external").events
+        assert [event["_external_outcome"] for event in events if "_external_outcome" in event] == [
+            "cancelled",
+        ]
+        assert any(
+            event.get("role") == "tool" and event.get("content") == "persisted tool output"
+            for event in events
+        )
+        assert process.closed.is_set()
+    finally:
+        await runner.shutdown()
+
+
+async def test_unclean_harness_crash_keeps_execution_recovery_required(store):
+    async def script(request, approve):
+        yield ExternalToolIntent(ExternalToolCall(
+            "tool-1", "Bash", {"command": "make change"},
+        ))
+        yield ExternalToolBatchReady()
+        raise RuntimeError("The harness disconnected before reporting the result.")
+
+    runner = ExternalHarnessRunner(ScriptedBackend(script))
+    try:
+        async with request_for(store, "crash") as request:
+            with pytest.raises(RuntimeError, match="disconnected"):
+                await runner.run(request)
+
+        snapshot = store.source.load_source_snapshot("test:external")
+        assert snapshot.header["metadata"].get("execution_recovery_required") is True
     finally:
         await runner.shutdown()
 

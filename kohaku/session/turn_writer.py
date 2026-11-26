@@ -125,6 +125,10 @@ class SourceTurnWriter:
             str, tuple[SourceToolIntentBinding | None, ...]
         ] = {}
         self._batch_callback: Callable[[KnownToolResult], Awaitable[str]] | None = None
+        self._active_tool_batch: tuple[tuple[str, str], ...] = ()
+        self._active_batch_dispatched: set[int] = set()
+        self._active_batch_safe_to_settle: set[int] = set()
+        self._active_batch_completed: set[int] = set()
 
     def fail(self) -> None:
         """Stop every stream after a mandatory runner or recording failure."""
@@ -317,6 +321,21 @@ class SourceTurnWriter:
             raise SourceValidationError('Invalid source tool batch')
         calls: list[object] = cast(list[object], calls_value)
         ids = [uuid.uuid4().hex for _ in calls]
+        batch_calls: list[tuple[str, str]] = []
+        for call_value in calls:
+            if not isinstance(call_value, dict):
+                batch_calls.append(("", ""))
+                continue
+            identity = _source_tool_result_identity(cast(object, call_value))
+            call_id, tool_name = identity
+            batch_calls.append((
+                call_id if isinstance(call_id, str) else "",
+                tool_name if isinstance(tool_name, str) else "",
+            ))
+        self._active_tool_batch = tuple(batch_calls)
+        self._active_batch_dispatched = set()
+        self._active_batch_safe_to_settle = set()
+        self._active_batch_completed = set()
         event = self._append(payload, execution_ids=ids)
         declared: list[object] = deepcopy(calls)
         bindings: list[SourceToolIntentBinding | None] = []
@@ -366,12 +385,14 @@ class SourceTurnWriter:
                 if binding is not None:
                     self._tool_intent_bindings[id(binding)] = (binding, durable_event)
         self._tool_intents_by_event[str(event["_event_id"])] = tuple(bindings)
-        completed: set[int] = set()
-
         async def record(value: KnownToolResult) -> str:
             try:
                 index = value.ordinal
-                if type(index) is not int or not 0 <= index < len(declared) or index in completed:
+                if (
+                    type(index) is not int
+                    or not 0 <= index < len(declared)
+                    or index in self._active_batch_completed
+                ):
                     self._writes.failed = True
                     raise SourceValidationError('Invalid source result binding')
                 tool_call_id, tool_name = _source_tool_result_identity(declared[index])
@@ -427,7 +448,7 @@ class SourceTurnWriter:
                 committed = self._append(tool_event, execution_id=ids[index],
                                          source_origin=origin, artifact_read=retrieval,
                                          filesystem_effects=value.filesystem_effects)
-                completed.add(index)
+                self._active_batch_completed.add(index)
                 if any(fact.reconciliation_required for fact in value.filesystem_effects or ()):
                     self.owner.recovery_required = True
                     self._writes.failed = True
@@ -438,6 +459,43 @@ class SourceTurnWriter:
 
         self._batch_callback = record
         return event
+
+    def mark_tool_dispatched(self, ordinal: int, safe_to_settle: bool) -> None:
+        """Record the point at which an admitted tool call starts execution."""
+        if (
+            type(ordinal) is not int
+            or not 0 <= ordinal < len(self._active_tool_batch)
+            or ordinal in self._active_batch_completed
+        ):
+            raise SourceValidationError("Invalid source tool dispatch binding")
+        self._active_batch_dispatched.add(ordinal)
+        if safe_to_settle:
+            self._active_batch_safe_to_settle.add(ordinal)
+
+    async def settle_cancelled_tool_results(self) -> None:
+        """Append deterministic results for known open calls after explicit Stop."""
+        callback = self._batch_callback
+        if callback is None:
+            return
+        for ordinal, (tool_call_id, name) in enumerate(self._active_tool_batch):
+            if ordinal in self._active_batch_completed:
+                continue
+            if (
+                ordinal in self._active_batch_dispatched
+                and ordinal not in self._active_batch_safe_to_settle
+            ):
+                self.owner.recovery_required = True
+                continue
+            content = "Tool execution was cancelled."
+            await callback(KnownToolResult(
+                ordinal=ordinal,
+                tool_call_id=tool_call_id,
+                name=name,
+                raw_result=content,
+                result=content,
+                event={"status": "cancelled"},
+                dispatched=ordinal in self._active_batch_dispatched,
+            ))
 
     def bind_tool_intents(
         self,

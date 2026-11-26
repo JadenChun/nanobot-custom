@@ -35,7 +35,7 @@ from kohaku.agent.tools.filesystem_effect import (
 )
 from kohaku.agent.tools.progress import bind_tool_progress_sink
 from kohaku.agent.tools.registry import ToolRegistry, is_tool_error_result
-from kohaku.agent.tools.shell import bind_approved_exec_cwd
+from kohaku.agent.tools.shell import ExecProcessStopped, ExecTool, bind_approved_exec_cwd
 from kohaku.agent.turn import ToolOutcome, TurnContext
 from kohaku.providers.base import ToolCallRequest
 from kohaku.utils.cancellation import task_is_cancelling
@@ -69,6 +69,7 @@ class KnownToolResult:
 
 
 ToolResultCallback = Callable[[KnownToolResult], Awaitable[None]]
+ToolDispatchCallback = Callable[[int, bool], None]
 
 
 def _copy_recorded_value(value: Any) -> Any:
@@ -189,6 +190,7 @@ async def execute_tool_calls(
     fail_on_tool_error: bool = False,
     tool_result_callback: ToolResultCallback | None = None,
     tool_intent_bindings: Sequence[SourceToolIntentBinding | None] | None = None,
+    tool_dispatch_callback: ToolDispatchCallback | None = None,
 ) -> tuple[list[Any], list[dict[str, Any]]]:
     """Execute one model response's tool calls in stable result order."""
     if turn_context is not None and turn_context.execution_owner is not None and tool_result_callback is None:
@@ -216,6 +218,41 @@ async def execute_tool_calls(
 
                 return _capture
 
+            async def _flush_records(index: int) -> bool:
+                reconciliation_required = False
+                if tool_result_callback is not None:
+                    while pending_records[index]:
+                        record = pending_records[index][0]
+                        await tool_result_callback(record)
+                        pending_records[index].pop(0)
+                        if any(
+                            fact.reconciliation_required
+                            for fact in record.filesystem_effects or ()
+                        ):
+                            reconciliation_required = True
+                return reconciliation_required
+
+            async def _settle_cancelled_batch() -> None:
+                await asyncio.gather(*tasks, return_exceptions=True)
+                if tool_result_callback is not None:
+                    for record_index in range(len(batch)):
+                        await _flush_records(record_index)
+
+            async def _await_cancelled_batch_settlement() -> None:
+                try:
+                    # The callback may persist source events through the
+                    # registered execution owner, so flush on this task.
+                    await _settle_cancelled_batch()
+                except asyncio.CancelledError:
+                    logger.warning(
+                        "Cancelled tool batch settlement was interrupted",
+                    )
+                except Exception as settlement_error:
+                    logger.warning(
+                        "Cancelled tool batch results could not be settled: {}",
+                        type(settlement_error).__name__,
+                    )
+
             tasks: list[asyncio.Task[tuple[Any, dict[str, Any]]]] = []
             owner = turn_context.execution_owner if turn_context is not None else None
             try:
@@ -238,6 +275,7 @@ async def execute_tool_calls(
                                 and batch_start + index < len(tool_intent_bindings)
                                 else None
                             ),
+                            tool_dispatch_callback=tool_dispatch_callback,
                             deferred_hooks=pending_hooks[index],
                         )
                     )
@@ -250,40 +288,49 @@ async def execute_tool_calls(
                 if tasks:
                     await asyncio.gather(*tasks, return_exceptions=True)
                 raise
-            batch_raw = await asyncio.gather(*tasks, return_exceptions=True)
+            try:
+                batch_raw = await asyncio.gather(*tasks, return_exceptions=True)
+            except asyncio.CancelledError:
+                await _await_cancelled_batch_settlement()
+                raise
+            cancellation = next(
+                (item for item in batch_raw if isinstance(item, asyncio.CancelledError)),
+                None,
+            )
+            if cancellation is None and task_is_cancelling():
+                cancellation = asyncio.CancelledError()
             first_exception: BaseException | None = None
             reconciliation_required = False
-            for index, raw_item in enumerate(batch_raw):
-                if tool_result_callback is not None:
-                    for record in pending_records[index]:
-                        await tool_result_callback(record)
-                        if any(
-                            fact.reconciliation_required
-                            for fact in record.filesystem_effects or ()
-                        ):
-                            reconciliation_required = True
-                if isinstance(raw_item, BaseException):
+            try:
+                for index, raw_item in enumerate(batch_raw):
+                    reconciliation_required |= await _flush_records(index)
+                    if isinstance(raw_item, BaseException):
+                        if first_exception is None:
+                            first_exception = raw_item
+                        continue
                     if first_exception is None:
-                        first_exception = raw_item
-                    continue
-                if first_exception is None:
-                    for hook_cb in pending_hooks[index]:
-                        await hook_cb()
-                outcome, event = raw_item
-                result_item: tuple[Any, dict[str, Any]] = (outcome, event)
-                if isinstance(outcome, ToolOutcome):
-                    if outcome.stop_reason and (
-                        outcome.stop_reason != "tool_error" or fail_on_tool_error
-                    ):
-                        terminal = _merge_batch_terminal(terminal, outcome)
-                    else:
-                        result_item = (outcome.content, event)
-                elif fail_on_tool_error and event.get("status") == "error":
-                    wrapped = ToolOutcome(outcome, "tool_error")
-                    terminal = _merge_batch_terminal(terminal, wrapped)
-                    result_item = (wrapped, event)
-                tool_results.append(result_item)
+                        for hook_cb in pending_hooks[index]:
+                            await hook_cb()
+                    outcome, event = raw_item
+                    result_item: tuple[Any, dict[str, Any]] = (outcome, event)
+                    if isinstance(outcome, ToolOutcome):
+                        if outcome.stop_reason and (
+                            outcome.stop_reason != "tool_error" or fail_on_tool_error
+                        ):
+                            terminal = _merge_batch_terminal(terminal, outcome)
+                        else:
+                            result_item = (outcome.content, event)
+                    elif fail_on_tool_error and event.get("status") == "error":
+                        wrapped = ToolOutcome(outcome, "tool_error")
+                        terminal = _merge_batch_terminal(terminal, wrapped)
+                        result_item = (wrapped, event)
+                    tool_results.append(result_item)
+            except asyncio.CancelledError:
+                await _await_cancelled_batch_settlement()
+                raise
             ordinal += len(batch)
+            if cancellation is not None:
+                raise cancellation
             if first_exception is not None:
                 raise first_exception
             if reconciliation_required:
@@ -313,6 +360,7 @@ async def execute_tool_calls(
                                 and ordinal < len(tool_intent_bindings)
                                 else None
                             ),
+                            tool_dispatch_callback=tool_dispatch_callback,
                         )
                         ordinal += 1
                         outcome, event = result
@@ -348,6 +396,7 @@ async def execute_tool_calls(
                         and ordinal < len(tool_intent_bindings)
                         else None
                     ),
+                    tool_dispatch_callback=tool_dispatch_callback,
                 )
                 ordinal += 1
                 outcome, event = result
@@ -395,6 +444,7 @@ async def _execute_tool_call(
     ordinal: int = 0,
     tool_policy: ToolPolicy | None = None,
     tool_intent_binding: SourceToolIntentBinding | None = None,
+    tool_dispatch_callback: ToolDispatchCallback | None = None,
     deferred_hooks: list[Callable[[], Awaitable[None]]] | None = None,
 ) -> tuple[Any, dict[str, Any]]:
     lookup_error = repeated_external_lookup_error(
@@ -569,6 +619,8 @@ async def _execute_tool_call(
             exec_unsandboxed = decision.exec_unsandboxed
             exec_private_network = decision.exec_private_network
         dispatched = preflight_result is None
+        if dispatched and tool_dispatch_callback is not None:
+            tool_dispatch_callback(ordinal, bool(getattr(tool, "read_only", False)))
         progress_sink = hook.tool_progress_sink(tool_call) if dispatched else None
         try:
             binding_token = set_assessed_write_target(assessed_write_target, edit_binding)
@@ -601,6 +653,10 @@ async def _execute_tool_call(
                                      event, dispatched=True)
             except FilesystemEffectReconciliationRequiredError:
                 pass
+            raise
+        except ExecProcessStopped:
+            if type(tool) is ExecTool and tool_dispatch_callback is not None:
+                tool_dispatch_callback(ordinal, True)
             raise
         except asyncio.CancelledError:
             raise

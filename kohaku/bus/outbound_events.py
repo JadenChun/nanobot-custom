@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal, TypedDict
 
 from kohaku.bus.events import CommittedUserInput, OutboundMessage
 from kohaku.events import AgentEvent
@@ -25,6 +25,19 @@ if TYPE_CHECKING:
     from kohaku.security.desktop_permissions import WorkspacePermissionProjection
     from kohaku.session.harness_binding import HarnessBindingPayload
     from kohaku.workspace_access_recovery import FolderAccessRequest, WorkspaceScopePayload
+
+
+RunLifecycleState = Literal["running", "waiting_approval", "stopping"]
+
+
+class RunState(TypedDict):
+    state: RunLifecycleState
+    turn_id: str | None
+    run_id: str | None
+    source_incarnation: str | None
+    started_at: float | None
+    can_stop: bool
+    can_steer: bool
 
 
 @dataclass(frozen=True)
@@ -184,6 +197,13 @@ class StopTargetEvent(AgentEvent):
     """Transient server-derived original-chat Stop target for current views."""
 
     stop_target: dict[str, object] | None
+
+
+@dataclass(frozen=True)
+class RunStateEvent(AgentEvent):
+    """Transient lifecycle and control identity for one admitted run."""
+
+    run_state: RunState | None
 
 
 @dataclass(frozen=True)

@@ -43,7 +43,9 @@ from kohaku.utils.restart import (
 )
 
 if TYPE_CHECKING:
+    from kohaku.agent.run_control import RunStopTarget
     from kohaku.agent.stop_target import StopTargetReader
+    from kohaku.bus.outbound_events import RunState
     from kohaku.cron.service import CronService
     from kohaku.session.manager import SessionManager
     from kohaku.triggers.local_store import LocalTriggerStore
@@ -147,6 +149,8 @@ class ChannelManager:
             Callable[[str, str, str, str | None], Awaitable[dict[str, Any]]] | None
         ) = None,
         webui_stop_target_for_key: StopTargetReader | None = None,
+        webui_run_state_for_key: Callable[[str], RunState | None] | None = None,
+        webui_run_stop_target: Callable[[RunStopTarget], Awaitable[bool]] | None = None,
         config_path: Path | None = None,
     ):
         if config_path is None:
@@ -172,6 +176,8 @@ class ChannelManager:
         self._webui_recovery_action = webui_recovery_action
         self._webui_child_control = webui_child_control
         self._webui_stop_target_for_key = webui_stop_target_for_key
+        self._webui_run_state_for_key = webui_run_state_for_key
+        self._webui_run_stop_target = webui_run_stop_target
         self.channels: dict[str, BaseChannel] = {}
         self._channel_owners: dict[str, str] = {}
         self._channel_runtime_specs: dict[str, tuple[str, str]] = {}
@@ -233,6 +239,8 @@ class ChannelManager:
                 bus=self.bus,
                 session_manager=self._session_manager,
                 stop_target_for_key=self._webui_stop_target_for_key,
+                run_state_for_key=self._webui_run_state_for_key,
+                run_stop_target=self._webui_run_stop_target,
                 child_control=self._webui_child_control,
                 static_dist_path=static_path,
                 workspace_path=workspace,
