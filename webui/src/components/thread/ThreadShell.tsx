@@ -1616,6 +1616,7 @@ export function ThreadShell({
     stopFeedback,
     dismissStopNotice,
     stopTarget,
+    runState,
     connectionOpen,
     hasUnknownMessageSend,
     runStartedAt,
@@ -3661,18 +3662,21 @@ export function ThreadShell({
       {session || historyKey ? (
         <>
         {Object.entries(externalApprovals).map(([approvalId, approval]) => {
-          if (!chatId || (!claudeChat && !approval.childId)
-            || dismissedRootApprovalIds.includes(approvalId)) return null;
+          if (!chatId || dismissedRootApprovalIds.includes(approvalId)) return null;
           const child = currentDelegatedChildren.find((row) => row.child_id === approval.childId);
           const decide = (decision: ApprovalDecisionPayload["decision"]) => {
-            const turnId = client.sendApprovalDecision(chatId, approvalId, decision, {
-              sessionKey: approval.session_key,
-              sessionIncarnation: approval.session_incarnation,
-              runId: approval.run_id,
+            const identity = {
+              session_key: approval.session_key,
+              session_incarnation: approval.session_incarnation,
+              run_id: approval.run_id,
               generation: approval.generation,
-              effectId: approval.effect_id,
-            });
-            pendingRootApprovalRef.current = { turnId, approvalId };
+              effect_id: approval.effect_id,
+            };
+            void client.sendLiveApprovalDecision(chatId, {
+              approval_id: approvalId, decision, ...identity,
+            }).then((turnId) => {
+              if (turnId) pendingRootApprovalRef.current = { turnId, approvalId };
+            }).catch(() => setRootApprovalResetSignal((count) => count + 1));
           };
           return (
             <ApprovalRequestCard
@@ -3752,7 +3756,11 @@ export function ThreadShell({
             request={workspaceAccessRequest}
             requestLoading={workspaceAccessRequestLoading}
             requestRefreshFailed={workspaceAccessRequestError}
-            busy={turnActive || hasUnknownMessageSend || workspaceScopeDisabled}
+            busy={
+              (turnActive && runState?.state !== "waiting_approval")
+              || hasUnknownMessageSend
+              || workspaceScopeDisabled
+            }
             workspaces={workspaces}
             onUpdateRequest={updateWorkspaceAccessRequest}
             workspacePermissions={workspacePermissions}

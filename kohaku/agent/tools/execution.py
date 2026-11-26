@@ -200,7 +200,11 @@ async def execute_tool_calls(
     if tool_policy is not None:
         tool_policy = tool_policy.for_tools(tools)
         decision = await tool_policy.evaluate(messages=messages or [], tool_calls=tool_calls)
-        if decision.action != "allow":
+        if decision.action != "allow" and not (
+            decision.requires_approval
+            and turn_context is not None
+            and turn_context.request_live_approval is not None
+        ):
             terminal = ToolOutcome(decision.response, decision.stop_reason or "policy_blocked",
                                    decision.metadata)
     tool_results: list[tuple[Any, dict[str, Any]]] = []
@@ -605,6 +609,27 @@ async def _execute_tool_call(
             turn_context.execution_owner.validate_dispatch()
         if tool_policy is not None:
             decision = tool_policy.authorize_dispatch(tool_call, params, turn_context)
+            if (
+                decision.requires_approval
+                and turn_context is not None
+                and turn_context.request_live_approval is not None
+            ):
+                authority = await turn_context.request_live_approval(
+                    decision,
+                    ToolCallRequest(id=tool_call.id, name=tool_call.name, arguments=params),
+                )
+                if authority is not None:
+                    turn_context.live_effect_approvals[tool_call.id] = authority
+                    decision = tool_policy.authorize_dispatch(tool_call, params, turn_context)
+                    turn_context.live_effect_approvals.pop(tool_call.id, None)
+                if decision.requires_approval:
+                    payload = {"status": "denied", "reason": "approval_not_granted"}
+                    event = {"name": tool_call.name, "status": "denied"}
+                    await _record_result(
+                        tool_result_callback, ordinal, tool_call, payload, payload,
+                        event, dispatched=False,
+                    )
+                    return payload, event
             if decision.action != "allow":
                 refused = ToolOutcome(
                     decision.response, decision.stop_reason or "policy_blocked", decision.metadata,
@@ -687,6 +712,15 @@ async def _execute_tool_call(
             )
             return payload, event
 
+    if (
+        isinstance(result, ToolOutcome)
+        and result.stop_reason == "folder_access_required"
+        and turn_context is not None
+        and turn_context.request_live_folder_access is not None
+    ):
+        if tool_dispatch_callback is not None and not result.filesystem_effects:
+            tool_dispatch_callback(ordinal, True)
+        result = await turn_context.request_live_folder_access(result)
     raw_result = result
     outcome = result if isinstance(result, ToolOutcome) else None
     if outcome is not None and outcome.stop_reason == "kohaku_media_settled":

@@ -16,6 +16,7 @@ from kohaku.security.desktop_permissions import (
     WorkspaceTaskAccessReference,
 )
 from kohaku.security.folder_grants import FolderGrantsUnavailableError
+from kohaku.session.live_folder_access import LiveFolderAccess, LiveFolderSelection
 from kohaku.session.workspace_access_continuation import (
     WorkspaceAccessContinuationRejectedError,
 )
@@ -265,8 +266,10 @@ def admit_workspace_access_continuation(
 def persist_folder_access_request(
     sessions: SessionManager,
     context: TurnContext,
+    *,
+    live_need: FolderAccessNeed | None = None,
 ) -> FolderAccessRequest | None:
-    """Persist a pending card only from a completed, owned canonical WebUI turn."""
+    """Persist a pending card from the current canonical WebUI owner."""
     from kohaku.agent.loop import TurnKind
     from kohaku.agent.turn import HistoryMode, TurnSource
     from kohaku.session.source import SourceValidationError
@@ -279,8 +282,7 @@ def persist_folder_access_request(
     writer = run_context.source_writer if run_context is not None else None
     request_context = context.request_context
     if (
-        result is None
-        or result.stop_reason != "folder_access_required"
+        (live_need is None and (result is None or result.stop_reason != "folder_access_required"))
         or request is None
         or request.source is not TurnSource.GATEWAY
         or request.history_mode is not HistoryMode.SESSION
@@ -303,13 +305,23 @@ def persist_folder_access_request(
     if not isinstance(turn_id, str) or not 1 <= len(turn_id) <= 128:
         return None
     try:
-        need = parse_folder_access_need(result.policy_metadata.get("folder_access"))
+        if live_need is None:
+            assert result is not None
+            need = parse_folder_access_need(result.policy_metadata.get("folder_access"))
+        else:
+            need = live_need
         scope = request_context.workspace_scope
         if scope is None:
             return None
         task_input_id = run_context.source_input_event_id
         writer.owner.validate_dispatch()
         snapshot = writer.owner.read_snapshot()
+        if live_need is not None and snapshot.header["metadata"].get("webui") is not True:
+            # Ingress can yield the first metadata write to the admitted turn.
+            writer.store.update_metadata(
+                context.session_key, {"webui": True, "workspace_scope": scope.metadata()},
+            )
+            snapshot = writer.owner.read_snapshot()
         if type(task_input_id) is not str:
             return None
         input_event = next(
@@ -553,16 +565,18 @@ class WorkspaceAccessRecoveryOwner:
             raise WorkspaceAccessActionError(409, "context_unavailable")
         if snapshot.header["metadata"].get("execution_recovery_required") is True:
             raise WorkspaceAccessActionError(409, "context_unavailable")
-        if snapshot.header["metadata"].get("execution_lease") is not None:
-            raise WorkspaceAccessActionError(409, "chat_running")
-        if websocket_turn_wall_started_at(chat_id) is not None:
+        live = self._live_request(key, record)
+        if live is None and (
+            snapshot.header["metadata"].get("execution_lease") is not None
+            or websocket_turn_wall_started_at(chat_id) is not None
+        ):
             raise WorkspaceAccessActionError(409, "chat_running")
         from kohaku.session.pending_followups import parse_pending_followup_records
         from kohaku.session.persistence_metadata import SOURCE_PENDING_FOLLOWUPS_METADATA_KEY
 
         raw_followups = snapshot.header["metadata"].get(SOURCE_PENDING_FOLLOWUPS_METADATA_KEY, [])
         try:
-            if parse_pending_followup_records(raw_followups):
+            if parse_pending_followup_records(raw_followups) and live is None:
                 raise WorkspaceAccessActionError(409, "chat_running")
         except WorkspaceAccessActionError:
             raise
@@ -579,6 +593,10 @@ class WorkspaceAccessRecoveryOwner:
         } != record["expected_scope"]:
             raise WorkspaceAccessActionError(409, "focus_changed")
         return current_scope
+
+    def _live_request(self, key: str, record: WorkspaceAccessRecord) -> LiveFolderAccess | None:
+        live = self.sessions.live_folder_access.get(key)
+        return live if live is not None and live.matches(record) else None
 
     def get(self, chat_id: str) -> FolderAccessRequest | None:
         try:
@@ -1227,6 +1245,12 @@ class WorkspaceAccessRecoveryOwner:
             "status": "cancelled",
         })
         self._commit_action(key, snapshot, record, replacement)
+        live = self._live_request(key, record)
+        if live is not None:
+            def cancel_live() -> None:
+                if not live.decision.done():
+                    live.decision.set_result(None)
+            live.decision.get_loop().call_soon_threadsafe(cancel_live)
         selection = record.get("selection_authority")
         if selection is not None and selection["kind"] == "once":
             owner = self.workspaces.permission_owner
@@ -1426,6 +1450,26 @@ class WorkspaceAccessRecoveryOwner:
             raise WorkspaceAccessActionError(503, "folder_grants_unavailable") from None
         if not access["read"] or current_scope.project_path != path:
             raise WorkspaceAccessActionError(409, "access_changed")
+
+        live = self._live_request(key, record)
+        if live is not None:
+            replacement = parse_workspace_access_record({
+                **record,
+                "revision": record["revision"] + 1,
+                "status": "continued",
+                "continuation_turn_id": record["blocked_turn_id"],
+            })
+            self._commit_action(key, snapshot, record, replacement)
+            backend = self.sessions.source_backend(key)
+            if backend is None:
+                raise WorkspaceAccessActionError(503, "access_recovery_unavailable")
+            latest = backend.source.load_source_snapshot(key)
+            result = self._action_result(
+                key, chat_id, latest, replacement, current_scope,
+                permission_reference=task_reference,
+            )
+            live.decision.set_result(LiveFolderSelection(current_scope, task_reference))
+            return result
 
         from kohaku.bus.events import InboundMessage
         from kohaku.session.webui_turns import (

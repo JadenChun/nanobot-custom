@@ -33,6 +33,7 @@ from loguru import logger
 
 from kohaku.agent import context as agent_context
 from kohaku.agent import model_presets as preset_helpers
+from kohaku.agent.approvals import PendingTurnApproval
 from kohaku.agent.autocompact import AutoCompact
 from kohaku.agent.automation_turns import publish_next_deferred_turn
 from kohaku.agent.child_backend import ChildApprovalResume, ChildTurnRequest
@@ -53,7 +54,12 @@ from kohaku.agent.idle_lifecycle import IdleLifecycleIntegration
 from kohaku.agent.memory import Consolidator
 from kohaku.agent.memory_recovery_startup_admission import require_startup_receipt_admission
 from kohaku.agent.model_runtime import ModelRuntimeResolver
-from kohaku.agent.policy import CompositeToolPolicy, RiskyActionPolicy, ToolPolicy
+from kohaku.agent.policy import (
+    CompositeToolPolicy,
+    RiskyActionPolicy,
+    ToolPolicy,
+    ToolPolicyDecision,
+)
 from kohaku.agent.run_control import (
     ActiveRunHandle,
     ExternalTaskRunControlAdapter,
@@ -108,6 +114,7 @@ from kohaku.agent.turn import (
     RunRecord,
     RunStatus,
     SessionRunRef,
+    ToolOutcome,
     TraceMode,
     TurnCallbacks,
     TurnRequest,
@@ -119,6 +126,8 @@ from kohaku.agent.turn_admission import (
     ApprovalAdmission,
     ApprovalProvenance,
     ApprovalSnapshot,
+    EffectApprovalAuthority,
+    PendingApproval,
 )
 from kohaku.agent.turn_delivery import (
     TurnDelivery,
@@ -136,6 +145,7 @@ from kohaku.bus.events import (
 )
 from kohaku.bus.outbound_events import (
     DelegatedChildEvent,
+    ExternalApprovalEvent,
     RunStateEvent,
     SessionUpdatedEvent,
     StopTargetEvent,
@@ -162,7 +172,7 @@ from kohaku.harness.claude_sdk import ClaudeSDKBackend
 from kohaku.harness.direct import run_direct_turn, start_bridge
 from kohaku.harness.runner import CLAUDE_TOOL_NAMES, ExternalHarnessRunner
 from kohaku.llm_usage.context import source_from_request
-from kohaku.providers.base import LLMProvider, LLMUsage, ProviderConversationState
+from kohaku.providers.base import LLMProvider, LLMUsage, ProviderConversationState, ToolCallRequest
 from kohaku.providers.conversation_state import (
     ConversationRequestBinding,
     ProviderStateSettlement,
@@ -191,6 +201,7 @@ from kohaku.security.workspace_access import (
     WorkspaceScopeResolver,
     bind_workspace_scope,
     build_workspace_scope,
+    current_workspace_focus,
     reset_workspace_scope,
 )
 from kohaku.session import turn_continuation
@@ -211,6 +222,7 @@ from kohaku.session.input_attempt import (
     find_input_attempt,
 )
 from kohaku.session.keys import UNIFIED_SESSION_KEY, remember_last_channel
+from kohaku.session.live_folder_access import LiveFolderAccess, LiveFolderSelection
 from kohaku.session.manager import SESSION_CACHE_MAX_SIZE, Session, SessionManager
 from kohaku.session.model_selection import (
     SESSION_MODEL_PRESET_METADATA_KEY,
@@ -2335,6 +2347,15 @@ class AgentLoop:
         except Exception:
             logger.debug("Run lifecycle event could not be queued for {}", key)
 
+    async def _update_run_approval_state(self, key: str, run_id: str, waiting: bool) -> None:
+        state = "waiting_approval" if waiting else "running"
+        if self.run_control.set_state(key, run_id, state) is not None:
+            await self._publish_run_state_for_key(key)
+
+    def resolve_run_approval(self, key: str, decision: ApprovalDecision) -> bool:
+        """Resolve an exact decision from an authenticated control route."""
+        return self.external_harness.approvals.resolve(decision, control_session_key=key)
+
     async def stop_run_target(self, target: RunStopTarget) -> bool:
         """Route an authenticated WebUI identity through the existing Stop owner."""
         key = webui_session_key(target.chat_id)
@@ -3959,6 +3980,74 @@ class AgentLoop:
             },
         )
 
+    async def _await_live_tool_approval(
+        self,
+        context: RunTurnContext,
+        events: EventSink,
+        decision: ToolPolicyDecision,
+        call: ToolCallRequest,
+    ) -> EffectApprovalAuthority | None:
+        key = context.session_key
+        owner = context.execution_owner
+        if key is None or owner is None:
+            return None
+        run = self.run_control.active_run(key)
+        if run is None or run.run_id != context.run_id:
+            return None
+        effect = decision.metadata.get("effect_id")
+        summary = decision.metadata.get("summary")
+        if not isinstance(effect, str) or not isinstance(summary, str):
+            return None
+        source = owner.read_snapshot().state
+        pending = PendingApproval(
+            summary=summary,
+            created_at=time.time(),
+            session_key=key,
+            approval_id=uuid.uuid4().hex,
+            session_incarnation=source.incarnation,
+            run_id=context.run_id,
+            turn_id=run.turn_id,
+            effect_id=effect,
+            generation=source.generation,
+            source_state=source,
+            save_exclusion_command=decision.metadata.get("save_exclusion_command")
+            if isinstance(decision.metadata.get("save_exclusion_command"), str) else None,
+        )
+        command = call.arguments.get("command")
+        approval = PendingTurnApproval(
+            pending.approval_id, key, source.incarnation, context.run_id, source.generation,
+            effect, call.name,
+            json.dumps({"command": command} if isinstance(command, str) else {}),
+            summary, pending.saveable_command(),
+        )
+
+        def current_run() -> bool:
+            return (
+                self.run_control.active_run(key) is run
+                and not run.cancel_requested
+                and not context.cancelled
+                and not self._lifecycle_is_closing()
+            )
+
+        async def requested(approval: PendingTurnApproval) -> None:
+            self.run_control.set_state(key, run.run_id, "waiting_approval")
+            await self._publish_run_state_for_key(key)
+            await events.emit(ExternalApprovalEvent(approval_id=approval.approval_id, approval=approval))
+
+        async def closed(approval_id: str) -> None:
+            await events.emit(ExternalApprovalEvent(approval_id=approval_id))
+            if not self.external_harness.approvals.pending_tool_calls(run.run_id):
+                self.run_control.set_state(key, run.run_id, "running")
+                await self._publish_run_state_for_key(key)
+
+        action = await self.external_harness.approvals.wait_for_decision(
+            approval, is_authorized=current_run, control_session_key=key,
+            on_approval=requested, on_closed=closed, require_exact_identity=True,
+        )
+        if action == "deny":
+            return None
+        return self.approval_admission.issue_live_effect(pending, context, current_run)
+
     async def _run_agent_loop(
         self,
         transcript_input: TranscriptInput,
@@ -4008,6 +4097,16 @@ class AgentLoop:
             effect_authority=run_context.policy.effect_authority,
             permissions=self.tools_config.permissions,
         )
+        request = run_context.request
+        live_controls = request.metadata.get("live_turn_controls") if request is not None else None
+        if (
+            request is not None
+            and request.source is TurnSource.GATEWAY
+            and (live_controls is True or live_controls == "approval")
+            and source_writer is not None
+            and webui_chat_id(run_context.session_key or "") is not None
+        ):
+            run_context.request_live_approval = partial(self._await_live_tool_approval, run_context, events)
         tool_policy: ToolPolicy = risky_policy
         if run_context.internal_tool_policy is not None:
             tool_policy = CompositeToolPolicy((run_context.internal_tool_policy, risky_policy))
@@ -4437,6 +4536,9 @@ class AgentLoop:
                     private_roots=grants.sandbox_private_roots if grants is not None else (),
                     is_closing=self._lifecycle_is_closing,
                     workspace_is_authorized=workspace_is_authorized,
+                    on_approval_state=partial(
+                        self._update_run_approval_state, active_session_key, run_context.run_id,
+                    ) if active_session_key is not None else None,
                 )
             source_transcript = None
             if source_writer is not None:
@@ -7757,6 +7859,59 @@ class AgentLoop:
         ctx.transcript_input = self._build_transcript_input(ctx)
 
 
+    async def _await_live_folder_access(
+        self, ctx: TurnContext, outcome: ToolOutcome,
+    ) -> dict[str, object]:
+        from kohaku.session.workspace_access_recovery import persist_folder_access_request
+        from kohaku.workspace_access_recovery import parse_folder_access_need
+
+        key = ctx.session_key
+        run = self.run_control.active_run(key)
+        context = ctx.run_context
+        denied: dict[str, object] = {"status": "denied", "reason": "folder_access_not_granted"}
+        if run is None or context is None or context.run_id != run.run_id:
+            return denied
+        if key in self.sessions.live_folder_access:
+            return denied
+        try:
+            need = parse_folder_access_need(outcome.policy_metadata.get("folder_access"))
+        except (TypeError, ValueError):
+            return denied
+        request = persist_folder_access_request(self.sessions, ctx, live_need=need)
+        if request is None:
+            return denied
+        decision: asyncio.Future[LiveFolderSelection | None] = (
+            asyncio.get_running_loop().create_future()
+        )
+        waiter = LiveFolderAccess(request["access_request_id"], run.run_id, decision)
+        self.sessions.live_folder_access[key] = waiter
+        try:
+            self.run_control.set_state(key, run.run_id, "waiting_approval")
+            await self._publish_run_state_for_key(key)
+            await ctx.events.emit(SessionUpdatedEvent(scope="metadata", workspace_access_request=request))
+            selected = await decision
+            if selected is None or run.cancel_requested:
+                return denied
+            focus = current_workspace_focus()
+            focus_owner = self._workspace_focus_owner()
+            if focus is None or focus_owner is None:
+                return denied
+            current_access = focus_owner.effective_access(
+                selected.scope.project_path, permission_reference=selected.task_reference,
+            )
+            if not current_access["read"]:
+                return denied
+            focus.replace(selected.scope)
+            focus.task_reference = selected.task_reference
+            context.workspace_task_reference = selected.task_reference
+            return {"status": "allowed", "project_path": str(selected.scope.project_path)}
+        finally:
+            if self.sessions.live_folder_access.get(key) is waiter:
+                self.sessions.live_folder_access.pop(key)
+            if not self.external_harness.approvals.pending_tool_calls(run.run_id):
+                self.run_control.set_state(key, run.run_id, "running")
+                await self._publish_run_state_for_key(key)
+
     async def _run_turn(self, ctx: TurnContext) -> None:
         runtime = ctx.require_runtime()
         if ctx.visible_run_started_at is None:
@@ -7765,6 +7920,9 @@ class AgentLoop:
         assert ctx.transcript_input is not None
         if ctx.run_context is not None:
             ctx.sent_messages = ctx.run_context.delivery.sent_messages
+            request = ctx.run_context.request
+            if request is not None and request.metadata.get("live_turn_controls") is True:
+                ctx.run_context.request_live_folder_access = partial(self._await_live_folder_access, ctx)
         with capture_message_deliveries(ctx.sent_messages) as message_sends:
             result = await self._run_agent_loop(
                 ctx.transcript_input,

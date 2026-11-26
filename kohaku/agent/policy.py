@@ -444,10 +444,15 @@ class RiskyActionPolicy(ToolPolicy):
             reason = reason or "repeat the previously approved risky action"
         if reason is None:
             return ToolPolicyDecision(edit_binding=assessment.edit_binding)
+        live_authority = (
+            turn_context.live_effect_approvals.pop(tool_call.id, None)
+            if turn_context is not None else None
+        )
+        authority = live_authority or self.effect_authority
         if (
             (assessed is None or effect_id == assessed[0])
-            and self.effect_authority is not None
-            and self.effect_authority.consume(effect_id, turn_context)
+            and authority is not None
+            and authority.consume(effect_id, turn_context)
         ):
             return ToolPolicyDecision(
                 edit_binding=assessment.edit_binding,

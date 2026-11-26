@@ -28,6 +28,7 @@ from kohaku.webui.ws_http import GatewayHTTPHandler
 if TYPE_CHECKING:
     from kohaku.agent.run_control import RunStopTarget
     from kohaku.agent.stop_target import StopTargetReader
+    from kohaku.agent.turn import ApprovalDecision
     from kohaku.bus.outbound_events import RunState
     from kohaku.bus.queue import MessageBus
     from kohaku.channels.websocket.runtime import WebSocketConfig
@@ -55,6 +56,7 @@ class GatewayServices:
     session_manager: SessionManager | None
     child_control: Callable[[str, str, str, str | None], Awaitable[dict[str, Any]]] | None
     run_stop_target: Callable[[RunStopTarget], Awaitable[bool]] | None
+    resolve_run_approval: Callable[[str, ApprovalDecision], bool] | None
     cron_service: CronService | None
     local_trigger_store: LocalTriggerStore | None
     cron_pending_job_ids: Callable[[str], set[str]] | None
@@ -70,6 +72,7 @@ def build_gateway_services(
     stop_target_for_key: StopTargetReader | None = None,
     run_state_for_key: Callable[[str], RunState | None] | None = None,
     run_stop_target: Callable[[RunStopTarget], Awaitable[bool]] | None = None,
+    resolve_run_approval: Callable[[str, ApprovalDecision], bool] | None = None,
     child_control: Callable[[str, str, str, str | None], Awaitable[dict[str, Any]]] | None = None,
     static_dist_path: Path | None = None,
     workspace_path: Path,
@@ -168,6 +171,7 @@ def build_gateway_services(
         session_manager,
         stop_target_for_key=stop_target_for_key,
         run_state_for_key=run_state_for_key,
+        live_turn_controls=resolve_run_approval is not None,
         log=logger,
     )
     http = GatewayHTTPHandler(
@@ -245,6 +249,7 @@ def build_gateway_services(
         session_manager=session_manager,
         child_control=child_control,
         run_stop_target=run_stop_target,
+        resolve_run_approval=resolve_run_approval,
         cron_service=cron_service,
         local_trigger_store=local_trigger_store,
         cron_pending_job_ids=cron_pending_job_ids,

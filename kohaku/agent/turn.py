@@ -23,7 +23,7 @@ from kohaku.attachments.models import AttachmentRecord
 
 if TYPE_CHECKING:
     from kohaku.agent.child_backend import ChildTurnRequest
-    from kohaku.agent.policy import ToolPolicy
+    from kohaku.agent.policy import ToolPolicy, ToolPolicyDecision
     from kohaku.agent.tools.artifact import ArtifactRetrievalReceipt
     from kohaku.agent.tools.base import ToolDenialKind
     from kohaku.agent.tools.filesystem_effect import FilesystemEffectFact
@@ -31,7 +31,7 @@ if TYPE_CHECKING:
     from kohaku.agent.tools.registry import CapturedToolBindings
     from kohaku.agent.turn_admission import EffectApprovalAuthority
     from kohaku.bus.events import OutboundMessage
-    from kohaku.providers.base import LLMUsage
+    from kohaku.providers.base import LLMUsage, ToolCallRequest
     from kohaku.security.desktop_permissions import (
         WorkspaceFullAccessReference,
         WorkspaceTaskAccessReference,
@@ -555,6 +555,13 @@ class TurnContext:
     tools_used: list[str] = field(default_factory=list)
     cancelled: bool = False
     explicit_stop_requested: Callable[[], bool] | None = field(default=None, repr=False)
+    request_live_approval: Callable[
+        [ToolPolicyDecision, ToolCallRequest], Awaitable[EffectApprovalAuthority | None]
+    ] | None = field(default=None, repr=False)
+    live_effect_approvals: dict[str, EffectApprovalAuthority] = field(default_factory=dict, repr=False)
+    request_live_folder_access: Callable[
+        [ToolOutcome], Awaitable[dict[str, object]]
+    ] | None = field(default=None, repr=False)
     lock_owner: str = ""
     metadata: dict[str, Any] = field(default_factory=dict)
     execution_owner: ExecutionOwner | None = field(default=None, repr=False)

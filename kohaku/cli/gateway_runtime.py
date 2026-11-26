@@ -435,6 +435,7 @@ def _run_gateway(
             webui_stop_target_for_key=agent.stop_target_for_key,
             webui_run_state_for_key=agent.run_state_for_key,
             webui_run_stop_target=agent.stop_run_target,
+            webui_resolve_run_approval=agent.resolve_run_approval,
             config_path=Path(config_path),
         )
 

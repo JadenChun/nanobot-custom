@@ -28,7 +28,7 @@ from kohaku.session.harness_binding import (
 from kohaku.session.source import validate_execution_links
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Awaitable, Callable
 
     from kohaku.agent.child_backend import ChildTurnRequest
     from kohaku.agent.hook import AgentHook
@@ -67,6 +67,7 @@ async def run_direct_turn(
     workspace_is_authorized: Callable[[], bool],
     child: ChildTurnRequest | None = None,
     approval_events: EventSink | None = None,
+    on_approval_state: Callable[[bool], Awaitable[None]] | None = None,
     authorize_tool: Callable[[str, dict[str, object]], bool] | None = None,
 
 ) -> AgentRunResult:
@@ -92,12 +93,16 @@ async def run_direct_turn(
     child_id = child.admission.child_id if child is not None else None
 
     async def approval_requested(approval: PendingExternalApproval) -> None:
+        if on_approval_state is not None:
+            await on_approval_state(True)
         await approvals.emit(ExternalApprovalEvent(
             approval_id=approval.approval_id, approval=approval, child_id=child_id,
         ))
 
     async def approval_closed(approval_id: str) -> None:
         await approvals.emit(ExternalApprovalEvent(approval_id=approval_id, child_id=child_id))
+        if on_approval_state is not None:
+            await on_approval_state(False)
 
     first_turn = binding.locked_workspace is None
     binding = replace(

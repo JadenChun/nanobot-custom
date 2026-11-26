@@ -111,6 +111,7 @@ export type InboundEvent =
       usage?: TokenUsage
       recovery_state?: RecoveryState
       stop_target?: StopExpectation | null
+      live_turn_controls?: true
     }
   | {
       event: "message_accepted"
@@ -226,6 +227,7 @@ type OutboundEvent =
       cli_apps?: Array<{ name: string }>
       mcp_presets?: Array<{ name: string }>
       session_mentions?: SessionMention[]
+      live_turn_controls?: "approval"
       approval_decision?: ApprovalDecision
       stop_expectation?: StopExpectation
     }
@@ -1499,6 +1501,7 @@ export class KohakuClient {
   private socket: WebSocket | null = null
   private chatId = ""
   private temporary = false
+  private liveTurnApproval = false
   private lastSavedChatId = ""
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null
   private reconnectAttempt = 0
@@ -1654,6 +1657,10 @@ export class KohakuClient {
             request_intent: options.requestIntent ?? "new",
             ...(options.targetTurnId ? { target_turn_id: options.targetTurnId } : {}),
           }
+        : {}),
+      ...(this.liveTurnApproval && !content.trimStart().startsWith("/")
+        && !options.approvalDecision && options.requestIntent !== "steer"
+        ? { live_turn_controls: "approval" as const }
         : {}),
       ...(options.approvalDecision ? { approval_decision: options.approvalDecision } : {}),
       ...(options.stopExpectation ? { stop_expectation: options.stopExpectation } : {}),
@@ -1817,6 +1824,7 @@ export class KohakuClient {
       const previousTemporaryChat = this.temporary ? this.chatId : ""
       this.chatId = event.chat_id
       this.temporary = event.temporary === true
+      this.liveTurnApproval = event.live_turn_controls === true
       if (!this.temporary) this.lastSavedChatId = event.chat_id
       if (previousTemporaryChat && previousTemporaryChat !== event.chat_id) {
         this.write({ type: "discard_temporary_chat", chat_id: previousTemporaryChat })

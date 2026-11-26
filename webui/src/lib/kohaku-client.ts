@@ -423,6 +423,7 @@ export class KohakuClient {
   private readyChatId: string | null = null;
   private claudeAvailable = false;
   private harnessAvailabilityHandlers = new Set<(available: boolean) => void>();
+  private liveTurnControls = new Set<string>();
   private externalApprovals = new Map<string, Map<string, Extract<InboundEvent, { event: "external_approval" }>>>();
   private harnessBindings = new Map<string, HarnessBinding>();
   private attachedModelPresets = new Map<string, string | null>();
@@ -1744,6 +1745,9 @@ export class KohakuClient {
             request_intent: options?.requestIntent ?? "new",
             ...(options?.targetTurnId ? { target_turn_id: options.targetTurnId } : {}),
           }),
+      ...(this.liveTurnControls.has(chatId) && options?.startsNewRun !== false
+        ? { live_turn_controls: true as const }
+        : {}),
       webui: true,
     };
     if (!this.frameFitsTransport(frame)) {
@@ -1805,6 +1809,28 @@ export class KohakuClient {
       return;
     }
     this.queueSend(frame);
+  }
+
+  async sendLiveApprovalDecision(
+    chatId: string,
+    approval: ApprovalDecisionPayload,
+  ): Promise<string | null> {
+    try {
+      await this.requestMutation("run.approve", { chat_id: chatId, approval });
+      return null;
+    } catch (error) {
+      if (!(error instanceof WebUIMutationError)
+        || error.status !== 404
+        || error.outcome !== "not_applied"
+        || error.message !== "unknown WebUI mutation action") throw error;
+    }
+    return this.sendApprovalDecision(chatId, approval.approval_id, approval.decision, {
+      sessionKey: approval.session_key,
+      sessionIncarnation: approval.session_incarnation,
+      runId: approval.run_id,
+      generation: approval.generation,
+      effectId: approval.effect_id,
+    });
   }
 
   sendApprovalDecision(
@@ -2215,6 +2241,8 @@ export class KohakuClient {
 
     if (parsed.event === "attached") {
       this.externalApprovals.delete(parsed.chat_id);
+      if (parsed.live_turn_controls === true) this.liveTurnControls.add(parsed.chat_id);
+      else this.liveTurnControls.delete(parsed.chat_id);
       if (parsed.harness_binding) this.harnessBindings.set(parsed.chat_id, parsed.harness_binding);
       if ("model_preset" in parsed) {
         this.attachedModelPresets.set(parsed.chat_id, parsed.model_preset ?? null);

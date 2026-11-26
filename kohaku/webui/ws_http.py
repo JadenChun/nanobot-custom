@@ -130,6 +130,7 @@ from kohaku.webui.native_folder_picker import (
     native_folder_picker_available,
     pick_native_folder,
 )
+from kohaku.webui.outbound_wire import ExternalApprovalWirePayload
 from kohaku.webui.session_automations import (
     all_automations_payload,
     serialize_automation_jobs,
@@ -658,6 +659,7 @@ class GatewayHTTPHandler:
         self.recovery_action = recovery_action
         self.stop_target_for_key = stop_target_for_key
         self.run_state_for_key = run_state_for_key
+        self.live_approvals_for_key: Callable[[str], list[ExternalApprovalWirePayload]] | None = None
         self._skill_install_lock = asyncio.Lock()
         self._folder_picker_lock = asyncio.Lock()
         self.cron_service = cron_service
@@ -875,6 +877,8 @@ class GatewayHTTPHandler:
             payload["stop_target"] = read_stop_target(snapshot.state.session_key, source_snapshot=snapshot)
         if status == 200 and run_state_key is not None and self.run_state_for_key is not None:
             payload["run_state"] = self.run_state_for_key(run_state_key)
+        if status == 200 and owner and run_state_key is not None and self.live_approvals_for_key is not None:
+            payload["pending_approvals"] = self.live_approvals_for_key(run_state_key)
         return status, payload
 
     def mobile_thread_payload(
@@ -1867,6 +1871,12 @@ class GatewayHTTPHandler:
             )
         if run_state_key is not None and read_run_state is not None:
             result["run_state"] = read_run_state(run_state_key)
+        if (
+            run_state_key is not None
+            and self.live_approvals_for_key is not None
+            and (attached_mobile_identity(connection) is None or _typed_owner_identity(connection))
+        ):
+            result["pending_approvals"] = self.live_approvals_for_key(run_state_key)
         accept_encoding = _combined_list_header(request.headers, "Accept-Encoding")
         return await asyncio.to_thread(
             _http_json_response,

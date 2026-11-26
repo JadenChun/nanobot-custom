@@ -42,12 +42,14 @@ class WebUISessionProjection:
         *,
         stop_target_for_key: Callable[[str], dict[str, object] | None] | None = None,
         run_state_for_key: Callable[[str], RunState | None] | None = None,
+        live_turn_controls: bool = False,
         log: Any = default_logger,
     ) -> None:
         self._sessions = sessions
         self._stop_target_for_key = stop_target_for_key
         self._run_state_for_key = run_state_for_key
         self._log = log
+        self._live_turn_controls = live_turn_controls
 
     def attach_fields(
         self, session_key: str, *, source: SourceSnapshot | None = None,
@@ -64,6 +66,8 @@ class WebUISessionProjection:
         metadata = cast(dict[str, object], raw_metadata) if isinstance(raw_metadata, dict) else None
 
         fields: dict[str, Any] = {}
+        if self._live_turn_controls:
+            fields["live_turn_controls"] = True
         if (binding := external_binding(metadata)) is not None:
             fields["harness_binding"] = binding.payload()
             fields["harness_capabilities"] = harness_capabilities()

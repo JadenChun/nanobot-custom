@@ -1909,6 +1909,7 @@ export type InboundEvent =
       usage?: TurnUsage;
       stop_target?: StopExpectation | null;
       run_state?: RunState | null;
+      live_turn_controls?: true;
       /** Confirmed active model/effort from the session projection. */
       model_preset?: string | null;
       reasoning_effort?: string | null;
@@ -2448,6 +2449,7 @@ export type Outbound =
       request_settings_version?: 1;
       request_intent?: "new" | "steer";
       target_turn_id?: string;
+      live_turn_controls?: true;
       approval_decision?: ApprovalDecisionPayload;
       stop_expectation?: StopExpectation;
       /** Marks messages sent by the embedded WebUI, without changing the

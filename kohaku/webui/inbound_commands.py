@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Any, Protocol, cast
 from loguru import logger
 from websockets.asyncio.server import ServerConnection
 
+from kohaku.agent.approvals import TurnApprovalSaveError
 from kohaku.agent.run_control import parse_run_stop_payload
 from kohaku.agent.stop_target import StopExpectation, parse_stop_expectation
 from kohaku.agent.turn import ApprovalDecision
@@ -1465,7 +1466,7 @@ class WebUICommandRouter:
             try:
                 permitted = {"type", "chat_id", "content", "turn_id", "webui", "request_settings_version",
                              "request_intent", "input_attempt", "media", "attachments", "cli_apps",
-                             "mcp_presets", "session_mentions", "quoted_context"}
+                             "mcp_presets", "session_mentions", "quoted_context", "live_turn_controls"}
                 if (set(envelope) - permitted or duplicate_keys or temporary_owned
                     or envelope.get("webui") is not True
                     or envelope.get("request_settings_version") != 1 or request_intent != "new"
@@ -1863,6 +1864,14 @@ class WebUICommandRouter:
             if envelope.get("webui") is True:
                 metadata["webui"] = True
                 metadata.update(self._transcripts.client_turn_metadata(envelope.get("turn_id")))
+            live_controls = envelope.get("live_turn_controls")
+            if (
+                (live_controls is True or live_controls == "approval")
+                and queued_owner is not None
+                and self.gateway.resolve_run_approval is not None
+                and self._owner_chat_controls_available(connection)
+            ):
+                metadata["live_turn_controls"] = live_controls
             if isinstance(request_intent, str):
                 metadata[WEBUI_REQUEST_INTENT_METADATA_KEY] = request_intent
             if is_stop:
@@ -2732,6 +2741,56 @@ class WebUICommandRouter:
         except Exception:
             logger.exception("WebUI replay ledger could not store the result")
 
+    async def _resolve_run_approval(
+        self, connection: ServerConnection, payload: dict[str, Any],
+    ) -> WebUIRequestResult:
+        chat_id = payload.get("chat_id")
+        try:
+            raw_decision: object = payload.get("approval")
+            if (
+                not is_valid_webui_chat_id(chat_id)
+                or set(payload) != {"chat_id", "approval"}
+                or getattr(payload, "duplicate_keys", ())
+                or getattr(raw_decision, "duplicate_keys", ())
+            ):
+                raise ValueError("Invalid approval control envelope.")
+            decision = ApprovalDecision.from_mapping(raw_decision)
+            if (
+                decision.session_key is None
+                or decision.session_incarnation is None
+                or decision.run_id is None
+                or decision.effect_id is None
+                or decision.generation is None
+            ):
+                raise ValueError("Approval control requires an exact identity.")
+        except (TypeError, ValueError):
+            return WebUIRequestResult(
+                status=400, message="invalid_approval_decision", outcome="not_applied",
+            )
+        if (
+            not self._owner_chat_controls_available(connection)
+            or chat_id not in self._transport.webui_connection_chats(connection)
+            or (_typed_mobile_identity(connection) is not None
+                and not await self._transport.revalidate_mobile_connection(connection))
+        ):
+            return WebUIRequestResult(status=403, message="scope_denied", outcome="not_applied")
+        resolve = self.gateway.resolve_run_approval
+        if resolve is None:
+            return WebUIRequestResult(
+                status=404, message="unknown WebUI mutation action", outcome="not_applied",
+            )
+        try:
+            accepted = resolve(webui_session_key(chat_id), decision)
+        except TurnApprovalSaveError:
+            return WebUIRequestResult(
+                status=409, message="approval_save_failed", outcome="not_applied",
+            )
+        if not accepted:
+            return WebUIRequestResult(status=409, message="approval_stale", outcome="not_applied")
+        return WebUIRequestResult(
+            status=200, message="accepted", result={"accepted": True}, outcome="applied",
+        )
+
     async def execute_webui_request(
         self,
         connection: ServerConnection,
@@ -2743,6 +2802,8 @@ class WebUICommandRouter:
     ) -> WebUIRequestResult:
         if action == "delegation.child.control":
             return await self._control_delegated_child(connection, payload)
+        if action == "run.approve":
+            return await self._resolve_run_approval(connection, payload)
         if action == "run.stop":
             try:
                 target = parse_run_stop_payload(payload)
