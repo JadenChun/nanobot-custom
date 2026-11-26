@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Literal, cast
 
+from kohaku.agent.tools.executor_capabilities import tree_ownership_available
 from kohaku.security.native_admission import (
     NativeProcessReservation,
     process_start_time,
@@ -261,7 +262,7 @@ def _parse_status(line: bytes) -> _SupervisorStatus:
 
 
 def native_supervisor_available() -> bool:
-    return sys.platform == "linux" and os.name == "posix"
+    return tree_ownership_available()
 
 
 async def spawn_native_process(
