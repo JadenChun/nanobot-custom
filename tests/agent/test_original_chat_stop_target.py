@@ -998,16 +998,18 @@ async def test_followup_submitted_before_fence_cannot_commit_after_stop(monkeypa
         await asyncio.wait_for(provider.first_started.wait(), timeout=5)
         admission = agent._source_activity_admissions[key]
         entered, release = asyncio.Event(), asyncio.Event()
-        record_activity = agent._record_foreground_activity
+        publish_stop_target = agent._publish_stop_target_for_session
 
-        async def blocked_activity(*args, **kwargs):
-            entered.set()
-            await release.wait()
-            return await record_activity(*args, **kwargs)
+        async def blocked_publication(session_key):
+            if session_key == key and not entered.is_set():
+                entered.set()
+                await release.wait()
+            await publish_stop_target(session_key)
 
-        monkeypatch.setattr(agent, "_record_foreground_activity", blocked_activity)
+        monkeypatch.setattr(agent, "_publish_stop_target_for_session", blocked_publication)
         message = InboundMessage(channel="websocket", sender_id="webui", chat_id="exact-stop", content="activity")
-        first = asyncio.create_task(admission.submit(message))
+        first_id = mint_pending_followup_id(message)
+        first = asyncio.create_task(admission.submit(message, followup_id=first_id))
         await asyncio.wait_for(entered.wait(), timeout=5)
         queued_message = replace(message, content="must not become durable after Stop", metadata={})
         followup_id = mint_pending_followup_id(queued_message)

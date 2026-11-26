@@ -56,7 +56,7 @@ def composition(tmp_path, *, injection=None, events=None, compute=None):
     selected = CronRuntimeInjection(clock, lambda *_: True, 0.01) if injection is True else injection
     value = RuntimeComposition.define(config, factories=factories,
         channel_options=ChannelBuildOptions(factory=lambda *_args, **_kwargs: channels),
-        startup_receipt_admitted=True, cron_injection=selected)
+        cron_injection=selected)
     return value, item, clock, events, channels
 
 
@@ -146,8 +146,7 @@ async def test_real_agent_runner_provider_once_in_shared_managed_graph(tmp_path,
 
     def agent(config, bus, sessions, tools, _mcp, cron, delivery):
         return AgentLoop.from_config(config, bus, tool_registry=tools, provider=provider,
-            session_manager=sessions, cron_service=cron, turn_delivery_factory=delivery,
-            enable_legacy_auto_compact=False)
+            session_manager=sessions, cron_service=cron, turn_delivery_factory=delivery)
 
     value._factories = replace(value._factories, agent=agent, tools=ToolRegistry)
     handle = await value.acquire()

@@ -41,7 +41,6 @@ def _make_loop(admitted_sync, tmp_path, presets=None, active_preset=None):
             session_manager=inputs.sessions, tool_registry=inputs.tools,
             cron_service=inputs.cron, turn_delivery_factory=inputs.delivery,
             tools_config=inputs.config.tools, restrict_to_workspace=True,
-            enable_legacy_auto_compact=False,
         )
 
     return admitted_sync(tmp_path, build, keys=("cli:one", "cli:two"))
@@ -99,7 +98,6 @@ def test_model_preset_setter_calls_runtime_model_publisher(admitted_sync, tmp_pa
             session_manager=inputs.sessions, tool_registry=inputs.tools,
             cron_service=inputs.cron, turn_delivery_factory=inputs.delivery,
             tools_config=inputs.config.tools, restrict_to_workspace=True,
-            enable_legacy_auto_compact=False,
         )
 
     loop = admitted_sync(tmp_path, build)
@@ -135,7 +133,6 @@ def test_model_preset_setter_replaces_provider_from_snapshot(admitted_sync, tmp_
             session_manager=inputs.sessions, tool_registry=inputs.tools,
             cron_service=inputs.cron, turn_delivery_factory=inputs.delivery,
             tools_config=inputs.config.tools, restrict_to_workspace=True,
-            enable_legacy_auto_compact=False,
         )
 
     loop = admitted_sync(tmp_path, build)
@@ -164,7 +161,6 @@ def test_model_preset_setter_failure_leaves_old_state(admitted_sync, tmp_path) -
             session_manager=inputs.sessions, tool_registry=inputs.tools,
             cron_service=inputs.cron, turn_delivery_factory=inputs.delivery,
             tools_config=inputs.config.tools, restrict_to_workspace=True,
-            enable_legacy_auto_compact=False,
         )
 
     loop = admitted_sync(tmp_path, build)
@@ -207,7 +203,6 @@ def test_active_model_preset_survives_unchanged_config_refresh(admitted_sync, tm
             session_manager=inputs.sessions, tool_registry=inputs.tools,
             cron_service=inputs.cron, turn_delivery_factory=inputs.delivery,
             tools_config=inputs.config.tools, restrict_to_workspace=True,
-            enable_legacy_auto_compact=False,
         )
 
     loop = admitted_sync(tmp_path, build)
@@ -251,7 +246,6 @@ def test_config_model_refresh_clears_active_model_preset(admitted_sync, tmp_path
             session_manager=inputs.sessions, tool_registry=inputs.tools,
             cron_service=inputs.cron, turn_delivery_factory=inputs.delivery,
             tools_config=inputs.config.tools, restrict_to_workspace=True,
-            enable_legacy_auto_compact=False,
         )
 
     loop = admitted_sync(tmp_path, build)
@@ -429,7 +423,7 @@ def test_from_config_injects_default_preset(admitted_sync, tmp_path) -> None:
             return AgentLoop.from_config(
                 inputs.config, inputs.bus, tool_registry=inputs.tools,
                 session_manager=inputs.sessions, cron_service=inputs.cron,
-                turn_delivery_factory=inputs.delivery, enable_legacy_auto_compact=False,
+                turn_delivery_factory=inputs.delivery,
             )
 
         loop = admitted_sync(tmp_path, build, config=config)
@@ -453,7 +447,7 @@ def test_from_config_static_preset_loader_does_not_enable_hot_reload(admitted_sy
             return AgentLoop.from_config(
                 inputs.config, inputs.bus, tool_registry=inputs.tools,
                 session_manager=inputs.sessions, cron_service=inputs.cron,
-                turn_delivery_factory=inputs.delivery, enable_legacy_auto_compact=False,
+                turn_delivery_factory=inputs.delivery,
             )
 
         loop = admitted_sync(tmp_path, build, config=config)

@@ -15,13 +15,14 @@ from copy import deepcopy
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
-from time import monotonic
 from typing import TYPE_CHECKING, Any, Literal, cast
 from uuid import uuid4
 
 from loguru import logger
 
 from kohaku.agent.context import TranscriptInput
+from kohaku.context.budget import TokenMeter
+from kohaku.context.tool_result_gate import ToolResultGate
 from kohaku.events import NO_EVENTS, ContextCompactionEvent, EventSink
 from kohaku.providers.base import (
     ContextUsageSnapshot,
@@ -44,8 +45,6 @@ from kohaku.providers.request_budget import (
     LocalUsageAnchor,
     PreparedRequestBudgetPreview,
     PreparedRequestRoute,
-    ProviderRequestRejected,
-    RequestPayloadBytesExceeded,
     TransportIdentity,
     TransportMeasurement,
     derive_provider_request_limits,
@@ -53,6 +52,7 @@ from kohaku.providers.request_budget import (
 from kohaku.runtime_context import (
     RUNTIME_CONTEXT_MESSAGE_META,
     detach_runtime_context,
+    merge_runtime_history_markers,
     reattach_runtime_context,
 )
 from kohaku.session.artifact_projection import ArtifactProjector
@@ -66,21 +66,16 @@ from kohaku.session.summary import (
     SUMMARY_CONTINUATION_TEXT,
     SessionSummaryCheckpoint,
 )
-from kohaku.utils.helpers import (
-    estimate_message_tokens,
-    estimate_prompt_tokens_chain,
-    find_legal_message_start,
-    maybe_persist_tool_result,
-    truncate_text,
-    truncate_text_to_tokens,
-)
+from kohaku.utils.helpers import estimate_message_tokens as estimate_message_tokens
+from kohaku.utils.helpers import find_legal_message_start
 from kohaku.utils.runtime import ensure_nonempty_tool_result
 
 if TYPE_CHECKING:
     from kohaku.agent.tools.registry import ToolRegistry
     from kohaku.providers.base import LLMProvider
-    from kohaku.session.checkpoint_dependencies import SummaryDependencyProof, SummaryEvidence
+    from kohaku.session.checkpoint_dependencies import SummaryDependencyProof
     from kohaku.session.source_request import SourceRequestLedger
+    from kohaku.session.source_store import SourceSnapshot
     from kohaku.session.turn_writer import SourceTurnWriter
     from kohaku.utils.llm_runtime import LLMRuntime
 
@@ -94,9 +89,11 @@ ProviderCompactionConsolidator = Callable[
     Awaitable[str | None],
 ]
 
+estimate_prompt_tokens_chain = TokenMeter.estimate_messages_tokens
+
+
 SNIP_SAFETY_BUFFER = DEFAULT_FINALIZED_REQUEST_SAFETY_BUFFER
 # read_file has its own bound; exempt it to avoid persist->read->persist loops.
-TOOL_RESULT_OFFLOAD_EXEMPT_TOOLS = frozenset({"read_file"})
 BACKFILL_CONTENT = "[Tool result unavailable — call was interrupted or lost]"
 PLACEHOLDER_TEXTS = frozenset({
     "[Previous assistant message omitted.]",
@@ -286,12 +283,13 @@ class SourceCompactionState:
     local_checkpoint: CheckpointNode | None = None
     artifact_projection_unavailable: bool = False
     attempts: list[SourceCompactionMetrics] = field(default_factory=list)
-    idle_timeout_seconds: float = 300.0
-    overall_timeout_seconds: float = 900.0
-    pressure_trigger_ratio: float = 0.9
-    target_ratio: float = 0.6
+    idle_timeout_seconds: float = 45.0
+    overall_timeout_seconds: float = 120.0
+    pressure_trigger_ratio: float = 0.80
+    target_ratio: float = 0.50
     summary_generation_tokens: int | None = None
     summary_retained_tokens: int | None = None
+    on_checkpoint: Callable[[SourceSnapshot], None] | None = None
 
 
 @dataclass(frozen=True)
@@ -419,12 +417,10 @@ class ContextGovernor:
         if state.artifact_projector is None and type(tool) is ReadArtifactTool:
             if tool.reader.writer is not compaction.writer:
                 raise SourceValidationError('Artifact projector does not match source invocation')
-            state.artifact_projector = ArtifactProjector(tool.reader)
+            state.artifact_projector = ArtifactProjector(
+                tool.reader, max_chars=state.config.max_tool_result_chars,
+            )
         projector = state.artifact_projector
-        if projector is None:
-            if any(isinstance(node, SourceNode) and node.artifact is not None for node in view.nodes):
-                raise SourceValidationError('Artifact projection lacks admitted verifier')
-            return view
         if source.has_pending_requests:
             raise SourceValidationError('Cannot offload with an outstanding request ticket')
         notes = source.validate_view(view)
@@ -432,19 +428,40 @@ class ContextGovernor:
         if compaction.raw_messages != active.messages():
             raise SourceValidationError('Artifact projection differs from runner transcript')
         had_projected = any(
-            isinstance(node, SourceNode) and node.artifact is not None for node in active.nodes
+            isinstance(node, SourceNode) and node.artifact_bindings for node in active.nodes
         )
-        enabled = (type(tool) is ReadArtifactTool and tool.reader is projector.reader and any(
-            definition.get('type') == 'function'
-            and definition.get('function', {}).get('name') == 'read_artifact'
-            for definition in tool_definitions or []))
-        if not enabled and not any(
-                isinstance(node, SourceNode) and node.artifact is not None for node in active.nodes):
-            return active.with_runtime(*notes)
-        updated = projector.prepare(active, enabled=enabled)
+        if had_projected and projector is None:
+            raise SourceValidationError('Artifact projection lacks admitted verifier')
+        enabled = (
+            projector is not None and type(tool) is ReadArtifactTool and tool.reader is projector.reader
+            and any(
+                definition.get('type') == 'function'
+                and definition.get('function', {}).get('name') == 'read_artifact'
+                for definition in tool_definitions or []
+            )
+        )
+        projected = (
+            projector.prepare(active, enabled=enabled)
+            if projector is not None and (enabled or had_projected) else active
+        )
         compaction.artifact_projection_unavailable = had_projected and not any(
-            isinstance(node, SourceNode) and node.artifact is not None for node in updated.nodes
+            isinstance(node, SourceNode) and node.artifact_bindings for node in projected.nodes
         )
+        gate = ToolResultGate(
+            state.config.workspace, state.config.session_key, state.config.max_tool_result_chars,
+        )
+        updated_nodes: list[RequestNode] = []
+        for node in projected.nodes:
+            if (isinstance(node, SourceNode) and node.message.get('role') == 'tool'
+                    and not node.artifact_bindings):
+                message = node.message
+                content = gate.normalize(
+                    node.event_id, str(message.get('name') or ''), message.get('content'),
+                )
+                if content != message.get('content'):
+                    node = replace(node, message={**message, 'content': content})
+            updated_nodes.append(node)
+        updated = SourceTranscript(tuple(updated_nodes))
         source.validate_transcript(updated)
         if (source.has_pending_requests or source.projection_epoch != epoch or source.transcript != active
                 or compaction.raw_messages != active.messages()):
@@ -560,7 +577,7 @@ class ContextGovernor:
         if (type(retained) is not int or retained <= 0
                 or not isinstance(cast(object, summary), str) or not summary.strip()
                 or len(summary) > 64_000
-                or truncate_text_to_tokens(summary, retained) != summary):
+                or TokenMeter.count_text(summary) > retained + max(1, retained // 10)):
             raise SourceValidationError('Invalid bounded source summary')
         if auxiliary_usage is not None and (not auxiliary_usage or any(
                 type(value) is not int or value < 0 for value in auxiliary_usage.values())):
@@ -682,6 +699,11 @@ class ContextGovernor:
         state.invalidate_context_usage()
         state.local_usage_anchor = None
         state.conversation.replace_transcript(compaction.raw_messages)
+        if committed is not None and compaction.on_checkpoint is not None:
+            try:
+                compaction.on_checkpoint(committed)
+            except Exception:
+                logger.exception("Could not queue memory extraction after compaction.")
         return view
 
     @staticmethod
@@ -787,12 +809,9 @@ class ContextGovernor:
             return 0
         allowance = cls._summary_generation_allowance(compaction, budget)
         envelope = cls._summary_envelope_tokens(compaction)
-        max_tool_chars = config.max_tool_result_chars
-        if type(max_tool_chars) is not int or max_tool_chars < 0:
-            max_tool_chars = 0
-        growth = min(max_tool_chars, max(1, budget // 8))
-        reserve = envelope + allowance + SNIP_SAFETY_BUFFER + growth
-        return min(reserve, max(0, budget - 1))
+        return TokenMeter.compute_summary_reserve(
+            budget, config.max_tool_result_chars, allowance, envelope,
+        )
 
     async def compact_source_request(self, state: ModelRequestState, view: SourceTranscript, *,
                                      tool_definitions: list[dict[str, Any]] | None,
@@ -801,612 +820,13 @@ class ContextGovernor:
                                      tool_choice: str | dict[str, Any] | None = None,
                                      provider_context: ProviderCallContext | None = None,
                                      recovery_root_reason: str | None = None) -> SourceTranscript:
-        """Summarize eligible closed source chunks at 90% pressure, targeting 60%."""
-        from kohaku.agent.memory import Consolidator
-        from kohaku.session.checkpoint_dependencies import (
-            ConsumedSummaryChunk,
-            SummaryDependencyProof,
+        from kohaku.context.compaction import CompactionEngine
+
+        return await CompactionEngine.compact_source_request(
+            self, state, view, tool_definitions=tool_definitions, force=force, stream=stream,
+            tool_choice=tool_choice, provider_context=provider_context,
+            recovery_root_reason=recovery_root_reason,
         )
-
-        compaction = state.source_compaction
-        budget = self.input_budget(state.config)
-        if compaction is None or not state.config.context_window_tokens or budget <= 0:
-            return view
-        deadline = asyncio.get_running_loop().time() + compaction.overall_timeout_seconds
-
-        def check_deadline() -> None:
-            if asyncio.get_running_loop().time() >= deadline:
-                raise SourceCompactionUnavailableError(
-                    'Source compaction operation deadline expired',
-                    reason='summary_overall_timeout',
-                )
-
-        check_deadline()
-        if compaction.artifact_projection_unavailable:
-            return view
-        main_preview = self._prepared_budget_preview(
-            state.config,
-            view.messages(),
-            tool_definitions=tool_definitions,
-            stream=stream,
-            tool_choice=tool_choice,
-            provider_context=provider_context,
-        )
-        if main_preview is not None:
-            estimated = main_preview.measurement.input_tokens
-            measurement_source = main_preview.measurement.source
-            budget = main_preview.measurement.input_limit_tokens or 0
-        else:
-            estimated, measurement_source = estimate_prompt_tokens_chain(
-                state.config.provider,
-                state.config.model,
-                view.messages(),
-                tool_definitions,
-            )
-            budget = self.input_budget(state.config)
-        if main_preview is None and not budget:
-            budget = self.input_budget(state.config)
-        check_deadline()
-        generation_allowance = self._summary_generation_allowance(compaction, budget)
-        summary_reserve = self._summary_reserve(state.config, compaction, budget)
-        if (
-            not force
-            and estimated < budget * compaction.pressure_trigger_ratio
-            and estimated + summary_reserve < budget
-        ):
-            return view
-        attempt = self.capture_source_compaction(state, view, tool_definitions=tool_definitions)
-        check_deadline()
-        candidate = attempt.candidate
-        if not candidate.boundaries:
-            return view  # The caller still enforces the hard limit before transport.
-        final_boundary = candidate.boundaries[-1]
-        final_evidence = candidate.summary_evidence(final_boundary)
-        if not final_evidence.nodes:
-            return view
-        dependencies_present = bool(
-            final_evidence.retrievals
-            or final_evidence.projections
-            or candidate.previous_checkpoint is not None and candidate.previous_checkpoint.artifact_references
-        )
-        if dependencies_present and not self._has_active_retrieval_schema(state, attempt):
-            # The active main request cannot resolve a dependency-bearing
-            # checkpoint. Keep canonical source and let the final main budget
-            # guard decide whether the request can proceed.
-            return view
-        target = int(budget * compaction.target_ratio)
-        preview = candidate.rebuild(final_boundary, CheckpointNode('preview', 'x')).with_runtime(*attempt.request_notes)
-        fixed_preview = self._prepared_budget_preview(
-            state.config,
-            preview.messages(),
-            tool_definitions=tool_definitions,
-            stream=stream,
-            tool_choice=tool_choice,
-            provider_context=provider_context,
-        )
-        if fixed_preview is not None:
-            fixed_tokens = fixed_preview.measurement.input_tokens
-            budget = fixed_preview.measurement.input_limit_tokens or 0
-        else:
-            fixed_tokens, _ = estimate_prompt_tokens_chain(
-                state.config.provider,
-                state.config.model,
-                preview.messages(),
-                tool_definitions,
-            )
-        check_deadline()
-        if fixed_tokens >= budget:
-            self.ensure_request_fits(
-                state.config,
-                preview.messages(),
-                tool_definitions=tool_definitions,
-                stream=stream,
-                tool_choice=tool_choice,
-                provider_context=provider_context,
-            )
-            raise SourceCompactionUnavailableError(
-                'No room for a bounded source summary',
-                reason='fixed_prefix_exceeds_auxiliary_budget',
-            )
-        headroom = max(1, (target if fixed_tokens < target else budget) - fixed_tokens)
-        retained_tokens = max(
-            1,
-            min(generation_allowance, headroom),
-        )
-        allowance = retained_tokens
-        prepared_payloads: dict[tuple[int, int, str | None], list[dict[str, Any]]] = {}
-
-        def prepared_payload(evidence: SummaryEvidence,
-                             previous_summary: str | None) -> list[dict[str, Any]]:
-            key = (evidence.after, evidence.boundary, previous_summary)
-            payload = prepared_payloads.get(key)
-            if payload is None:
-                payload = Consolidator.source_summary_messages(
-                    [node.message for node in evidence.nodes], previous_summary,
-                )
-                prepared_payloads[key] = payload
-            return payload
-
-        from kohaku.providers.openai_compat_provider import OpenAICompatProvider
-
-        prefix_mode = 'canonical'
-        prefix_fallback_reason: str | None = None
-        prefix_source_nodes = 0
-        prefix_estimated_tokens: int | None = None
-        converted_prefix_match: bool | None = None
-        prefix_selection = None
-        prefix_payload: list[dict[str, Any]] | None = None
-        prefix_preview: PreparedRequestBudgetPreview | None = None
-        prefix_provider = compaction.runtime.provider
-        supports_prefix_summary = (
-            prefix_provider is state.config.provider
-            and getattr(prefix_provider, 'supports_source_summary', False) is True
-        )
-        if not supports_prefix_summary:
-            prefix_fallback_reason = 'summary_provider_missing_capability'
-        elif main_preview is None:
-            prefix_fallback_reason = 'provider_preview_unavailable'
-        elif any(
-            tool.get('type') != 'function'
-            or not isinstance(tool.get('function'), dict)
-            for tool in tool_definitions or []
-        ):
-            prefix_fallback_reason = 'unsupported_tool_envelope'
-        else:
-            prefix_selection = candidate.select_historical_prefix(final_boundary)
-            prefix_fallback_reason = prefix_selection.fallback_reason
-            if prefix_selection.transcript is not None:
-                if prefix_selection.boundary is None:
-                    raise SourceValidationError('Historical prefix selection has no boundary')
-                from kohaku.agent.memory import Consolidator
-
-                prefix_payload = Consolidator.source_prefix_summary_messages(
-                    prefix_selection.transcript.messages(),
-                )
-                try:
-                    prefix_preview = self._compatibility_auxiliary_preview(
-                        compaction.runtime,
-                        prefix_payload,
-                        max_output_tokens=allowance,
-                        tools=tool_definitions,
-                        tool_choice=tool_choice,
-                        mode='prefix',
-                        idle_timeout_seconds=compaction.idle_timeout_seconds,
-                        deadline_monotonic=deadline,
-                    )
-                except RequestPayloadBytesExceeded:
-                    prefix_preview = None
-                    prefix_fallback_reason = 'prefix_payload_bytes'
-                except ProviderRequestRejected as exc:
-                    if exc.reason != 'unsupported_auxiliary_envelope':
-                        raise
-                    prefix_preview = None
-                    prefix_fallback_reason = exc.reason
-                if prefix_preview is None and prefix_fallback_reason is None:
-                    prefix_fallback_reason = 'provider_preview_unavailable'
-                elif prefix_preview is not None and not all(
-                    self._safe_historical_prefix_envelope(preview.effective_body)
-                    for preview in (main_preview, prefix_preview)
-                ):
-                    prefix_preview = None
-                    prefix_fallback_reason = 'unsupported_tool_envelope'
-                elif prefix_preview is not None and not prefix_preview.measurement.fits:
-                    prefix_fallback_reason = 'prefix_exceeds_auxiliary_budget'
-                elif prefix_preview is not None:
-                    instruction = prefix_payload[-1]
-                    converted = prefix_preview.converted_messages
-                    has_separate_instruction = bool(
-                        len(converted) > 0
-                        and OpenAICompatProvider.json_values_equal(
-                            converted[-1], instruction,
-                        )
-                    )
-                    prefix_rows = converted[:-1] if has_separate_instruction else ()
-                    aligned_body_fields = {
-                        'messages', 'stream', 'stream_options', 'max_tokens',
-                        'max_completion_tokens', 'max_output_tokens',
-                    }
-                    main_envelope = {
-                        key: value for key, value in main_preview.effective_body.items()
-                        if key not in aligned_body_fields
-                    }
-                    prefix_envelope = {
-                        key: value for key, value in prefix_preview.effective_body.items()
-                        if key not in aligned_body_fields
-                    }
-                    converted_prefix_match = bool(
-                        has_separate_instruction
-                        and len(main_preview.converted_messages) >= len(prefix_rows)
-                        and main_preview.converted_messages[:len(prefix_rows)] == prefix_rows
-                        and main_preview.converted_tools == prefix_preview.converted_tools
-                        and main_envelope == prefix_envelope
-                    )
-                    if converted_prefix_match:
-                        prefix_mode = 'historical_prefix'
-                        prefix_fallback_reason = None
-                        prefix_source_nodes = prefix_selection.source_node_count
-                        prefix_estimated_tokens = prefix_preview.measurement.input_tokens
-                    else:
-                        prefix_fallback_reason = 'converted_prefix_mismatch'
-
-        metrics = SourceCompactionMetrics(
-            'root' if candidate.stream_id is None else 'local',
-            estimated,
-            root_reason=recovery_root_reason,
-            prefix_mode=prefix_mode,
-            prefix_fallback_reason=prefix_fallback_reason,
-            prefix_source_nodes=prefix_source_nodes,
-            prefix_estimated_tokens=prefix_estimated_tokens,
-            converted_prefix_match=converted_prefix_match,
-            measurement_source=measurement_source,
-            selected_capacity=(
-                main_preview.measurement.total_limit_tokens
-                if main_preview is not None
-                else state.config.context_window_tokens
-            ),
-            completion_reserve=(
-                main_preview.measurement.completion_reserve_tokens
-                if main_preview is not None
-                else ContextGovernor._captured_generation(state.config).max_tokens
-            ),
-            safety_buffer=(
-                main_preview.measurement.safety_buffer_tokens
-                if main_preview is not None
-                else SNIP_SAFETY_BUFFER
-            ),
-            payload_bytes=(
-                main_preview.measurement.measured_bytes if main_preview is not None else None
-            ),
-            summary_generation_allowance=generation_allowance,
-            summary_retained_tokens=retained_tokens,
-            summary_reserve_tokens=summary_reserve,
-        )
-        compaction.attempts.append(metrics)
-        started = monotonic()
-        compaction_id = uuid4().hex
-        cursor = candidate.previous_boundary
-        summary = candidate.previous_checkpoint.summary if candidate.previous_checkpoint is not None else None
-        consumed: list[ConsumedSummaryChunk] = []
-
-        async def emit_phase(
-            phase: Literal['started', 'succeeded', 'failed', 'cancelled'],
-        ) -> None:
-            check_deadline()
-            async with asyncio.timeout_at(deadline):
-                await state.events.emit(
-                    ContextCompactionEvent(compaction_id=compaction_id, phase=phase),
-                )
-            check_deadline()
-
-        try:
-            await emit_phase('started')
-            # Reject impossible indivisible groups across the intended prefix before
-            # spending any auxiliary calls. Local previews use the same finalized body
-            # and token units as the eventual one-attempt dispatch.
-            group_start = candidate.previous_boundary
-            prefix_preflight_boundary = candidate.previous_boundary
-            if prefix_mode == 'historical_prefix':
-                if prefix_selection is None or prefix_selection.boundary is None:
-                    raise SourceValidationError(
-                        'Verified historical prefix selection lost its boundary',
-                    )
-                prefix_preflight_boundary = prefix_selection.boundary
-            for boundary in candidate.boundaries:
-                check_deadline()
-                if boundary <= prefix_preflight_boundary:
-                    # The verified native prefix was already checked as one exact
-                    # finalized SDK body. Do not price its canonical JSON surrogate,
-                    # which is not the body that will be dispatched.
-                    group_start = boundary
-                    check_deadline()
-                    continue
-                evidence = candidate.summary_evidence(boundary, after=group_start)
-                if not evidence.nodes:
-                    continue
-                payload = prepared_payload(evidence, None)
-                try:
-                    group_preview = self._compatibility_auxiliary_preview(
-                        compaction.runtime,
-                        payload,
-                        max_output_tokens=allowance,
-                        tools=None,
-                        tool_choice=None,
-                        mode='canonical',
-                        idle_timeout_seconds=compaction.idle_timeout_seconds,
-                        deadline_monotonic=deadline,
-                    )
-                except RequestPayloadBytesExceeded as exc:
-                    raise SourceCompactionUnavailableError(
-                        'Indivisible source group exceeds the auxiliary payload limit',
-                        reason=exc.reason,
-                    ) from None
-                except ProviderRequestRejected as exc:
-                    raise SourceCompactionUnavailableError(
-                        'Auxiliary request envelope was rejected',
-                        reason=exc.reason,
-                    ) from None
-                if group_preview is not None:
-                    if not group_preview.measurement.fits:
-                        raise SourceCompactionUnavailableError(
-                            'Indivisible source group exceeds auxiliary budget',
-                            reason='indivisible_source_group_exceeds_auxiliary_budget',
-                        )
-                else:
-                    tokens, _ = estimate_prompt_tokens_chain(
-                        compaction.runtime.provider,
-                        compaction.runtime.model,
-                        payload,
-                        None,
-                    )
-                    if (tokens + allowance + SNIP_SAFETY_BUFFER
-                            > compaction.runtime.context_window_tokens):
-                        raise SourceCompactionUnavailableError(
-                            'Indivisible source group exceeds auxiliary budget',
-                            reason='indivisible_source_group_exceeds_auxiliary_budget',
-                        )
-                group_start = boundary
-                check_deadline()
-
-            truncated_boundaries: set[int] = set()
-            truncated_failure: str | None = None
-            for fold_index in range(4):
-                chosen = None
-                evidence = None
-                prepared = None
-                call_mode: Literal['prefix', 'canonical'] = 'canonical'
-                call_tools: list[dict[str, Any]] | None = None
-                call_tool_choice: str | dict[str, Any] | None = None
-                if (
-                    fold_index == 0
-                    and prefix_mode == 'historical_prefix'
-                    and prefix_selection is not None
-                    and prefix_payload is not None
-                    and prefix_preview is not None
-                ):
-                    prefix_boundary = prefix_selection.boundary
-                    if prefix_boundary is None:
-                        raise SourceValidationError(
-                            'Verified historical prefix selection lost its boundary',
-                        )
-                    chosen = prefix_boundary
-                    evidence = candidate.summary_evidence(prefix_boundary, after=cursor)
-                    prepared = prefix_payload
-                    call_mode = 'prefix'
-                    call_tools = tool_definitions
-                    call_tool_choice = tool_choice
-                # Search exact closed chunks, without truncating an indivisible
-                # tool group or folding covered pin text into evidence again.
-                chunk_rejection_reason: str | None = None
-                if prepared is None:
-                    for boundary in reversed(candidate.boundaries):
-                        if boundary <= cursor or boundary in truncated_boundaries:
-                            continue
-                        selected = candidate.summary_evidence(boundary, after=cursor)
-                        if not selected.nodes:
-                            continue
-                        payload = prepared_payload(selected, summary)
-                        try:
-                            chunk_preview = self._compatibility_auxiliary_preview(
-                                compaction.runtime,
-                                payload,
-                                max_output_tokens=allowance,
-                                tools=None,
-                                tool_choice=None,
-                                mode='canonical',
-                                idle_timeout_seconds=compaction.idle_timeout_seconds,
-                                deadline_monotonic=deadline,
-                            )
-                        except RequestPayloadBytesExceeded as exc:
-                            chunk_rejection_reason = exc.reason
-                            continue
-                        except ProviderRequestRejected as exc:
-                            raise SourceCompactionUnavailableError(
-                                'Auxiliary request envelope was rejected',
-                                reason=exc.reason,
-                            ) from None
-                        if chunk_preview is not None:
-                            if chunk_preview.measurement.fits:
-                                chosen, evidence, prepared = boundary, selected, payload
-                                break
-                        else:
-                            tokens, _ = estimate_prompt_tokens_chain(
-                                compaction.runtime.provider,
-                                compaction.runtime.model,
-                                payload,
-                                None,
-                            )
-                            if (tokens + allowance + SNIP_SAFETY_BUFFER
-                                    <= compaction.runtime.context_window_tokens):
-                                chosen, evidence, prepared = boundary, selected, payload
-                                break
-                if chosen is None or evidence is None or prepared is None:
-                    if truncated_failure is not None:
-                        raise SourceCompactionUnavailableError(
-                            'Bounded source summary failed: invalid_response',
-                            reason=truncated_failure,
-                        )
-                    raise SourceCompactionUnavailableError(
-                        'Eligible source chunk exceeds auxiliary budget',
-                        reason=(chunk_rejection_reason
-                                or 'eligible_source_chunk_exceeds_auxiliary_budget'),
-                    )
-                preflight = SummaryDependencyProof(candidate, tuple([
-                    *consumed,
-                    ConsumedSummaryChunk(evidence, summary, 'Preflight dependency validation.'),
-                ]))
-                self._preflight_summary_dependencies(state, attempt, preflight)
-                check_deadline()
-                calls_before = metrics.calls
-
-                def record_auxiliary_attempt(_kind: str) -> None:
-                    metrics.calls += 1
-
-                try:
-                    async with asyncio.timeout_at(deadline):
-                        result = await Consolidator.summarize_prepared_source_chunk(
-                            prepared,
-                            runtime=compaction.runtime,
-                            max_output_tokens=allowance,
-                            retained_text_tokens=retained_tokens,
-                            request_deadline_monotonic=deadline,
-                            stream_idle_timeout_seconds=compaction.idle_timeout_seconds,
-                            source_summary_mode=call_mode,
-                            tools=call_tools,
-                            tool_choice=call_tool_choice,
-                            on_transport_attempt=record_auxiliary_attempt,
-                        )
-                except BaseException:
-                    if metrics.calls > calls_before:
-                        metrics.usage_unknown = True
-                    raise
-                observed_calls = metrics.calls - calls_before
-                if result.calls > observed_calls:
-                    metrics.calls += result.calls - observed_calls
-                if (observed_calls or result.calls) and result.usage is None:
-                    metrics.usage_unknown = True
-                if result.usage is not None:
-                    metrics.usage = result.usage if metrics.usage is None else metrics.usage + result.usage
-                if result.summary is None or result.status != 'complete':
-                    failure_reason = result.failure_reason or 'summary_provider_error'
-                    if (
-                        failure_reason == 'summary_truncated'
-                        and fold_index < 3
-                    ):
-                        # Discard the truncated candidate and retry the same
-                        # evidence cursor with the next smaller closed chunk.
-                        truncated_boundaries.add(chosen)
-                        truncated_failure = failure_reason
-                        check_deadline()
-                        continue
-                    raise SourceCompactionUnavailableError(
-                        'Bounded source summary failed: ' + result.status,
-                        reason=failure_reason,
-                    )
-                consumed.append(ConsumedSummaryChunk(evidence, summary, result.summary))
-                summary, cursor = result.summary, chosen
-                metrics.boundary = cursor
-                rebuilt = candidate.rebuild(cursor, CheckpointNode('preview', summary)).with_runtime(*attempt.request_notes)
-                rebuilt_preview = self._prepared_budget_preview(
-                    state.config,
-                    rebuilt.messages(),
-                    tool_definitions=tool_definitions,
-                    stream=stream,
-                    tool_choice=tool_choice,
-                    provider_context=provider_context,
-                )
-                if rebuilt_preview is not None:
-                    after_tokens = rebuilt_preview.measurement.input_tokens
-                    metrics.after_tokens = after_tokens
-                else:
-                    after_tokens, _ = estimate_prompt_tokens_chain(
-                        state.config.provider,
-                        state.config.model,
-                        rebuilt.messages(),
-                        tool_definitions,
-                    )
-                    metrics.after_tokens = after_tokens
-                if (
-                    not force
-                    and after_tokens <= target
-                ) or cursor == final_boundary:
-                    break
-            if summary is None or cursor == candidate.previous_boundary:
-                raise SourceCompactionUnavailableError(
-                    'No source compaction progress',
-                    reason='no_progress',
-                )
-            usage = None if metrics.usage_unknown or metrics.usage is None else {
-                key: value for key, value in metrics.usage.to_dict().items() if type(value) is int
-            }
-            check_deadline()
-            published = self.publish_source_compaction(state, attempt, boundary=cursor,
-                                                      summary=summary, auxiliary_usage=usage,
-                                                      retained_text_tokens=retained_tokens,
-                                                      proof=SummaryDependencyProof(candidate, tuple(consumed)),
-                                                      stream=stream,
-                                                      tool_choice=tool_choice,
-                                                      provider_context=provider_context,
-                                                      deadline_monotonic=deadline)
-            metrics.status = 'succeeded'
-        except TimeoutError as exc:
-            metrics.status = 'failed'
-            metrics.failure_reason = 'summary_overall_timeout'
-            if asyncio.get_running_loop().time() < deadline:
-                try:
-                    await emit_phase('failed')
-                except TimeoutError:
-                    pass
-            raise SourceCompactionUnavailableError(
-                'Source compaction operation deadline expired',
-                reason='summary_overall_timeout',
-            ) from exc
-        except BaseException as exc:
-            metrics.status = 'cancelled' if isinstance(exc, asyncio.CancelledError) else 'failed'
-            if isinstance(exc, SourceCompactionUnavailableError):
-                metrics.failure_reason = exc.reason
-            elif isinstance(exc, ProviderRequestRejected):
-                metrics.failure_reason = exc.reason
-            elif isinstance(exc, SourceValidationError):
-                metrics.failure_reason = 'source_validation'
-            else:
-                metrics.failure_reason = (
-                    'cancelled' if isinstance(exc, asyncio.CancelledError)
-                    else 'summary_provider_error'
-                )
-            if asyncio.get_running_loop().time() < deadline:
-                try:
-                    await emit_phase(
-                        'cancelled' if isinstance(exc, asyncio.CancelledError) else 'failed',
-                    )
-                except TimeoutError:
-                    pass
-            raise
-        finally:
-            metrics.latency_ms = max(0, int((monotonic() - started) * 1000))
-            usage = metrics.usage
-            logger.debug(
-                'Source compaction provider={} model={} scope={} status={} boundary={} '
-                'before_tokens={} after_tokens={} calls={} known_tokens={} usage_input_tokens={} '
-                'usage_output_tokens={} cache_read_tokens={} cache_write_tokens={} usage_unknown={} '
-                'measurement_source={} selected_capacity={} completion_reserve={} safety_buffer={} '
-                'payload_bytes={} latency_ms={} root_reason={} failure_reason={} prefix_mode={} '
-                'prefix_fallback_reason={} prefix_source_nodes={} prefix_estimated_tokens={} '
-                'converted_prefix_match={} summary_generation_allowance={} '
-                'summary_retained_tokens={} summary_reserve_tokens={}',
-                state.config.provider.provider_name,
-                state.config.model,
-                metrics.scope,
-                metrics.status,
-                metrics.boundary,
-                metrics.before_tokens,
-                metrics.after_tokens,
-                metrics.calls,
-                usage.total_tokens if usage is not None else None,
-                usage.input_tokens if usage is not None else None,
-                usage.output_tokens if usage is not None else None,
-                usage.cache_read_tokens if usage is not None else None,
-                usage.cache_write_tokens if usage is not None else None,
-                metrics.usage_unknown,
-                metrics.measurement_source,
-                metrics.selected_capacity,
-                metrics.completion_reserve,
-                metrics.safety_buffer,
-                metrics.payload_bytes,
-                metrics.latency_ms,
-                metrics.root_reason,
-                metrics.failure_reason,
-                metrics.prefix_mode,
-                metrics.prefix_fallback_reason,
-                metrics.prefix_source_nodes,
-                metrics.prefix_estimated_tokens,
-                metrics.converted_prefix_match,
-                metrics.summary_generation_allowance,
-                metrics.summary_retained_tokens,
-                metrics.summary_reserve_tokens,
-            )
-        if asyncio.get_running_loop().time() < deadline:
-            await emit_phase('succeeded')
-        return published
 
     @staticmethod
     def _is_finalized_overflow(measurement: TransportMeasurement | None) -> bool:
@@ -1433,11 +853,10 @@ class ContextGovernor:
         ):
             return False
         return (
-            identity.transport in {
-                'openai_chat_completions',
-                'openai_chat_completions_stream',
+            measurement.policy in {
+                RequestAccountingPolicy.STRICT.value,
+                RequestAccountingPolicy.ESTIMATED_COMPAT.value,
             }
-            and measurement.policy == RequestAccountingPolicy.ESTIMATED_COMPAT.value
             and input_tokens >= 0
             and reserve >= 0
             and buffer >= 0
@@ -1471,19 +890,7 @@ class ContextGovernor:
         def unavailable(reason: Literal['no_eligible_evidence', 'no_progress']) -> SourceRecoveryOutcome:
             return SourceRecoveryOutcome(None, None, root_reason, reason)
 
-        backend_valid = (
-            type(backend_overflow) is BackendContextOverflow
-            and type(backend_overflow.status_code) is int
-            and backend_overflow.status_code == 400
-            and type(backend_overflow.code) is int
-            and backend_overflow.code == 400
-            and backend_overflow.error_type == 'exceed_context_size_error'
-            and type(backend_overflow.n_prompt_tokens) is int
-            and backend_overflow.n_prompt_tokens > 0
-            and type(backend_overflow.n_ctx) is int
-            and backend_overflow.n_ctx > 0
-            and backend_overflow.n_prompt_tokens >= backend_overflow.n_ctx
-        )
+        backend_valid = type(backend_overflow) is BackendContextOverflow and backend_overflow.verified
         if (
             not state.config.preserve_source
             or source is None
@@ -1494,6 +901,8 @@ class ContextGovernor:
             )
             or self.input_budget(state.config) <= 0
         ):
+            return unavailable('no_eligible_evidence')
+        if not source.eligible_ids:
             return unavailable('no_eligible_evidence')
         if source.has_pending_requests:
             raise SourceValidationError('Finalized budget recovery requires a quiescent request ledger')
@@ -1636,6 +1045,10 @@ class ContextGovernor:
                             [*left_sources, *right_sources],
                             context_blocks,
                         )
+                        if history := merge_runtime_history_markers(
+                            left_marker_dict, right_marker_dict,
+                        ):
+                            marker["history"] = history
                         internal_meta = (
                             dict(left_meta_dict) if left_meta_dict is not None else {}
                         )
@@ -1902,7 +1315,7 @@ class ContextGovernor:
             temperature=runtime.generation.temperature,
             max_tokens=max_output_tokens,
             reasoning_effort=(
-                runtime.generation.reasoning_effort if mode == 'prefix' else 'none'
+                'none'
             ),
         )
         return provider.preview_request_budget(
@@ -2110,77 +1523,19 @@ class ContextGovernor:
         *,
         tool_definitions: list[dict[str, Any]] | None,
     ) -> list[dict[str, Any]]:
-        """Replace accepted history H with a checkpoint while preserving delta."""
-        measured, _source = pressure
-        compaction_id = uuid4().hex
-        await state.events.emit(
-            ContextCompactionEvent(compaction_id=compaction_id, phase="started"),
-        )
-        try:
-            delta_messages = compaction.delta_after_accepted(messages)
-            consolidation_prefix = self.prepare_messages_for_model(
-                state.config,
-                compaction.accepted_messages,
-            )
-            summary = await compaction.consolidate_history(
-                deepcopy(consolidation_prefix),
-                compaction.active_summary,
-            )
-            if not summary:
-                raise ContextWindowExceededError(
-                    session_key=state.config.session_key,
-                    estimated_tokens=measured,
-                    input_budget=self.input_budget(state.config),
-                    source=_source,
-                )
+        from kohaku.context.compaction import CompactionEngine
 
-            compaction.active_summary = summary
-            prepared = self.prepare_messages_for_model(
-                state.config,
-                [
-                    *self._summary_transcript(compaction, summary),
-                    {"role": "user", "content": SUMMARY_CONTINUATION_TEXT},
-                    *delta_messages,
-                ],
-            )
-            # Responses-style state is append-only. Replacing H with a
-            # checkpoint requires a fresh request; a successful response may
-            # establish a new provider-owned state at the rewritten boundary.
-            state.conversation.replace_transcript(compaction.raw_messages)
-            state.usage = None
-            state.local_usage_anchor = None
-            prepared = self.ensure_request_fits(
-                state.config,
-                prepared,
-                tool_definitions=tool_definitions,
-            )
-            compaction.summary_checkpoint = SessionSummaryCheckpoint(
-                summary=summary,
-                transcript_boundary=compaction.raw_accepted_boundary,
-            )
-            state.invalidate_context_usage()
-        except (Exception, asyncio.CancelledError) as exc:
-            await state.events.emit(
-                ContextCompactionEvent(
-                    compaction_id=compaction_id,
-                    phase="cancelled" if isinstance(exc, asyncio.CancelledError) else "failed",
-                ),
-            )
-            raise
-        await state.events.emit(
-            ContextCompactionEvent(
-                compaction_id=compaction_id,
-                phase="succeeded",
-            ),
+        return await CompactionEngine.compact_legacy_history(
+            self, state, compaction, messages, pressure, tool_definitions=tool_definitions,
         )
-        return prepared
 
     @staticmethod
     def project_source_images(
         state: ModelRequestState, view: SourceTranscript,
         transcript: list[dict[str, object]] | None,
+        tool_definitions: list[dict[str, Any]] | None = None,
     ) -> SourceTranscript:
-        """Publish only the deterministic image projection, never request-only notes."""
+        """Project older images only when the source request is under pressure."""
         source = state.source
         if source is None:
             raise SourceValidationError('Image projection requires an active source ledger')
@@ -2191,7 +1546,18 @@ class ContextGovernor:
         raw = state.source_compaction.raw_messages if state.source_compaction else transcript
         if raw is not None and raw != active.messages():
             raise SourceValidationError('Image projection differs from runner transcript')
-        prepared = recent_image_messages(view.messages())
+        messages = view.messages()
+        prepared = recent_image_messages(messages)
+        if prepared == messages:
+            return view
+        budget = ContextGovernor.input_budget(state.config)
+        if budget <= 0:
+            return view
+        estimated, _ = estimate_prompt_tokens_chain(
+            state.config.provider, state.config.model, messages, tool_definitions,
+        )
+        if estimated * 4 < budget * 3:
+            return view
         nodes: list[RequestNode] = [
             node if isinstance(node, CheckpointNode) else replace(node, message=message)
             for node, message in zip(view.nodes, prepared, strict=True)
@@ -2240,6 +1606,7 @@ class ContextGovernor:
             ),
             context_window_tokens=state.config.context_window_tokens,
             local_usage_anchor=state.local_usage_anchor,
+            preserve_image_history=state.config.preserve_source,
         )
         if state.config.preserve_source:
             if state.source is not None:
@@ -2252,7 +1619,9 @@ class ContextGovernor:
             if source_view is not None:
                 source_view = self.admit_source_checkpoint(state, source_view, tool_definitions=tool_definitions)
                 source_view = self.project_source_artifacts(state, source_view, tool_definitions=tool_definitions)
-                source_view = self.project_source_images(state, source_view, transcript)
+                source_view = self.project_source_images(
+                    state, source_view, transcript, tool_definitions,
+                )
                 request_context = replace(
                     request_context,
                     local_usage_anchor=state.local_usage_anchor,
@@ -2299,6 +1668,7 @@ class ContextGovernor:
                 provider_context or ProviderCallContext(),
                 events=state.events,
                 local_usage_anchor=state.local_usage_anchor,
+                preserve_image_history=True,
             )
             final_context = self._attach_route_selection(
                 state.config,
@@ -2508,53 +1878,13 @@ class ContextGovernor:
         tool_name: str,
         result: Any,
     ) -> Any:
-        result = ensure_nonempty_tool_result(tool_name, result)
         if config.preserve_source:
-            return result
-        if tool_name in TOOL_RESULT_OFFLOAD_EXEMPT_TOOLS:
-            return result
-
-        def persist_text(text: str, call_id: str) -> str:
-            content = maybe_persist_tool_result(
-                config.workspace,
-                config.session_key,
-                call_id,
-                text,
-                max_chars=config.max_tool_result_chars,
-            )
-            # Persisted references must retain their complete paths.
-            return truncate_text(content, config.max_tool_result_chars) if config.workspace is None else content
-
-        original_result: object = result
-        try:
-            if isinstance(result, str):
-                return persist_text(result, tool_call_id)
-            if isinstance(result, list):
-                result = cast(list[object], result)
-                blocks: list[dict[str, Any]] = []
-                for raw_block in result:
-                    if not isinstance(raw_block, dict):
-                        return result
-                    block = cast(dict[str, Any], raw_block)
-                    if not isinstance(block.get("type"), str):
-                        return result
-                    if block["type"] == "text" and not isinstance(block.get("text"), str):
-                        return result
-                    blocks.append(block)
-                # Image redaction must not change how neighboring text is normalized.
-                return [
-                    {**block, "text": persist_text(block["text"], f"{tool_call_id}_text_{index}")}
-                    if block["type"] == "text" else block
-                    for index, block in enumerate(blocks)
-                ]
-        except Exception:
-            logger.exception(
-                "Tool result persist failed for {} in {}; using raw result",
-                tool_call_id,
-                config.session_key or "default",
-            )
-            return truncate_text(result, config.max_tool_result_chars) if isinstance(result, str) else original_result
-        return result
+            # The canonical writer retains the exact output. The projection
+            # binds its preview to the committed source event before dispatch.
+            return ensure_nonempty_tool_result(tool_name, result)
+        return ToolResultGate(
+            config.workspace, config.session_key, config.max_tool_result_chars,
+        ).normalize(tool_call_id, tool_name, result)
 
     @staticmethod
     def strip_placeholder_assistant_messages(
@@ -2754,47 +2084,11 @@ class ContextGovernor:
         tool_definitions: list[dict[str, Any]] | None,
         force: bool = False,
     ) -> list[dict[str, Any]]:
-        if not messages or not config.context_window_tokens:
-            return messages
+        from kohaku.context.compaction import CompactionEngine
 
-        budget = self.input_budget(config)
-        if budget <= 0:
-            return messages
-
-        if not force:
-            estimate, _ = estimate_prompt_tokens_chain(
-                config.provider,
-                config.model,
-                messages,
-                tool_definitions,
-            )
-            if estimate <= budget:
-                return messages
-
-        system_messages = [dict(msg) for msg in messages if msg.get("role") == "system"]
-        non_system = [dict(msg) for msg in messages if msg.get("role") != "system"]
-        if not non_system:
-            return messages
-
-        system_tokens = sum(estimate_message_tokens(msg) for msg in system_messages)
-        fixed_tokens, _ = estimate_prompt_tokens_chain(
-            config.provider,
-            config.model,
-            system_messages,
-            tool_definitions,
+        return CompactionEngine.snip_history(
+            self, config, messages, tool_definitions=tool_definitions, force=force,
         )
-        remaining_budget = max(0, budget - max(system_tokens, fixed_tokens))
-        kept: list[dict[str, Any]] = []
-        kept_tokens = 0
-        for message in reversed(non_system):
-            msg_tokens = estimate_message_tokens(message)
-            if kept and kept_tokens + msg_tokens > remaining_budget:
-                break
-            kept.append(message)
-            kept_tokens += msg_tokens
-        kept.reverse()
-
-        return system_messages + self._legal_history_tail(kept, non_system)
 
     def _legal_history_tail(
         self,

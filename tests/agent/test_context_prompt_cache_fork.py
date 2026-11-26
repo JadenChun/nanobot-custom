@@ -73,11 +73,11 @@ def test_runtime_context_is_separate_untrusted_user_message(tmp_path) -> None:
     assert "Return exactly: OK" in user_content
 
 
-def test_system_prompt_includes_video_inspection_rule(tmp_path) -> None:
+def test_system_prompt_indexes_video_inspection_skill(tmp_path) -> None:
     workspace = _make_workspace(tmp_path)
     builder = ContextBuilder(workspace)
 
     prompt = builder.build_system_prompt()
 
-    assert "If a source video file is available" in prompt
-    assert "Sample timeline previews sequentially, not in parallel" in prompt
+    assert "- video-understanding —" in prompt
+    assert "Sample timeline previews sequentially" not in prompt

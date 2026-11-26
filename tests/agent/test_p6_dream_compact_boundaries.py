@@ -61,8 +61,7 @@ async def loop(tmp_path, admitted_async):
             session_manager=inputs.sessions, tool_registry=inputs.tools,
             cron_service=inputs.cron, turn_delivery_factory=inputs.delivery,
             tools_config=inputs.config.tools, restrict_to_workspace=True,
-            context_window_tokens=32_000, enable_legacy_auto_compact=True,
-            session_ttl_minutes=0,
+            context_window_tokens=32_000,
         )
     result = await admitted_async(tmp_path, build, keys=("dream:test", "websocket:test"))
     result.context.memory.write_memory("PRIVATE_DREAM_MEMORY")
@@ -522,7 +521,6 @@ async def test_shutdown_failure_still_settles_batch_and_joins_background_before_
                 session_manager=inputs.sessions, tool_registry=inputs.tools,
                 cron_service=inputs.cron, turn_delivery_factory=inputs.delivery,
                 tools_config=inputs.config.tools, restrict_to_workspace=True,
-                session_ttl_minutes=0,
             )
 
         loop = await graphs.acquire(tmp_path, build, keys=("websocket:test",))

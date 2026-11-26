@@ -1,51 +1,32 @@
-"""Tests for default core tool guidance."""
+"""Verify the default guidance and its declared capability groups."""
 
 from importlib.resources import files as pkg_files
 
 from kohaku.agent.context import ContextBuilder
+from kohaku.context.budget import TokenMeter
 
 
-def _template_text(name: str) -> str:
-    return (pkg_files("kohaku") / "templates" / "agent" / name).read_text(encoding="utf-8")
-
-
-def test_tool_contract_uses_only_registered_core_tool_names():
-    content = _template_text("tool_contract.md")
-
-    assert "edit_file" in content
-    assert "write_file" in content
-    assert "find_files" in content
-    assert "grep" in content
+def test_universal_tool_contract_is_bounded():
+    content = (pkg_files("kohaku") / "templates" / "agent" / "tool_contract.md").read_text(
+        encoding="utf-8",
+    )
+    assert TokenMeter.count_text(content) <= 550
+    assert "narrowest tool" in content
     assert "apply_patch" not in content
 
 
-def test_default_prompt_has_no_unconditional_optional_tool_claim(tmp_path):
-    prompt = ContextBuilder(tmp_path).build_system_prompt()
-
-    assert "apply_patch" not in prompt
-    assert "find_files" in prompt
-    assert "grep" in prompt
-
-    scoped = ContextBuilder(tmp_path).build_system_prompt(
-        tool_names=frozenset({"read_file", "list_dir"}),
-    )
-    assert "find_files" not in scoped
-    assert "grep" not in scoped
-    assert "read_file" in scoped
-    assert "list_dir" in scoped
+def test_workspace_and_delivery_sections_follow_available_tools(tmp_path):
+    builder = ContextBuilder(tmp_path)
+    names = frozenset({"repository_catalog", "message"})
+    compiled = builder.compile_system_prompt(tool_names=names)
+    assert "repository_discovery" in compiled.section_tokens
+    assert "chat_delivery" in compiled.section_tokens
+    assert "project_selection" not in compiled.section_tokens
+    assert "folder_requests" not in compiled.section_tokens
 
 
 def test_identity_guidance_does_not_advertise_grep():
-    content = _template_text("identity.md")
-
+    content = (pkg_files("kohaku") / "templates" / "agent" / "identity.md").read_text(
+        encoding="utf-8",
+    )
     assert "grep" not in content
-
-
-def test_session_guidance_follows_the_available_tools(tmp_path):
-    builder = ContextBuilder(tmp_path)
-    names = {"list_sessions", "search_sessions", "read_session"}
-
-    for available in (frozenset(), frozenset({"list_sessions", "read_session"})):
-        prompt = builder.build_system_prompt(tool_names=available)
-
-        assert {name for name in names if name in prompt} == available

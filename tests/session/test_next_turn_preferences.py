@@ -321,7 +321,6 @@ async def test_active_turn_isolates_next_turn_folder_and_model_across_steer_stop
     composition = RuntimeComposition.define(
         config,
         sessions_root=sessions_root,
-        startup_receipt_admitted=True,
     )
     handle = await composition.acquire()
     chat_id = "split-chat"

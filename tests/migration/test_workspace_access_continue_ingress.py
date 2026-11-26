@@ -91,7 +91,7 @@ class _RepeatedRecoveryProvider(_RecordingProvider):
             (row.get("content") for row in reversed(messages) if row.get("role") == "user"),
             None,
         )
-        if latest_user == "Please start a fresh task now.":
+        if str(latest_user).partition("\n\n")[0] == "Please start a fresh task now.":
             return LLMResponse(content="Fresh task completed.")
         call_number = len(self.requests)
         if call_number in {1, 2}:
@@ -164,7 +164,6 @@ async def test_canonical_turn_finalizes_terminal_configured_write_without_recove
     composition = RuntimeComposition.define(
         config,
         sessions_root=sessions_root,
-        startup_receipt_admitted=True,
     )
     handle = await composition.acquire()
     key = "websocket:terminal-policy"
@@ -256,7 +255,6 @@ async def _prepare_continuation(
     composition = RuntimeComposition.define(
         config,
         sessions_root=tmp_path / "sessions",
-        startup_receipt_admitted=True,
     )
     handle = await composition.acquire()
     chat_id = "continue-ingress"
@@ -382,7 +380,6 @@ async def test_continue_survives_cache_invalidation_and_runs_once_on_real_bus(
     composition = RuntimeComposition.define(
         config,
         sessions_root=tmp_path / "sessions",
-        startup_receipt_admitted=True,
     )
     handle = await composition.acquire()
     chat_id = "continue-ingress"
@@ -516,7 +513,7 @@ async def test_continue_survives_cache_invalidation_and_runs_once_on_real_bus(
         await asyncio.wait_for(provider.called.wait(), timeout=3)
         assert len(provider.requests) == 2
         visible_inputs = [
-            str(row.get("content"))
+            str(row.get("content")).partition("\n\n")[0]
             for row in provider.requests[1]
             if row.get("role") == "user"
         ]
@@ -596,7 +593,6 @@ async def test_repeated_folder_recovery_continues_original_task_on_real_bus(
     composition = RuntimeComposition.define(
         config,
         sessions_root=tmp_path / "sessions",
-        startup_receipt_admitted=True,
     )
     handle = await composition.acquire()
     chat_id = "repeat-continue"
@@ -1007,7 +1003,7 @@ async def test_repeated_folder_recovery_continues_original_task_on_real_bus(
         assert final_record["status"] == "continued"
         assert final_record["task_input_event_id"] == original_event["_event_id"]
         user_inputs = [
-            str(message.get("content"))
+            str(message.get("content")).partition("\n\n")[0]
             for request_messages in provider.requests
             for message in request_messages
             if message.get("role") == "user"
@@ -1498,7 +1494,7 @@ async def test_accepted_new_input_invalidates_queued_continue_without_busy_injec
         await asyncio.wait_for(both_dispatched.wait(), timeout=5)
         assert len(prepared.provider.requests) == 2
         continued_inputs = [
-            str(row.get("content"))
+            str(row.get("content")).partition("\n\n")[0]
             for row in prepared.provider.requests[1]
             if row.get("role") == "user"
         ]
@@ -1591,7 +1587,7 @@ async def test_duplicate_private_continue_dispatch_runs_provider_once(
         assert dispatch_count == 1
         assert len(prepared.provider.requests) == 2
         visible_inputs = [
-            str(row.get("content"))
+            str(row.get("content")).partition("\n\n")[0]
             for row in prepared.provider.requests[1]
             if row.get("role") == "user"
         ]

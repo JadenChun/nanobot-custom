@@ -110,7 +110,7 @@ def test_boundary_only_advances_after_previous_prefix():
 
 def test_summary_is_never_a_system_message():
     projected = project_source(snapshot([event('user', 'input')], checkpoint(1)))
-    assert projected.messages()[0]['role'] == 'assistant'
+    assert projected.messages()[0]['role'] == 'user'
     assert 'untrusted evidence' in projected.messages()[0]['content']
 
 

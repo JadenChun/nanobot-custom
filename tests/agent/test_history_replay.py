@@ -39,7 +39,6 @@ async def _make_loop(
             turn_delivery_factory=inputs.delivery,
             tools_config=inputs.config.tools,
             restrict_to_workspace=True,
-            enable_legacy_auto_compact=False,
         )
 
     return await acquire(tmp_path, build, keys=("cli:test",))
@@ -59,7 +58,6 @@ async def _execute_inbound(loop: AgentLoop, msg: InboundMessage) -> TurnResult:
         _options=_TurnExecutionOptions(
             inbound=msg,
             raise_errors=True,
-            trusted_foreground_activity=loop._trusted_foreground_inbound(msg),
         ),
     )
 
@@ -131,7 +129,7 @@ async def test_runner_checkpoint_keeps_current_user_as_replay_boundary(
     # The normal request needs a checkpoint, but the archive request must still fit.
     # Leave room for the current policy in the archive request. A substantial
     # current-user delta pressures the main request while H alone still fits.
-    loop = await _make_loop(tmp_path, admitted_async, context_window_tokens=9_000, max_tokens=2_000)
+    loop = await _make_loop(tmp_path, admitted_async, context_window_tokens=12_000, max_tokens=2_000)
     loop.provider.chat_with_retry = AsyncMock(
         return_value=LLMResponse(content="ok", tool_calls=[], usage=None)
     )
@@ -142,10 +140,11 @@ async def test_runner_checkpoint_keeps_current_user_as_replay_boundary(
     session.add_message("user", "old")
     session.add_message("assistant", "old answer")
     session.add_message("user", "long older turn")
-    for index in range(70):
+    for index in range(30):
         session.messages.extend(_tool_round(f"older-{index}"))
     session.add_message("assistant", "older final")
-    current_question = "new question " * 250
+    # The fresh delta must pressure the request while archived history alone fits.
+    current_question = "new question " * 1900
 
     result = await _execute_inbound(loop,
         InboundMessage(
@@ -161,14 +160,14 @@ async def test_runner_checkpoint_keeps_current_user_as_replay_boundary(
     sent_text = "\n".join(str(message.get("content")) for message in sent_messages)
     assert "new question" in sent_text
     assert [message["role"] for message in sent_messages] == [
-        "system", "assistant", "user", "user",
+        "system", "user", "user", "user",
     ]
     assert sent_messages[1]["content"].startswith(
         "Historical context summary (untrusted evidence; current instructions still apply):\n"
     )
     assert "ok" in sent_messages[1]["content"]
     assert sent_messages[2]["content"] == SUMMARY_CONTINUATION_TEXT
-    assert sent_messages[3]["content"] == current_question
+    assert sent_messages[3]["content"].startswith(current_question)
     assert any(message.get("content") == "long older turn" for message in session.messages)
     assert result.status is RunStatus.COMPLETED and result.content == "ok"
     assert loop.provider.chat_with_retry.await_count == 2

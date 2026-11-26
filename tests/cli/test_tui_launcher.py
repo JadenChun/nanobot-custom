@@ -54,42 +54,6 @@ def admitted_tui_config(tmp_path, monkeypatch):
     return config
 
 
-def test_native_tui_entry_checks_startup_receipt_before_launch(monkeypatch, tmp_path):
-    from kohaku.agent.memory_recovery_startup_admission import StartupReceiptAdmissionError
-    from kohaku.config import loader
-
-    config_path = tmp_path / "config.json"
-    workspace = tmp_path / "workspace"
-    config_path.write_text(json.dumps({
-        "agents": {"defaults": {"workspace": str(workspace)}},
-    }), encoding="utf-8")
-    pending_receipt = workspace / "memory" / ".consolidation.pending.json"
-    pending_receipt.parent.mkdir(parents=True)
-    pending_receipt.write_text("{broken", encoding="utf-8")
-
-    original_load = loader.load_config
-    loaded = []
-
-    def load(*args, **kwargs):
-        loaded.append(True)
-        return original_load(*args, **kwargs)
-
-    monkeypatch.setattr(loader, "load_config", load)
-    original_config = config_path.read_bytes()
-    original_receipt = pending_receipt.read_bytes()
-
-    with pytest.raises(StartupReceiptAdmissionError):
-        agent(
-            message=None, session_id=None, workspace=None, config=str(config_path),
-            markdown=True, logs=False, log_file=None, classic=False, theme="auto",
-        )
-
-    assert loaded == [True]
-    assert config_path.read_bytes() == original_config
-    assert pending_receipt.read_bytes() == original_receipt
-    assert set(workspace.rglob("*")) == {pending_receipt.parent, pending_receipt}
-
-
 def _release_archive(
     asset: str,
     *,

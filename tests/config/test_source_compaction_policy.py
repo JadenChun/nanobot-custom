@@ -25,8 +25,8 @@ from kohaku.config.schema import AgentDefaults, SourceCompactionConfig
 def test_defaults_preserve_current_behavior():
     config = SourceCompactionConfig()
 
-    assert config.pressure_trigger_ratio == 0.9
-    assert config.target_ratio == 0.6
+    assert config.pressure_trigger_ratio == 0.8
+    assert config.target_ratio == 0.5
     assert config.summary_generation_tokens is None
 
 
@@ -145,8 +145,8 @@ def test_agent_defaults_nests_source_compaction_defaults():
     defaults = AgentDefaults()
 
     assert isinstance(defaults.source_compaction, SourceCompactionConfig)
-    assert defaults.source_compaction.pressure_trigger_ratio == 0.9
-    assert defaults.source_compaction.target_ratio == 0.6
+    assert defaults.source_compaction.pressure_trigger_ratio == 0.8
+    assert defaults.source_compaction.target_ratio == 0.5
     assert defaults.source_compaction.summary_generation_tokens is None
 
 

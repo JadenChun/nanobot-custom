@@ -34,7 +34,6 @@ async def _make_loop(
             model="test-model", tools_config=tools_config,
             session_manager=inputs.sessions, tool_registry=inputs.tools,
             cron_service=inputs.cron, turn_delivery_factory=inputs.delivery,
-            enable_legacy_auto_compact=False,
         )
 
     loop = await admitted(tmp_path, build)

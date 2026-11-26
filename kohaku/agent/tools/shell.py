@@ -214,13 +214,13 @@ class _PreparedCommand:
         command=StringSchema("The shell command to execute"),
         cmd=StringSchema("Compatibility alias for command"),
         summary=StringSchema(
-            "Brief 2-6 word summary of what this command does (e.g. 'Check image dimensions', 'Run unit tests', 'Build WebUI bundle').",
+            "Command summary, 2–6 words.",
             nullable=True,
         ),
         working_dir=StringSchema("Optional working directory for the command"),
         workdir=StringSchema("Compatibility alias for working_dir"),
         timeout=IntegerSchema(
-            description="Hard timeout in seconds (default 60, max 600).",
+            description="Timeout in seconds. Default 60.",
             minimum=1,
             maximum=600,
         ),
@@ -238,24 +238,23 @@ class _PreparedCommand:
             nullable=True,
         ),
         yield_time_ms=IntegerSchema(
-            description="Return after this many milliseconds if still running; omit to wait for exit.",
+            description="Return early after this many milliseconds, or omit to wait for exit.",
             minimum=0,
             maximum=MAX_YIELD_MS,
             nullable=True,
         ),
         notify_on_exit=BooleanSchema(
-            description="Continue this conversation when a background process exits (gateway feature).",
+            description="Resume the gateway conversation on process exit.",
             default=False,
         ),
         unsandboxed=BooleanSchema(
             description=(
-                "Request execution outside Sandbox for a command that needs host access, "
-                "such as Docker, package installs, or local sockets. This can require user approval."
+                "Request execution outside the sandbox. User approval can be required."
             ),
             default=False,
         ),
         max_output_chars=IntegerSchema(
-            description="Session output limit in characters (default 10000, max 50000).",
+            description="Session output limit in characters. Default 10000.",
             minimum=1000,
             maximum=MAX_OUTPUT_CHARS,
             nullable=True,
@@ -269,10 +268,8 @@ class _PreparedCommand:
         input_files=ArraySchema(
             StringSchema("Exact existing file path to expose read-only"),
             description=(
-                "Optional exact files (for example generated images or attachments) to make "
-                "readable at their original paths inside a Sandbox command. Each path must "
-                "pass the current read policy; this is not an access grant. Omit for no "
-                "additional inputs. Foreground commands only."
+                "Files to expose at their original paths for a foreground command. "
+                "The current read policy applies."
             ),
             max_items=16,
             nullable=True,

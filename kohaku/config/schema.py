@@ -13,7 +13,6 @@ from pydantic import (
     Field,
     PrivateAttr,
     StrictBool,
-    StrictFloat,
     StrictInt,
     field_validator,
     model_validator,
@@ -187,6 +186,8 @@ class DreamConfig(Base):
     _HOUR_MS = 3_600_000
 
     enabled: bool = False  # Compatibility intent; periodic Dream is not installed by the gateway
+    phase2_threshold: int = Field(default=5, ge=1)
+    max_rollout_summaries: int = Field(default=200, ge=1)
     interval_h: int = Field(default=2, ge=1)  # Every 2 hours by default
     cron: str | None = Field(
         default=None,
@@ -245,121 +246,11 @@ class ModelPresetConfig(Base):
 
 
 class IdleCompactionConfig(Base):
-    """Dormant configuration contract for future idle compaction activation.
-
-    This model only validates and preserves configuration. It does not build a
-    coordinator, enumerate sessions, resolve a provider, or create tasks.
-    Runtime activation remains owned by a later integration package.
-    """
-
-    _ALIASES: ClassVar[tuple[tuple[str, str], ...]] = (
-        ("idle_ttl_seconds", "idleTtlSeconds"),
-        ("scan_interval_seconds", "scanIntervalSeconds"),
-        ("queue_capacity", "queueCapacity"),
-        ("max_concurrent_jobs", "maxConcurrentJobs"),
-        ("max_auxiliary_calls", "maxAuxiliaryCalls"),
-        ("max_auxiliary_tokens", "maxAuxiliaryTokens"),
-        ("max_input_tokens", "maxInputTokens"),
-        ("max_output_tokens", "maxOutputTokens"),
-        ("max_chunks", "maxChunks"),
-        ("max_auxiliary_wall_seconds", "maxAuxiliaryWallSeconds"),
-        ("initial_backoff_seconds", "initialBackoffSeconds"),
-        ("max_backoff_seconds", "maxBackoffSeconds"),
-        ("summary_model_preset", "summaryModelPreset"),
-    )
+    """Idle compaction configuration retained for runtime preflight."""
 
     enabled: StrictBool = False
-    idle_ttl_seconds: StrictFloat = 0.0
-    scan_interval_seconds: StrictFloat | None = None
-    queue_capacity: StrictInt | None = Field(default=None, gt=0)
-    max_concurrent_jobs: StrictInt | None = Field(default=None, gt=0)
-    max_auxiliary_calls: StrictInt | None = Field(default=None, gt=0)
-    max_auxiliary_tokens: StrictInt | None = Field(default=None, gt=0)
-    max_input_tokens: StrictInt | None = Field(default=None, gt=0)
-    max_output_tokens: StrictInt | None = Field(default=None, gt=0)
-    max_chunks: StrictInt | None = Field(default=None, gt=0)
-    max_auxiliary_wall_seconds: StrictFloat | None = None
-    initial_backoff_seconds: StrictFloat | None = None
-    max_backoff_seconds: StrictFloat | None = None
-    summary_model_preset: str | None = None
-
-    @model_validator(mode="before")
-    @classmethod
-    def reject_alias_duplicates(cls, value: Any) -> Any:
-        """Reject ambiguous input when both generated aliases are supplied."""
-        if not isinstance(value, Mapping):
-            return value
-        data = dict(cast(Mapping[object, object], value))
-        for snake_name, camel_name in cls._ALIASES:
-            if snake_name in data and camel_name in data:
-                raise ValueError(
-                    f"Specify only one of {camel_name!r} or {snake_name!r}"
-                )
-        return data
-
-    @field_validator("idle_ttl_seconds")
-    @classmethod
-    def validate_idle_ttl_seconds(cls, value: float) -> float:
-        if not math.isfinite(value) or value < 0:
-            raise ValueError("idle_ttl_seconds must be a finite non-negative number")
-        return value
-
-    @field_validator(
-        "scan_interval_seconds",
-        "max_auxiliary_wall_seconds",
-        "initial_backoff_seconds",
-        "max_backoff_seconds",
-    )
-    @classmethod
-    def validate_positive_seconds(cls, value: float | None) -> float | None:
-        if value is not None and (not math.isfinite(value) or value <= 0):
-            raise ValueError("idle compaction duration values must be finite and positive")
-        return value
-
-    @field_validator("summary_model_preset")
-    @classmethod
-    def validate_summary_model_preset(cls, value: str | None) -> str | None:
-        if value is not None and not value.strip():
-            raise ValueError("summary_model_preset must be a non-empty preset name")
-        return value
-
-    @model_validator(mode="after")
-    def validate_enabled_contract(self) -> "IdleCompactionConfig":
-        if (
-            self.initial_backoff_seconds is not None
-            and self.max_backoff_seconds is not None
-            and self.initial_backoff_seconds > self.max_backoff_seconds
-        ):
-            raise ValueError("initial_backoff_seconds cannot exceed max_backoff_seconds")
-        if not self.enabled:
-            return self
-
-        missing = [
-            name
-            for name in (
-                "scan_interval_seconds",
-                "queue_capacity",
-                "max_concurrent_jobs",
-                "max_auxiliary_calls",
-                "max_auxiliary_tokens",
-                "max_input_tokens",
-                "max_output_tokens",
-                "max_chunks",
-                "max_auxiliary_wall_seconds",
-                "initial_backoff_seconds",
-                "max_backoff_seconds",
-                "summary_model_preset",
-            )
-            if getattr(self, name) is None
-        ]
-        if self.idle_ttl_seconds <= 0:
-            missing.append("idle_ttl_seconds > 0")
-        if missing:
-            raise ValueError(
-                "enabled idle compaction requires every operational field; "
-                f"missing or invalid: {', '.join(missing)}"
-            )
-        return self
+    idle_minutes: int = Field(default=30, ge=1)
+    min_messages: int = Field(default=8, ge=2)
 
 
 class SourceCompactionConfig(Base):
@@ -373,10 +264,10 @@ class SourceCompactionConfig(Base):
         ("summary_generation_tokens", "summaryGenerationTokens"),
     )
 
-    idle_timeout_seconds: float = Field(default=300.0, gt=0, allow_inf_nan=False)
-    overall_timeout_seconds: float = Field(default=900.0, gt=0, allow_inf_nan=False)
-    pressure_trigger_ratio: float = Field(default=0.9, gt=0, le=1, allow_inf_nan=False)
-    target_ratio: float = Field(default=0.6, gt=0, le=1, allow_inf_nan=False)
+    idle_timeout_seconds: float = Field(default=45.0, gt=0, allow_inf_nan=False)
+    overall_timeout_seconds: float = Field(default=120.0, gt=0, allow_inf_nan=False)
+    pressure_trigger_ratio: float = Field(default=0.80, gt=0, le=1, allow_inf_nan=False)
+    target_ratio: float = Field(default=0.50, gt=0, le=1, allow_inf_nan=False)
     summary_generation_tokens: int | None = Field(default=None, gt=0)
 
     @model_validator(mode="before")
@@ -429,9 +320,6 @@ class AgentDefaults(Base):
     fallback: list[FallbackEntry] = Field(default_factory=list)
     context_paths: list[str] = Field(default_factory=list)
     context_repos: list[str | ContextRepoConfig] = Field(default_factory=list)
-    tool_result_clearing_keep: int = 3
-    consolidation_trigger_ratio: float = 0.5
-    consolidation_target_ratio: float = 0.3
 
     @model_validator(mode="before")
     @classmethod
@@ -450,14 +338,6 @@ class AgentDefaults(Base):
                 raise ValueError(
                     "Specify only one of 'idleCompactAfterMinutes' or "
                     "'sessionTtlMinutes'"
-                )
-            if (
-                "idleCompactCheckIntervalSeconds" in data
-                and "idle_compact_check_interval_seconds" in data
-            ):
-                raise ValueError(
-                    "Specify only one of 'idleCompactCheckIntervalSeconds' or "
-                    "'idle_compact_check_interval_seconds'"
                 )
         return cast(object, value)
 
@@ -533,12 +413,9 @@ class AgentDefaults(Base):
         ge=0,
         validation_alias=AliasChoices("idleCompactAfterMinutes", "sessionTtlMinutes"),
         serialization_alias="idleCompactAfterMinutes",
-    )  # Auto-compact idle threshold in minutes (0 = disabled)
-    idle_compact_check_interval_seconds: int = Field(
-        default=60,
-        ge=0,
-    )  # Minimum interval in seconds between scans for idle sessions
+    )  # Legacy value checked by runtime preflight.
     idle_compaction: IdleCompactionConfig = Field(default_factory=IdleCompactionConfig)
+    compaction_model: str | None = None
     source_compaction: SourceCompactionConfig = Field(default_factory=SourceCompactionConfig)
     dream: DreamConfig = Field(default_factory=DreamConfig)
 
@@ -598,6 +475,7 @@ class ProviderConfig(Base):
     api_key: str | None = Field(default=None, repr=False)
     api_base: str | None = None
     api_type: Literal["auto", "chat_completions", "responses"] = "auto"  # Request API surface
+    supports_native_tool_search: bool = Field(default=False, exclude_if=lambda value: not value)
     extra_headers: dict[str, str] | None = None  # Custom headers (e.g. APP-Code for AiHubMix)
     extra_body: dict[str, Any] | None = None  # Extra provider request fields; shape depends on provider/API surface
     extra_query: dict[str, str] | None = None  # Extra query params (e.g. api-version for Azure-style gateways)
@@ -855,6 +733,7 @@ class MCPServerConfig(Base):
     url: str = ""  # HTTP/SSE: endpoint URL
     headers: dict[str, str] = Field(default_factory=dict)  # HTTP/SSE: custom headers
     tool_timeout: int = 30  # seconds before a tool call is cancelled
+    defer_loading: bool = True
     enabled_tools: list[str] = Field(default_factory=lambda: ["*"])  # Only register these tools; accepts raw MCP names or wrapped mcp_<server>_<tool> names; ["*"] = all capabilities (tools, resources, prompts); any restriction = only listed tools, no resources/prompts
 
 
@@ -980,7 +859,7 @@ class ToolsConfig(Base):
 class ArtifactsConfig(Base):
     """Opt-in private storage for source-bound context artifacts."""
 
-    enabled: StrictBool = False
+    enabled: StrictBool = True
     root: str | None = None
     max_blob_bytes: StrictInt = Field(default=64 * 1024 * 1024, gt=0)
     max_namespace_bytes: StrictInt = Field(default=1024 * 1024 * 1024, gt=0)
@@ -1067,12 +946,6 @@ class Config(BaseSettings):
         dream_name = self.agents.defaults.dream.model_override
         if dream_name and dream_name != "default" and dream_name not in self.model_presets:
             raise ValueError(f"Dream model preset {dream_name!r} not found in model_presets")
-        idle = self.agents.defaults.idle_compaction
-        if idle.enabled and idle.summary_model_preset not in self.model_presets:
-            raise ValueError(
-                "Idle compaction summary model preset "
-                f"{idle.summary_model_preset!r} not found in model_presets"
-            )
         if self.agents.defaults.fallback and self.agents.defaults.fallback_models:
             raise ValueError("Configure either legacy fallback or fallback_models, not both")
         for fallback in self.agents.defaults.fallback_models:

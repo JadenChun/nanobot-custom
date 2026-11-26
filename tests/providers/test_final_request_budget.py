@@ -231,8 +231,9 @@ def test_local_165k_window_accepts_long_text_with_parallel_images() -> None:
     )
 
     assert measurement.fits
-    assert 80_000 < measurement.input_tokens < 90_000
-    assert measurement.source.startswith("canonical_json_utf8_bytes")
+    text_tokens = len(tiktoken.get_encoding("cl100k_base").encode("x" * 80_000))
+    assert text_tokens < measurement.input_tokens < 80_000
+    assert measurement.source.startswith("strict_cl100k_calibrated")
     assert "+inline_image" in measurement.source
 
 
@@ -293,34 +294,33 @@ def test_known_openai_model_uses_its_selected_tiktoken_encoding() -> None:
     assert exceeded.value.measurement.source == "canonical_json_tiktoken"
 
 
-def test_unknown_local_model_uses_utf8_bytes_instead_of_guessed_encoding() -> None:
+def test_unknown_local_model_uses_calibrated_compatibility_encoding() -> None:
     identity = TransportIdentity("local_manager", "openai_chat_completions", "custom-qwen-alias")
     body = {
         "model": "custom-qwen-alias",
         "messages": [{"role": "user", "content": "x" * 480_000}],
     }
 
-    with pytest.raises(FinalizedRequestBudgetExceeded) as exceeded:
-        validate_finalized_request(
-            identity, body,
-            ProviderRequestLimits(total_tokens=165_888, completion_reserve_tokens=8_192,
-                                  safety_buffer_tokens=1_024),
-        )
-
-    assert exceeded.value.measurement is not None
-    assert exceeded.value.measurement.input_tokens > 480_000
-    assert exceeded.value.measurement.source == "canonical_json_utf8_bytes"
+    measured = validate_finalized_request(
+        identity, body,
+        ProviderRequestLimits(total_tokens=165_888, completion_reserve_tokens=8_192,
+                              safety_buffer_tokens=1_024),
+    )
+    assert measured.fits
+    assert measured.measured_bytes is not None and measured.measured_bytes > 480_000
+    assert measured.input_tokens < 165_888
+    assert measured.source == "strict_cl100k_calibrated"
 
 
 @pytest.mark.parametrize("model", ["gpt-4o-FAKE", "vendor/gpt-4o-compatible", "gpt-5.6-sol-fake"])
-def test_fake_and_aliased_model_names_fall_back_to_utf8_bytes(model: str) -> None:
+def test_fake_and_aliased_model_names_use_calibrated_cl100k(model: str) -> None:
     identity = TransportIdentity("openai", "openai_chat_completions", model)
     measurement = measure_finalized_request(
         identity,
         {"model": model, "messages": [{"role": "user", "content": "plain text"}]},
         ProviderRequestLimits(total_tokens=100_000, safety_buffer_tokens=0),
     )
-    assert measurement.source == "canonical_json_utf8_bytes"
+    assert measurement.source == "strict_cl100k_calibrated"
 
 
 @pytest.mark.parametrize(
@@ -821,8 +821,9 @@ def test_bedrock_tool_result_json_is_text_and_does_not_open_nested_media() -> No
     assert "bedrock_binary_media" not in measurement.source
     assert "inline_image" not in measurement.source
     assert "remote_image" not in measurement.source
-    assert "canonical_json_utf8_bytes" in measurement.source
-    assert measurement.input_tokens > 2_000
+    assert measurement.source == "strict_cl100k_calibrated"
+    raw_uri_tokens = len(tiktoken.get_encoding("cl100k_base").encode("A" * 2_000))
+    assert measurement.input_tokens > raw_uri_tokens
     result_json = body["messages"][0]["content"][0]["toolResult"]["content"][0]["json"]
     assert result_json["document"] == "normal document text"
     assert result_json["metadata"]["image_url"]["url"].startswith("data:image/png;base64,")
@@ -893,7 +894,8 @@ async def test_anthropic_tool_input_lookalike_blocks_dispatch_as_text() -> None:
             max_tokens=1,
         )
     assert exceeded.value.measurement is not None
-    assert exceeded.value.measurement.input_tokens > 100_000
+    assert exceeded.value.measurement.measured_bytes > 100_000
+    assert exceeded.value.measurement.input_tokens > exceeded.value.measurement.input_limit_tokens
     assert "inline_image" not in exceeded.value.measurement.source
     create.assert_not_awaited()
 
@@ -915,7 +917,8 @@ async def test_bedrock_tool_json_data_uri_blocks_dispatch_as_text() -> None:
             max_tokens=1,
         )
     assert exceeded.value.measurement is not None
-    assert exceeded.value.measurement.input_tokens > 100_000
+    assert exceeded.value.measurement.measured_bytes > 100_000
+    assert exceeded.value.measurement.input_tokens > exceeded.value.measurement.input_limit_tokens
     assert "inline_image" not in exceeded.value.measurement.source
     assert client.converse.call_count == 0
 

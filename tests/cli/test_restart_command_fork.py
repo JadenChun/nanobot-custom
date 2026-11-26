@@ -35,7 +35,7 @@ async def _make_loop(tmp_path, admitted_async):
             model="test-model", context_window_tokens=200_000,
             session_manager=inputs.sessions,
             tool_registry=inputs.tools, cron_service=inputs.cron,
-            turn_delivery_factory=inputs.delivery, enable_legacy_auto_compact=False,
+            turn_delivery_factory=inputs.delivery,
         )
 
     loop = await admitted_async(tmp_path, build, keys=("telegram:c1", "cli:test"))

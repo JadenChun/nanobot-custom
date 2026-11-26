@@ -8,7 +8,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable, Mapping
 from copy import deepcopy
 from enum import StrEnum
-from typing import Any, TypeVar, cast
+from typing import Any, Literal, TypeVar, cast
 
 if typing.TYPE_CHECKING:
     from pydantic import BaseModel
@@ -17,6 +17,11 @@ if typing.TYPE_CHECKING:
     from kohaku.runtime_context import RuntimeContextProvider
 
 _ToolT = TypeVar("_ToolT", bound="Tool")
+
+
+class ToolExposure(StrEnum):
+    DIRECT = "direct"
+    DEFERRED = "deferred"
 
 # Matches :meth:`Tool._cast_value` / :meth:`Schema.validate_json_schema_value` behavior
 _JSON_TYPE_MAP: dict[str, type | tuple[type, ...]] = {
@@ -436,6 +441,11 @@ class Tool(ABC):
     config_key: str = ""
     _plugin_discoverable: bool = True
     _scopes: set[str] = {"core"}
+    # Progressive exposure: DIRECT tools ship in the initial schema list, while
+    # DEFERRED tools stay withheld until ``tool_search`` activates them.
+    exposure: ToolExposure | Literal["direct", "deferred"] = ToolExposure.DIRECT
+    namespace: str = "core"
+    search_keywords: tuple[str, ...] = ()
 
     @classmethod
     def config_cls(cls) -> type[BaseModel] | None:

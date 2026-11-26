@@ -61,6 +61,40 @@ class FilesystemArtifactOrigin:
     relative_path: str
 
 
+@dataclass(frozen=True)
+class ToolOutputArtifactOrigin:
+    """Tool identity and content integrity supplied by a recorded execution."""
+
+    kind: Literal['tool_output']
+    tool_name: str
+    tool_call_id: str
+    sha256: str
+    byte_length: int
+
+
+def _artifact_origin(raw: object) -> FilesystemArtifactOrigin | ToolOutputArtifactOrigin:
+    if isinstance(raw, dict):
+        record = cast(dict[object, object], raw)
+        if record.get('kind') == 'tool_output':
+            if set(record) != {'kind', 'tool_name', 'tool_call_id', 'sha256', 'byte_length'}:
+                raise ArtifactValidationError('Invalid tool output provenance')
+            digest, size = record['sha256'], record['byte_length']
+            if (not isinstance(digest, str) or _DIGEST.fullmatch(digest) is None
+                    or type(size) is not int or size < 0):
+                raise ArtifactValidationError('Invalid tool output integrity')
+            return ToolOutputArtifactOrigin(
+                'tool_output', _identity(record['tool_name']), _identity(record['tool_call_id']),
+                digest, size,
+            )
+        return _origin(record)
+    return _origin(raw)
+
+
+def recorded_tool_output(origin: object, name: object, call_id: object) -> bool:
+    """Match the tool marker issued by the canonical source writer."""
+    return origin == {'kind': 'tool_output', 'tool_name': name, 'tool_call_id': call_id}
+
+
 def _origin(raw: object) -> FilesystemArtifactOrigin:
     if not isinstance(raw, dict):
         raise ArtifactValidationError('Invalid artifact source locator')
@@ -114,7 +148,7 @@ class ArtifactDescriptor:
     byte_length: int
     sha256: str
     created_at: str
-    source_access: FilesystemArtifactOrigin
+    source_access: FilesystemArtifactOrigin | ToolOutputArtifactOrigin
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -165,7 +199,7 @@ def parse_artifact_descriptor(raw: object) -> ArtifactDescriptor:
         _identity(record['session_key']), _identity(record['incarnation']), counters['generation'],
         _identity(record['event_id']), _identity(record['execution_id']), _identity(record['stream_id']),
         _identity(record['run_id']), block, 'text/plain; charset=utf-8', counters['byte_length'], digest,
-        timestamp, _origin(record['source_access']),
+        timestamp, _artifact_origin(record['source_access']),
     )
 
 
@@ -287,11 +321,11 @@ def _declared_tool_name(snapshot: SourceSnapshot, execution_id: str) -> str:
 
 
 def attested_artifact_origin(descriptor: ArtifactDescriptor, snapshot: SourceSnapshot, *,
-                             workspace_id: str) -> FilesystemReadReceipt:
+                             workspace_id: str) -> FilesystemReadReceipt | ToolOutputArtifactOrigin:
     """Require producer evidence in addition to source text; still not a read grant.
 
     The returned receipt's root binding must match current policy during retrieval.
-    Legacy inline events without producer receipts cannot be retroactively attested.
+    Tool output without a canonical producer marker stays ineligible.
     """
     from kohaku.agent.tools.read_provenance import (
         canonical_tool_name_for_producer,
@@ -300,12 +334,21 @@ def attested_artifact_origin(descriptor: ArtifactDescriptor, snapshot: SourceSna
 
     text = bound_artifact_text(descriptor, snapshot, workspace_id=workspace_id).decode('utf-8')
     event = next(row for row in snapshot.events if row['_event_id'] == descriptor.event_id)
-    receipt = parse_read_receipt(event.get('_source_origin'))
     declared_name = _declared_tool_name(snapshot, descriptor.execution_id)
     if (event.get('name') != declared_name
-            or canonical_tool_name_for_producer(receipt.producer) != declared_name
             or event.get('_dispatched') is not True or event.get('_outcome_status') != 'ok'
-            or descriptor.block_index is not None or receipt.source_access != descriptor.source_access
+            or '_artifact_read' in event or declared_name == 'read_artifact'):
+        raise ArtifactValidationError('Artifact lacks matching producer evidence')
+    origin = descriptor.source_access
+    if isinstance(origin, ToolOutputArtifactOrigin):
+        if (origin.tool_name != declared_name or origin.tool_call_id != event.get('tool_call_id')
+                or origin.sha256 != descriptor.sha256 or origin.byte_length != descriptor.byte_length
+                or not recorded_tool_output(event.get('_source_origin'), declared_name, origin.tool_call_id)):
+            raise ArtifactValidationError('Artifact lacks matching tool output evidence')
+        return origin
+    receipt = parse_read_receipt(event.get('_source_origin'))
+    if (canonical_tool_name_for_producer(receipt.producer) != declared_name
+            or descriptor.block_index is not None or receipt.source_access != origin
             or not receipt.matches(text)):
         raise ArtifactValidationError('Artifact lacks matching producer evidence')
     return receipt

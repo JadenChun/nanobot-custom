@@ -42,7 +42,7 @@ async def _acquired_loop(tmp_path, admitted_async, provider, key, *, unified_ses
             model="test-model", context_window_tokens=128_000,
             session_manager=inputs.sessions, tool_registry=inputs.tools,
             cron_service=inputs.cron, turn_delivery_factory=inputs.delivery,
-            unified_session=unified_session, enable_legacy_auto_compact=False,
+            unified_session=unified_session,
         )
 
     return await admitted_async(tmp_path, build, keys=(key,))
@@ -57,7 +57,6 @@ async def test_saved_summary_replay_does_not_require_background_compaction(
     mock_provider.estimate_prompt_tokens.return_value = (100, "test")
     mock_provider.chat_with_retry.return_value = LLMResponse(content="answer", finish_reason="stop")
     loop = await _acquired_loop(tmp_path, admitted_async, mock_provider, key)
-    assert loop.auto_compact is None
     loop.consolidator.archive_session = AsyncMock(side_effect=AssertionError("unexpected archive"))
     session = loop.sessions.get_or_create(key)
     session.metadata["_last_summary"] = {
@@ -79,7 +78,6 @@ async def test_saved_summary_replay_does_not_require_background_compaction(
 
     assert mock_provider.chat_with_retry.await_count == 2
     loop.consolidator.archive_session.assert_not_awaited()
-    assert loop.auto_compact is None
 
 
 @pytest.fixture
@@ -403,7 +401,7 @@ class TestConsolidatorPromptContract:
         for section in ("## Merge rules", "## What to retain", "## Output"):
             assert section in prompt
         assert "replacement checkpoint" in prompt
-        assert "[Archived Context Summary]" in prompt
+        assert "previous checkpoint" in prompt
         assert "current conversation state" in prompt
         assert "SNIP" in prompt
         for mark in ("[permanent]", "[durable]", "[ephemeral]", "[correction]"):
@@ -744,7 +742,7 @@ class TestCompactIdleSession:
             messages = sent["messages"]
             contents = [message.get("content", "") for message in messages]
             assert [message["role"] for message in messages] == [
-                "system", "assistant", "user", "user",
+                "system", "user", "user", "user",
             ]
             assert "Archived conversation summary." not in contents[0]
             assert contents[1].startswith(
@@ -1423,7 +1421,7 @@ class TestCompactIdleSession:
         assert sent_messages[-1]["content"] == _ARCHIVE_PROMPT
         system = sent_messages[0]["content"]
         assert "PROJECT_WORKSPACE_MARKER" in system
-        assert "GLOBAL_WORKSPACE_MARKER" not in system
+        assert system.index("GLOBAL_WORKSPACE_MARKER") < system.index("PROJECT_WORKSPACE_MARKER")
 
     @pytest.mark.asyncio
     async def test_acquires_consolidation_lock(

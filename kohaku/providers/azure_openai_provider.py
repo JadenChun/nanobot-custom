@@ -29,12 +29,12 @@ from loguru import logger
 from openai import AsyncOpenAI
 
 from kohaku.providers.base import (
-    FinalizedRequestBudgetExceeded,
     LLMProvider,
     LLMResponse,
     ProviderCallContext,
     ProviderConversationState,
     ProviderConversationTransportReceipt,
+    ProviderRequestRejected,
     record_transport_attempt,
 )
 from kohaku.providers.openai_responses import (
@@ -172,6 +172,8 @@ class AzureOpenAIProvider(LLMProvider):
             max_retries=0,
         )
 
+    supports_prompt_cache_key = True
+
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
@@ -304,6 +306,9 @@ class AzureOpenAIProvider(LLMProvider):
             body["tools"] = convert_tools(tools)
             body["tool_choice"] = tool_choice or "auto"
 
+        session_id = provider_context.session_id if provider_context is not None else None
+        if self.supports_prompt_cache_key and session_id:
+            body["prompt_cache_key"] = sha256(session_id.encode("utf-8")).hexdigest()
         return body
 
     async def _create_response_with_compaction_fallback(
@@ -435,7 +440,7 @@ class AzureOpenAIProvider(LLMProvider):
                     str(body["model"])
                 ),
             )
-        except FinalizedRequestBudgetExceeded:
+        except ProviderRequestRejected:
             raise
         except Exception as e:
             return self._handle_error(e)
@@ -504,7 +509,7 @@ class AzureOpenAIProvider(LLMProvider):
                 if result.provider_compaction_applied:
                     result.provider_compaction_scope = "current_request"
             return result
-        except FinalizedRequestBudgetExceeded:
+        except ProviderRequestRejected:
             raise
         except Exception as e:
             return self._handle_error(e)

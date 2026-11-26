@@ -16,11 +16,11 @@ from loguru import logger
 
 from kohaku import __version__
 from kohaku.providers.base import (
-    FinalizedRequestBudgetExceeded,
     LLMProvider,
     LLMResponse,
     LLMUsage,
     ProviderCallContext,
+    ProviderRequestRejected,
     ToolCallRequest,
     record_transport_attempt,
     resolve_stream_idle_timeout_s,
@@ -88,6 +88,7 @@ class XAIGrokProvider(LLMProvider):
         self.proxy = proxy or None
         self._credential_owner = credential_owner
         self._extra_body = dict(extra_body or {})
+        self._stateless_conversation_id = str(uuid.uuid4())
 
     async def _supports_backend_search(self, model: str) -> bool:
         catalog = await asyncio.to_thread(
@@ -174,7 +175,12 @@ class XAIGrokProvider(LLMProvider):
                 if tools_are_explicit and not isinstance(configured_tools, list):
                     body["tools"] = configured_tools
 
-            headers = _build_headers(token.access, wire_model)
+            session_id = provider_context.session_id if provider_context is not None else None
+            conversation_id = (
+                str(uuid.uuid5(uuid.NAMESPACE_URL, f"kohaku:grok:{session_id}"))
+                if session_id else self._stateless_conversation_id
+            )
+            headers = _build_headers(token.access, wire_model, conversation_id)
             stage = "xai_request"
             auth_retried = False
             hosted_tool_retried = False
@@ -207,7 +213,7 @@ class XAIGrokProvider(LLMProvider):
                         force_refresh=True,
                         owner=self._credential_owner,
                     )
-                    headers = _build_headers(token.access, wire_model)
+                    headers = _build_headers(token.access, wire_model, conversation_id)
                     stage = "xai_request_after_oauth_refresh"
                 except _XAIIncompleteHostedToolError as exc:
                     retry_usage = _combine_usage(retry_usage, exc.usage)
@@ -223,7 +229,7 @@ class XAIGrokProvider(LLMProvider):
                     )
                     if on_stream_recover is not None:
                         await on_stream_recover()
-                    headers = _build_headers(token.access, wire_model)
+                    headers = _build_headers(token.access, wire_model, conversation_id)
 
             content, tool_calls, finish_reason, usage, reasoning_content = result
             usage = _combine_usage(retry_usage, usage)
@@ -234,7 +240,7 @@ class XAIGrokProvider(LLMProvider):
                 usage=usage,
                 reasoning_content=reasoning_content,
             )
-        except FinalizedRequestBudgetExceeded:
+        except ProviderRequestRejected:
             raise
         except Exception as exc:
             response = _xai_error_response(exc)
@@ -355,8 +361,10 @@ def _combine_usage(left: LLMUsage | None, right: LLMUsage | None) -> LLMUsage | 
     return left + right
 
 
-def _build_headers(token: str, model: str) -> dict[str, str]:
-    conversation_id = str(uuid.uuid4())
+def _build_headers(
+    token: str, model: str, conversation_id: str | None = None,
+) -> dict[str, str]:
+    conversation_id = conversation_id or str(uuid.uuid4())
     return {
         "Authorization": f"Bearer {token}",
         "X-XAI-Token-Auth": "xai-grok-cli",

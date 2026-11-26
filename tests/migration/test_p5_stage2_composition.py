@@ -76,7 +76,6 @@ def test_default_durable_definition_is_byte_inode_mtime_stable(
     composition = RuntimeComposition.define(
         config,
         factories=_factories(),
-        startup_receipt_admitted=True,
     )
     assert isinstance(composition._authority, DurableSessionAuthority)
     assert snapshot() == before
@@ -93,7 +92,6 @@ async def test_default_authority_acquires_only_captured_preflight_roots(
         config,
         sessions_root=tmp_path / "selected-sessions" if explicit_root else None,
         factories=_factories(),
-        startup_receipt_admitted=True,
     )
     report = composition.preflight
     assert isinstance(composition._authority, DurableSessionAuthority)
@@ -123,7 +121,6 @@ def test_explicit_falsey_authority_wins_unchanged(tmp_path: Path) -> None:
         _config(tmp_path),
         session_authority=authority,
         factories=_factories(),
-        startup_receipt_admitted=True,
     )
     assert composition._authority is authority
 
@@ -138,7 +135,6 @@ async def test_explicit_durable_authority_routes_one_managed_manager(tmp_path: P
         config,
         session_authority=authority,
         factories=_factories(),
-        startup_receipt_admitted=True,
     )
     handle = await composition.acquire()
     assert handle.sessions.has_managed_authority
@@ -158,7 +154,6 @@ async def test_explicit_durable_lifetime_is_released_after_graph_shutdown(tmp_pa
         config,
         session_authority=authority,
         factories=_factories(),
-        startup_receipt_admitted=True,
     )
     await composition.acquire()
     contender = DurableSessionAuthority(

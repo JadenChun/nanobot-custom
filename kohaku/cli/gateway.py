@@ -11,9 +11,7 @@ from typing import TYPE_CHECKING, Any
 import typer
 from rich.console import Console
 
-from kohaku.agent.memory_recovery_startup_admission import require_startup_receipt_admission
 from kohaku.cli.log_control import replace_cli_console_sink
-from kohaku.config.paths import get_default_sessions_root
 from kohaku.config.schema import Config
 from kohaku.gateway import (
     GatewayAlreadyRunningError,
@@ -111,14 +109,6 @@ def create_gateway_app(
         # The higher-level `kohaku webui` command owns interactive first-run guidance.
         return "warn"
 
-    def admit_config(cfg: Config) -> None:
-        root = (
-            cfg.runtime_data_dir / "sessions"
-            if cfg.runtime_data_dir is not None
-            else get_default_sessions_root()
-        )
-        require_startup_receipt_admission(cfg.workspace_path, sessions_root=root)
-
     def start_options(
         *,
         port: int | None,
@@ -192,7 +182,6 @@ def create_gateway_app(
             raise typer.Exit(1)
         if background:
             cfg = load_runtime_config(config, workspace)
-            admit_config(cfg)
             if validate_startup_config is not None:
                 validate_startup_config(cfg)
             if prepare_webui_bundle is not None:
@@ -263,7 +252,6 @@ def create_gateway_app(
             raise typer.Exit(1)
 
         cfg = load_runtime_config(config, workspace)
-        admit_config(cfg)
         unconfigured_provider_error = None
         if validate_startup_config is not None:
             unconfigured_provider_error = validate_startup_config(cfg)
@@ -352,7 +340,6 @@ def create_gateway_app(
     ) -> None:
         """Restart the background gateway."""
         cfg = load_runtime_config(config, workspace)
-        admit_config(cfg)
         if validate_startup_config is not None:
             validate_startup_config(cfg)
         if prepare_webui_bundle is not None:
@@ -412,7 +399,6 @@ def create_gateway_app(
         loaded_config = None
         if not dry_run:
             loaded_config = load_runtime_config(config, workspace)
-            admit_config(loaded_config)
         options = GatewayServiceOptions(
             start=start_options(
                 port=port,

@@ -682,16 +682,15 @@ async def test_projected_title_generation_skips_existing_chat_title(tmp_path: Pa
 def test_save_turn_keeps_multimodal_runtime_context_for_model_replay() -> None:
     loop = _mk_loop()
     session = Session(key="test:runtime-only")
-    block = RuntimeContextBlock(source="test", content="provider context")
+    block = RuntimeContextBlock(source="test", content="provider context", retention="persist_compact")
 
     loop._save_turn(
         session,
         [_runtime_message([], [block])],
         skip=0,
     )
-    assert session.messages[0]["content"] == [
-        {"type": "text", "text": "provider context"}
-    ]
+    assert session.messages[0]["content"] == []
+    assert session.get_history()[0]["content"] == [{"type": "text", "text": "provider context"}]
     assert public_history_message(session.messages[0])["content"] == []
 
 
@@ -794,7 +793,6 @@ def test_save_turn_keeps_image_placeholder_and_runtime_context() -> None:
     )
     assert session.messages[0]["content"] == [
         {"type": "text", "text": "[image: /media/feishu/photo.jpg]"},
-        {"type": "text", "text": "provider context"},
     ]
     assert public_history_message(session.messages[0])["content"] == [
         {"type": "text", "text": "[image: /media/feishu/photo.jpg]"}
@@ -818,7 +816,6 @@ def test_save_turn_keeps_image_placeholder_without_meta() -> None:
     )
     assert session.messages[0]["content"] == [
         {"type": "text", "text": "[image]"},
-        {"type": "text", "text": "provider context"},
     ]
 
 
@@ -862,7 +859,7 @@ def test_save_turn_redacts_tool_image_without_truncating_text() -> None:
     ]
 
 
-def test_save_turn_persists_runtime_context_and_public_view_hides_it() -> None:
+def test_save_turn_drops_turn_only_goal_context() -> None:
     loop = _mk_loop()
     session = Session(key="test:suffix-strip")
     block = RuntimeContextBlock(source="goal", content="internal goal guidance")
@@ -872,8 +869,8 @@ def test_save_turn_persists_runtime_context_and_public_view_hides_it() -> None:
         [_runtime_message("hello world", [block])],
         skip=0,
     )
-    assert session.messages[0]["content"] == "hello world\n\ninternal goal guidance"
-    assert session.messages[0][RUNTIME_CONTEXT_HISTORY_META]["sources"] == ["goal"]
+    assert session.messages[0]["content"] == "hello world"
+    assert RUNTIME_CONTEXT_HISTORY_META not in session.messages[0]
     assert public_history_message(session.messages[0])["content"] == "hello world"
 
 
@@ -937,7 +934,7 @@ def test_save_turn_keeps_string_when_only_runtime_context() -> None:
         [_runtime_message("", [block])],
         skip=0,
     )
-    assert session.messages[0]["content"] == "provider context"
+    assert session.messages[0]["content"] == ""
     assert public_history_message(session.messages[0])["content"] == ""
 
 
@@ -1382,7 +1379,7 @@ async def test_subagent_followup_state_is_durable_before_prompt_assembly(_make_f
 ) -> None:
     loop = await _make_full_loop(tmp_path, keys=('cli:subagent-prompt-crash',))
     loop.provider.can_resume_conversation_state.return_value = True
-    loop.context.build_system_prompt = MagicMock(  # type: ignore[method-assign]
+    loop.context.compile_system_prompt = MagicMock(  # type: ignore[method-assign]
         side_effect=RuntimeError("prompt boom"),
     )
     session = loop.sessions.get_or_create("cli:subagent-prompt-crash")
@@ -1414,8 +1411,8 @@ async def test_subagent_redelivery_does_not_duplicate_staged_provider_input(_mak
 ) -> None:
     loop = await _make_full_loop(tmp_path, keys=('cli:subagent-redelivery',))
     loop.provider.can_resume_conversation_state.return_value = True
-    build_system_prompt = loop.context.build_system_prompt
-    loop.context.build_system_prompt = MagicMock(  # type: ignore[method-assign]
+    compile_system_prompt = loop.context.compile_system_prompt
+    loop.context.compile_system_prompt = MagicMock(  # type: ignore[method-assign]
         side_effect=RuntimeError("prompt boom"),
     )
     session = loop.sessions.get_or_create("cli:subagent-redelivery")
@@ -1439,7 +1436,7 @@ async def test_subagent_redelivery_does_not_duplicate_staged_provider_input(_mak
         message.get("content")
         for message in persisted.provider_state.pending_messages
     ].count("subagent result") == 1
-    loop.context.build_system_prompt = build_system_prompt  # type: ignore[method-assign]
+    loop.context.compile_system_prompt = compile_system_prompt  # type: ignore[method-assign]
     loop._run_agent_loop = AsyncMock(  # type: ignore[method-assign]
         side_effect=RuntimeError("provider boom"),
     )
@@ -1741,7 +1738,7 @@ async def test_internal_continuation_queues_turn_without_fake_user_history(_make
         assert "Finish the long goal." in queued.content
 
         session = loop.sessions.get_or_create("feishu:c-auto")
-        assert "Finish the long goal." in str(session.messages[0]["content"])
+        assert "Finish the long goal." not in str(session.messages[0]["content"])
         assert [
             {k: v for k, v in m.items() if k in {"role", "content"}}
             for m in map(public_history_message, session.messages)
@@ -2386,7 +2383,6 @@ async def test_system_subagent_followup_uses_common_turn_lifecycle(_make_full_lo
 
     for name in (
         "_restore_turn",
-        "_compact_session",
         "_dispatch_command",
         "_build_turn",
         "_run_turn",
@@ -2428,7 +2424,6 @@ async def test_system_subagent_followup_uses_common_turn_lifecycle(_make_full_lo
 
     assert visited == [
         "_restore_turn",
-        "_compact_session",
         "_dispatch_command",
         "_build_turn",
         "_run_turn",
@@ -2436,7 +2431,7 @@ async def test_system_subagent_followup_uses_common_turn_lifecycle(_make_full_lo
         "_prepare_outbound",
     ]
     logged = "".join(logs)
-    for stage in ("restore", "compact", "command", "build", "run", "save", "respond"):
+    for stage in ("restore", "command", "build", "run", "save", "respond"):
         assert f"Stage {stage} completed in" in logged
 
 
@@ -2638,7 +2633,7 @@ async def test_turn_after_unanswered_user_keeps_tool_call_pairing(_make_full_loo
         initial_messages = _assembled_messages(loop.context, transcript_input)
         assert [m["role"] for m in initial_messages] == ["system", "user", "user"]
         assert initial_messages[-2]["content"] == "earlier question that never got an answer"
-        assert initial_messages[-1]["content"] == "and another thing"
+        assert initial_messages[-1]["content"].split("\n\n", 1)[0] == "and another thing"
         return _agent_run_result(
             "done",
             [

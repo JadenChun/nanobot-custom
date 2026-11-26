@@ -193,6 +193,9 @@ _FAST_BIGRAMS = frozenset({
 
 
 class DesktopUseTool(Tool):
+    exposure = "deferred"
+    namespace = "ui"
+    search_keywords = ("desktop", "screen", "mouse", "keyboard", "gui")
     """Stateless pixel-coordinate desktop driver (Operator / Anthropic style)."""
 
     def __init__(

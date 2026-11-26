@@ -137,7 +137,7 @@ def test_selected_websocket_project_is_visible_to_the_model(
     )
     prompt = ContextBuilder(agent_home).build_system_prompt(workspace=scope.project_path)
 
-    assert prompt.index("# Tool Usage Notes") < prompt.index("# Current Project")
+    assert prompt.index("# Operating Principles") < prompt.index("# Current Project")
     assert f"Working directory: {project.resolve()}" in prompt
     assert "Use it as the default root for project files" in prompt
 

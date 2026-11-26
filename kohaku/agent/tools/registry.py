@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import Collection, Iterable
+from collections.abc import Callable, Collection, Iterable, Iterator
 from contextlib import ExitStack, contextmanager
 from copy import deepcopy
 from dataclasses import dataclass, replace
@@ -35,10 +35,10 @@ if TYPE_CHECKING:
 MANAGED_WEBUI_TOOL_NAMES = frozenset({
     "read_file", "write_file", "edit_file", "list_dir", "find_files", "grep", "exec",
     "exec_session", "list_exec_sessions", "web_search", "web_fetch",
-    "list_sessions", "search_sessions", "read_session",
+    "list_sessions", "read_session", "memory_search",
     "message", "cron", "generate_image", "repository_catalog",
     "save_knowledge", "select_workspace", "plan_task", "delegate_task",
-    "request_folder_access", "review_work", "explore", "followup_child",
+    "request_folder_access", "review_work", "explore", "followup_child", "tool_search",
 })
 
 _MANAGED_CAPABILITY_DENIAL = (
@@ -56,17 +56,21 @@ def managed_webui_tool_names(tools: Iterable[Tool]) -> frozenset[str]:
     rather than a new unconfined process launch.
     """
     names = set(MANAGED_WEBUI_TOOL_NAMES)
+    for tool in tools:
+        if is_managed_mcp_tool(tool):
+            names.add(tool.name)
+    return frozenset(names)
+
+
+def is_managed_mcp_tool(tool: Tool) -> bool:
     from kohaku.agent.tools.mcp import (
+        MCPMetaTool,
         MCPPromptWrapper,
         MCPResourceWrapper,
         MCPToolWrapper,
     )
 
-    managed_mcp_types = {MCPToolWrapper, MCPResourceWrapper, MCPPromptWrapper}
-    for tool in tools:
-        if type(tool) in managed_mcp_types:
-            names.add(tool.name)
-    return frozenset(names)
+    return type(tool) in {MCPMetaTool, MCPToolWrapper, MCPResourceWrapper, MCPPromptWrapper}
 
 
 class ManagedToolDispatchGuard:
@@ -77,10 +81,17 @@ class ManagedToolDispatchGuard:
         grants: FolderGrantView | None,
         *,
         allowed_names: Collection[str] | None = None,
+        allowed_live: Callable[[str], bool] | None = None,
     ) -> None:
         self._grants = grants
         self._allowed_names = frozenset(
             MANAGED_WEBUI_TOOL_NAMES if allowed_names is None else allowed_names
+        )
+        self._allowed_live = allowed_live
+
+    def _allowed(self, name: str) -> bool:
+        return name in self._allowed_names or (
+            self._allowed_live is not None and self._allowed_live(name)
         )
 
     def _managed_context(self) -> bool:
@@ -94,7 +105,7 @@ class ManagedToolDispatchGuard:
         )
 
     def error(self, name: str) -> str | None:
-        if not self._managed_context() or name in self._allowed_names:
+        if not self._managed_context() or self._allowed(name):
             return None
         return _MANAGED_CAPABILITY_DENIAL.format(name=name)
 
@@ -106,7 +117,7 @@ class ManagedToolDispatchGuard:
             request is None
             or request.channel != "websocket"
             or grants is None
-            or name in self._allowed_names
+            or self._allowed(name)
         ):
             yield None
             return
@@ -312,7 +323,7 @@ class ToolRegistry:
         return self.get(name) is not None
 
     @staticmethod
-    def _schema_name(schema: dict[str, Any]) -> str:
+    def schema_name(schema: dict[str, Any]) -> str:
         """Extract a normalized tool name from either OpenAI or flat schemas."""
         fn = schema.get("function")
         if isinstance(fn, dict):
@@ -334,14 +345,14 @@ class ToolRegistry:
             builtins: list[dict[str, Any]] = []
             mcp_tools: list[dict[str, Any]] = []
             for schema in definitions:
-                name = self._schema_name(schema)
+                name = self.schema_name(schema)
                 if name.startswith("mcp_"):
                     mcp_tools.append(schema)
                 else:
                     builtins.append(schema)
 
-            builtins.sort(key=self._schema_name)
-            mcp_tools.sort(key=self._schema_name)
+            builtins.sort(key=self.schema_name)
+            mcp_tools.sort(key=self.schema_name)
             self._cached_definitions = builtins + mcp_tools
 
         return deepcopy(self._cached_definitions)
@@ -585,8 +596,11 @@ class ToolRegistry:
     async def execute_with_context(self, name: str, params: Any, context: Any) -> Any:
         return await self.execute(name, params, context=context)
 
-    def iter_tools(self):
+    def iter_tools(self) -> Iterator[Tool]:
         return iter(self._tools.values())
+
+    def _live_registrations(self) -> dict[str, _ToolRegistration]:
+        return self._registrations
 
     def _filtered_dispatch_parent(self) -> ToolRegistry:
         return self
@@ -619,6 +633,111 @@ class ToolRegistry:
         return self.has(name)
 
 
+class PolicyToolView(ToolRegistry):
+    """A turn-local overlay that borrows current admitted registrations."""
+
+    def __init__(self, root: ToolRegistry, allows: Callable[[Tool], bool]) -> None:
+        super().__init__()
+        self._root = root
+        self._allows = allows
+        self._local: set[str] = set()
+        self._removed: set[str] = set()
+        self._mcp_schemas: dict[str, dict[str, Any]] = {}
+        self._dispatch_parent = ref(root)
+        self._admission.parent = root._admission
+
+    def _sync(self) -> None:
+        available = self._root._live_registrations()
+        inherited: dict[str, _ToolRegistration] = {}
+        for name, registration in available.items():
+            if name in self._local or name in self._removed or not self._allows(registration.tool):
+                continue
+            current = self._registrations.get(name)
+            if (
+                name in self._mcp_schemas
+                and (current is None or current.parent is not registration)
+                and registration.tool.to_schema() != self._mcp_schemas[name]
+            ):
+                continue
+            inherited[name] = registration
+        for name in set(self._tools) - self._local - inherited.keys():
+            super().unregister(name)
+        for name, registration in inherited.items():
+            current = self._registrations.get(name)
+            if current is not None and current.parent is registration:
+                continue
+            if current is not None:
+                super().unregister(name)
+            super().register(registration.tool)
+            self._registrations[name].parent = registration
+        self._withheld_names.update(available.keys() - self._tools.keys())
+        self._withheld_names.update(self._root._withheld_names - self._tools.keys())
+
+    def register(self, tool: Tool) -> None:
+        self._sync()
+        super().register(tool)
+        self._local.add(tool.name)
+
+    def replace(self, tool: Tool) -> None:
+        self._sync()
+        super().replace(tool)
+        self._local.add(tool.name)
+
+    def unregister(self, name: str) -> None:
+        self._sync()
+        super().unregister(name)
+        self._local.discard(name)
+        self._removed.add(name)
+
+    def _live_registrations(self) -> dict[str, _ToolRegistration]:
+        self._sync()
+        return super()._live_registrations()
+
+    def dispatch_error(self, name: str) -> str | None:
+        self._sync()
+        return super().dispatch_error(name)
+
+    def get(self, name: str) -> Tool | None:
+        self._sync()
+        return super().get(name)
+
+    def iter_tools(self) -> Iterator[Tool]:
+        self._sync()
+        return super().iter_tools()
+
+    def get_definitions(self) -> list[dict[str, Any]]:
+        self._sync()
+        return super().get_definitions()
+
+    def get_runtime_context_providers(self) -> list[RuntimeContextProvider]:
+        self._sync()
+        return super().get_runtime_context_providers()
+
+    def capture_request_tools(self) -> CapturedToolBindings:
+        self._sync()
+        for tool in self._tools.values():
+            if tool.name not in self._mcp_schemas and is_managed_mcp_tool(tool):
+                self._mcp_schemas[tool.name] = deepcopy(tool.to_schema())
+        return super().capture_request_tools()
+
+    @property
+    def tool_names(self) -> list[str]:
+        self._sync()
+        return super().tool_names
+
+    def __len__(self) -> int:
+        self._sync()
+        return super().__len__()
+
+    def filtered(self, names: list[str]) -> ToolRegistry:
+        included = frozenset(names)
+        return PolicyToolView(self, lambda tool: tool.name in included)
+
+    def without(self, names: Collection[str]) -> PolicyToolView:
+        excluded = frozenset(names)
+        return PolicyToolView(self, lambda tool: tool.name not in excluded)
+
+
 class CapturedToolBindings(ToolRegistry):
     """Owned request/borrower view of exact registrations, with live revocation.
 
@@ -644,31 +763,77 @@ class CapturedToolBindings(ToolRegistry):
         self._origin_registries = tuple(origins)
         self._released = False
         included = set(names)
-        self._tools = {name: tool for name, tool in source._tools.items() if name in included}
-        self._registrations = {name: source._registrations[name] for name in self._tools}
+        self._registrations = {
+            name: registration for name, registration in source._live_registrations().items()
+            if name in included
+        }
+        self._tools = {name: registration.tool for name, registration in self._registrations.items()}
         self._withheld_names = source._withheld_names | (source._tools.keys() - included)
         definitions = (source.get_definitions() if isinstance(source, CapturedToolBindings)
                        else [deepcopy(tool.to_schema()) for tool in self._tools.values()])
         self._definitions = sorted(
-            (definition for definition in definitions if self._schema_name(definition) in self._tools),
-            key=lambda definition: (self._schema_name(definition).startswith("mcp_"),
-                                    self._schema_name(definition)),
+            (definition for definition in definitions if self.schema_name(definition) in self._tools),
+            key=lambda definition: (self.schema_name(definition).startswith("mcp_"),
+                                    self.schema_name(definition)),
         )
         self._schemas: dict[str, dict[str, Any]] = {
             name: deepcopy(tool.parameters) for name, tool in self._tools.items()
         }
         if isinstance(source, CapturedToolBindings):
             self._schemas = {name: deepcopy(source._schemas[name]) for name in self._tools}
-        from kohaku.agent.tools.mcp import mcp_generation_lease
+        from kohaku.agent.tools.mcp import mcp_generation_leases
 
-        leases = {lease for tool in self._tools.values()
-                  if (lease := mcp_generation_lease(tool)) is not None}
+        leases = {
+            lease
+            for tool in self._tools.values()
+            for lease in mcp_generation_leases(tool)
+        }
         self._leases: tuple[MCPGenerationLease, ...] = tuple(
             lease for lease in leases if lease.acquire_sampled()
         )
 
     def get_definitions(self) -> list[dict[str, Any]]:
         return deepcopy(self._definitions)
+
+    def refresh_reconnected_tools(self) -> None:
+        """Keep sampled schemas and bind equivalent successors after a transport reconnect."""
+        source = self._source
+        if source is None:
+            return
+        from kohaku.agent.tools.mcp import MCPMetaTool, MCPToolWrapper, mcp_generation_leases
+
+        current = source._live_registrations()
+        leases = set(self._leases)
+        for name, old_tool in self._tools.items():
+            next_registration = current.get(name)
+            if (
+                next_registration is None
+                or not isinstance(old_tool, (MCPToolWrapper, MCPMetaTool))
+                or not old_tool.accepts_reconnected_tool(next_registration.tool)
+                or next_registration.error() is not None
+            ):
+                continue
+            next_leases = mcp_generation_leases(next_registration.tool)
+            if not next_leases:
+                continue
+            acquired: list[MCPGenerationLease] = []
+            ok = True
+            for lease in next_leases:
+                if lease in leases:
+                    continue
+                if not lease.acquire_sampled():
+                    ok = False
+                    break
+                acquired.append(lease)
+            if not ok:
+                for lease in acquired:
+                    lease.release_sampled()
+                continue
+            if acquired:
+                self._leases = (*self._leases, *acquired)
+                leases.update(acquired)
+            self._tools[name] = next_registration.tool
+            self._registrations[name] = next_registration
 
     def dispatch_error(self, name: str) -> str | None:
         if self._released:

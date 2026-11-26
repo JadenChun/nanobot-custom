@@ -169,7 +169,6 @@ async def test_default_foreground_and_clean_close_do_not_import_optional_cron(tm
     handle = await composition.acquire()
     assert handle.cron_runtime is None and handle.cron.occurrence_store is None
     assert effects.provider == 0 and effects.sends == []
-    assert handle.agent.auto_compact is None
     await joined(handle.agent.process_direct("ordinary", session_key="cli:new"))
     await joined(composition.aclose())
     assert effects.provider == 1 and effects.sends == []
@@ -222,7 +221,7 @@ async def test_default_owned_failure_classification_and_explicit_retry_without_o
     assert value.state is RuntimeState.CLOSED and effects.lifecycle[-2:] == ["channels-close", "mcp-close"]
 
 
-@pytest.mark.parametrize("unsafe", ["witness", "journal", "sidecar", "ttl", "idle", "recovery", "quarantine"])
+@pytest.mark.parametrize("unsafe", ["witness", "journal", "sidecar", "ttl"])
 async def test_assembled_startup_unsafe_state_denies_before_dependency_factories(tmp_path, unsafe):
     from kohaku.session.manager import JsonlSessionStore
 
@@ -242,14 +241,6 @@ async def test_assembled_startup_unsafe_state_denies_before_dependency_factories
         config.agents.defaults.session_ttl_minutes = 1
     elif unsafe == "idle":
         config.agents.defaults.idle_compaction.enabled = True
-    else:
-        memory = config.workspace_path / "memory"
-        memory.mkdir(mode=0o700)
-        if unsafe == "recovery":
-            (memory / ".consolidation.pending.json").write_bytes(b"pending fake receipt")
-        else:
-            (memory / ".recovery" / "receipt-quarantine").mkdir(parents=True, mode=0o700)
-            (memory / ".recovery").chmod(0o700)
     before = set(asyncio.all_tasks())
     value = None
     with pytest.raises((ValueError, RuntimeError)):

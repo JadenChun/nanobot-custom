@@ -227,8 +227,9 @@ async def test_read_file_result_is_not_offloaded(tmp_path):
     tool_message = next(msg for msg in captured_second_call if msg.get("role") == "tool")
     # read_file result must NOT be offloaded to a file
     assert "[tool output persisted]" not in tool_message["content"]
-    # read_file manages its own size; generic truncation must NOT apply
-    assert len(tool_message["content"]) == 20_000
+    assert len(tool_message["content"]) <= 2048
+    assert tool_message["content"].startswith("x" * 800)
+    assert tool_message["content"].endswith("x" * 400)
     # no file should have been written for this read_file call
     offload_dir = tmp_path / ".nanobot" / "tool-results"
     assert not any(offload_dir.rglob("call_rf.txt")) if offload_dir.exists() else True
@@ -278,7 +279,9 @@ async def test_processed_tool_result_is_stable_for_persistence_and_replay(tmp_pa
     loop._save_turn(session, result.messages, skip=1)
     persisted_tool = next(message for message in session.messages if message.get("role") == "tool")
 
-    assert request_tool["content"] == raw_result
+    assert request_tool["content"].startswith("start-")
+    assert request_tool["content"].endswith("-end-marker")
+    assert len(request_tool["content"]) <= 2048
     assert persisted_tool["content"] == request_tool["content"]
 
     replay_provider = MagicMock()
@@ -308,7 +311,7 @@ async def test_processed_tool_result_is_stable_for_persistence_and_replay(tmp_pa
     assert replay_request_tool["content"] == request_tool["content"]
 
 
-async def test_runner_keeps_going_when_tool_result_persistence_fails():
+async def test_runner_keeps_going_when_tool_result_persistence_fails(tmp_path):
     from kohaku.agent.runner import AgentRunner
 
     provider = MagicMock()
@@ -329,24 +332,28 @@ async def test_runner_keeps_going_when_tool_result_persistence_fails():
     provider.chat_with_retry = chat_with_retry
     tools = MagicMock()
     tools.get_definitions.return_value = []
-    tools.execute = AsyncMock(return_value="tool result")
+    raw = "Start " + ("x" * 20_000) + " End"
+    tools.execute = AsyncMock(return_value=raw)
 
     runner = AgentRunner()
     with patch(
-        "kohaku.agent.context_governance.maybe_persist_tool_result",
-        side_effect=RuntimeError("disk full"),
+        "kohaku.context.tool_result_gate.maybe_persist_tool_result",
+        side_effect=OSError("disk full"),
     ):
         result = await runner.run(make_run_spec(provider,
             initial_messages=[{"role": "user", "content": "do task"}],
             tools=tools,
             model="test-model",
             max_iterations=2,
-            max_tool_result_chars=_MAX_TOOL_RESULT_CHARS,
+            max_tool_result_chars=2048,
+            workspace=tmp_path,
         ))
 
     assert result.final_content == "done"
     tool_message = next(msg for msg in captured_second_call if msg.get("role") == "tool")
-    assert tool_message["content"] == "tool result"
+    assert tool_message["content"].startswith("Start ")
+    assert tool_message["content"].endswith(" End")
+    assert len(tool_message["content"]) <= 2048
 
 
 async def test_mixed_tool_text_survives_model_save_replay(tmp_path):
@@ -405,8 +412,10 @@ async def test_tiny_budget_keeps_complete_readable_reference(tmp_path):
     )
     raw = "y" * 20_000
     reference = ContextGovernor.normalize_tool_result(config, call_id, "exec", raw)
-    assert reference.startswith("[truncated: ") and reference.endswith("]")
-    path = reference.removeprefix("[truncated: ").removesuffix("]")
+    assert len(reference) <= 2_000
+    path = next(line.removeprefix("Full output saved to workspace path: ")
+                for line in reference.splitlines()
+                if line.startswith("Full output saved to workspace path: "))
     assert raw in await reader.execute(path=path)
     assert ContextGovernor.normalize_tool_result(config, call_id, "exec", reference) == reference
     assert (tmp_path / path).read_text(encoding="utf-8") == raw

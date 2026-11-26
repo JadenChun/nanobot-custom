@@ -34,7 +34,6 @@ from kohaku.cli.webui_support import (
     _webui_display_url,
     _webui_endpoint_reachable,
 )
-from kohaku.config.paths import get_default_sessions_root
 from kohaku.utils.helpers import sync_workspace_templates
 from kohaku.webui.dev import (
     WebUIDevError,
@@ -101,17 +100,13 @@ def webui(
         from kohaku.migration_guard import require_runtime_ready
 
         require_runtime_ready()
-    from kohaku.agent.memory_recovery_startup_admission import (
-        StartupReceiptAdmissionError,
-        admitted_startup_mutation,
-        require_startup_receipt_admission,
-    )
     from kohaku.config.loader import resolve_config_env_vars, save_config
     from kohaku.gateway import (
         GatewayClientLease,
         GatewayInstance,
         GatewayRuntime,
     )
+    from kohaku.utils.workspace_lock import open_workspace_memory_lock
 
     cli_terminal._ensure_interactive_tty_mode()
     config_path = _resolve_webui_config_path(config)
@@ -178,36 +173,25 @@ def webui(
         raise typer.Exit(1) from exc
 
     workspace_path = setup_config.workspace_path.resolve(strict=False)
-    if setup_config.runtime_data_dir is not None:
-        sessions_root = setup_config.runtime_data_dir / "sessions"
-    elif config:
-        sessions_root = config_path.parent / "sessions"
-    else:
-        sessions_root = get_default_sessions_root()
-    try:
-        require_startup_receipt_admission(workspace_path, sessions_root=sessions_root)
-        with admitted_startup_mutation(workspace_path, sessions_root=sessions_root):
-            if created_config or provider_error or changed_webui or workspace:
-                save_config(setup_config, config_path)
-                console.print(f"[green]✓[/green] Saved config: {config_path}")
-            workspace_path.mkdir(parents=True, exist_ok=True)
-            sync_workspace_templates(workspace_path)
-    except StartupReceiptAdmissionError as exc:
-        console.print(f"[red]Error: {exc}[/red]")
-        raise typer.Exit(1) from None
+    if created_config or provider_error or changed_webui or workspace:
+        save_config(setup_config, config_path)
+        console.print(f"[green]✓[/green] Saved config: {config_path}")
+    workspace_path.mkdir(parents=True, exist_ok=True)
+    with open_workspace_memory_lock(workspace_path):
+        sync_workspace_templates(workspace_path)
 
     runtime_config = _load_runtime_config(str(config_path), workspace)
     runtime_sessions_root = (runtime_config.runtime_data_dir or config_path.parent) / "sessions"
     from kohaku.runtime_composition import RuntimePreflightError, runtime_preflight
 
-    def recheck_startup_admission() -> None:
+    def check_runtime_preflight() -> None:
         try:
             runtime_preflight(runtime_config, sessions_root=runtime_sessions_root)
-        except (StartupReceiptAdmissionError, RuntimePreflightError) as exc:
+        except RuntimePreflightError as exc:
             console.print(f"[red]Error: {exc}[/red]")
             raise typer.Exit(1) from None
 
-    recheck_startup_admission()
+    check_runtime_preflight()
     effective_gateway_port = gateway_port if gateway_port is not None else runtime_config.gateway.port
 
     dev_browser_url = webui_dev_browser_url(webui_url) if dev else None
@@ -240,7 +224,7 @@ def webui(
         webui_bundle_mode = _webui_build_mode_for_interactive(yes=yes)
         _prepare_webui_bundle_for_gateway(runtime_config, mode=webui_bundle_mode)
 
-    recheck_startup_admission()
+    check_runtime_preflight()
     instance = GatewayInstance.resolve(
         config_path=config_path,
         workspace=workspace,
@@ -250,14 +234,14 @@ def webui(
 
     def ensure_shared_gateway(*, client_lease: GatewayClientLease) -> None:
         """Start or refresh the one managed gateway shared by local clients."""
-        recheck_startup_admission()
+        check_runtime_preflight()
         result = client_lease.ensure_on_demand_gateway(start_options)
         restarted = False
         restart_attempted = False
         if not result.ok and result.message == "gateway_already_running" and changed_webui:
             restart_attempted = True
             console.print("[yellow]WebUI config changed; restarting the background gateway.[/yellow]")
-            recheck_startup_admission()
+            check_runtime_preflight()
             result = runtime.restart(start_options, timeout_s=20)
             restarted = result.ok
         if not result.ok and (restart_attempted or result.message != "gateway_already_running"):
@@ -324,7 +308,7 @@ def webui(
 
             try:
                 assert dev_browser_url is not None
-                recheck_startup_admission()
+                check_runtime_preflight()
                 with run_webui_dev_server(
                     target_url=webui_dev_proxy_target(webui_url),
                     browser_url=dev_browser_url,
@@ -371,7 +355,7 @@ def webui(
         if dev_browser_url:
             dev_proxy_target = webui_dev_proxy_target(webui_url)
             try:
-                recheck_startup_admission()
+                check_runtime_preflight()
                 with run_webui_dev_server(
                     target_url=dev_proxy_target,
                     browser_url=dev_browser_url,

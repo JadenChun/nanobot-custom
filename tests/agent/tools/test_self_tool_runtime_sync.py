@@ -21,7 +21,7 @@ async def test_my_tool_max_iterations_syncs_subagent_limit(tmp_path, admitted_as
             bus=inputs.bus, provider=provider, workspace=inputs.config.workspace_path,
             max_iterations=40, session_manager=inputs.sessions,
             tool_registry=inputs.tools, cron_service=inputs.cron,
-            turn_delivery_factory=inputs.delivery, enable_legacy_auto_compact=False,
+            turn_delivery_factory=inputs.delivery,
             tools_config=ToolsConfig(my=MyToolConfig(allow_set=True)),
         )
 

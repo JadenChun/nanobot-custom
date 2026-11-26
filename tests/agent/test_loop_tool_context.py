@@ -64,7 +64,6 @@ def _build_loop(provider: LLMProvider, registries: list[ToolRegistry] | None = N
             model="test-model", session_manager=inputs.sessions, tool_registry=inputs.tools,
             cron_service=inputs.cron, turn_delivery_factory=inputs.delivery,
             tools_config=inputs.config.tools, restrict_to_workspace=True,
-            session_ttl_minutes=0,
         )
     return build
 
@@ -319,21 +318,6 @@ async def test_process_message_captures_original_text_before_restore(
         )
 
     assert seen == [(expected, runtime)]
-
-
-def test_tool_context_construction_rejects_pending_startup_receipt(tmp_path: Path) -> None:
-    from kohaku.agent.memory_recovery_startup_admission import StartupReceiptAdmissionError
-    from kohaku.bus.queue import MessageBus
-
-    workspace = tmp_path / "workspace"
-    pending = workspace / "memory" / ".consolidation.pending.json"
-    pending.parent.mkdir(parents=True)
-    pending.write_text("{broken", encoding="utf-8")
-    with pytest.raises(StartupReceiptAdmissionError):
-        AgentLoop(
-            bus=MessageBus(), provider=ScriptedProvider([]), workspace=workspace,
-            sessions_root=tmp_path / "sessions",
-        )
 
 
 async def test_unapproved_context_recording_call_is_not_dispatched(

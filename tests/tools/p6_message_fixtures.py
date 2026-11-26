@@ -28,7 +28,6 @@ async def make_loop(
             model="test-model", session_manager=inputs.sessions, tool_registry=inputs.tools,
             cron_service=inputs.cron, turn_delivery_factory=inputs.delivery,
             tools_config=inputs.config.tools, restrict_to_workspace=True,
-            enable_legacy_auto_compact=False,
         )
 
     return await acquire(root, build, keys=keys)
@@ -55,7 +54,6 @@ async def execute_message(
         ),
         _options=_TurnExecutionOptions(
             inbound=message, ephemeral=ephemeral, raise_errors=True,
-            trusted_foreground_activity=loop._trusted_foreground_inbound(message),
             admission_scope=queue_scope if pending_queue is not None else None,
         ),
     )

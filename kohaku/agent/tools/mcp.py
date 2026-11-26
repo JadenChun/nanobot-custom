@@ -11,11 +11,12 @@ import re
 import shutil
 import urllib.parse
 import uuid
+from collections import Counter
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterable, Mapping, Sequence
 from contextlib import AsyncExitStack, suppress
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal, Protocol, TypeGuard, cast
+from typing import TYPE_CHECKING, Any, Literal, Protocol, TypeGuard, TypeVar, cast, overload
 from urllib.parse import urlparse
 
 import httpx
@@ -28,6 +29,7 @@ from kohaku.agent.tools.progress import (
 )
 from kohaku.agent.tools.registry import ToolRegistry
 from kohaku.agent.turn import ToolOutcome
+from kohaku.context.budget import TokenMeter
 from kohaku.security.network import (
     PinnedDNSAsyncTransport,
     env_proxy_applies_to_url,
@@ -71,6 +73,10 @@ _KOHAKU_MEDIA_CONTROL_TOOL = "cancel_kohaku_media_call"
 _KOHAKU_MEDIA_CALL_META_KEY = "ai.nanobot.media.call_id"
 _KOHAKU_MEDIA_SETTLE_STOP_REASON = "kohaku_media_settled"
 _KOHAKU_MEDIA_CONTROL_TIMEOUT_SECONDS = 5.0
+_MAX_MCP_PAGES = 20
+_MAX_CONNECTIONS = 8
+_MAX_DESCRIPTION_CHARS = 512
+_MAX_SCHEMA_CHARS = 8192
 
 
 class MCPConnection(Protocol):
@@ -210,6 +216,11 @@ def _limit_tool_name(name: str, max_length: int = _MAX_TOOL_NAME_LENGTH) -> str:
 def _sanitize_mcp_tool_name(name: str) -> str:
     """Sanitize and limit an MCP-derived tool name."""
     return _limit_tool_name(_sanitize_name(name))
+
+
+def _collision_name(name: str, original: str) -> str:
+    suffix = "_" + hashlib.sha256(original.encode("utf-8")).hexdigest()[:12]
+    return name[:_MAX_TOOL_NAME_LENGTH - len(suffix)] + suffix
 
 
 def _is_transient(exc: BaseException) -> bool:
@@ -513,17 +524,13 @@ _SUPPORTED_MCP_SCHEMA_KEYS = frozenset({
     "enum", "minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum",
     "multipleOf", "minLength", "maxLength", "minItems", "maxItems",
     "nullable", "description", "title", "default", "$ref", "$schema",
-    "definitions", "anyOf",
+    "definitions", "$defs", "anyOf", "oneOf", "allOf",
+    "format", "pattern", "const", "examples",
 })
 
 
-def _is_null_schema_branch(branch: Any) -> bool:
-    """Return whether one anyOf branch is the JSON null marker."""
-    return isinstance(branch, dict) and cast(dict[str, Any], branch).get("type") == "null"
-
-
 def _validate_mcp_schema(schema: Any, *, path: str = "") -> str | None:
-    """Reject a schema whose advertised constraints the local validator cannot enforce."""
+    """Validate the structure and supported keywords of an MCP input schema."""
     if not isinstance(schema, dict):
         return f"{path or 'schema'} must be an object"
     mapping = cast(dict[str, Any], schema)
@@ -544,10 +551,12 @@ def _validate_mcp_schema(schema: Any, *, path: str = "") -> str | None:
             list(cast(list[Any], raw_type))
             if isinstance(raw_type, list) else [raw_type]
         )
-        if any(item not in {"string", "integer", "number", "boolean", "array", "object", "null"} for item in types):
+        if any(not isinstance(item, str) or item not in {
+            "string", "integer", "number", "boolean", "array", "object", "null",
+        } for item in types):
             return f"{path or 'schema'} uses an unsupported type"
     for key, value in mapping.items():
-        if key == "properties" and isinstance(value, dict):
+        if key in {"properties", "definitions", "$defs"} and isinstance(value, dict):
             for name, child in cast(dict[str, Any], value).items():
                 error = _validate_mcp_schema(child, path=f"{path}.{name}" if path else name)
                 if error:
@@ -560,15 +569,10 @@ def _validate_mcp_schema(schema: Any, *, path: str = "") -> str | None:
             error = _validate_mcp_schema(value, path=f"{path}.*" if path else "*")
             if error:
                 return error
-        elif key == "anyOf" and isinstance(value, list):
+        elif key in {"anyOf", "oneOf", "allOf"} and isinstance(value, list):
             branches = cast(list[Any], value)
-            non_null = [
-                branch for branch in branches if not _is_null_schema_branch(branch)
-            ]
-            if len(non_null) > 1:
-                return f"{path or 'schema'} uses an unsupported anyOf branch"
             for index, branch in enumerate(branches):
-                error = _validate_mcp_schema(branch, path=f"{path}.anyOf[{index}]")
+                error = _validate_mcp_schema(branch, path=f"{path}.{key}[{index}]")
                 if error:
                     return error
     return None
@@ -692,11 +696,17 @@ class _MCPWrapperBase(Tool):
     _name: str
     _generation_lease: MCPGenerationLease | None = None
     _binding_ended: bool = False
+    prompt_instructions: str | None = None
 
     def _set_mcp_connection(self, session: ClientSession, server_name: str) -> None:
         self._session = session
         self._server_name = server_name
         self._reconnect: _ReconnectCallback | None = None
+
+    @property
+    def server_name(self) -> str:
+        """Configured MCP server this wrapper belongs to."""
+        return self._server_name
 
     def set_reconnect_handler(self, reconnect: _ReconnectCallback) -> None:
         self._reconnect = reconnect
@@ -788,6 +798,19 @@ def is_kohaku_media_stop_settlement(
 def mcp_generation_lease(tool: Tool) -> MCPGenerationLease | None:
     """Expose a concrete MCP wrapper's existing resource owner to request capture."""
     return tool.generation_lease if isinstance(tool, _MCPWrapperBase) else None
+
+
+def mcp_generation_leases(tool: Tool) -> tuple[MCPGenerationLease, ...]:
+    """Expose all generation leases owned by an MCP tool or meta-tool."""
+    if isinstance(tool, _MCPWrapperBase):
+        return (tool.generation_lease,) if tool.generation_lease is not None else ()
+    if isinstance(tool, MCPMetaTool):
+        seen: list[MCPGenerationLease] = []
+        for server in tool.servers.values():
+            if server.lease is not None and server.lease not in seen:
+                seen.append(server.lease)
+        return tuple(seen)
+    return ()
 
 
 def mcp_binding_error(tool: Tool) -> str | None:
@@ -947,12 +970,13 @@ def _classify_read_only(
 
 def is_read_only_mcp_tool(tool: Tool) -> bool:
     """Return whether a wrapped MCP tool is classified as read-only."""
-    return isinstance(tool, MCPToolWrapper) and tool.is_read_only
+    return isinstance(tool, MCPMetaTool) or isinstance(tool, MCPToolWrapper) and tool.is_read_only
 
 class MCPToolWrapper(_MCPWrapperBase):
     """Wraps a single MCP server tool as a nanobot Tool."""
 
     _plugin_discoverable = False
+    _reconnected_tool: MCPToolWrapper | None = None
 
     def __init__(
         self,
@@ -967,6 +991,9 @@ class MCPToolWrapper(_MCPWrapperBase):
         media_output_roots: Sequence[Path] = (),
         generation: str = "",
         kohaku_media_cancel_available: bool = False,
+        wrapped_name: str | None = None,
+        normalized_schema: dict[str, Any] | None = None,
+        defer_loading: bool = True,
     ):
         self._set_mcp_connection(session, server_name)
         self.generation = generation
@@ -980,10 +1007,19 @@ class MCPToolWrapper(_MCPWrapperBase):
             Path(root).expanduser() for root in media_output_roots
         )
         self._original_name = tool_def.name
-        self._name = _sanitize_mcp_tool_name(f"mcp_{server_name}_{tool_def.name}")
-        self._description = tool_def.description or tool_def.name
+        self._name = wrapped_name or _sanitize_mcp_tool_name(f"mcp_{server_name}_{tool_def.name}")
+        self._description = (tool_def.description or tool_def.name)[:_MAX_DESCRIPTION_CHARS]
+        self.exposure = "deferred" if defer_loading else "direct"
+        self.namespace = f"mcp:{server_name.lower()}"
         raw_schema = tool_def.inputSchema or {"type": "object", "properties": {}}
-        self._parameters = _normalize_schema_for_openai(raw_schema)
+        self._parameters: dict[str, Any] = (
+            normalized_schema if normalized_schema is not None
+            else _normalize_schema_for_openai(raw_schema)
+        )
+        if len(json.dumps(self._parameters, ensure_ascii=False, separators=(",", ":"))) > _MAX_SCHEMA_CHARS:
+            warning = " Input schema omitted because it exceeds the size limit."
+            self._description = self._description[:_MAX_DESCRIPTION_CHARS - len(warning)] + warning
+            self._parameters = {"type": "object", "properties": {}, "additionalProperties": True}
         self._tool_timeout = tool_timeout
         annotations = getattr(tool_def, "annotations", None)
         read_only, source, trusted_for_heuristics = _classify_read_only(
@@ -1008,6 +1044,30 @@ class MCPToolWrapper(_MCPWrapperBase):
             read_only_source=source,
             supports_parallel_calls=not tool_def.name.lower().startswith(_SERIAL_ONLY_PREFIXES),
         )
+
+    def disambiguate_name(self) -> None:
+        """Keep the original remote name while disambiguating the local schema."""
+        self._name = _collision_name(self._name, f"{self.server_name}/{self._original_name}")
+        self._mcp_metadata = replace(self._mcp_metadata, wrapped_name=self._name)
+
+    def admit_reconnected_tool(self, replacement: Tool | None) -> None:
+        """Link only an equivalent capability published by a transport reconnect."""
+        if (
+            isinstance(replacement, MCPToolWrapper)
+            and self.mcp_metadata == replacement.mcp_metadata
+            and self.exposure == replacement.exposure
+            and self.parameters == replacement.parameters
+            and self.description == replacement.description
+        ):
+            self._reconnected_tool = replacement
+
+    def accepts_reconnected_tool(self, candidate: Tool) -> bool:
+        successor = self._reconnected_tool
+        while successor is not None:
+            if successor is candidate:
+                return True
+            successor = successor._reconnected_tool
+        return False
 
     @property
     def mcp_metadata(self) -> MCPToolMetadata:
@@ -1530,12 +1590,12 @@ class MCPResourceWrapper(_MCPWrapperBase):
                 logger.warning(
                     "MCP resource '{}' timed out after {}s", self._name, self._resource_timeout
                 )
-                return f"(MCP resource read timed out after {self._resource_timeout}s)"
+                return ToolResult.error(f"(MCP resource read timed out after {self._resource_timeout}s)")
             except asyncio.CancelledError:
                 if task_is_cancelling():
                     raise
                 logger.warning("MCP resource '{}' was cancelled by server/SDK", self._name)
-                return "(MCP resource read was cancelled)"
+                return ToolResult.error("(MCP resource read was cancelled)")
             except Exception as exc:
                 if await self._refresh_session_after_termination(
                     exc,
@@ -1545,7 +1605,7 @@ class MCPResourceWrapper(_MCPWrapperBase):
                     refreshed_session = True
                     continue
                 if self._binding_ended:
-                    return "(MCP resource read refused: the bound connection generation ended)"
+                    return ToolResult.error("(MCP resource read refused: the bound connection generation ended)")
                 if _is_transient(exc):
                     if not retried_transient:
                         retried_transient = True
@@ -1561,14 +1621,14 @@ class MCPResourceWrapper(_MCPWrapperBase):
                         self._name,
                         type(exc).__name__,
                     )
-                    return f"(MCP resource read failed after retry: {type(exc).__name__})"
+                    return ToolResult.error(f"(MCP resource read failed after retry: {type(exc).__name__})")
                 logger.exception(
                     "MCP resource '{}' failed: {}: {}",
                     self._name,
                     type(exc).__name__,
                     exc,
                 )
-                return f"(MCP resource read failed: {type(exc).__name__})"
+                return ToolResult.error(f"(MCP resource read failed: {type(exc).__name__})")
             else:
                 parts: list[str] = []
                 for block in result.contents:
@@ -1652,12 +1712,12 @@ class MCPPromptWrapper(_MCPWrapperBase):
                 logger.warning(
                     "MCP prompt '{}' timed out after {}s", self._name, self._prompt_timeout
                 )
-                return f"(MCP prompt call timed out after {self._prompt_timeout}s)"
+                return ToolResult.error(f"(MCP prompt call timed out after {self._prompt_timeout}s)")
             except asyncio.CancelledError:
                 if task_is_cancelling():
                     raise
                 logger.warning("MCP prompt '{}' was cancelled by server/SDK", self._name)
-                return "(MCP prompt call was cancelled)"
+                return ToolResult.error("(MCP prompt call was cancelled)")
             except McpError as exc:
                 if await self._refresh_session_after_termination(
                     exc,
@@ -1667,14 +1727,14 @@ class MCPPromptWrapper(_MCPWrapperBase):
                     refreshed_session = True
                     continue
                 if self._binding_ended:
-                    return "(MCP prompt call refused: the bound connection generation ended)"
+                    return ToolResult.error("(MCP prompt call refused: the bound connection generation ended)")
                 logger.exception(
                     "MCP prompt '{}' failed: code={} message={}",
                     self._name,
                     exc.error.code,
                     exc.error.message,
                 )
-                return f"(MCP prompt call failed: {exc.error.message} [code {exc.error.code}])"
+                return ToolResult.error(f"(MCP prompt call failed: {exc.error.message} [code {exc.error.code}])")
             except Exception as exc:
                 if await self._refresh_session_after_termination(
                     exc,
@@ -1684,7 +1744,7 @@ class MCPPromptWrapper(_MCPWrapperBase):
                     refreshed_session = True
                     continue
                 if self._binding_ended:
-                    return "(MCP prompt call refused: the bound connection generation ended)"
+                    return ToolResult.error("(MCP prompt call refused: the bound connection generation ended)")
                 if _is_transient(exc):
                     if not retried_transient:
                         retried_transient = True
@@ -1700,14 +1760,14 @@ class MCPPromptWrapper(_MCPWrapperBase):
                         self._name,
                         type(exc).__name__,
                     )
-                    return f"(MCP prompt call failed after retry: {type(exc).__name__})"
+                    return ToolResult.error(f"(MCP prompt call failed after retry: {type(exc).__name__})")
                 logger.exception(
                     "MCP prompt '{}' failed: {}: {}",
                     self._name,
                     type(exc).__name__,
                     exc,
                 )
-                return f"(MCP prompt call failed: {type(exc).__name__})"
+                return ToolResult.error(f"(MCP prompt call failed: {type(exc).__name__})")
             else:
                 parts: list[str] = []
                 for message in result.messages:
@@ -1723,6 +1783,159 @@ class MCPPromptWrapper(_MCPWrapperBase):
                     else:
                         parts.append(str(content))
                 return "\n".join(parts) or "(no output)"
+
+
+_Page = TypeVar("_Page", covariant=True)
+_Entry = TypeVar("_Entry")
+
+
+class _MCPList(Protocol[_Page]):
+    @overload
+    def __call__(self) -> Awaitable[_Page]: ...
+
+    @overload
+    def __call__(self, cursor: str | None, /) -> Awaitable[_Page]: ...
+
+
+async def _list_mcp_pages(
+    request: _MCPList[_Page], entries: Callable[[_Page], list[_Entry]],
+) -> list[_Entry]:
+    found: list[_Entry] = []
+    cursor: str | None = None
+    seen: set[str] = set()
+    for _ in range(_MAX_MCP_PAGES):
+        page = await request() if cursor is None else await request(cursor)
+        found.extend(entries(page))
+        next_cursor: object = getattr(page, "nextCursor", None)
+        if not isinstance(next_cursor, str) or not next_cursor or next_cursor in seen:
+            break
+        cursor = next_cursor
+        seen.add(cursor)
+    return found
+
+
+@dataclass
+class _MCPExtraServer:
+    name: str
+    session: ClientSession
+    timeout: int
+    instructions: str | None
+    resources: dict[str, Resource]
+    prompts: dict[str, Prompt]
+    lease: MCPGenerationLease | None = None
+    reconnect: _ReconnectCallback | None = None
+
+
+class MCPMetaTool(Tool):
+    """Expose one shared MCP resource or prompt catalogue."""
+
+    _plugin_discoverable = False
+    exposure = "deferred"
+    namespace = "mcp"
+    search_keywords = ("MCP", "resource", "prompt", "list")
+
+    def __init__(self, kind: Literal["resources", "prompts"], server: _MCPExtraServer) -> None:
+        self.kind: Literal["resources", "prompts"] = kind
+        self.servers = {server.name: server}
+
+    def accepts_reconnected_tool(self, other: Tool) -> bool:
+        return isinstance(other, MCPMetaTool) and other.kind == self.kind
+
+    @property
+    def name(self) -> str:
+        return f"mcp_{self.kind}"
+
+    @property
+    def description(self) -> str:
+        if self.kind == "resources":
+            return "List or read the resources advertised by an MCP server."
+        return "List or get the prompt templates advertised by an MCP server."
+
+    @property
+    def read_only(self) -> bool:
+        return True
+
+    @property
+    def parameters(self) -> dict[str, Any]:
+        properties: dict[str, Any] = {"server": {"type": "string"}}
+        if self.kind == "resources":
+            properties["action"] = {"type": "string", "enum": ["list", "read"]}
+            properties["uri"] = {"type": "string"}
+        else:
+            properties["action"] = {"type": "string", "enum": ["list", "get"]}
+            properties["name"] = {"type": "string"}
+            properties["arguments"] = {
+                "type": "object", "additionalProperties": {"type": "string"},
+            }
+        return {"type": "object", "properties": properties, "required": ["action", "server"]}
+
+    async def execute(
+        self, action: str, server: str, uri: str | None = None,
+        name: str | None = None, arguments: dict[str, str] | None = None,
+    ) -> str:
+        binding = self.servers.get(server)
+        if binding is None:
+            return ToolResult.error(f"MCP {self.kind} are unavailable for server {server!r}.")
+        if binding.lease is not None and (reason := binding.lease.dispatch_error()):
+            return ToolResult.error(f"MCP call refused: {reason}")
+        if action == "list":
+            rows: list[dict[str, object]]
+            if self.kind == "resources":
+                rows = [{"uri": uri, "name": item.name, "description": (item.description or "")[:512]}
+                        for uri, item in binding.resources.items()]
+            else:
+                rows = [{"name": item.name, "description": (item.description or "")[:512],
+                         "arguments": [{"name": arg.name, "required": bool(arg.required)}
+                                       for arg in item.arguments or []]}
+                        for item in binding.prompts.values()]
+            return json.dumps(rows, ensure_ascii=False)
+        wrapper: MCPPromptWrapper | MCPResourceWrapper
+        params: dict[str, str] = {}
+        if self.kind == "resources" and action == "read":
+            resource = binding.resources.get(uri or "")
+            if resource is None:
+                return ToolResult.error("Supply an advertised resource URI.")
+            wrapper = MCPResourceWrapper(binding.session, server, resource, binding.timeout)
+        elif self.kind == "prompts" and action == "get":
+            prompt = binding.prompts.get(name or "")
+            if prompt is None:
+                return ToolResult.error("Supply an advertised prompt name.")
+            wrapper = MCPPromptWrapper(binding.session, server, prompt, binding.timeout)
+            params = arguments or {}
+            if issues := wrapper.validate_params(params):
+                return ToolResult.error("Invalid MCP prompt arguments. " + " ".join(issues))
+        else:
+            return ToolResult.error(f"Unsupported action {action!r} for MCP {self.kind}.")
+        if binding.lease is not None:
+            wrapper.bind_generation(binding.lease)
+        if binding.reconnect is not None:
+            wrapper.set_reconnect_handler(binding.reconnect)
+        try:
+            return await wrapper.execute(**params)
+        except asyncio.CancelledError:
+            if task_is_cancelling():
+                raise
+            return ToolResult.error("MCP request was cancelled.")
+        except Exception as exc:
+            return ToolResult.error(f"MCP request failed: {type(exc).__name__}.")
+
+
+def server_prompt_instructions(
+    registry: ToolRegistry,
+) -> dict[str, tuple[str, set[str]]]:
+    """Group initialized server instructions by the admitted wrapper names."""
+    servers: dict[str, tuple[str, set[str]]] = {}
+    for tool in registry.iter_tools():
+        if isinstance(tool, MCPMetaTool):
+            for binding in tool.servers.values():
+                if binding.instructions:
+                    servers.setdefault(binding.name, (binding.instructions, set()))[1].add(tool.name)
+        elif isinstance(tool, _MCPWrapperBase) and tool.prompt_instructions:
+            _, names = servers.setdefault(
+                tool.server_name, (tool.prompt_instructions, set()),
+            )
+            names.add(tool.name)
+    return dict(sorted(servers.items()))
 
 
 async def connect_mcp_servers(
@@ -1744,6 +1957,9 @@ async def connect_mcp_servers(
     from mcp.client.sse import sse_client
     from mcp.client.stdio import stdio_client
     from mcp.client.streamable_http import streamable_http_client
+
+    published_servers: set[str] = set()
+    pending_publications: dict[str, list[Tool]] = {}
 
     async def open_single_server(
         name: str, cfg: MCPServerConfig, server_stack: AsyncExitStack
@@ -1867,9 +2083,14 @@ async def connect_mcp_servers(
 
             read = _filter_malformed_mcp_progress_notifications(read, name)
             session = await server_stack.enter_async_context(ClientSession(read, write))
-            await session.initialize()
-
-            tools = await session.list_tools()
+            initialization = await session.initialize()
+            raw_instructions: object = getattr(initialization, "instructions", None)
+            instructions = (
+                TokenMeter.truncate_text(raw_instructions.strip(), 500)
+                if isinstance(raw_instructions, str) and raw_instructions.strip() else None
+            )
+            tool_defs = await _list_mcp_pages(session.list_tools, lambda page: page.tools)
+            unique_tools = {tool.name: tool for tool in tool_defs}
             pending_tools: list[Tool] = []
             generation = hashlib.sha256(
                 f"{name}:{cfg.type or ''}:{cfg.url or ''}:{cfg.command or ''}".encode("utf-8")
@@ -1878,15 +2099,23 @@ async def connect_mcp_servers(
             allow_all_tools = "*" in enabled_tools
             registered_count = 0
             matched_enabled_tools: set[str] = set()
-            available_raw_names = [tool_def.name for tool_def in tools.tools]
-            available_wrapped_names = [_sanitize_mcp_tool_name(f"mcp_{name}_{tool_def.name}") for tool_def in tools.tools]
+            available_raw_names = list(unique_tools)
+            base_names = {
+                raw: _sanitize_mcp_tool_name(f"mcp_{name}_{raw}") for raw in unique_tools
+            }
+            collisions = Counter(base_names.values())
+            wrapped_names = {
+                raw: _collision_name(base, f"{name}/{raw}") if collisions[base] > 1 else base
+                for raw, base in base_names.items()
+            }
+            available_wrapped_names = list(wrapped_names.values())
             kohaku_media_cancel_available = (
                 name == "comfy"
                 and transport_type == "stdio"
-                and any(tool_def.name == _KOHAKU_MEDIA_CONTROL_TOOL for tool_def in tools.tools)
+                and _KOHAKU_MEDIA_CONTROL_TOOL in unique_tools
             )
-            for tool_def in tools.tools:
-                wrapped_name = _sanitize_mcp_tool_name(f"mcp_{name}_{tool_def.name}")
+            for raw, tool_def in unique_tools.items():
+                wrapped_name = wrapped_names[raw]
                 if tool_def.name == _KOHAKU_MEDIA_CONTROL_TOOL:
                     if enabled_tools and not allow_all_tools and (
                         tool_def.name in enabled_tools or wrapped_name in enabled_tools
@@ -1911,7 +2140,8 @@ async def connect_mcp_servers(
                         name,
                     )
                     continue
-                schema_error = _validate_mcp_schema(tool_def.inputSchema)
+                normalized_schema = _normalize_schema_for_openai(tool_def.inputSchema)
+                schema_error = _validate_mcp_schema(normalized_schema)
                 if schema_error is not None:
                     logger.warning(
                         "MCP server '{}': refusing tool '{}' schema: {}",
@@ -1931,14 +2161,16 @@ async def connect_mcp_servers(
                     media_output_roots=media_output_roots,
                     generation=generation,
                     kohaku_media_cancel_available=kohaku_media_cancel_available,
+                    wrapped_name=wrapped_name,
+                    normalized_schema=normalized_schema,
+                    defer_loading=cfg.defer_loading,
                 )
+                wrapper.prompt_instructions = instructions
                 pending_tools.append(wrapper)
                 registered_count += 1
-                if enabled_tools:
-                    if tool_def.name in enabled_tools:
-                        matched_enabled_tools.add(tool_def.name)
-                    if wrapped_name in enabled_tools:
-                        matched_enabled_tools.add(wrapped_name)
+                matched_enabled_tools.update(
+                    enabled_tools.intersection({raw, wrapped_name})
+                )
 
             if enabled_tools and not allow_all_tools:
                 unmatched_enabled_tools = sorted(enabled_tools - matched_enabled_tools)
@@ -1960,43 +2192,30 @@ async def connect_mcp_servers(
             # the operator intended to restrict capabilities — registering
             # unrestricted resource/prompt wrappers would violate that intent.
             # The default ["*"] (allow-all) means no restriction was intended.
-            register_extras = allow_all_tools
-            if register_extras:
+            if allow_all_tools:
+                resources: list[Resource] = []
+                prompts: list[Prompt] = []
                 try:
-                    resources_result = await session.list_resources()
-                    for resource in resources_result.resources:
-                        wrapper = MCPResourceWrapper(
-                            session, name, resource, resource_timeout=cfg.tool_timeout
-                        )
-                        pending_tools.append(wrapper)
-                        registered_count += 1
-                        logger.debug(
-                            "MCP: registered resource '{}' from server '{}'",
-                            wrapper.name,
-                            name,
-                        )
+                    resources = await _list_mcp_pages(session.list_resources, lambda page: page.resources)
                 except Exception as e:
                     logger.debug(
                         "MCP server '{}': resources not supported or failed: {}", name, e
                     )
 
                 try:
-                    prompts_result = await session.list_prompts()
-                    for prompt in prompts_result.prompts:
-                        wrapper = MCPPromptWrapper(
-                            session, name, prompt, prompt_timeout=cfg.tool_timeout
-                        )
-                        pending_tools.append(wrapper)
-                        registered_count += 1
-                        logger.debug(
-                            "MCP: registered prompt '{}' from server '{}'",
-                            wrapper.name,
-                            name,
-                        )
+                    prompts = await _list_mcp_pages(session.list_prompts, lambda page: page.prompts)
                 except Exception as e:
                     logger.debug(
                         "MCP server '{}': prompts not supported or failed: {}", name, e
                     )
+                if resources or prompts:
+                    extras = _MCPExtraServer(
+                        name, session, cfg.tool_timeout, instructions,
+                        {str(resource.uri): resource for resource in resources},
+                        {prompt.name: prompt for prompt in prompts},
+                    )
+                    pending_tools.extend([MCPMetaTool("resources", extras), MCPMetaTool("prompts", extras)])
+                    registered_count += 2
             else:
                 logger.info(
                     "MCP server '{}': skipping resource/prompt registration "
@@ -2004,23 +2223,7 @@ async def connect_mcp_servers(
                     name,
                 )
 
-            if pending_tools:
-                published: list[Tool] = []
-                try:
-                    for tool in pending_tools:
-                        registry.register(tool)
-                        published.append(tool)
-                except BaseException:
-                    for tool in published:
-                        with suppress(Exception):
-                            registry.unregister(tool.name)
-                    raise
-                logger.debug(
-                    "MCP: published {} bindings for server '{}' generation {}",
-                    len(published),
-                    name,
-                    generation,
-                )
+            pending_publications[name] = pending_tools
             logger.info(
                 "MCP server '{}': connected, {} capabilities registered", name, registered_count
             )
@@ -2099,23 +2302,39 @@ async def connect_mcp_servers(
         return name, connection
 
     server_stacks: dict[str, MCPConnection] = {}
-    attempted_names: list[str] = []
+    slots = asyncio.Semaphore(_MAX_CONNECTIONS)
+
+    async def connect_bounded(name: str, cfg: MCPServerConfig) -> None:
+        async with slots:
+            _, connection = await connect_single_server(name, cfg)
+            if connection is not None:
+                server_stacks[name] = connection
 
     try:
-        for name, cfg in mcp_servers.items():
-            attempted_names.append(name)
+        results = await asyncio.gather(
+            *(connect_bounded(name, cfg) for name, cfg in mcp_servers.items()),
+            return_exceptions=True,
+        )
+        for name, result in zip(mcp_servers, results):
+            if isinstance(result, Exception):
+                _log_mcp_connection_failure(name, result)
+            elif isinstance(result, BaseException):
+                raise result
+        # Use configuration-independent order for cross-server name collisions.
+        for name in sorted(server_stacks):
             try:
-                result = await connect_single_server(name, cfg)
-            except Exception as e:
-                _log_mcp_connection_failure(name, e)
-                continue
-            if result[1] is not None:
-                server_stacks[result[0]] = result[1]
+                _publish_mcp_tools(registry, pending_publications[name])
+            except Exception as exc:
+                _log_mcp_connection_failure(name, exc)
+                await _close_mcp_connection(name, server_stacks[name])
+                server_stacks.pop(name)
+            else:
+                published_servers.add(name)
     except BaseException:
         # Callers can bound readiness/reload with a timeout. If cancellation
         # interrupts a later server, ownership of earlier connections has not
         # transferred yet, so roll the whole batch back before propagating it.
-        for name in attempted_names:
+        for name in published_servers:
             _unregister_server_tools(registry, name)
         try:
             await close_mcp_connections(server_stacks)
@@ -2123,7 +2342,7 @@ async def connect_mcp_servers(
             logger.debug("MCP batch rollback cleanup error (can be ignored): {}", cleanup_exc)
         raise
 
-    return server_stacks
+    return {name: server_stacks[name] for name in mcp_servers if name in server_stacks}
 
 
 def session_extra(metadata: Mapping[str, Any] | None) -> dict[str, Any]:
@@ -2427,13 +2646,7 @@ class MCPProvider:
                         continue
                     tools_removed += _unregister_server_tools(self._registry, name)
                     await self._retire_server(name)
-                    for tool_name in list(candidate_registry.tool_names):
-                        tool = candidate_registry.get(tool_name)
-                        if tool is None:
-                            continue
-                        if _tool_belongs_to_server(tool, tool_name, name):
-                            candidate_registry.unregister(tool_name)
-                            self._registry.register(tool)
+                    _publish_mcp_tools(self._registry, list(_server_tools(candidate_registry, name)))
                     self._connections[name] = candidate
                     # No await may expose these wrappers without their real
                     # generation; the next old server may suspend retirement.
@@ -2541,6 +2754,8 @@ class MCPProvider:
                     continue
                 if isinstance(tool, _MCPWrapperBase):
                     tool.set_reconnect_handler(reconnect)
+                elif isinstance(tool, MCPMetaTool):
+                    tool.servers[server_name].reconnect = reconnect
 
     async def _refresh_terminated_server(
         self,
@@ -2573,6 +2788,10 @@ class MCPProvider:
                 "MCP server '{}' session terminated; refreshing connection",
                 server_name,
             )
+            previous = [
+                tool for tool in _server_tools(self._registry, server_name)
+                if isinstance(tool, MCPToolWrapper)
+            ]
             _unregister_server_tools(self._registry, server_name)
             await self._close_server(server_name)
 
@@ -2597,6 +2816,8 @@ class MCPProvider:
                     server_name,
                 )
                 return None
+            for old_tool in previous:
+                old_tool.admit_reconnected_tool(self._registry.get(old_tool.name))
             return self._registry.get(tool_name)
 
     async def _publish_connections(
@@ -2605,12 +2826,11 @@ class MCPProvider:
         """Publish only after readiness; attaching generation holds cannot suspend."""
         tools = [tool for tool in candidates.iter_tools()
                  if any(_tool_belongs_to_server(tool, tool.name, name) for name in connections)]
-        for tool in tools:
-            if self._registry.has(tool.name):
-                await close_mcp_connections(connections)
-                raise ValueError(f"Duplicate tool registration: {tool.name}")
-        for tool in tools:
-            self._registry.register(tool)
+        try:
+            _publish_mcp_tools(self._registry, tools)
+        except BaseException:
+            await close_mcp_connections(connections)
+            raise
         self._connections.update(connections)
 
     def _attach_generation_leases(
@@ -2625,7 +2845,9 @@ class MCPProvider:
             wrappers = [tool for tool in self._registry.iter_tools()
                         if isinstance(tool, _MCPWrapperBase)
                         and _tool_belongs_to_server(tool, tool.name, server_name)]
-            if not wrappers:
+            extras = [tool.servers[server_name] for tool in self._registry.iter_tools()
+                      if isinstance(tool, MCPMetaTool) and server_name in tool.servers]
+            if not wrappers and not extras:
                 # Connections with no callable wrappers have no sampled/active
                 # users. Preserve their existing same-task close path.
                 continue
@@ -2652,6 +2874,8 @@ class MCPProvider:
             lease.bind(closer)
             for tool in wrappers:
                 tool.bind_generation(lease)
+            for binding in extras:
+                binding.lease = lease
             self._generation_leases[server_name] = lease
 
     async def _retire_server(self, server_name: str) -> None:
@@ -2707,9 +2931,44 @@ def _tool_prefix(server_name: str) -> str:
 
 
 def _tool_belongs_to_server(tool: Tool | None, tool_name: str, server_name: str) -> bool:
+    if isinstance(tool, MCPMetaTool):
+        return server_name in tool.servers
     if isinstance(tool, _MCPWrapperBase):
         return getattr(tool, "_server_name", None) == server_name
     return tool_name.startswith(_tool_prefix(server_name))
+
+
+def _server_tools(registry: ToolRegistry, server_name: str) -> Iterable[Tool]:
+    for tool in registry.iter_tools():
+        if isinstance(tool, MCPMetaTool):
+            if binding := tool.servers.get(server_name):
+                yield MCPMetaTool(tool.kind, binding)
+        elif _tool_belongs_to_server(tool, tool.name, server_name):
+            yield tool
+
+
+def _publish_mcp_tools(registry: ToolRegistry, tools: list[Tool]) -> None:
+    existing = {tool.name: tool for tool in registry.iter_tools()}
+    merged: list[tuple[MCPMetaTool, MCPMetaTool]] = []
+    additions: list[Tool] = []
+    for tool in tools:
+        present = existing.get(tool.name)
+        if isinstance(present, MCPMetaTool) and isinstance(tool, MCPMetaTool):
+            merged.append((present, tool))
+            continue
+        if (
+            isinstance(present, MCPToolWrapper) and isinstance(tool, MCPToolWrapper)
+            and present.server_name != tool.server_name
+        ):
+            tool.disambiguate_name()
+        if tool.name in existing:
+            raise ValueError(f"Duplicate tool registration: {tool.name}")
+        existing[tool.name] = tool
+        additions.append(tool)
+    for tool in additions:
+        registry.register(tool)
+    for present, tool in merged:
+        present.servers.update(tool.servers)
 
 
 def _unregister_server_tools(registry: ToolRegistry, server_name: str) -> int:
@@ -2717,6 +2976,10 @@ def _unregister_server_tools(registry: ToolRegistry, server_name: str) -> int:
     for tool_name in list(registry.tool_names):
         tool = registry.get(tool_name)
         if _tool_belongs_to_server(tool, tool_name, server_name):
+            if isinstance(tool, MCPMetaTool):
+                tool.servers.pop(server_name, None)
+                if tool.servers:
+                    continue
             registry.unregister(tool_name)
             removed += 1
     return removed

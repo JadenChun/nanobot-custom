@@ -14,6 +14,9 @@ if TYPE_CHECKING:
 
 
 class _ForegroundTool(Tool):
+    exposure = "deferred"
+    namespace = "delegation"
+
     _tool_name: str
     _tool_description: str
     _tool_parameters: dict[str, Any]

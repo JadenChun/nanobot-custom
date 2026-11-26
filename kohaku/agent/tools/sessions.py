@@ -52,6 +52,9 @@ def _session_ref(session_key: str) -> str:
 
 
 class _SessionTool(Tool):
+    exposure = "deferred"
+    namespace = "sessions"
+
     def __init__(self, sessions: SessionManager) -> None:
         self._access = WebuiSessionAccess(sessions)
 
@@ -141,7 +144,7 @@ class SearchSessionsTool(_SessionTool):
 @tool_parameters(
     tool_parameters_schema(
         session_key=StringSchema(
-            "Exact session_key from a selected reference or search_sessions, or a session @handle.",
+            "Exact session_key from a selected reference or memory_search, or a session @handle.",
             min_length=1,
             max_length=512,
         ),

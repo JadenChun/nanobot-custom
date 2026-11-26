@@ -212,7 +212,10 @@ class SourceCompactionCandidate:
     def summary_evidence(self, boundary: int, *, after: int | None = None) -> SummaryEvidence:
         """Capture canonical or verified projected evidence for one summary fold."""
         from kohaku.agent.tools.artifact import parse_retrieval_receipt
-        from kohaku.session.artifact_projection import validate_artifact_projection
+        from kohaku.session.artifact_projection import (
+            render_artifact_projection,
+            validate_artifact_projections,
+        )
         from kohaku.session.checkpoint_dependencies import (
             ProjectedArtifactDependency,
             RetrievalDependency,
@@ -234,14 +237,20 @@ class SourceCompactionCandidate:
             node = active.get(canonical.event_id)
             if node is None:
                 raise SourceValidationError('Summary evidence omits canonical source')
-            if node.artifact is None:
+            if not node.artifact_bindings:
                 # Request-only expansions never enter the proof. The legacy
                 # canonical node remains the only summary input in this case.
                 nodes.append(canonical)
                 continue
-            validate_artifact_projection(node, canonical, self.snapshot)
-            projections.append(ProjectedArtifactDependency(node.event_id, node.artifact))
-            nodes.append(node)
+            # Rebuild the summary from durable source and the verified text
+            # projections. Active request images may exist only in memory.
+            for descriptor in validate_artifact_projections(node, canonical, self.snapshot):
+                canonical = render_artifact_projection(canonical, descriptor)
+            projections.extend(
+                ProjectedArtifactDependency(node.event_id, binding)
+                for binding in node.artifact_bindings
+            )
+            nodes.append(canonical)
         # Visibility is established before inspecting reserved retrieval metadata.
         visible = {node.event_id for node in canonical_nodes}
         retrievals: list[RetrievalDependency] = []

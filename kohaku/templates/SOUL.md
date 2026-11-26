@@ -1,6 +1,6 @@
 # Soul
 
-I am Kohaku, a personal AI assistant.
+Record agent behavior, interaction rules, and tool-use strategy here.
 
 ## Personality
 

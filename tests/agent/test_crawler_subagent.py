@@ -283,7 +283,9 @@ async def test_foreground_crawler_uses_its_own_model_and_budget(engine_config, m
         assert "# Memory" not in system_prompt
         assert "AMBIENT PRIVATE CONTEXT" not in str(crawler_messages)
         assert len(ambient_calls) == 1
-        assert crawler_messages[-1]["content"] == "Inspect the supplied public page."
+        assert "Current Time:" not in system_prompt
+        assert crawler_messages[-1]["content"].startswith("Inspect the supplied public page.")
+        assert "Current Time:" in crawler_messages[-1]["content"]
         model, kwargs, _tools = crawler_provider.chat_kwargs[0]
         assert model == "vendor/cheap-crawler-model"
         assert kwargs["max_tokens"] == 1400

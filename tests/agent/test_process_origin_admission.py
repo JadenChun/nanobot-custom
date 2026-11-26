@@ -36,8 +36,7 @@ async def origin_loop(tmp_path, admitted_async):
         return AgentLoop(bus=inputs.bus, provider=provider, workspace=inputs.config.workspace_path,
             model="offline", session_manager=inputs.sessions, tool_registry=inputs.tools,
             cron_service=inputs.cron, turn_delivery_factory=inputs.delivery,
-            tools_config=inputs.config.tools, restrict_to_workspace=True,
-            enable_legacy_auto_compact=False)
+            tools_config=inputs.config.tools, restrict_to_workspace=True)
 
     loop = await admitted_async(tmp_path, build)
     loop.sessions.admit_persistent_write("websocket:origin")

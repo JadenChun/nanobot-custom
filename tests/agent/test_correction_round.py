@@ -9,15 +9,6 @@ from pathlib import Path
 import pytest
 
 from kohaku.agent.memory import Consolidator, MemoryStore
-from kohaku.agent.memory_recovery import MemoryReceiptRecoveryRequired
-from kohaku.agent.memory_recovery_coordinator import (
-    OfflineMemoryRecoveryError,
-    reconcile_pending_memory_receipt_offline,
-)
-from kohaku.agent.memory_recovery_receipt_finalizer import (
-    OfflineReceiptFinalizationError,
-    finalize_pending_memory_receipt_offline,
-)
 from kohaku.agent.turn import TurnResult
 from kohaku.cron.action_store import CronActionStore
 from kohaku.cron.canonical_execution import execute_claimed_fresh_text
@@ -31,18 +22,13 @@ from kohaku.cron.types import CronSchedule
 from kohaku.providers.base import LLMResponse
 from kohaku.providers.request_budget import FinalizedRequestBudgetExceeded
 from kohaku.session.manager import SessionManager, SessionWriteConflict
-from kohaku.utils.prompt_budget import (
-    AsyncPortableFileLock,
-    PromptBudget,
-    reduce_messages_to_budget,
-)
+from kohaku.utils.prompt_budget import AsyncPortableFileLock
 from tests.agent.p6_memory_contract_fixtures import (
     SummaryProvider,
     concrete_provider,
     file_snapshot,
     fitting_prefix,
     provider_limits,
-    receipt_layout,
     summary_runtime,
 )
 
@@ -62,36 +48,6 @@ async def test_async_lock_cancellation_does_not_leak(tmp_path: Path) -> None:
     replacement = AsyncPortableFileLock(path)
     await asyncio.wait_for(replacement.__aenter__(), timeout=1)
     await replacement.__aexit__(None, None, None)
-
-
-def test_reducer_keeps_late_system_and_removes_invalid_tool_group() -> None:
-    class Counter:
-        @staticmethod
-        def estimate_prompt_tokens(messages, _tools, _model):
-            return len(messages), "test"
-
-    messages = [
-        {"role": "system", "content": "first"},
-        {"role": "user", "content": "question"},
-        {"role": "system", "content": "late policy"},
-        {
-            "role": "assistant",
-            "content": "visible",
-            "tool_calls": [{"id": "one"}, {"id": "one"}],
-        },
-        {"role": "tool", "tool_call_id": "one", "content": "orphaned"},
-    ]
-    reduced = reduce_messages_to_budget(
-        messages,
-        Counter(),
-        "test",
-        [],
-        PromptBudget(total_tokens=100, safety_buffer=0),
-    )
-    assert [item["content"] for item in reduced[:2]] == ["first", "late policy"]
-    assert {item.get("content") for item in reduced} >= {"question", "visible"}
-    assert not any(item.get("role") == "tool" for item in reduced)
-    assert not any(item.get("tool_calls") for item in reduced)
 
 
 def test_session_generation_rejects_stale_append_and_merges_identical_messages(tmp_path: Path) -> None:
@@ -130,32 +86,6 @@ async def test_direct_provider_transport_is_budget_guarded():
     assert result.content == "ok"
     assert calls == ["chat"]
     assert oversized == [{"role": "user", "content": "x" * 20_000}]
-
-
-@pytest.mark.asyncio
-async def test_offline_receipt_digest_conflict_preserves_new_memory_and_evidence(tmp_path):
-    workspace, sessions, source, pending = receipt_layout(tmp_path, base=b"newer", end=1, output="obsolete")
-    memory = workspace / "memory" / "MEMORY.md"
-    memory.write_bytes(b"newest")
-    from tests.state_stat import content_stat
-
-    raw, receipt_stat, source_raw = pending.read_bytes(), content_stat(pending.stat()), source.read_bytes()
-    for _ in range(2):
-        with pytest.raises(OfflineMemoryRecoveryError):
-            reconcile_pending_memory_receipt_offline(workspace, sessions_root=sessions)
-        with pytest.raises(OfflineReceiptFinalizationError):
-            finalize_pending_memory_receipt_offline(workspace, sessions_root=sessions)
-        assert memory.read_text() == "newest"
-        assert memory.read_bytes() == b"newest"
-        header = json.loads(source.read_bytes().splitlines()[0])
-        assert header["last_consolidated"] == 0
-        assert header["last_archived"] == 0
-        assert source.read_bytes() == source_raw
-        assert pending.read_bytes() == raw and content_stat(pending.stat()) == receipt_stat
-        with pytest.raises(MemoryReceiptRecoveryRequired):
-            MemoryStore(workspace, sessions_root=sessions)
-    # Base-digest validation can follow conversion; its durable residue is not rolled back.
-    assert (workspace / "memory" / ".recovery").is_dir()
 
 
 @pytest.mark.asyncio

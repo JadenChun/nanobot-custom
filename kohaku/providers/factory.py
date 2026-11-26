@@ -276,6 +276,7 @@ def _make_provider_core(
                 spec=spec,
                 extra_body=p.extra_body if p else None,
                 api_type=p.api_type if p and provider_name == "openai" else "auto",
+                supports_native_tool_search=bool(p and p.supports_native_tool_search),
                 timeout=p.timeout if p else None,
                 extra_query=p.extra_query if p else None,
                 proxy=p.proxy if p else None,

@@ -17,7 +17,7 @@ engine_config = engine_fixtures.engine_config
 
 
 @pytest.mark.parametrize("capacity,overflow,expected_calls", [
-    (64_000, True, 1), (128_000, False, 2),
+    (18_000, True, 1), (128_000, False, 2),
 ])
 async def test_large_seed_retains_the_hard_byte_budget_and_real_receipt(
     engine_config, monkeypatch, capacity, overflow, expected_calls,
@@ -27,6 +27,7 @@ async def test_large_seed_retains_the_hard_byte_budget_and_real_receipt(
 
     monkeypatch.setattr(helpers, "_get_token_encoding", unavailable)
     content = "covered retrieval result content for engine restart " * 800
+    engine_config.agents.defaults.max_tool_result_chars = 48_000
     (engine_config.workspace_path / "file").write_text(content)
     provider = engine_fixtures.ScriptedProvider([
         LLMResponse(content=None, tool_calls=[ToolCallRequest(

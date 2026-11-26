@@ -20,7 +20,11 @@ from kohaku.agent.tools.schema import (
 from kohaku.apps.cli import CliAppError, CliAppManager, CliAppsRuntimeConfig
 from kohaku.apps.cli.utils import runtime_lines_for_request
 from kohaku.config_base import Base
-from kohaku.runtime_context import RuntimeContextBlock, wrap_runtime_context_lines
+from kohaku.runtime_context import (
+    RuntimeContextBlock,
+    runtime_metadata_value,
+    wrap_runtime_context_lines,
+)
 from kohaku.security.workspace_access import current_tool_workspace
 
 
@@ -57,6 +61,9 @@ class CliAppsToolConfig(Base):
     )
 )
 class CliAppsTool(Tool):
+    exposure = "deferred"
+    namespace = "automation"
+    search_keywords = ("cli app", "attached application", "run app")
     """Run an installed CLI-Anything or public CLI app through a controlled argv subprocess."""
 
     config_key = "cli_apps"
@@ -100,20 +107,10 @@ class CliAppsTool(Tool):
 
     @property
     def description(self) -> str:
-        try:
-            installed = CliAppManager(workspace=self.workspace, runtime=self.runtime).installed_names()
-        except Exception:
-            installed = []
-        installed_note = (
-            f" Installed Settings CLI Apps: {', '.join(installed)}."
-            if installed
-            else " No Settings CLI Apps are currently installed."
-        )
         return (
             "Run a CLI App that the user explicitly installed in Settings or attached as @app. "
             "Do not use this for ordinary system CLIs such as git, gh, python, npm, or brew; "
             "unknown names are rejected. Execution uses argv, not shell."
-            + installed_note
         )
 
     def runtime_context_provider(self):
@@ -122,16 +119,26 @@ class CliAppsTool(Tool):
     async def _provide_runtime_context(
         self,
         request: RequestContext,
-    ) -> RuntimeContextBlock | None:
+    ) -> list[RuntimeContextBlock] | None:
+        workspace = request.workspace or self.workspace
         lines = runtime_lines_for_request(
             request.original_user_text or "",
             request.metadata,
-            request.workspace or self.workspace,
+            workspace,
         )
-        content = wrap_runtime_context_lines(lines)
-        if not content:
-            return None
-        return RuntimeContextBlock(source="cli_apps", content=content)
+        blocks: list[RuntimeContextBlock] = []
+        if lines:
+            blocks.append(RuntimeContextBlock("cli_apps", wrap_runtime_context_lines(lines)))
+        try:
+            installed = CliAppManager(workspace=workspace, runtime=self.runtime).installed_names()
+        except Exception:
+            installed = []
+        if installed:
+            names = ", ".join(runtime_metadata_value(name[:64]) for name in sorted(installed)[:16])
+            blocks.append(RuntimeContextBlock("cli_apps_index", wrap_runtime_context_lines([
+                f"Installed CLI Apps: {names}. Use tool_search to find run_cli_app.",
+            ])))
+        return blocks or None
 
     async def execute(
         self,

@@ -46,7 +46,6 @@ async def _make_loop(
             turn_delivery_factory=inputs.delivery,
             tools_config=inputs.config.tools,
             restrict_to_workspace=True,
-            enable_legacy_auto_compact=False,
         )
 
     loop = await acquire(tmp_path, build, keys=() if native else (key,))

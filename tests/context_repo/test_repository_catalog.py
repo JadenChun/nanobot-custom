@@ -168,7 +168,7 @@ def test_prompt_catalog_stays_small_and_context_is_read_on_demand_after_switch(t
     assert "Instructions for a only" not in prompts[2]
     assert "Instructions for a only" in prompts[3]
     assert all("Durable fact loaded only when requested" not in prompt for prompt in prompts)
-    assert all(str(knowledge) in prompt for prompt in prompts)
+    assert all(str(knowledge) not in prompt for prompt in prompts)
     assert len(catalog.prompt_summary()) < 1500
 
 

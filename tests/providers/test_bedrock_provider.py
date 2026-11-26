@@ -145,14 +145,14 @@ def test_build_kwargs_converts_messages_tools_and_tool_results() -> None:
         tool_choice="required",
     )
 
-    assert kwargs["system"] == [{"text": "You are helpful."}]
-    assert kwargs["messages"][1]["content"] == [{
+    assert kwargs["system"][0] == {"text": "You are helpful."}
+    assert kwargs["messages"][1]["content"][0] == {
         "toolUse": {
             "toolUseId": "toolu_1",
             "name": "read_file",
             "input": {"path": "x"},
         }
-    }]
+    }
     assert kwargs["messages"][2]["role"] == "user"
     assert kwargs["messages"][2]["content"][0]["toolResult"]["toolUseId"] == "toolu_1"
     assert kwargs["messages"][2]["content"][1] == {"text": "continue"}

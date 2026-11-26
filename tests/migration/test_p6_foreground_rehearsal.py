@@ -166,7 +166,6 @@ def _graph(config: Config, effects: _Effects) -> RuntimeComposition:
         return AgentLoop.from_config(
             config, bus, tool_registry=tools, provider=provider,
             session_manager=sessions, cron_service=cron, turn_delivery_factory=delivery,
-            enable_legacy_auto_compact=False,
         )
 
     return RuntimeComposition.define(config, factories=RuntimeFactories(
@@ -221,9 +220,7 @@ async def test_positive_foreground_close_restart_retains_one_accepted_turn(
             assert loader_calls == [handle.tools]
             assert not handle.cron._running and handle.cron._timer_task is None
             assert handle.agent._background_tasks == set()
-            assert handle.agent.auto_compact is None
             assert handle.agent._loop_task is None and not handle.agent._running
-            assert handle.agent._idle_integration is None
             assert handle.agent.local_trigger_store is None
             assert effects.provider_calls == 0  # Clean startup spends no tokens.
             result = await handle.agent.execute_turn(TurnRequest(

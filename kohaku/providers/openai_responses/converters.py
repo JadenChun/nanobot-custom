@@ -211,17 +211,23 @@ def convert_tools(tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Convert OpenAI function-calling tool schema to Responses API flat format."""
     converted: list[dict[str, Any]] = []
     for tool in tools:
+        if tool.get("type") == "tool_search":
+            converted.append({"type": "tool_search"})
+            continue
         fn = _as_json_object(tool.get("function")) or {} if tool.get("type") == "function" else tool
         name = fn.get("name")
         if not name:
             continue
         params: object = fn.get("parameters") or {}
-        converted.append({
+        definition: dict[str, Any] = {
             "type": "function",
             "name": name,
             "description": fn.get("description") or "",
             "parameters": params if isinstance(params, dict) else {},
-        })
+        }
+        if tool.get("defer_loading") is True:
+            definition["defer_loading"] = True
+        converted.append(definition)
     return converted
 
 

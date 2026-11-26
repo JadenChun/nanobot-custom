@@ -52,6 +52,8 @@ def folder_access_outcome(
 
 
 class SelectWorkspaceTool(Tool):
+    exposure = "deferred"
+    namespace = "workspace"
     """Select or clear the current project's focus for the owning WebUI chat."""
 
     _PARAMETERS: dict[str, Any] = {
@@ -100,6 +102,8 @@ class SelectWorkspaceTool(Tool):
         return ToolResult.error("Workspace selection requires an active owning WebSocket turn")
 
     async def execute_with_context(self, context: TurnContext, **kwargs: Any) -> str:
+        if not context.is_user_turn:
+            return ToolResult.error("Workspace selection requires a user turn.")
         if self._owner is None:
             return ToolResult.error("Workspace selection is unavailable")
         action = kwargs.get("action")
@@ -116,6 +120,8 @@ class SelectWorkspaceTool(Tool):
 
 
 class RequestFolderAccessTool(Tool):
+    exposure = "deferred"
+    namespace = "workspace"
     """Ask the local user to identify an unknown or exact project folder."""
 
     _PARAMETERS: dict[str, Any] = {
@@ -163,6 +169,8 @@ class RequestFolderAccessTool(Tool):
         return ToolResult.error("Folder selection requires an active owning WebSocket turn")
 
     async def execute_with_context(self, context: TurnContext, **kwargs: Any) -> str | ToolOutcome:
+        if not context.is_user_turn:
+            return ToolResult.error("Folder selection requires a user turn.")
         if self._owner is None:
             return ToolResult.error("Folder selection is unavailable")
         purpose = kwargs.get("purpose")

@@ -45,7 +45,11 @@ from kohaku.providers.base import (
     track_stream_delivery,
 )
 from kohaku.providers.capabilities import ModelCapabilities, model_capabilities_from_metadata
-from kohaku.providers.image_history import recent_image_messages
+from kohaku.providers.image_history import (
+    MAX_TOOL_IMAGE_BATCH_BYTES,
+    MAX_TOOL_IMAGES_PER_BATCH,
+    recent_image_messages,
+)
 from kohaku.providers.openai_responses import (
     MISSING_TERMINAL_EVENT_MESSAGE,
     ResponsesStreamCapture,
@@ -591,8 +595,9 @@ class OpenAICompatProvider(LLMProvider):
     # ordinary frame sizes, so the previous value of 3 left a review of a 5 s
     # clip mostly unseen. Six covers a short clip's sampled frames; the byte
     # limit below remains the hard ceiling.
-    _MAX_LOCAL_TOOL_IMAGES_PER_BATCH = 6
-    _MAX_LOCAL_TOOL_IMAGE_BATCH_BYTES = 8 * 1024 * 1024
+    supports_prompt_cache_key = False
+    _MAX_LOCAL_TOOL_IMAGES_PER_BATCH = MAX_TOOL_IMAGES_PER_BATCH
+    _MAX_LOCAL_TOOL_IMAGE_BATCH_BYTES = MAX_TOOL_IMAGE_BATCH_BYTES
 
     def __init__(
         self,
@@ -608,6 +613,7 @@ class OpenAICompatProvider(LLMProvider):
         provider_name: str = "openai",
         timeout: float | None = None,
         policy: ProviderPolicy | None = None,
+        supports_native_tool_search: bool = False,
     ):
         super().__init__(api_key, api_base, provider_name=provider_name)
         if timeout is not None and (not math.isfinite(timeout) or timeout <= 0):
@@ -645,6 +651,14 @@ class OpenAICompatProvider(LLMProvider):
         self._bound_state_endpoint = _normalized_direct_openai_responses_endpoint(
             effective_base
         )
+        self.supports_native_tool_search = (
+            supports_native_tool_search and self._bound_state_endpoint is not None
+            and self._api_type == "responses"
+        )
+        self.supports_prompt_cache_key = (
+            self._bound_state_endpoint is not None
+            and (spec.name if spec is not None else provider_name) == "openai"
+        )
         self._bound_state_wire_headers = dict(self._default_headers)
         self._bound_state_wire_query = dict(self._extra_query)
         self._bound_state_construction_eligible = (
@@ -675,7 +689,9 @@ class OpenAICompatProvider(LLMProvider):
         provider_context: ProviderCallContext | None,
     ) -> tuple[list[dict[str, Any]], ProviderCallContext | None]:
         """Bound the newest tool-image batch on the selected local leaf."""
-        if not self._is_local:
+        if not self._is_local or (
+            provider_context is not None and provider_context.preserve_image_history
+        ):
             return messages, provider_context
         byte_limit = self._MAX_LOCAL_TOOL_IMAGE_BATCH_BYTES
         if self.policy.max_request_bytes is not None:
@@ -828,6 +844,7 @@ class OpenAICompatProvider(LLMProvider):
         cls,
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]] | None,
+        direct_tool_count: int | None = None,
     ) -> tuple[list[dict[str, Any]], list[dict[str, Any]] | None]:
         """Inject cache_control markers for prompt caching."""
         cache_marker = {"type": "ephemeral"}
@@ -835,7 +852,7 @@ class OpenAICompatProvider(LLMProvider):
 
         def _mark(msg: dict[str, Any]) -> dict[str, Any]:
             content = msg.get("content")
-            if isinstance(content, str):
+            if isinstance(content, str) and content.strip():
                 return {**msg, "content": [
                     {"type": "text", "text": content, "cache_control": cache_marker},
                 ]}
@@ -848,12 +865,21 @@ class OpenAICompatProvider(LLMProvider):
         if new_messages and new_messages[0].get("role") == "system":
             new_messages[0] = _mark(new_messages[0])
         if len(new_messages) >= 3:
-            new_messages[-2] = _mark(new_messages[-2])
+            for index in range(len(new_messages) - 2, 0, -1):
+                candidate = new_messages[index]
+                # _sanitize_messages clears content on assistant tool-call turns,
+                # which would wipe any cache_control attached to that message.
+                if candidate.get("role") == "assistant" and candidate.get("tool_calls"):
+                    continue
+                marked = _mark(candidate)
+                if marked is not candidate:
+                    new_messages[index] = marked
+                    break
 
         new_tools = tools
         if tools:
             new_tools = list(tools)
-            for idx in cls._tool_cache_marker_indices(new_tools):
+            for idx in cls._tool_cache_marker_indices(new_tools, direct_tool_count):
                 new_tools[idx] = {**new_tools[idx], "cache_control": cache_marker}
         return new_messages, new_tools
 
@@ -1134,14 +1160,15 @@ class OpenAICompatProvider(LLMProvider):
         tool_choice: str | dict[str, Any] | None,
         *,
         preserve_message_roles: bool = False,
+        direct_tool_count: int | None = None,
     ) -> dict[str, Any]:
         model_name = model or self.default_model
         spec = self._spec
+        messages = self._sanitize_empty_content(messages)
 
         if spec and spec.supports_prompt_caching:
-            model_name = model or self.default_model
             if any(model_name.lower().startswith(k) for k in ("anthropic/", "claude")):
-                messages, tools = self._apply_cache_control(messages, tools)
+                messages, tools = self._apply_cache_control(messages, tools, direct_tool_count)
 
         model_name = self._request_model_name(model_name)
 
@@ -1158,7 +1185,7 @@ class OpenAICompatProvider(LLMProvider):
         kwargs: dict[str, Any] = {
             "model": model_name,
             "messages": self._sanitize_messages(
-                self._sanitize_empty_content(messages),
+                messages,
                 model_name,
                 preserve_role_alternation=preserve_message_roles,
             ),
@@ -1359,7 +1386,11 @@ class OpenAICompatProvider(LLMProvider):
                 provider_context is not None
                 and provider_context.source_summary_mode == "prefix"
             ),
+            direct_tool_count=provider_context.direct_tool_count if provider_context else None,
         )
+        session_id = provider_context.session_id if provider_context is not None else None
+        if self.supports_prompt_cache_key and session_id:
+            kwargs["prompt_cache_key"] = hashlib.sha256(session_id.encode("utf-8")).hexdigest()
         canonical_summary = (
             provider_context is not None
             and provider_context.source_summary_mode == "canonical"
@@ -2119,6 +2150,14 @@ class OpenAICompatProvider(LLMProvider):
             ),
         )
 
+    def native_tool_search_for_model(self, model: str | None) -> bool:
+        model_name = self._request_model_name(model or self.default_model).lower()
+        version = re.match(r"gpt-(\d+)(?:\.(\d+))?(?:-|$)", model_name)
+        return bool(
+            self.supports_native_tool_search and version
+            and (int(version[1]), int(version[2] or 0)) >= (5, 4)
+        )
+
     def _should_use_responses_api(
         self,
         model: str | None,
@@ -2447,6 +2486,9 @@ class OpenAICompatProvider(LLMProvider):
                 else:
                     body["include"] = [source_include]
 
+        session_id = provider_context.session_id if provider_context is not None else None
+        if self.supports_prompt_cache_key and session_id:
+            body["prompt_cache_key"] = hashlib.sha256(session_id.encode("utf-8")).hexdigest()
         return body
 
     async def _create_response_with_compaction_fallback(

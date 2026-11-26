@@ -31,7 +31,7 @@ async def _loop(tmp_path: Path, admitted_async, *, session_tool=False) -> AgentL
             bus=inputs.bus, provider=provider, workspace=inputs.config.workspace_path,
             model="test-model", session_manager=inputs.sessions,
             tool_registry=inputs.tools, cron_service=inputs.cron,
-            turn_delivery_factory=inputs.delivery, enable_legacy_auto_compact=False,
+            turn_delivery_factory=inputs.delivery,
         )
 
     loop = await admitted_async(tmp_path, build, keys=("telegram:target",))
@@ -93,7 +93,8 @@ async def test_session_message_runs_as_user_input_and_replies_on_target_route(
         assert "Message from @luma." in provider_input["content"]
         assert "Reply with send_session_message." in provider_input["content"]
     else:
-        assert provider_input["content"] == "Please review"
+        assert provider_input["content"].partition("\n\n")[0] == "Please review"
+        assert "Message from @luma." not in provider_input["content"]
 
     stored = loop.sessions.get_or_create("telegram:target").messages
     user_row = next(row for row in stored if row.get("role") == "user")

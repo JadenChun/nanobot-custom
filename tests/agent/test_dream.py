@@ -29,7 +29,6 @@ def _dream_loop(
         session_manager=inputs.sessions, tool_registry=inputs.tools,
         cron_service=inputs.cron, turn_delivery_factory=inputs.delivery,
         tools_config=inputs.config.tools, restrict_to_workspace=True,
-        enable_legacy_auto_compact=False,
     )
     assert loop.context.memory.workspace == inputs.config.workspace_path
     assert loop.consolidator.store is loop.context.memory
@@ -156,7 +155,7 @@ class TestBuildDreamPrompt:
 
         assert result is not None
         prompt, _ = result
-        assert "memory consolidation engine" in prompt
+        assert "Maintain the workspace's durable memory" in prompt
 
     def test_truncates_long_entries_at_1000_chars(self, store):
         long_content = "x" * 2000
@@ -204,17 +203,18 @@ class TestBuildDreamPrompt:
         assert cursor == 2
         assert "usable memory" in prompt
 
-    def test_dream_prompt_consumes_consolidator_attribute_tags(self):
+    def test_dream_prompt_routes_durable_memory_files(self):
         prompt = render_template(
             "agent/dream.md",
             strip=True,
             skill_creator_path="skills/skill-creator/SKILL.md",
         )
 
-        assert "History attribute tags" in prompt
-        assert "[skip]: audit-only" in prompt
-        assert "[correction]: replace the older conflicting fact" in prompt
-        assert "Always strip these bracketed tags from saved memory content" in prompt
+        assert "kohaku-memory-summary: v1" in prompt
+        assert "memory/MEMORY.md" in prompt
+        assert "Remove all routing and retention tags" in prompt
+        assert "[skip]" not in prompt
+        assert "[SKILL]" not in prompt
 
 
 class TestDreamRunCompletion:

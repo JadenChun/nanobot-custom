@@ -163,7 +163,9 @@ async def test_real_silent_image_replacement_relay_survives_runner_error_and_can
             return state
 
     provider = ScriptedProvider([])
-    provider.estimate_prompt_tokens = lambda *_a: (100, "test")
+    provider.estimate_prompt_tokens = lambda messages, *_a: (
+        9_100 if "old.png" in str(messages) else 100, "test",
+    )
     failure = asyncio.CancelledError() if cancelled else RuntimeError("after silent replacement")
     provider.chat_stream_with_retry = AsyncMock(side_effect=failure)
     bus = MessageBus()

@@ -12,10 +12,10 @@ from kohaku.config.loader import load_config, save_config
 from kohaku.config.schema import Config
 
 
-def test_artifacts_default_to_disabled_with_documented_caps() -> None:
+def test_artifacts_default_to_enabled_with_documented_caps() -> None:
     artifacts = Config().artifacts
 
-    assert artifacts.enabled is False
+    assert artifacts.enabled is True
     assert artifacts.root is None
     assert artifacts.max_blob_bytes == 64 * 1024 * 1024
     assert artifacts.max_namespace_bytes == 1024 * 1024 * 1024
@@ -45,14 +45,14 @@ def test_artifact_settings_round_trip_with_camel_case_names(tmp_path: Path) -> N
     }
 
 
-def test_legacy_config_omitting_artifacts_stays_disabled_and_lossless(tmp_path: Path) -> None:
+def test_legacy_config_omitting_artifacts_loads_enabled_and_lossless(tmp_path: Path) -> None:
     source = tmp_path / "legacy.json"
     payload = {"agents": {"defaults": {"workspace": str(tmp_path / "workspace")}}}
     source.write_text(json.dumps(payload), encoding="utf-8")
 
     config = load_config(source)
 
-    assert config.artifacts.enabled is False
+    assert config.artifacts.enabled is True
     assert config.artifacts.root is None
     assert json.loads(source.read_text(encoding="utf-8")) == payload
 

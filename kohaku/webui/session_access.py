@@ -305,4 +305,12 @@ def session_mentions_runtime_context(
         encoded,
         "Use read_session when its history is relevant.",
     ])
-    return RuntimeContextBlock(source="session_mentions", content=content)
+    compact_references = ", ".join(
+        f"@{mention['name'][:80]}" for mention in mentions[:8]
+    )
+    return RuntimeContextBlock(
+        source="session_mentions", content=content, retention="persist_compact",
+        compact_summary=wrap_runtime_context_lines([
+            f"Previously referenced sessions: {compact_references}",
+        ]),
+    )
