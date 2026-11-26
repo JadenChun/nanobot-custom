@@ -16,6 +16,8 @@ from loguru import logger
 
 from kohaku.bus.events import OutboundMessage
 from kohaku.bus.outbound_events import (
+    ContextCompactionEvent,
+    DelegatedChildEvent,
     ProgressEvent,
     RetryWaitEvent,
     RuntimeModelUpdatedEvent,
@@ -1191,6 +1193,16 @@ class ChannelManager:
                         continue
 
                 if isinstance(event, RetryWaitEvent):
+                    continue
+
+                if isinstance(event, DelegatedChildEvent) and msg.channel != "websocket":
+                    continue
+
+                if (
+                    isinstance(event, ContextCompactionEvent)
+                    and msg.channel != "websocket"
+                    and self.config.channels.task_update_mode != "verbose"
+                ):
                     continue
 
                 if (
