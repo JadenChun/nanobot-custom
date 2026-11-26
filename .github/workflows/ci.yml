@@ -332,6 +332,7 @@ jobs:
           tests/darwin
           tests/agent/test_executor_capabilities.py
           tests/agent/test_executor_capability_parity.py
+          tests/security/test_darwin_proc.py
 
   webui:
     needs: changes

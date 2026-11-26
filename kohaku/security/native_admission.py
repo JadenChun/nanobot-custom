@@ -616,6 +616,8 @@ class NativeAdmissionLedger:
 
 
 def current_host_identity() -> HostIdentity:
+    if sys.platform == "darwin":
+        return _darwin_host_identity()
     host_id: str | None = None
     for path in (Path("/etc/machine-id"), Path("/var/lib/dbus/machine-id")):
         try:
@@ -636,7 +638,30 @@ def current_host_identity() -> HostIdentity:
     return HostIdentity(host_id, boot_id or None, pid_namespace)
 
 
+def _darwin_host_identity() -> HostIdentity:
+    from kohaku.security import darwin_proc
+
+    try:
+        host_id: str | None = darwin_proc.host_uuid()
+        boot_id: str | None = darwin_proc.boot_session_uuid()
+    except (OSError, darwin_proc.DarwinUnavailableError):
+        return HostIdentity(None, None, None)
+    # One host-wide pid namespace; see process_pid_namespace.
+    return HostIdentity(host_id, boot_id, 1)
+
+
+def _darwin_process_start_time(pid: int) -> int | None:
+    from kohaku.security import darwin_proc
+
+    try:
+        return darwin_proc.process_start_time(pid)
+    except (OSError, darwin_proc.DarwinUnavailableError):
+        return None
+
+
 def process_start_time(pid: int) -> int | None:
+    if sys.platform == "darwin":
+        return _darwin_process_start_time(pid)
     try:
         raw = Path(f"/proc/{pid}/stat").read_text(encoding="ascii")
     except (OSError, UnicodeDecodeError):
@@ -654,6 +679,9 @@ def process_start_time(pid: int) -> int | None:
 
 
 def process_pid_namespace(pid: int) -> int | None:
+    if sys.platform == "darwin":
+        # macOS has one host-wide pid namespace, so any live pid is in namespace 1.
+        return 1 if _darwin_process_start_time(pid) is not None else None
     try:
         return os.stat(f"/proc/{pid}/ns/pid").st_ino
     except OSError:
@@ -1104,6 +1132,14 @@ def _receipt_publication_guard(
 
 def _rename_noreplace(source: Path, target: Path) -> None:
     """Atomically publish a complete receipt without replacing prior proof."""
+    if sys.platform == "darwin":
+        from kohaku.security import darwin_proc
+
+        try:
+            darwin_proc.rename_excl(source, target)
+        except darwin_proc.DarwinUnavailableError as exc:
+            raise OSError(errno.ENOTSUP, "atomic native receipt publication is unavailable") from exc
+        return
     if sys.platform != "linux":
         raise OSError(errno.ENOTSUP, "atomic native receipt publication is unavailable")
     try:
