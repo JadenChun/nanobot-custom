@@ -299,6 +299,40 @@ jobs:
             artifacts/
           if-no-files-found: warn
 
+  macos:
+    name: macOS executor (Seatbelt)
+    needs: changes
+    if: needs.changes.outputs.python_required == 'true'
+    runs-on: macos-latest
+    timeout-minutes: 20
+    env:
+      # A hosted runner is disposable, so tests that signal real processes may run.
+      KOHAKU_DARWIN_DESTRUCTIVE_TESTS: "1"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.14
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          enable-cache: true
+          cache-dependency-glob: pyproject.toml
+
+      - name: Install dependencies
+        run: uv sync --extra dev
+
+      - name: Run macOS executor tests
+        run: >-
+          uv run --no-sync python -m pytest -q
+          tests/darwin
+          tests/agent/test_executor_capabilities.py
+          tests/agent/test_executor_capability_parity.py
+
   webui:
     needs: changes
     if: needs.changes.outputs.webui_required == 'true'

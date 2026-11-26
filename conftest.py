@@ -117,3 +117,23 @@ def _use_windows_system_ca_for_default_http_clients() -> Iterator[None]:
         yield
     finally:
         ssl.create_default_context = original
+
+
+def pytest_configure(config: pytest.Config) -> None:
+    config.addinivalue_line(
+        "markers",
+        "darwin_host: signals real processes; runs only on an opted-in macOS host",
+    )
+
+
+def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
+    """Keep real-signal macOS tests off developer machines (A3-2M, WP0)."""
+    from tests.darwin.gate import darwin_host_skip_reason
+
+    reason = darwin_host_skip_reason(sys.platform, os.environ)
+    if reason is None:
+        return
+    skip = pytest.mark.skip(reason=reason)
+    for item in items:
+        if "darwin_host" in item.keywords:
+            item.add_marker(skip)

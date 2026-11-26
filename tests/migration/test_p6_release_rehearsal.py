@@ -49,7 +49,10 @@ def test_candidate_ci_runs_linux_python_314_and_preserves_strict_policy() -> Non
         "main", "staging", "codex/upstream-migration", "codex/harness-migration-candidate",
     ]
     jobs = workflow["jobs"]
-    assert all(job["runs-on"] == "ubuntu-latest" for job in jobs.values())
+    # One named job may run on macOS (A3-2M gate G6); every other job stays on Ubuntu.
+    runners = {name: job["runs-on"] for name, job in jobs.items()}
+    assert runners.pop("macos", "macos-latest") == "macos-latest"
+    assert all(runner == "ubuntu-latest" for runner in runners.values())
     python_jobs = [
         job for job in jobs.values()
         if any(
