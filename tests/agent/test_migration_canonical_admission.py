@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from kohaku.agent.loop import AgentLoop
+from kohaku.agent.run_control import SessionRunController
 from kohaku.agent.run_store import RunStore
 from kohaku.agent.runner import AgentRunResult
 from kohaku.agent.tools.registry import ToolRegistry
@@ -23,6 +24,7 @@ from kohaku.session.manager import SessionManager
 
 def host(tmp_path):
     loop = object.__new__(AgentLoop)
+    loop.run_control = SessionRunController()
     loop._fork_dependencies = SimpleNamespace(
         foreground_manager=SimpleNamespace(new_budget=DelegationBudget, _delegation_tree=None),
         resource_policy=SimpleNamespace(workspace=tmp_path, context_manager=object()))

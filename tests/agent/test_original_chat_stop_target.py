@@ -455,6 +455,7 @@ async def test_root_stop_accepts_stale_mutable_snapshot_during_child_progress(
     tmp_path,
     change,
 ):
+    from kohaku.agent.run_control import RunStopTarget
     from kohaku.bus.runtime_events import TurnCompleted
 
     provider = _ScriptedProvider([LLMResponse(content="unused")], block_first=True)
@@ -464,25 +465,11 @@ async def test_root_stop_accepts_stale_mutable_snapshot_during_child_progress(
         key = "websocket:exact-stop"
         await handle.bus.publish_inbound(InboundMessage(
             channel="websocket", sender_id="webui", chat_id="exact-stop", content="first",
+            metadata={"webui_turn_id": "exact-steer-turn"},
         ))
         await asyncio.wait_for(provider.first_started.wait(), timeout=5)
         agent = handle.agent
         tree = agent._fork_dependencies.foreground_manager._delegation_tree
-        pending_admitted = asyncio.Event()
-        original_admit = agent._admit_pending_activity
-
-        async def observe_pending(*args, **kwargs):
-            outcome = await original_admit(*args, **kwargs)
-            pending_admitted.set()
-            return outcome
-
-        monkeypatch.setattr(agent, "_admit_pending_activity", observe_pending)
-        await handle.bus.publish_inbound(InboundMessage(
-            channel="websocket", sender_id="webui", chat_id="exact-stop",
-            content="queued follow-up marker",
-        ))
-        await asyncio.wait_for(pending_admitted.wait(), timeout=5)
-
         child = None
         if change in {"held-remove", "child-run"}:
             child = await tree.reserve(
@@ -494,6 +481,16 @@ async def test_root_stop_accepts_stale_mutable_snapshot_during_child_progress(
                 assert child is not None
         target = agent.stop_target_for_key(key)
         assert target is not None
+        run = agent.run_state_for_key(key)
+        assert run is not None and run["can_steer"]
+        steer = RunStopTarget(
+            "exact-stop", run["source_incarnation"], run["turn_id"], run["run_id"],
+        )
+        assert await agent.steer_run_target(steer, "Queued steer marker")
+        _, steered = handle.sessions.read_existing_canonical_source(key)
+        assert "Queued steer marker" in json.dumps(
+            steered.header["metadata"][SOURCE_PENDING_FOLLOWUPS_METADATA_KEY],
+        )
         if change == "held-add":
             await tree.reserve(
                 parent=handle.sessions.get_or_create(key), parent_key=key,

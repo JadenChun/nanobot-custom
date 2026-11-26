@@ -571,6 +571,8 @@ class GatewayHTTPHandler:
     services owned by the composition layer.
     """
 
+    run_state_for_key: Callable[[str], RunState | None] | None = None
+
     def __init__(
         self,
         *,

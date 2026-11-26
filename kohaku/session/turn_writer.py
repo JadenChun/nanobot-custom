@@ -321,8 +321,10 @@ class SourceTurnWriter:
             raise SourceValidationError('Invalid source tool batch')
         calls: list[object] = cast(list[object], calls_value)
         ids = [uuid.uuid4().hex for _ in calls]
+        event = self._append(payload, execution_ids=ids)
+        declared: list[object] = deepcopy(calls)
         batch_calls: list[tuple[str, str]] = []
-        for call_value in calls:
+        for call_value in declared:
             if not isinstance(call_value, dict):
                 batch_calls.append(("", ""))
                 continue
@@ -336,8 +338,6 @@ class SourceTurnWriter:
         self._active_batch_dispatched = set()
         self._active_batch_safe_to_settle = set()
         self._active_batch_completed = set()
-        event = self._append(payload, execution_ids=ids)
-        declared: list[object] = deepcopy(calls)
         bindings: list[SourceToolIntentBinding | None] = []
         for ordinal, (call_value, execution_id) in enumerate(zip(declared, ids)):
             if not isinstance(call_value, dict):

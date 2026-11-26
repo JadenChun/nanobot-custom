@@ -33,7 +33,6 @@ from loguru import logger
 
 from kohaku.agent import context as agent_context
 from kohaku.agent import model_presets as preset_helpers
-from kohaku.agent.approvals import PendingTurnApproval
 from kohaku.agent.autocompact import AutoCompact
 from kohaku.agent.automation_turns import publish_next_deferred_turn
 from kohaku.agent.child_backend import ChildApprovalResume, ChildTurnRequest
@@ -2331,16 +2330,18 @@ class AgentLoop:
 
     def run_state_for_key(self, key: str) -> RunStateSnapshot | None:
         """Return the same-process lifecycle state for one admitted root run."""
-        return self.run_control.snapshot(key)
+        handle = self.run_control.active_run(key)
+        return self.run_control.snapshot(key) if handle is not None and handle.steer_mailbox is not None else None
 
     async def _publish_run_state_for_key(self, key: str) -> None:
         """Publish the current run identity or an idle state to the WebUI bus."""
         chat_id = webui_chat_id(key)
-        if chat_id is None:
+        handle = self.run_control.active_run(key)
+        if chat_id is None or (handle is not None and handle.steer_mailbox is None):
             return
         try:
             await self.bus.publish_event(
-                RunStateEvent(run_state=self.run_control.snapshot(key)),
+                RunStateEvent(run_state=self.run_state_for_key(key)),
                 channel="websocket",
                 chat_id=chat_id,
             )
@@ -2420,7 +2421,7 @@ class AgentLoop:
                 mailbox.put_nowait(message)
             except asyncio.QueueFull:
                 if admission is not None:
-                    self._retain_admitted_activity_for_republish(key, message)
+                    self._pending_republish.setdefault(key, []).append(message)
                     return True
                 return False
             if admission is not None and identifier is not None:
@@ -4058,6 +4059,8 @@ class AgentLoop:
         decision: ToolPolicyDecision,
         call: ToolCallRequest,
     ) -> EffectApprovalAuthority | None:
+        from kohaku.agent.approvals import PendingTurnApproval
+
         key = context.session_key
         owner = context.execution_owner
         if key is None or owner is None:
@@ -6125,7 +6128,7 @@ class AgentLoop:
         context: RunTurnContext,
         *,
         persistent: bool = True,
-        admitted: Callable[[], Awaitable[None] | None] | None = None,
+        admitted: Callable[[], Awaitable[None]] | None = None,
         workspace_access_continuation: WorkspaceAccessContinuationReference | None = None,
         workspace_full_reference: WorkspaceFullAccessReference | None = None,
         expected_source_state: SourceState | None = None,
@@ -6216,9 +6219,7 @@ class AgentLoop:
             if workspace_access_continuation is not None or workspace_full_reference is not None:
                 raise RuntimeError("workspace permission source is unavailable")
             if admitted is not None:
-                admitted_result = admitted()
-                if inspect.isawaitable(admitted_result):
-                    await admitted_result
+                await admitted()
             yield None
             return
         from kohaku.webui.metadata import WEBUI_SOURCE_TOKEN_METADATA_KEY
@@ -6442,9 +6443,7 @@ class AgentLoop:
             self._source_activity_admissions[key] = activity_admission
             try:
                 if admitted is not None:
-                    admitted_result = admitted()
-                    if inspect.isawaitable(admitted_result):
-                        await admitted_result
+                    await admitted()
                 yield None
             finally:
                 if self._source_activity_admissions.get(key) is activity_admission:
@@ -6700,6 +6699,7 @@ class AgentLoop:
                 steerable = (
                     options.admission_scope is not None and turn_id is not None
                     and source_incarnation is not None
+                    and normalize_command_text(request.content).lower().split(maxsplit=1)[:1] != ["/compact"]
                 )
                 admit_steer = partial(self._admit_run_steer, key, run_id) if steerable else None
                 adapter = (
@@ -7176,7 +7176,8 @@ class AgentLoop:
                     if mailbox is not None and self._pending_queues.get(key) is mailbox:
                         self._pending_queues.pop(key, None)
                     self.run_control.unregister(key, active_run_handle)
-                    await self._publish_run_state_for_key(key)
+                    if mailbox is not None:
+                        await self._publish_run_state_for_key(key)
             assert result is not None
             callback = (
                 request.callbacks.on_error if result.error else request.callbacks.on_complete
