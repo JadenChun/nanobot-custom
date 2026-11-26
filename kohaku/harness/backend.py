@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import AsyncGenerator, Awaitable, Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal, Protocol
+from typing import TYPE_CHECKING, Literal, Protocol, runtime_checkable
 
 from kohaku.agent.approvals import (
     PendingTurnApproval,
@@ -79,6 +79,7 @@ class ExternalTurnRequest:
     max_turns: int | None = None
     approval_session_key: str | None = None
     authorize_tool: Callable[[str, dict[str, object]], bool] | None = None
+    drain_steer: Callable[[Callable[[], Awaitable[None]], bool], Awaitable[list[str]]] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -141,9 +142,20 @@ class ExternalToolBatchReady:
     """The SDK finished reporting the current model response."""
 
 
+@dataclass(frozen=True, slots=True)
+class ExternalSteerAvailable:
+    """The active run has guidance in its mailbox."""
+
+
+@dataclass(frozen=True, slots=True)
+class ExternalQueryFinished:
+    """One SDK response ended while another query remains active."""
+
+
 ExternalEvent = (
     ExternalSessionStarted | ExternalText | ExternalReasoning | ExternalToolIntent
     | ExternalToolResult | ExternalTurnFinished | ExternalToolBatchReady
+    | ExternalSteerAvailable | ExternalQueryFinished
 )
 ExternalApprovalAction = Literal["approve", "approve_and_save", "deny"]
 RequestApproval = Callable[[ExternalToolCall, str, bool], Awaitable[ExternalApprovalAction]]
@@ -155,6 +167,15 @@ class ExternalHarnessProcess(Protocol):
     ) -> AsyncGenerator[ExternalEvent, None]: ...
 
     async def close(self) -> None: ...
+
+
+@runtime_checkable
+class StreamingSteerProcess(Protocol):
+    """External process that accepts user input while a query is active."""
+
+    async def send_steer(self, prompt: str) -> bool: ...
+
+    def notify_steer(self) -> None: ...
 
 
 class SessionHarnessBackend(Protocol):

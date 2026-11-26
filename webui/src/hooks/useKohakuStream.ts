@@ -633,8 +633,9 @@ export function useKohakuStream(
 
   useEffect(() => {
     if (!chatId || liveRunStateSeenRef.current || initialRunStateInput === undefined) return;
+    client.hydrateActiveRun(chatId, initialRunStateInput);
     acceptRunState(initialRunStateInput, "history");
-  }, [acceptRunState, chatId, initialRunStateInput]);
+  }, [acceptRunState, chatId, client, initialRunStateInput]);
 
   const resolveAdmission = useCallback((turnId: string | null | undefined, admitted: boolean) => {
     if (!turnId) return;
@@ -1664,6 +1665,7 @@ export function useKohakuStream(
         pendingStopRunIdentityRef.current = null;
         if (
           liveNaturalCompletion
+          && !wasStopping
           && completedTurnId
           && completedTurnId !== stoppedTurnIdRef.current
           && !stopPendingRef.current

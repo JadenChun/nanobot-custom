@@ -330,6 +330,7 @@ class AgentRunSpec:
     consolidate_history: HistoryConsolidator | None = None
     consolidate_provider_compaction: ProviderCompactionConsolidator | None = None
     injection_callback: InjectionCallback | None = None
+    drain_before_first_request: bool = False
     terminal_injection_callback: InjectionCallback | None = None
     llm_timeout_s: float | None = None
     continuation_callback: ContinuationCallback | None = None
@@ -1040,6 +1041,11 @@ class AgentRunner:
                 session_key=spec.session_key,
             )
             await hook.before_iteration(context)
+            if iteration == 0 and spec.drain_before_first_request:
+                had_injections, injection_cycles = await self._try_drain_injections(
+                    spec, messages, None, injection_cycles, source=request_state.source,
+                    phase="before first model request",
+                )
             request_message_count = len(messages)
             request_messages = (
                 request_state.compaction.request_messages(messages)

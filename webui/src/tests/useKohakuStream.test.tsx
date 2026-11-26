@@ -133,6 +133,11 @@ function fakeClient() {
       getRunTurnId(chatId: string) {
         return runTurnIdByChatId.get(chatId) ?? null;
       },
+      hydrateActiveRun(chatId: string, state?: { turn_id: string | null; started_at: number | null } | null) {
+        if (!state?.turn_id) return;
+        runTurnIdByChatId.set(chatId, state.turn_id);
+        if (state.started_at !== null) runStartedAtByChatId.set(chatId, state.started_at);
+      },
       getGoalState(chatId: string) {
         return goalStateByChatId.get(chatId);
       },

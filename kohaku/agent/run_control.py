@@ -5,11 +5,12 @@ from __future__ import annotations
 import asyncio
 import re
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Protocol, TypedDict, cast
 
 from loguru import logger
 
+from kohaku.bus.events import InboundMessage
 from kohaku.bus.outbound_events import RunLifecycleState, RunState
 
 RunStateSnapshot = RunState
@@ -53,18 +54,34 @@ def parse_run_stop_payload(value: object) -> RunStopTarget:
     return RunStopTarget(*values)
 
 
+def parse_run_steer_payload(value: object) -> tuple[RunStopTarget, str]:
+    """Validate the run identity and nonempty text for the dedicated Steer action."""
+    if not isinstance(value, dict):
+        raise ValueError("Invalid Steer request")
+    raw = cast(dict[object, object], value)
+    if getattr(raw, "duplicate_keys", ()):
+        raise ValueError("Invalid Steer request")
+    fields = dict(raw)
+    prompt = fields.pop("prompt", None)
+    if not isinstance(prompt, str) or not prompt.strip() or len(prompt) > 32_000:
+        raise ValueError("Invalid Steer prompt")
+    return parse_run_stop_payload(fields), prompt
+
+
 class RunControlAdapter(Protocol):
     """Harness boundary for control actions on one admitted run."""
 
     async def request_stop(self) -> None: ...
 
-    async def enqueue_steer(self, prompt: str) -> bool: ...
+    async def enqueue_steer(self, message: InboundMessage) -> bool: ...
 
     async def resolve_approval(self, approval_id: str, decision: object) -> bool: ...
 
 
-class ExternalStopper(Protocol):
+class ExternalRunOwner(Protocol):
     async def stop(self, session_key: str) -> None: ...
+
+    def notify_steer(self, session_key: str) -> None: ...
 
 
 @dataclass(slots=True)
@@ -72,14 +89,14 @@ class TaskRunControlAdapter:
     """Cancel one native root task through the shared adapter contract."""
 
     task: asyncio.Task[object]
+    admit_steer: Callable[[InboundMessage], Awaitable[bool]] | None = None
 
     async def request_stop(self) -> None:
         if not self.task.done() and not self.task.cancelling():
             self.task.cancel()
 
-    async def enqueue_steer(self, prompt: str) -> bool:
-        del prompt
-        return False
+    async def enqueue_steer(self, message: InboundMessage) -> bool:
+        return self.admit_steer is not None and await self.admit_steer(message)
 
     async def resolve_approval(self, approval_id: str, decision: object) -> bool:
         del approval_id, decision
@@ -90,9 +107,10 @@ class TaskRunControlAdapter:
 class ExternalTaskRunControlAdapter:
     """Use the external harness owner's cancellation path for one run."""
 
-    runner: ExternalStopper
+    runner: ExternalRunOwner
     session_key: str
     stop_task: asyncio.Task[None] | None = None
+    admit_steer: Callable[[InboundMessage], Awaitable[bool]] | None = None
 
     async def request_stop(self) -> None:
         if self.stop_task is None or self.stop_task.done():
@@ -107,9 +125,11 @@ class ExternalTaskRunControlAdapter:
         if not task.cancelled():
             task.exception()
 
-    async def enqueue_steer(self, prompt: str) -> bool:
-        del prompt
-        return False
+    async def enqueue_steer(self, message: InboundMessage) -> bool:
+        if self.admit_steer is None or not await self.admit_steer(message):
+            return False
+        self.runner.notify_steer(self.session_key)
+        return True
 
     async def resolve_approval(self, approval_id: str, decision: object) -> bool:
         del approval_id, decision
@@ -127,10 +147,11 @@ class ActiveRunHandle:
     workspace_scope: dict[str, object] | None
     started_at: float
     harness_kind: str
-    steer_mailbox: asyncio.Queue[object] | None = None
+    steer_mailbox: asyncio.Queue[InboundMessage] | None = None
     active_children: tuple[str, ...] = ()
     adapter: RunControlAdapter | None = None
     can_steer: bool = False
+    steer_admission: asyncio.Lock = field(default_factory=asyncio.Lock)
 
 
 class SessionRunController:
@@ -237,15 +258,29 @@ class SessionRunController:
         handle.state = state
         return self.snapshot(session_key)
 
-    def set_steer_mailbox(
+    async def enqueue_steer(
         self,
         session_key: str,
-        run_id: str,
-        mailbox: asyncio.Queue[object] | None,
-    ) -> None:
+        message: InboundMessage,
+        *,
+        turn_id: str,
+        exact_target: RunStopTarget | None = None,
+    ) -> bool:
+        """Admit guidance only to the current, steerable run."""
         handle = self.active_run(session_key)
-        if handle is not None and handle.run_id == run_id:
-            handle.steer_mailbox = mailbox
+        if (
+            handle is None
+            or not handle.can_steer
+            or handle.state not in {"running", "waiting_approval"}
+            or handle.turn_id != turn_id
+            or handle.adapter is None
+            or (exact_target is not None and (
+                handle.source_incarnation != exact_target.source_incarnation
+                or handle.run_id != exact_target.run_id
+            ))
+        ):
+            return False
+        return await handle.adapter.enqueue_steer(message)
 
     def set_active_children(
         self,

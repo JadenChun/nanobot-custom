@@ -1742,8 +1742,6 @@ class WebUIWorkspaceController:
         # explicit control mutation, never a property of a chat message.
         session_key = webui_session_key(chat_id)
         is_steer = envelope.get("request_intent") == "steer"
-        if is_steer and self.has_external_harness(session_key):
-            raise WorkspaceScopeError("harness_steering_unavailable", status=409)
         content = envelope.get("content")
         stripped = content.strip() if isinstance(content, str) else ""
         is_stop = stripped == "/stop" and not envelope.get("media")

@@ -30,8 +30,10 @@ from kohaku.agent.tools.sandbox import managed_bwrap_available
 from kohaku.harness.backend import (
     BridgeFactory,
     ExternalEvent,
+    ExternalQueryFinished,
     ExternalReasoning,
     ExternalSessionStarted,
+    ExternalSteerAvailable,
     ExternalText,
     ExternalToolBatchReady,
     ExternalToolCall,
@@ -217,6 +219,7 @@ class _SDKTurn:
     trackers: dict[str, FileEditTracker] = field(default_factory=dict)
     edits: dict[str, dict[str, object]] = field(default_factory=dict)
     denied: set[str] = field(default_factory=set)
+    pending_responses: int = 1
 
 
 @dataclass(slots=True)
@@ -313,6 +316,7 @@ class _ClaudeProcess:
         self._owner_task: asyncio.Task[None] | None = None
         self._owner_ready: asyncio.Future[None] | None = None
         self._commands: asyncio.Queue[_SDKCommand] = asyncio.Queue()
+        self._turn_events: asyncio.Queue[object] | None = None
         self._running = False
         self._closing = False
 
@@ -482,6 +486,7 @@ class _ClaudeProcess:
             raise RuntimeError("The Claude Code process already has an active turn.")
         self._running = True
         events: asyncio.Queue[object] = asyncio.Queue()
+        self._turn_events = events
         await self._commands.put(_SDKCommand(request, approve, events))
         try:
             while True:
@@ -493,6 +498,23 @@ class _ClaudeProcess:
                 yield cast(ExternalEvent, event)
         finally:
             self._running = False
+            self._turn_events = None
+
+    def notify_steer(self) -> None:
+        events = self._turn_events
+        if events is not None:
+            events.put_nowait(ExternalSteerAvailable())
+
+    async def send_steer(self, prompt: str) -> bool:
+        """Submit input on the same SDK stream and keep its response in this run."""
+        active = self._active
+        if self._closing or active is None or not active.pending_responses:
+            return False
+        if not active.request.is_authorized():
+            return False
+        active.pending_responses += 1
+        await self._client.query(prompt)
+        return True
 
     async def _run_turn(
         self, request: ExternalTurnRequest, approve: RequestApproval,
@@ -512,74 +534,96 @@ class _ClaudeProcess:
         session_id = None
         try:
             await self._client.query(request.prompt)
-            async for message in self._client.receive_response():
-                if getattr(message, "parent_tool_use_id", None) is not None:
-                    continue
-                observed_id = _string(getattr(message, "session_id", None))
-                if isinstance(message, sdk.SystemMessage) and message.subtype == "init":
-                    observed_id = _string(_object(message.data).get("session_id"))
-                if observed_id and observed_id != session_id:
-                    if observed_id == self._fork_parent_id:
-                        yield ExternalTurnFinished(error="Claude Code did not create a distinct fork.")
-                        return
-                    session_id = observed_id
-                    yield ExternalSessionStarted(observed_id)
-                if isinstance(message, sdk.StreamEvent):
-                    raw = _object(message.event)
-                    if raw.get("type") == "message_stop":
-                        yield ExternalToolBatchReady()
-                    index = raw.get("index")
-                    if not isinstance(index, int):
+            while active.pending_responses:
+                had_text = False
+                async for message in self._client.receive_response():
+                    if getattr(message, "parent_tool_use_id", None) is not None:
                         continue
-                    if raw.get("type") == "content_block_start":
-                        kind = _string(_object(raw.get("content_block")).get("type"))
-                        if kind in partial:
-                            parts: list[str] = []
-                            current_blocks[index] = kind, parts
-                            partial[kind].append(parts)
-                    elif index in current_blocks:
-                        kind, parts = current_blocks[index]
-                        if raw.get("type") == "content_block_delta":
-                            delta = _string(_object(raw.get("delta")).get(kind))
-                            if delta:
-                                parts.append(delta)
-                                yield ExternalText(delta) if kind == "text" else ExternalReasoning(delta)
-                        elif raw.get("type") == "content_block_stop":
-                            del current_blocks[index]
-                            if kind == "thinking" and parts:
-                                yield ExternalReasoning(None)
-                elif isinstance(message, sdk.AssistantMessage):
-                    for block in message.content:
-                        if isinstance(block, sdk.TextBlock):
-                            text = _remaining(_string(block.text), partial["text"])
-                            if text:
-                                yield ExternalText(text)
-                        elif isinstance(block, sdk.ThinkingBlock):
-                            thinking = _remaining(_string(block.thinking), partial["thinking"])
-                            if thinking:
-                                yield ExternalReasoning(thinking)
-                                yield ExternalReasoning(None)
-                        elif isinstance(block, sdk.ToolUseBlock):
-                            yield ExternalToolIntent(ExternalToolCall(
-                                _string(block.id), _string(block.name), _object(block.input),
-                            ))
-                elif isinstance(message, sdk.UserMessage):
-                    content: object = message.content
-                    if isinstance(content, list):
-                        for block in cast(list[object], content):
-                            if isinstance(block, sdk.ToolResultBlock):
-                                call_id = _string(getattr(block, "tool_use_id", None))
-                                yield ExternalToolResult(
-                                    call_id, getattr(block, "content", None),
-                                    bool(getattr(block, "is_error", False)),
-                                    call_id not in active.denied, active.edits.pop(call_id, None),
-                                )
-                elif isinstance(message, sdk.ResultMessage):
-                    yield ExternalTurnFinished(
-                        error="Claude Code reported a turn error." if message.is_error else None,
-                        cancelled=message.terminal_reason in {"aborted_streaming", "aborted_tools"},
-                        final_text=_string(message.result) or None,
-                    )
+                    observed_id = _string(getattr(message, "session_id", None))
+                    if isinstance(message, sdk.SystemMessage) and message.subtype == "init":
+                        observed_id = _string(_object(message.data).get("session_id"))
+                    if observed_id and observed_id != session_id:
+                        if observed_id == self._fork_parent_id:
+                            yield ExternalTurnFinished(error="Claude Code did not create a distinct fork.")
+                            return
+                        session_id = observed_id
+                        yield ExternalSessionStarted(observed_id)
+                    if isinstance(message, sdk.StreamEvent):
+                        raw = _object(message.event)
+                        if raw.get("type") == "message_stop":
+                            yield ExternalToolBatchReady()
+                        index = raw.get("index")
+                        if not isinstance(index, int):
+                            continue
+                        if raw.get("type") == "content_block_start":
+                            kind = _string(_object(raw.get("content_block")).get("type"))
+                            if kind in partial:
+                                parts: list[str] = []
+                                current_blocks[index] = kind, parts
+                                partial[kind].append(parts)
+                        elif index in current_blocks:
+                            kind, parts = current_blocks[index]
+                            if raw.get("type") == "content_block_delta":
+                                delta = _string(_object(raw.get("delta")).get(kind))
+                                if delta:
+                                    parts.append(delta)
+                                    if kind == "text":
+                                        had_text = True
+                                        yield ExternalText(delta)
+                                    else:
+                                        yield ExternalReasoning(delta)
+                            elif raw.get("type") == "content_block_stop":
+                                del current_blocks[index]
+                                if kind == "thinking" and parts:
+                                    yield ExternalReasoning(None)
+                    elif isinstance(message, sdk.AssistantMessage):
+                        for block in message.content:
+                            if isinstance(block, sdk.TextBlock):
+                                text = _remaining(_string(block.text), partial["text"])
+                                if text:
+                                    had_text = True
+                                    yield ExternalText(text)
+                            elif isinstance(block, sdk.ThinkingBlock):
+                                thinking = _remaining(_string(block.thinking), partial["thinking"])
+                                if thinking:
+                                    yield ExternalReasoning(thinking)
+                                    yield ExternalReasoning(None)
+                            elif isinstance(block, sdk.ToolUseBlock):
+                                yield ExternalToolIntent(ExternalToolCall(
+                                    _string(block.id), _string(block.name), _object(block.input),
+                                ))
+                    elif isinstance(message, sdk.UserMessage):
+                        content: object = message.content
+                        if isinstance(content, list):
+                            for block in cast(list[object], content):
+                                if isinstance(block, sdk.ToolResultBlock):
+                                    call_id = _string(getattr(block, "tool_use_id", None))
+                                    yield ExternalToolResult(
+                                        call_id, getattr(block, "content", None),
+                                        bool(getattr(block, "is_error", False)),
+                                        call_id not in active.denied, active.edits.pop(call_id, None),
+                                    )
+                    elif isinstance(message, sdk.ResultMessage):
+                        active.pending_responses -= 1
+                        if active.pending_responses and not message.is_error and message.terminal_reason not in {
+                            "aborted_streaming", "aborted_tools",
+                        }:
+                            if not had_text:
+                                text = _string(message.result)
+                                if text:
+                                    yield ExternalText(text)
+                            partial = {"text": deque(), "thinking": deque()}
+                            current_blocks.clear()
+                            yield ExternalQueryFinished()
+                            break
+                        active.pending_responses = 0
+                        yield ExternalTurnFinished(
+                            error="Claude Code reported a turn error." if message.is_error else None,
+                            cancelled=message.terminal_reason in {"aborted_streaming", "aborted_tools"},
+                            final_text=_string(message.result) or None,
+                        )
+                        return
+                else:
                     return
         finally:
             self._active = None

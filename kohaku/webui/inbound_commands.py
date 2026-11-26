@@ -18,7 +18,7 @@ from loguru import logger
 from websockets.asyncio.server import ServerConnection
 
 from kohaku.agent.approvals import TurnApprovalSaveError
-from kohaku.agent.run_control import parse_run_stop_payload
+from kohaku.agent.run_control import parse_run_steer_payload, parse_run_stop_payload
 from kohaku.agent.stop_target import StopExpectation, parse_stop_expectation
 from kohaku.agent.turn import ApprovalDecision
 from kohaku.attachments.models import AttachmentRecord
@@ -198,7 +198,7 @@ def steering_target_error(
     ):
         return "not_admitted", "steering_target_changed"
     current_scope = websocket_turn_scope(chat_id)
-    if current_scope is None or scope.metadata() != current_scope:
+    if current_scope is not None and scope.metadata() != current_scope:
         return "not_admitted", "steering_context_changed"
     return None
 
@@ -2791,6 +2791,43 @@ class WebUICommandRouter:
             status=200, message="accepted", result={"accepted": True}, outcome="applied",
         )
 
+    async def _steer_active_run(
+        self, connection: ServerConnection, payload: dict[str, Any],
+    ) -> WebUIRequestResult:
+        try:
+            target, prompt = parse_run_steer_payload(payload)
+        except ValueError:
+            return WebUIRequestResult(
+                status=400, message="invalid_run_steer_target", outcome="not_applied",
+            )
+        if (
+            not self._owner_chat_controls_available(connection)
+            or target.chat_id not in self._transport.webui_connection_chats(connection)
+            or (_typed_mobile_identity(connection) is not None
+                and not await self._transport.revalidate_mobile_connection(connection))
+        ):
+            return WebUIRequestResult(status=403, message="scope_denied", outcome="not_applied")
+        sessions = self.gateway.session_manager
+        cached = sessions.get_cached(webui_session_key(target.chat_id)) if sessions else None
+        if cached is not None and not cached.policy.persist and not self._temporary_chats.owns(
+            connection, target.chat_id,
+        ):
+            return WebUIRequestResult(
+                status=403, message="temporary_chat_unavailable", outcome="not_applied",
+            )
+        steer = self.gateway.run_steer_target
+        if steer is None:
+            return WebUIRequestResult(
+                status=503, message="run_steer_unavailable", outcome="not_applied",
+            )
+        if not await steer(target, prompt):
+            return WebUIRequestResult(
+                status=409, message="stale_steer_target", outcome="not_applied",
+            )
+        return WebUIRequestResult(
+            status=200, message="accepted", result={"accepted": True}, outcome="applied",
+        )
+
     async def execute_webui_request(
         self,
         connection: ServerConnection,
@@ -2804,6 +2841,8 @@ class WebUICommandRouter:
             return await self._control_delegated_child(connection, payload)
         if action == "run.approve":
             return await self._resolve_run_approval(connection, payload)
+        if action == "run.steer":
+            return await self._steer_active_run(connection, payload)
         if action == "run.stop":
             try:
                 target = parse_run_stop_payload(payload)

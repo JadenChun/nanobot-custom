@@ -2192,8 +2192,8 @@ async def test_webui_steering_target_change_is_rejected_before_bus_dispatch(tmp_
 
 
 @pytest.mark.asyncio
-async def test_webui_steering_matching_target_still_dispatches(tmp_path):
-    """The rejection gate must not block guidance for the live target."""
+async def test_webui_steering_reserved_target_cannot_start_a_new_run(tmp_path):
+    """A turn reservation alone cannot accept guidance or start a run."""
     from kohaku.bus.events import InboundMessage
     from kohaku.session import webui_turns as wth
     from kohaku.webui.metadata import (
@@ -2220,13 +2220,10 @@ async def test_webui_steering_matching_target_still_dispatches(tmp_path):
                 WEBUI_TURN_METADATA_KEY: "guidance-2",
             },
         ))
-        for _ in range(100):
-            if loop._dispatch.await_count:
-                break
-            await asyncio.sleep(0.01)
-
-        assert loop._dispatch.await_count == 1
-        assert loop.bus.outbound_size == 0
+        rejected = await asyncio.wait_for(loop.bus.consume_outbound(), timeout=2)
+        assert rejected.event.reason == "steering_target_changed"
+        assert rejected.event.turn_id == "guidance-2"
+        loop._dispatch.assert_not_awaited()
     finally:
         wth.clear_websocket_turn_if_current("steer-live", owner)
         loop.stop()

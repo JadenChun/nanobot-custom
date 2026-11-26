@@ -56,6 +56,7 @@ class GatewayServices:
     session_manager: SessionManager | None
     child_control: Callable[[str, str, str, str | None], Awaitable[dict[str, Any]]] | None
     run_stop_target: Callable[[RunStopTarget], Awaitable[bool]] | None
+    run_steer_target: Callable[[RunStopTarget, str], Awaitable[bool]] | None
     resolve_run_approval: Callable[[str, ApprovalDecision], bool] | None
     cron_service: CronService | None
     local_trigger_store: LocalTriggerStore | None
@@ -72,6 +73,7 @@ def build_gateway_services(
     stop_target_for_key: StopTargetReader | None = None,
     run_state_for_key: Callable[[str], RunState | None] | None = None,
     run_stop_target: Callable[[RunStopTarget], Awaitable[bool]] | None = None,
+    run_steer_target: Callable[[RunStopTarget, str], Awaitable[bool]] | None = None,
     resolve_run_approval: Callable[[str, ApprovalDecision], bool] | None = None,
     child_control: Callable[[str, str, str, str | None], Awaitable[dict[str, Any]]] | None = None,
     static_dist_path: Path | None = None,
@@ -249,6 +251,7 @@ def build_gateway_services(
         session_manager=session_manager,
         child_control=child_control,
         run_stop_target=run_stop_target,
+        run_steer_target=run_steer_target,
         resolve_run_approval=resolve_run_approval,
         cron_service=cron_service,
         local_trigger_store=local_trigger_store,

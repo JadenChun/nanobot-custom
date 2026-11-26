@@ -2147,7 +2147,7 @@ export function ThreadShell({
     ? activeViewportTurnByChatIdRef.current.get(chatId) ?? null
     : null;
   const canonicalRunTurnId = chatId && messagesReady && turnActive
-    ? client.getRunTurnId(chatId)
+    ? (runState === undefined ? client.getRunTurnId(chatId) : runState?.turn_id ?? null)
     : null;
   const viewportTurnId = messagesReady && turnActive
     ? canonicalRunTurnId
@@ -3818,7 +3818,10 @@ export function ThreadShell({
             : (openingConversation || booting || preparingFull)
         }
         newTurnBlocked={session || historyKey ? (!chatId || reasoningPending) : false}
-        steerDisabled={session || historyKey ? (claudeChat || !connectionOpen || !canonicalRunTurnId) : false}
+        steerDisabled={session || historyKey
+          ? (!connectionOpen || !canonicalRunTurnId
+            || (runState === undefined ? claudeChat : !runState?.can_steer))
+          : false}
         inputAriaLabel={composerInputAriaLabel}
         isStreaming={turnActive}
         queueCompletionTurnId={session || historyKey ? queueCompletionTurnId : null}

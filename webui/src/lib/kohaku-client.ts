@@ -18,6 +18,7 @@ import type {
   WorkspacePermissionProjection,
   WebUIMutationOutcome,
   StopExpectation,
+  RunState,
   InputAttemptBinding,
   InputAttemptCapability,
   InputAttemptProof,
@@ -551,6 +552,20 @@ export class KohakuClient {
   /** Canonical lifecycle turn currently owning the run for *chatId*, if known. */
   getRunTurnId(chatId: string): string | null {
     return this.latestRunTurnIdByChatId.get(chatId) ?? null;
+  }
+
+  /** Restore the canonical active turn for controls and live completion. */
+  hydrateActiveRun(chatId: string, state: RunState | null | undefined): void {
+    if (!state?.turn_id) return;
+    const turnId = state.turn_id;
+    if (this.canonicalCompletedTurnIdsByChatId.get(chatId)?.has(turnId)) return;
+    const previous = this.runStartedAtByChatId.get(chatId);
+    if (previous !== undefined && state.started_at !== null && state.started_at < previous) return;
+    if (this.getRunTurnId(chatId) !== turnId) this.advanceRunGeneration(chatId, turnId);
+    if (state.started_at === null) return;
+    this.runStartedAtByTurnKey.set(this.runSendKey(chatId, turnId), state.started_at);
+    this.runStartedAtByChatId.set(chatId, state.started_at);
+    if (previous !== state.started_at) this.emitRunStatus(chatId, state.started_at);
   }
 
   /** Clear the optimistic run state immediately after the user stops a turn. */
@@ -2240,6 +2255,7 @@ export class KohakuClient {
     }
 
     if (parsed.event === "attached") {
+      this.hydrateActiveRun(parsed.chat_id, parsed.run_state);
       this.externalApprovals.delete(parsed.chat_id);
       if (parsed.live_turn_controls === true) this.liveTurnControls.add(parsed.chat_id);
       else this.liveTurnControls.delete(parsed.chat_id);
@@ -2384,6 +2400,7 @@ export class KohakuClient {
       // Check before consuming the running state. A legacy synthesized ID,
       // duplicate terminal frame, or reconnect's idle snapshot is display
       // evidence only and cannot release a new input from the queue.
+      if (parsed.event === "run_state") this.hydrateActiveRun(chatId, parsed.run_state);
       const liveNaturalCompletion = parsed.event === "turn_end"
         && this.status_ === "open"
         && receivedTurnId !== null

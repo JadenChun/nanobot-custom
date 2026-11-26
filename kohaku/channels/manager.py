@@ -152,6 +152,7 @@ class ChannelManager:
         webui_stop_target_for_key: StopTargetReader | None = None,
         webui_run_state_for_key: Callable[[str], RunState | None] | None = None,
         webui_run_stop_target: Callable[[RunStopTarget], Awaitable[bool]] | None = None,
+        webui_run_steer_target: Callable[[RunStopTarget, str], Awaitable[bool]] | None = None,
         webui_resolve_run_approval: Callable[[str, ApprovalDecision], bool] | None = None,
         config_path: Path | None = None,
     ):
@@ -180,6 +181,7 @@ class ChannelManager:
         self._webui_stop_target_for_key = webui_stop_target_for_key
         self._webui_run_state_for_key = webui_run_state_for_key
         self._webui_run_stop_target = webui_run_stop_target
+        self._webui_run_steer_target = webui_run_steer_target
         self._webui_resolve_run_approval = webui_resolve_run_approval
         self.channels: dict[str, BaseChannel] = {}
         self._channel_owners: dict[str, str] = {}
@@ -244,6 +246,7 @@ class ChannelManager:
                 stop_target_for_key=self._webui_stop_target_for_key,
                 run_state_for_key=self._webui_run_state_for_key,
                 run_stop_target=self._webui_run_stop_target,
+                run_steer_target=self._webui_run_steer_target,
                 resolve_run_approval=self._webui_resolve_run_approval,
                 child_control=self._webui_child_control,
                 static_dist_path=static_path,

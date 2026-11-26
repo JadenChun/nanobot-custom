@@ -21,8 +21,10 @@ from kohaku.harness.backend import (
     ExternalApprovalRegistry,
     ExternalEvent,
     ExternalHarnessProcess,
+    ExternalQueryFinished,
     ExternalReasoning,
     ExternalSessionStarted,
+    ExternalSteerAvailable,
     ExternalText,
     ExternalToolBatchReady,
     ExternalToolCall,
@@ -32,6 +34,7 @@ from kohaku.harness.backend import (
     ExternalTurnRequest,
     HarnessCapabilityError,
     SessionHarnessBackend,
+    StreamingSteerProcess,
 )
 
 CLAUDE_TOOL_NAMES = {
@@ -185,7 +188,18 @@ class ExternalHarnessRunner:
                 session.launch_key = launch_key
             turn.persist_binding(session.session_id)
             await request.hook.before_run(turn.run_context)
-            await turn.consume(session, session.process.run(request, approve))
+            process = session.process
+            next_request = request
+            while True:
+                await turn.consume(session, process.run(next_request, approve))
+                if turn.status != "completed" or session.stopping or not request.is_authorized():
+                    break
+                prompts = turn.unsent_guidance + await turn.drain_guidance(terminal=not turn.unsent_guidance)
+                turn.unsent_guidance.clear()
+                if not prompts:
+                    break
+                turn.status = "failed"
+                next_request = replace(request, prompt="\n\n".join(prompts))
             outcome = await turn.finish(session.session_id)
             reusable = (
                 request.retain_process and outcome.status == "completed" and session.session_id is not None
@@ -245,6 +259,11 @@ class ExternalHarnessRunner:
                         self._idle_timeout, session.close_process,
                     )
 
+    def notify_steer(self, session_key: str) -> None:
+        session = self._sessions.get(session_key)
+        if session is not None and not session.stopping and isinstance(session.process, StreamingSteerProcess):
+            session.process.notify_steer()
+
     async def stop(self, session_key: str) -> None:
         self.approvals.cancel_for_session(session_key)
         session = self._sessions.get(session_key)
@@ -283,6 +302,8 @@ class _Turn:
     status: Literal["completed", "failed", "cancelled"] = "failed"
     error: str | None = None
     reasoning: bool = False
+    unsent_guidance: list[str] = field(default_factory=list)
+    query_text_start: int = 0
     settled: bool = False
 
     def __post_init__(self) -> None:
@@ -294,6 +315,23 @@ class _Turn:
         payload = binding.payload()
         if writer.owner.read_snapshot().header["metadata"].get("harness_binding") != payload:
             writer.store.update_metadata(self.request.session_key, {"harness_binding": payload})
+
+    async def drain_guidance(self, *, terminal: bool = False) -> list[str]:
+        drain = self.request.drain_steer
+        if drain is None or self.active_calls or self.queued_calls:
+            return []
+        if self.segment and self.status != "completed":
+            return []
+        return await drain(self.commit_query_segment, terminal)
+
+    async def commit_query_segment(self) -> None:
+        await self.end_reasoning()
+        if self.segment:
+            entry = self.request.writer.append_message({
+                "role": "assistant", "content": "".join(self.segment),
+            })
+            await self.end_segment(entry["_event_id"], resuming=True)
+        self.query_text_start = len(self.text)
 
     async def consume(self, session: _Session, events: AsyncGenerator[ExternalEvent, None]) -> None:
         async with aclosing(events):
@@ -322,8 +360,11 @@ class _Turn:
                 elif isinstance(event, ExternalToolBatchReady):
                     if self.queued_calls and not self.active_calls:
                         await self.write_batch()
-                else:
-                    if event.final_text and not self.text:
+                elif isinstance(event, ExternalQueryFinished):
+                    if not (self.active_calls or self.queued_calls):
+                        await self.commit_query_segment()
+                elif not isinstance(event, ExternalSteerAvailable):
+                    if event.final_text and len(self.text) == self.query_text_start:
                         await self.add_text(event.final_text)
                     self.error = event.error
                     if session.stopping:
@@ -336,6 +377,14 @@ class _Turn:
                     else:
                         self.error = event.error or "Claude Code did not report every tool result."
                     return
+                if (
+                    isinstance(event, (ExternalSessionStarted, ExternalToolResult, ExternalSteerAvailable))
+                    and isinstance(session.process, StreamingSteerProcess)
+                    and not session.stopping and self.request.is_authorized()
+                ):
+                    prompts = await self.drain_guidance()
+                    if prompts and not await session.process.send_steer("\n\n".join(prompts)):
+                        self.unsent_guidance.extend(prompts)
         if session.stopping:
             self.status = "cancelled"
             self.error = None
