@@ -1186,11 +1186,7 @@ async def test_connect_mcp_servers_enabled_tools_specific_list_blocks_resources_
         await stack.aclose()
 
     # Only the allowed tool should be registered
-    assert "mcp_test_demo" in registry.tool_names
-    assert "mcp_test_other" not in registry.tool_names
-    # Resources and prompts must not leak
-    assert not any("secret_data" in name for name in registry.tool_names)
-    assert not any("admin_prompt" in name for name in registry.tool_names)
+    assert registry.tool_names == ["mcp_test_demo"]
 
 
 @pytest.mark.asyncio
@@ -1211,9 +1207,13 @@ async def test_connect_mcp_servers_enabled_tools_wildcard_allows_resources_and_p
     for stack in stacks.values():
         await stack.aclose()
 
-    assert "mcp_test_demo" in registry.tool_names
-    assert any("public_data" in name for name in registry.tool_names)
-    assert any("help_prompt" in name for name in registry.tool_names)
+    assert set(registry.tool_names) == {"mcp_test_demo", "mcp_resources", "mcp_prompts"}
+    assert "public_data" in await registry.execute("mcp_resources", {
+        "server": "test", "action": "list",
+    })
+    assert "help_prompt" in await registry.execute("mcp_prompts", {
+        "server": "test", "action": "list",
+    })
 
 
 @pytest.mark.asyncio
@@ -1663,7 +1663,7 @@ async def test_connect_mcp_servers_rolls_back_completed_batch_on_cancellation(
         )
     )
     await asyncio.wait_for(slow_started.wait(), timeout=1.0)
-    assert registry.tool_names == ["mcp_fast_demo"]
+    assert registry.tool_names == []
 
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
@@ -2146,9 +2146,7 @@ async def test_connect_registers_resources_and_prompts(
     for stack in stacks.values():
         await stack.aclose()
 
-    assert "mcp_test_tool_a" in registry.tool_names
-    assert "mcp_test_resource_res_b" in registry.tool_names
-    assert "mcp_test_prompt_prompt_c" in registry.tool_names
+    assert set(registry.tool_names) == {"mcp_test_tool_a", "mcp_resources", "mcp_prompts"}
 
 
 # ---------------------------------------------------------------------------
@@ -2225,7 +2223,7 @@ def test_tool_wrapper_preserves_original_name_for_mcp_call() -> None:
 
 
 @pytest.mark.asyncio
-async def test_connect_mcp_servers_sanitizes_resource_names(
+async def test_shared_resources_preserve_advertised_names(
     fake_mcp_runtime: dict[str, object | None],
 ) -> None:
     fake_mcp_runtime["session"] = _make_fake_session_with_capabilities(
@@ -2241,7 +2239,9 @@ async def test_connect_mcp_servers_sanitizes_resource_names(
     for stack in stacks.values():
         await stack.aclose()
 
-    assert "mcp_test_resource_PostgreSQL_System_Information" in registry.tool_names
+    result = await registry.execute("mcp_resources", {"server": "test", "action": "list"})
+    assert "PostgreSQL System Information" in result
+    assert set(registry.tool_names) == {"mcp_resources", "mcp_prompts"}
 
 
 @pytest.mark.asyncio
@@ -2365,7 +2365,7 @@ async def test_connect_mcp_servers_rejects_unsupported_schema_before_publication
         description="bad tool",
         inputSchema={
             "type": "object",
-            "properties": {"name": {"type": "string", "pattern": "^a"}},
+            "properties": {"name": {"not": {"type": "string"}}},
         },
     )
 

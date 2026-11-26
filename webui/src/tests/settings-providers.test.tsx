@@ -14,6 +14,45 @@ async function chooseProviderToConfigure(label: string) {
 describe("Settings providers", () => {
   installSettingsViewTestHooks();
 
+  it("confirms removal, keeps conflicts visible, and removes the provider and its catalog", async () => {
+    const base = settingsPayload();
+    const customProvider = {
+      name: "custom-company",
+      label: "Company Gateway",
+      configured: true,
+      is_custom: true,
+      api_base: "https://gateway.example/v1",
+    };
+    const payload = { ...base, providers: [...base.providers, customProvider] };
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input).startsWith("/api/settings/provider-models?")) {
+        return jsonResponse({ status: "available", models: [], model_count: 0 });
+      }
+      return { ok: false, status: 404, json: async () => ({}) } as Response;
+    }));
+
+    renderSettingsView({ initialSection: "models", initialSettings: payload });
+    fireEvent.click(await screen.findByRole("button", { name: /Company Gateway https:/ }));
+    const remove = screen.getByRole("button", { name: "Remove provider" });
+    fireEvent.click(remove);
+    let dialog = within(await screen.findByRole("alertdialog", { name: "Remove provider?" }));
+    fireEvent.click(dialog.getByRole("button", { name: "Cancel" }));
+    expect(requestMutationMock).not.toHaveBeenCalled();
+
+    fireEvent.click(remove);
+    dialog = within(await screen.findByRole("alertdialog", { name: "Remove provider?" }));
+    requestMutationMock
+      .mockRejectedValueOnce(new Error("Change or delete model presets that use this provider first."))
+      .mockResolvedValueOnce(base);
+    fireEvent.click(dialog.getByRole("button", { name: "Remove provider" }));
+    expect(await dialog.findByRole("alert")).toHaveTextContent("Change or delete model presets");
+    fireEvent.click(dialog.getByRole("button", { name: "Remove provider" }));
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument());
+    expect(requestMutationMock).toHaveBeenLastCalledWith(
+      "settings.provider.delete", { provider: customProvider.name }, expect.any(Number),
+    );
+    expect(screen.queryByText(customProvider.label)).not.toBeInTheDocument();
+  });
 
   it("signs in to the xAI Grok provider", async () => {
     const base = settingsPayload();

@@ -21,7 +21,6 @@ from kohaku.agent.turn import (
 )
 from kohaku.agent.turn import TurnContext as RunTurnContext
 from kohaku.bus.events import InboundMessage
-from kohaku.bus.queue import MessageBus
 from kohaku.config.schema import ChannelsConfig
 from kohaku.providers.base import LLMResponse
 from kohaku.session.source_projection import source_nodes
@@ -51,7 +50,6 @@ async def _make_loop(
             turn_delivery_factory=inputs.delivery,
             tools_config=inputs.config.tools,
             restrict_to_workspace=True,
-            enable_legacy_auto_compact=False,
         )
 
     return await acquire(tmp_path, build)
@@ -82,7 +80,6 @@ async def _execute_inbound(loop: AgentLoop, msg: InboundMessage) -> None:
         _options=_TurnExecutionOptions(
             inbound=msg,
             raise_errors=True,
-            trusted_foreground_activity=loop._trusted_foreground_inbound(msg),
         ),
     )
 
@@ -385,37 +382,6 @@ def test_attachment_references_canonicalize_existing_relative_paths(
     assert f"[Attachment: {doc_path.resolve()}]" in content
 
 
-def test_attachment_setup_unadmitted_constructor_refuses_before_effects(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from kohaku.agent.memory_recovery_startup_admission import StartupReceiptAdmissionError
-    from kohaku.session.manager import SessionManager
-
-    provider = MagicMock()
-    bus = MessageBus()
-    workspace = tmp_path / "unadmitted"
-    pending = workspace / "memory" / ".consolidation.pending.json"
-    pending.parent.mkdir(parents=True)
-    pending.write_text("{broken", encoding="utf-8")
-
-    def denied(*_args, **_kwargs):
-        pytest.fail("unadmitted attachment setup reached a session or directory effect")
-
-    monkeypatch.setattr(SessionManager, "__init__", denied)
-    monkeypatch.setattr(Path, "mkdir", denied)
-    before = tuple(tmp_path.iterdir())
-    with pytest.raises(StartupReceiptAdmissionError):
-        AgentLoop(
-            bus=bus, provider=provider, workspace=workspace,
-            sessions_root=tmp_path / "sessions",
-        )
-    assert tuple(tmp_path.iterdir()) == before
-    assert not bus._pending
-    provider.chat.assert_not_called()
-    provider.chat_with_retry.assert_not_called()
-
-
 @pytest.mark.asyncio
 async def test_attachment_setup_uses_owned_workspace_and_inert_composition(
     tmp_path: Path,
@@ -434,7 +400,6 @@ async def test_attachment_setup_uses_owned_workspace_and_inert_composition(
     assert loop.sessions.has_managed_authority
     assert loop.turn_delivery_factory.bus is loop.bus
     assert loop.tools_config.restrict_to_workspace is True
-    assert loop.auto_compact is None
     assert not loop._background_tasks
     assert not loop.cron_service._running
     loop.provider.chat.assert_not_called()

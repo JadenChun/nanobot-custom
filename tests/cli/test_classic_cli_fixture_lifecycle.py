@@ -172,7 +172,6 @@ def test_one_shot_body_failure_closes_actual_graph_and_preserves_exception(
         def from_config(cls, received, bus, **options):
             assert received is config
             assert options["provider"] is provider
-            assert options["enable_legacy_auto_compact"] is False
             agent = cls(
                 bus, options["session_manager"], options["tool_registry"],
                 options["turn_delivery_factory"],
@@ -285,27 +284,30 @@ def test_each_external_effect_trap_fails_without_underlying_io(
     assert classic_cli_runtime.compositions == []
 
 
-def test_classic_cli_preflight_rejects_enabled_idle_compaction_without_effects(
-    tmp_path, monkeypatch, classic_cli_runtime,
+def test_classic_cli_preflight_accepts_enabled_idle_compaction(
+    tmp_path, classic_cli_runtime,
 ):
-    agent_cli = importlib.import_module("kohaku.cli.agent")
+    from kohaku.runtime_composition import RuntimeComposition, RuntimeFactories, RuntimeState
+
     config = _config(tmp_path)
     config.agents.defaults.idle_compaction.enabled = True
-    loaded = []
+    graph = RuntimeComposition.define(
+        config,
+        factories=replace(
+            RuntimeFactories.defaults(),
+            agent=lambda _cfg, bus, sessions, tools, _mcp, _cron, delivery: _ScriptedAgent(
+                bus, sessions, tools, delivery,
+            ),
+        ),
+    )
 
-    def load(*_args):
-        loaded.append(True)
-        return config
+    async def exercise():
+        handle = await graph.acquire()
+        try:
+            assert graph.state is RuntimeState.READY
+        finally:
+            await graph.aclose()
 
-    monkeypatch.setattr("kohaku.cli.process_identity._set_process_title", lambda _title: None)
-    monkeypatch.setattr(agent_cli, "_load_runtime_config", load)
-    # This test intentionally leaves the config-aware foreground preflight real.
-    result = CliRunner().invoke(app, ["agent", "-m", "hello"])
-    assert result.exit_code == 1
-    assert isinstance(result.exception, SystemExit)
-    assert result.exception.code == 1
-    assert "Agent cannot start" in result.output
-    assert "idle" in result.output.lower()
-    assert loaded == [True]
-    assert classic_cli_runtime.compositions == []
-    assert not config.workspace_path.exists()
+    asyncio.run(exercise())
+    assert classic_cli_runtime.compositions == [graph]
+    classic_cli_runtime.verify_closed()

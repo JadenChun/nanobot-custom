@@ -10,7 +10,6 @@ import time
 import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, replace
-from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, TypedDict, cast
 
@@ -1207,7 +1206,7 @@ class ForegroundAgentManager:
 
     def _base_prompt(self, title: str) -> str:
         parts = [
-            f"# {title}\n\nCurrent Time: {datetime.now().astimezone().isoformat(timespec='seconds')}",
+            f"# {title}",
             (
                 "You are a foreground role called by Kohaku's main orchestrator. Complete only "
                 "the bounded assignment and return evidence to the orchestrator. Never address "

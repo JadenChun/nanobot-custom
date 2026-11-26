@@ -2,24 +2,13 @@
 
 from __future__ import annotations
 
-import asyncio
 import base64
 import importlib.util
-from collections.abc import Generator
 from pathlib import Path
 from types import ModuleType
 
 import pytest
 
-from kohaku.agent import memory_recovery_conversion_runtime as recovery
-from kohaku.agent import memory_recovery_storage as storage
-from kohaku.agent.memory_recovery_manifest import (
-    JsonValue,
-    ManifestRecord,
-    MemoryManifestError,
-    MemoryRecoveryManifest,
-    derive_manifest_identity,
-)
 from kohaku.agent.tools import desktop_use as desktop
 
 _ENV_KEY = "KOHAKU_DESKTOP_USE_MAX_INLINE_BYTES"
@@ -161,148 +150,3 @@ def test_inline_payload_uses_published_limit_at_exact_boundary(
             None,
         )
     assert tool._backend is None
-
-
-@pytest.fixture
-def manifest(
-    tmp_path: Path,
-) -> Generator[tuple[MemoryRecoveryManifest, dict[str, JsonValue]], None, None]:
-    (tmp_path / "memory").mkdir()
-    payload: dict[str, JsonValue] = {"probe": ["unicode ✓", True, None, 2, {"nested": "value"}]}
-    identity = derive_manifest_identity("conversions", payload)
-    with storage.open_workspace_memory(tmp_path) as authority:
-        chain = MemoryRecoveryManifest(authority.open_evidence_namespace("conversions", identity))
-        yield chain, payload
-
-
-@pytest.mark.parametrize("preexisting", [False, True])
-def test_captured_helper_with_genuine_manifest_and_detached_json(
-    manifest: tuple[MemoryRecoveryManifest, dict[str, JsonValue]], preexisting: bool,
-) -> None:
-    chain, payload = manifest
-    previous = chain.create(payload) if preexisting else None
-    returned = recovery._loaded_captured(chain, payload)
-    assert returned.phase == "CAPTURED"
-    assert returned.payload == payload
-    assert returned.payload is not payload
-    assert chain.load() == (returned,)
-    if previous is not None:
-        assert returned.raw_bytes == previous.raw_bytes
-        assert returned.digest == previous.digest
-    detached = returned.payload
-    detached["probe"] = "changed"
-    assert returned.payload == payload
-    assert chain.load() == (returned,)
-
-
-class _ScriptedManifest(MemoryRecoveryManifest):
-    """Nominal stage-unit double; it does not issue or qualify storage authority."""
-
-    def __init__(
-        self,
-        reads: list[tuple[ManifestRecord, ...] | BaseException],
-        created: ManifestRecord | BaseException,
-    ) -> None:
-        self.reads = list(reads)
-        self.created = created
-        self.trace: list[tuple[str, object]] = []
-
-    def load(self) -> tuple[ManifestRecord, ...]:
-        self.trace.append(("load", None))
-        result = self.reads.pop(0)
-        if isinstance(result, BaseException):
-            raise result
-        return result
-
-    def create(self, captured_payload: dict[str, JsonValue]) -> ManifestRecord:
-        self.trace.append(("create", captured_payload))
-        if isinstance(self.created, BaseException):
-            raise self.created
-        return self.created
-
-
-@pytest.mark.parametrize("preexisting", [False, True])
-def test_helper_preserves_payload_return_identity_and_read_create_read_order(
-    manifest: tuple[MemoryRecoveryManifest, dict[str, JsonValue]], preexisting: bool,
-) -> None:
-    chain, payload = manifest
-    record = chain.create(payload)
-    initial = (record,) if preexisting else ()
-    scripted = _ScriptedManifest([initial, (record,)], record)
-    assert recovery._loaded_captured(scripted, payload) is record
-    assert scripted.trace == [("load", None), ("create", payload), ("load", None)]
-    assert scripted.trace[1][1] is payload
-    assert scripted.reads == []
-
-
-@pytest.mark.parametrize("wrong_phase", [False, True])
-def test_initial_chain_refusal_precedes_create(
-    manifest: tuple[MemoryRecoveryManifest, dict[str, JsonValue]], wrong_phase: bool,
-) -> None:
-    chain, payload = manifest
-    captured = chain.create(payload)
-    prepared = chain.append(
-        predecessor_digest=captured.digest, phase="CONVERSION_PREPARED", payload={"step": 1},
-    )
-    initial = (prepared,) if wrong_phase else (captured, prepared)
-    scripted = _ScriptedManifest([initial], captured)
-    with pytest.raises(recovery.ConversionPreparationError):
-        recovery._loaded_captured(scripted, payload)
-    assert scripted.trace == [("load", None)]
-    assert scripted.reads == []
-
-
-@pytest.mark.parametrize("extra_record", [False, True])
-def test_reload_mismatch_refuses_after_create(
-    manifest: tuple[MemoryRecoveryManifest, dict[str, JsonValue]], extra_record: bool,
-) -> None:
-    chain, payload = manifest
-    record = chain.create(payload)
-    final = (record, record) if extra_record else ()
-    scripted = _ScriptedManifest([(), final], record)
-    with pytest.raises(recovery.ConversionPreparationError):
-        recovery._loaded_captured(scripted, payload)
-    assert scripted.trace == [("load", None), ("create", payload), ("load", None)]
-    assert scripted.trace[1][1] is payload
-    assert scripted.reads == []
-
-
-@pytest.mark.parametrize("phase", ["initial", "create", "reload"])
-@pytest.mark.parametrize("error_type", [RuntimeError, asyncio.CancelledError])
-def test_helper_propagates_exact_failure_without_extra_phases(
-    manifest: tuple[MemoryRecoveryManifest, dict[str, JsonValue]],
-    phase: str,
-    error_type: type[BaseException],
-) -> None:
-    chain, payload = manifest
-    record = chain.create(payload)
-    error = error_type("phase probe")
-    reads: list[tuple[ManifestRecord, ...] | BaseException] = [(), (record,)]
-    created: ManifestRecord | BaseException = record
-    if phase == "initial":
-        reads = [error]
-    elif phase == "create":
-        created = error
-    else:
-        reads[1] = error
-    scripted = _ScriptedManifest(reads, created)
-    with pytest.raises(error_type) as caught:
-        recovery._loaded_captured(scripted, payload)
-    assert caught.value is error
-    expected = [("load", None)]
-    if phase != "initial":
-        expected.append(("create", payload))
-    if phase == "reload":
-        expected.append(("load", None))
-    assert scripted.trace == expected
-
-
-@pytest.mark.parametrize("invalid", [1.5, b"binary", ("tuple",)])
-def test_helper_keeps_native_manifest_validation_for_invalid_json(
-    manifest: tuple[MemoryRecoveryManifest, dict[str, JsonValue]], invalid: object,
-) -> None:
-    chain, _payload = manifest
-    with pytest.raises(MemoryManifestError) as caught:
-        recovery._loaded_captured(chain, {"invalid": invalid})
-    assert caught.value.code == "invalid"
-    assert chain.load() == ()

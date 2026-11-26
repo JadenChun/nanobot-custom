@@ -155,10 +155,17 @@ async def test_governor_replacement_keeps_runtime_notes_and_no_tools_obeys_hard_
         await governor.prepare_request(state, repeated.messages(),
             tool_definitions=registry.get_definitions(), source_view=repeated)
         assert source.projection_epoch == 1
+        bounded, _ = await governor.prepare_request(
+            state, source.transcript.messages(), tool_definitions=None, source_view=source.transcript,
+        )
+        tool_output = next(row['content'] for row in bounded if row['role'] == 'tool')
+        assert len(tool_output) <= 16_000 and 'read_artifact' not in tool_output
+        fixed = RuntimeNode('oversized-fixed', {'role': 'user', 'content': ' detail' * 20_000})
+        overflow = source.transcript.with_runtime(fixed)
         with pytest.raises(ContextWindowExceededError):
-            await governor.prepare_request(state, source.transcript.messages(),
-                                          tool_definitions=None, source_view=source.transcript)
-        assert raw == original.messages() and source.projection_epoch == 2
+            await governor.prepare_request(
+                state, overflow.messages(), tool_definitions=None, source_view=overflow,
+            )
 
 
 async def test_summary_evidence_is_canonical_not_generated_reference(tmp_path):

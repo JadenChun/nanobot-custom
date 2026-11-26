@@ -4,12 +4,10 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
-from types import MappingProxyType, SimpleNamespace
+from types import MappingProxyType
 
 import pytest
 
-from kohaku.agent import memory_recovery_startup_admission as admission
-from kohaku.agent import memory_recovery_storage as storage
 from kohaku.agent.tools import producer_adapters
 from kohaku.agent.tools.base import Tool
 from kohaku.agent.tools.filesystem import ReadFileTool
@@ -89,67 +87,6 @@ def test_source_operation_rejects_distinct_backend_before_yield(tmp_path: Path) 
         assert authority.closed
     finally:
         authority.close()
-
-
-def test_startup_context_yields_real_gate_and_releases_it(tmp_path: Path) -> None:
-    workspace = tmp_path / "workspace"
-    sessions = tmp_path / "sessions"
-    assert not workspace.exists()
-    with admission.admitted_startup_mutation(workspace, sessions_root=sessions) as gate:
-        assert gate is not None
-        gate.require_current()
-    with pytest.raises(storage.MemoryStorageError) as closed:
-        gate.require_current()
-    assert closed.value.code == "closed"
-    with storage.open_existing_workspace_memory_lock(workspace) as reopened:
-        reopened.require_current()
-    assert not (workspace / "memory" / ".consolidation.pending.json").exists()
-
-
-@pytest.mark.parametrize("error_type", [RuntimeError, KeyError, asyncio.CancelledError])
-def test_startup_context_preserves_body_error_and_releases_lock(tmp_path, error_type):
-    workspace = tmp_path / "workspace"
-    sessions = tmp_path / "sessions"
-    error = error_type("synthetic body refusal")
-    with pytest.raises(error_type) as caught:
-        with admission.admitted_startup_mutation(workspace, sessions_root=sessions) as gate:
-            assert gate is not None
-            gate.require_current()
-            raise error
-    assert caught.value is error
-    with pytest.raises(storage.MemoryStorageError) as closed:
-        gate.require_current()
-    assert closed.value.code == "closed"
-    with storage.open_existing_workspace_memory_lock(workspace) as reopened:
-        reopened.require_current()
-
-
-def test_startup_context_pending_receipt_refuses_before_yield(tmp_path: Path) -> None:
-    workspace = tmp_path / "workspace"
-    memory = workspace / "memory"
-    memory.mkdir(parents=True)
-    pending = memory / ".consolidation.pending.json"
-    pending.write_bytes(b"synthetic pending receipt")
-    entered = []
-    with pytest.raises(admission.StartupReceiptAdmissionError) as caught:
-        with admission.admitted_startup_mutation(workspace, sessions_root=tmp_path / "sessions"):
-            entered.append(True)
-    assert entered == []
-    assert str(caught.value) == "memory recovery required"
-    assert caught.value.__cause__ is None
-    assert pending.read_bytes() == b"synthetic pending receipt"
-
-
-def test_startup_context_unsupported_clean_branch_yields_none_without_creation(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    # Only this module's branch selector changes, not native descriptor operations.
-    monkeypatch.setattr(admission, "os", SimpleNamespace(name="unsupported"))
-    workspace = tmp_path / "absent"
-    with admission.admitted_startup_mutation(workspace, sessions_root=tmp_path / "sessions") as gate:
-        assert gate is None
-        assert not workspace.exists()
-    assert not workspace.exists()
 
 
 @pytest.mark.parametrize(

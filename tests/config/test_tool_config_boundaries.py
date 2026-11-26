@@ -48,7 +48,7 @@ assert Config.model_rebuild(force=True) is True
 config = Config()
 assert type(config.tools.web) is WebToolsConfig
 assert config.channels.websocket == {"enabled": False}
-assert config.artifacts.enabled is False
+assert config.artifacts.enabled is True
 assert config.agents.defaults.idle_compaction.enabled is False
 assert config.tools.model_dump(by_alias=True)["imageGeneration"]["configurationSource"] == "legacy"
 print("ok")

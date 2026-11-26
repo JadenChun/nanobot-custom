@@ -181,6 +181,7 @@ export function SettingsPage({
     providerOAuthResponse,
     providerSaving,
     remoteBrowserAccess,
+    removeProvider,
     resetWebSearchDraft,
     restartViaSettingsSurface,
     runProviderOAuth,
@@ -348,6 +349,7 @@ export function SettingsPage({
               }
               onSaveProvider={saveProvider}
               onCreateCustomProvider={createCustomProvider}
+              onRemoveProvider={removeProvider}
               onProviderOAuthLogin={(provider) => runProviderOAuth(provider, "login")}
               onProviderOAuthLogout={(provider) => runProviderOAuth(provider, "logout")}
               imageProviderRestartPending={pendingRestartSections.image || pendingRestartSections.runtime}

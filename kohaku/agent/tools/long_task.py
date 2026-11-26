@@ -21,18 +21,19 @@ from kohaku.runtime_context import RuntimeContextBlock, wrap_runtime_context_lin
 from kohaku.session.goal_state import (
     GOAL_STATE_KEY,
     MAX_GOAL_OBJECTIVE_CHARS,
+    active_goal_runtime_lines,
     discard_legacy_goal_state_key,
     explicit_goal_requested,
     goal_state_raw,
-    goal_state_runtime_lines,
     parse_goal_state,
     sustained_goal_active,
 )
+from kohaku.session.manager import SessionWriteConflict
 from kohaku.session.turn_continuation import reset_goal_continuation_rounds
 from kohaku.utils.prompt_templates import render_template
 
 if TYPE_CHECKING:
-    from kohaku.session.manager import SessionManager
+    from kohaku.session.manager import Session, SessionManager
 
 
 _GOAL_ACTIONS = ("complete", "cancel", "block", "replace")
@@ -75,7 +76,7 @@ class _GoalToolsMixin:
 
     def _save_goal_state(
         self,
-        sess: Any,
+        sess: Session,
         blob: dict[str, Any],
         *,
         reset_continuation: bool = False,
@@ -86,11 +87,36 @@ class _GoalToolsMixin:
         if reset_continuation:
             reset_goal_continuation_rounds(sess.metadata)
         try:
-            self._sessions.save(sess)
+            request = current_request_context()
+            if request is not None and request.source_state is not None:
+                self._save_source_goal(sess, previous_metadata, request)
+            else:
+                self._sessions.save(sess)
         except BaseException:
             sess.metadata.clear()
             sess.metadata.update(previous_metadata)
             raise
+
+    def _save_source_goal(
+        self, session: Session, previous_metadata: dict[str, Any], request: RequestContext,
+    ) -> None:
+        """Commit only goal metadata under the current canonical turn owner."""
+        from kohaku.agent.delegation import current_turn_context
+
+        turn = current_turn_context()
+        writer = turn.source_writer if turn is not None else None
+        expected = request.source_state
+        if writer is None or expected is None or writer.owner.key != session.key:
+            raise SessionWriteConflict()
+        writer.owner.validate_dispatch()
+        if not writer.owner.read_snapshot().state.same_origin(expected):
+            raise SessionWriteConflict()
+        removals = previous_metadata.keys() - session.metadata.keys()
+        if not self._sessions.upsert_session_metadata(
+            session.key, {GOAL_STATE_KEY: session.metadata[GOAL_STATE_KEY]},
+            removals=removals, fsync=True,
+        ):
+            raise SessionWriteConflict()
 
     async def _publish_goal_state_changed(self, metadata: dict[str, Any]) -> None:
         bus = self._bus
@@ -131,6 +157,9 @@ class _GoalToolsMixin:
     )
 )
 class CreateGoalTool(Tool, _GoalToolsMixin):
+    exposure = "deferred"
+    namespace = "goals"
+    search_keywords = ("goal", "sustained task", "long-running objective")
     """Create one explicit sustained objective for the current session."""
 
     def __init__(
@@ -187,10 +216,13 @@ class CreateGoalTool(Tool, _GoalToolsMixin):
             strip=True,
             goal_start_requested=goal_start_requested,
             goal_active=goal_active,
-        )
-        state = wrap_runtime_context_lines(goal_state_runtime_lines(session.metadata))
+        ) if goal_start_requested else ""
+        state = wrap_runtime_context_lines(active_goal_runtime_lines(session.metadata))
         content = "\n\n".join(part for part in (guidance, state) if part)
-        return RuntimeContextBlock(source="goal", content=content)
+        return RuntimeContextBlock(
+            source="goal", content=content,
+            retention="ephemeral_body" if goal_start_requested else "turn_only",
+        )
 
     async def execute(
         self,
@@ -262,6 +294,9 @@ class CreateGoalTool(Tool, _GoalToolsMixin):
     )
 )
 class UpdateGoalTool(Tool, _GoalToolsMixin):
+    exposure = "deferred"
+    namespace = "goals"
+    search_keywords = ("goal", "complete objective", "progress")
     """Complete, cancel, block, or replace the active sustained goal."""
 
     def __init__(

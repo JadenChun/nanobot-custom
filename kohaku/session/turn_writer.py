@@ -15,6 +15,8 @@ from loguru import logger
 from kohaku.agent.tools.execution import KnownToolResult
 from kohaku.agent.tools.filesystem_effect import FilesystemEffectFact
 from kohaku.agent.turn import ToolOutcome
+from kohaku.providers.image_history import PERSISTED_IMAGE_PLACEHOLDER, is_inline_image_block
+from kohaku.runtime_context import RUNTIME_CONTEXT_HISTORY_META
 from kohaku.session.execution_owner import ExecutionOwner
 from kohaku.session.input_attempt import (
     InputAttempt,
@@ -64,16 +66,12 @@ def _persisted_content(value: Any) -> Any:
         return value
     retained: list[object] = []
     for block in cast(list[object], value):
-        if isinstance(block, dict):
-            if cast(dict[object, object], block).get('type') in {'thinking', 'reasoning', 'redacted_thinking', 'reasoning_content'}:
-                continue
-            image = cast(dict[object, object], block).get('image_url')
-            if (cast(dict[object, object], block).get('type') == 'image_url' and isinstance(image, dict)
-                    and isinstance(cast(dict[object, object], image).get('url'), str)
-                    and cast(str, cast(dict[object, object], image)['url']).startswith('data:image/')):
-                retained.append({'type': 'text', 'text': '[Image data unavailable in persisted source.]'})
-                continue
-        retained.append(cast(object, block))
+        if is_inline_image_block(block):
+            retained.append({'type': 'text', 'text': PERSISTED_IMAGE_PLACEHOLDER})
+        elif not isinstance(block, dict) or cast(dict[object, object], block).get('type') not in {
+            'thinking', 'reasoning', 'redacted_thinking', 'reasoning_content',
+        }:
+            retained.append(cast(object, block))
     return retained
 
 
@@ -232,6 +230,8 @@ class SourceTurnWriter:
         self,
         record: PendingFollowupRecord,
         projection: dict[str, object],
+        *,
+        runtime_history: dict[str, Any] | None = None,
     ) -> SourceInjectionBinding:
         """Atomically commit original input and return its invocation-bound projection."""
         if self.failed or self.parent_stream_id is not None or type(record) is not PendingFollowupRecord:
@@ -245,6 +245,8 @@ class SourceTurnWriter:
             payload: dict[str, object] = {"role": "user", "content": record.content}
             if record.media:
                 payload["media"] = list(record.media)
+            if runtime_history is not None:
+                payload[RUNTIME_CONTEXT_HISTORY_META] = runtime_history
             event = new_source_event(payload, run_id=self.run_id)
             event["_pending_followup_id"] = record.identifier
             if record.child_followup is not None:
@@ -434,6 +436,21 @@ class SourceTurnWriter:
                             retrieval = parse_retrieval_receipt(candidate.to_dict()).to_dict()
                         except ValueError:
                             logger.debug('Ignoring invalid artifact retrieval receipt')
+                if origin is None and value.dispatched and value.event.get('status') == 'ok':
+                    from kohaku.context.tool_result_gate import (
+                        MIN_TOOL_RESULT_CHARS,
+                        PROTECTED_FILESYSTEM_TOOLS,
+                        tool_text_blocks,
+                    )
+
+                    if (value.name not in PROTECTED_FILESYSTEM_TOOLS | {'read_artifact'}
+                            and any(len(text) > MIN_TOOL_RESULT_CHARS
+                                    for _, text in tool_text_blocks(raw))):
+                        origin = {
+                            'kind': 'tool_output',
+                            'tool_name': value.name,
+                            'tool_call_id': value.tool_call_id,
+                        }
                 tool_event: dict[str, Any] = {
                     'role': 'tool',
                     'tool_call_id': value.tool_call_id,
@@ -604,7 +621,9 @@ class SourceTurnWriter:
         return self.project_events(self.owner.read_snapshot().events)
 
     @staticmethod
-    def project_events(events: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[str]]:
+    def project_events(
+        events: list[dict[str, Any]], *, include_runtime_context: bool = True,
+    ) -> tuple[list[dict[str, Any]], list[str]]:
         from kohaku.session.source_projection import project_events
 
-        return project_events(events)
+        return project_events(events, include_runtime_context=include_runtime_context)

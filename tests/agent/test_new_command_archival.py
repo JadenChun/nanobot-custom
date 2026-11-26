@@ -37,7 +37,6 @@ class TestNewCommandArchival:
                 model="test-model", context_window_tokens=1,
                 session_manager=inputs.sessions, tool_registry=inputs.tools,
                 cron_service=inputs.cron, turn_delivery_factory=inputs.delivery,
-                enable_legacy_auto_compact=False,
             )
 
         loop = await admitted_async(tmp_path, build, keys=("cli:test",))

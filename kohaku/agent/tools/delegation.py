@@ -14,6 +14,9 @@ if TYPE_CHECKING:
 
 
 class _ForegroundTool(Tool):
+    exposure = "deferred"
+    namespace = "delegation"
+
     _tool_name: str
     _tool_description: str
     _tool_parameters: dict[str, Any]
@@ -56,6 +59,7 @@ _ARTIFACT_REFERENCES = {
 
 class PlanTaskTool(_ForegroundTool):
     _tool_name = "plan_task"
+    search_keywords = ("plan", "architecture", "design", "claude_sdk", "coding")
     _tool_description = (
         "Ask a foreground read-only planner for an implementation-ready plan when sequencing, "
         "dependencies, or ambiguity make direct work unreliable. Waits for the plan. Do not use "
@@ -98,6 +102,7 @@ class PlanTaskTool(_ForegroundTool):
 
 class DelegateTaskTool(_ForegroundTool):
     _tool_name = "delegate_task"
+    search_keywords = ("delegate", "implement", "code", "coding", "claude_sdk", "claude", "worker")
     _tool_description = (
         "Run one bounded implementation or artifact task in a foreground worker and wait for its "
         "completion report. Provide a self-contained Markdown contract and explicit writable "
@@ -197,6 +202,7 @@ class FollowupChildTool(_ForegroundTool):
 
 class ReviewWorkTool(_ForegroundTool):
     _tool_name = "review_work"
+    search_keywords = ("review", "audit", "verify", "claude_sdk")
     _tool_description = (
         "Run a foreground independent read-only review and wait for PASS, CORRECT, or REJECT "
         "evidence. Use for important deliverables, risky changes, uncertain results, or explicit "

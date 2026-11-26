@@ -9,6 +9,7 @@ cannot be represented deterministically.
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 import math
@@ -359,15 +360,53 @@ class GovernedRequestConflictError(ProviderRequestRejected):
 
 
 class BackendContextOverflow(ProviderRequestRejected):
-    """A local backend returned its pinned structured context overflow result."""
+    """A provider rejected a request because its input exceeded the context window."""
 
-    def __init__(self, *, status_code: int, code: int, n_prompt_tokens: int, n_ctx: int) -> None:
+    def __init__(
+        self, *, status_code: int, code: int | str, n_prompt_tokens: int = 0,
+        n_ctx: int = 0, error_type: str = "exceed_context_size_error",
+    ) -> None:
         self.status_code = status_code
         self.code = code
-        self.error_type = "exceed_context_size_error"
+        self.error_type = error_type
         self.n_prompt_tokens = n_prompt_tokens
         self.n_ctx = n_ctx
         super().__init__(reason="backend_context_overflow")
+
+    @property
+    def verified(self) -> bool:
+        if self.error_type == "context_length_exceeded":
+            return self.status_code in (400, 422) and self.code == self.error_type
+        return (
+            self.status_code == self.code == 400
+            and self.error_type == "exceed_context_size_error"
+            and type(self.n_prompt_tokens) is int
+            and type(self.n_ctx) is int
+            and self.n_prompt_tokens >= self.n_ctx > 0
+        )
+
+    @classmethod
+    def from_report(
+        cls, status: int | None, code: str | None, error_type: str | None, content: str | None,
+    ) -> BackendContextOverflow | None:
+        """Recognize context rejection from normalized provider error fields."""
+        kinds = {"context_length_exceeded", "context_window_exceeded",
+                 "prompt_too_long", "input_too_long"}
+        known_code = code in kinds or error_type in kinds
+        if status not in (400, 422) and not (status is None and known_code):
+            return None
+        message = (content or "").lower()
+        if known_code or any(phrase in message for phrase in (
+            "prompt is too long", "input is too long", "input is too long for",
+            "exceeds the maximum context length", "maximum context length is",
+            "token count exceeds the maximum", "input length and `max_tokens` exceed context",
+            "input is too long for requested model", "exceeds the maximum input token count",
+        )):
+            return cls(
+                status_code=status or 400, code="context_length_exceeded",
+                error_type="context_length_exceeded",
+            )
+        return None
 
 
 def _completion_reserve(body: Mapping[str, object]) -> int:
@@ -1026,34 +1065,50 @@ def _text_token_measurement(
     identity: TransportIdentity,
     policy: RequestBudgetPolicy,
 ) -> tuple[int, str]:
-    """Estimate text tokens, failing closed to the older byte ceiling.
-
-    Unknown model names and unavailable encodings use UTF-8 bytes, which are a
-    conservative ceiling that cannot assign a nearby model's vocabulary to an
-    arbitrary alias.
-    """
-    if policy == ESTIMATED_COMPAT_POLICY:
-        try:
-            encoding = tiktoken.get_encoding("cl100k_base")
-            tokens = len(encoding.encode(encoded.decode("utf-8"), disallowed_special=()))
-            return max(1, math.ceil(tokens * TOKEN_ESTIMATE_SAFETY_RATIO)), (
-                ESTIMATED_COMPAT_POLICY
-            )
-        except Exception:
-            return max(1, len(encoded)), (
-                "estimated_compat_unavailable_utf8_byte_ceiling"
-            )
+    """Measure with an exact tokenizer or a calibrated compatibility tokenizer."""
+    exact_encoding = (
+        None if policy == ESTIMATED_COMPAT_POLICY
+        else known_tiktoken_encoding(identity.provider, identity.model)
+    )
+    source = (
+        ESTIMATED_COMPAT_POLICY if policy == ESTIMATED_COMPAT_POLICY else
+        "canonical_json_tiktoken" if exact_encoding else "strict_cl100k_calibrated"
+    )
     try:
-        encoding_name = known_tiktoken_encoding(identity.provider, identity.model)
-        if encoding_name is None:
-            raise ValueError("no tokenizer mapping for selected model")
-        encoding = tiktoken.get_encoding(encoding_name)
-        tokens = len(encoding.encode(encoded.decode("utf-8")))
-        return max(1, math.ceil(tokens * TOKEN_ESTIMATE_SAFETY_RATIO)), (
-            "canonical_json_tiktoken"
-        )
+        encoding = tiktoken.get_encoding(exact_encoding or "cl100k_base")
+        tokens = len(encoding.encode(encoded.decode("utf-8"), disallowed_special=()))
+        return max(1, math.ceil(tokens * TOKEN_ESTIMATE_SAFETY_RATIO)), source
     except Exception:
-        return max(1, len(encoded)), "canonical_json_utf8_bytes"
+        fallback = (
+            "estimated_compat_unavailable_utf8_byte_ceiling" if policy == ESTIMATED_COMPAT_POLICY
+            else "canonical_json_utf8_bytes"
+        )
+        return max(1, len(encoded)), fallback
+
+
+def _encode_payload_binary(value: object) -> str:
+    """Match SDK serialization of native Bedrock binary fields."""
+    if isinstance(value, (bytes, bytearray)):
+        return base64.b64encode(value).decode("ascii")
+    raise TypeError("finalized provider request contains a non-JSON value")
+
+
+def _payload_bytes(body: Mapping[str, object]) -> int:
+    return len(json.dumps(
+        body, ensure_ascii=False, allow_nan=False, separators=(",", ":"),
+        default=_encode_payload_binary,
+    ).encode("utf-8"))
+
+
+def enforce_finalized_payload_bytes(body: Mapping[str, object]) -> None:
+    """Enforce the transport byte ceiling even without a token budget."""
+    cap = DEFAULT_ESTIMATED_COMPAT_MAX_REQUEST_BYTES
+    try:
+        size = _payload_bytes(body)
+    except (TypeError, ValueError, UnicodeError) as exc:
+        raise ProviderRequestRejected(reason="invalid_request_envelope") from exc
+    if size > cap:
+        raise RequestPayloadBytesExceeded(size, cap)
 
 
 def _serialized_input_measurement(
@@ -1061,7 +1116,9 @@ def _serialized_input_measurement(
     body: Mapping[str, object],
     policy: RequestBudgetPolicy,
     capabilities: ModelCapabilities | None = None,
-) -> tuple[int, str, int | None]:
+    *,
+    byte_limit: int,
+) -> tuple[int, str, int]:
     """Count a content-free canonical body with conservative token units.
 
     Text is measured with a tokenizer and a safety ratio. Inline and
@@ -1072,18 +1129,11 @@ def _serialized_input_measurement(
     if not isinstance(body, dict):
         raise ValueError("finalized provider request is not a JSON object")
     try:
+        payload_bytes = _payload_bytes(body)
+        if payload_bytes > byte_limit:
+            raise RequestPayloadBytesExceeded(payload_bytes, byte_limit)
         canonical, supplemental_units, measurement_kinds = _canonicalize_finalized_value(
             body, identity, capabilities=capabilities,
-        )
-        request_json = (
-            json.dumps(
-                body,
-                ensure_ascii=False,
-                allow_nan=False,
-                separators=(",", ":"),
-            ).encode("utf-8")
-            if policy == ESTIMATED_COMPAT_POLICY
-            else b""
         )
         encoded = json.dumps(
             canonical,
@@ -1100,11 +1150,11 @@ def _serialized_input_measurement(
     return (
         max(1, text_units + supplemental_units),
         source,
-        len(request_json) if policy == ESTIMATED_COMPAT_POLICY else None,
+        payload_bytes,
     )
 
 
-def _estimated_compat_byte_limit(max_request_bytes: int | None) -> int:
+def _request_byte_limit(max_request_bytes: int | None) -> int:
     raw = cast(object, max_request_bytes)
     if raw is None:
         return DEFAULT_ESTIMATED_COMPAT_MAX_REQUEST_BYTES
@@ -1141,9 +1191,7 @@ def measure_finalized_request(
             raise ValueError(
                 "estimated compatibility policy is unsupported for this transport"
             )
-        byte_limit = _estimated_compat_byte_limit(max_request_bytes)
-    else:
-        byte_limit = None
+    byte_limit = _request_byte_limit(max_request_bytes)
     if completion_reserve_tokens is not None and (
         isinstance(completion_reserve_tokens, bool)
         or not isinstance(cast(object, completion_reserve_tokens), int)
@@ -1164,7 +1212,7 @@ def measure_finalized_request(
             max_output_tokens=reserve,
         )
     input_tokens, source, measured_bytes = _serialized_input_measurement(
-        identity, body, policy, capabilities,
+        identity, body, policy, capabilities, byte_limit=byte_limit,
     )
     return TransportMeasurement(
         identity=identity,

@@ -467,7 +467,7 @@ async def test_new_and_compact_ack_only_an_input_their_owner_appends(
         if source_mode:
             rows = source_backend.source.load_source_snapshot(key).events
             assert [row["role"] for row in rows] == (
-                ["user", "assistant"] if command == "/compact" else []
+                ["user"] if command == "/compact" else []
             )
         else:
             rows = loop.sessions.get_or_create(key).messages
@@ -486,7 +486,6 @@ async def test_false_legacy_input_append_result_does_not_publish_receipt(tmp_pat
     session_manager = SessionManager(tmp_path / "sessions")
     session = session_manager.get_or_create(key)
     loop = object.__new__(AgentLoop)
-    loop.auto_compact = None
     loop.sessions = session_manager
     loop._request_context_for_turn = lambda _ctx: None
     loop._resolve_runtime_context_for_turn = AsyncMock(return_value=[])

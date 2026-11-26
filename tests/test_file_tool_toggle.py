@@ -44,7 +44,6 @@ async def test_file_tool_loader_obeys_flag_in_acquired_graph(tmp_path, admitted_
             inputs.config, inputs.bus, provider=provider,
             session_manager=inputs.sessions, tool_registry=inputs.tools,
             cron_service=inputs.cron, turn_delivery_factory=inputs.delivery,
-            enable_legacy_auto_compact=False,
         )
 
     loop = await admitted_async(tmp_path, build, config=config)

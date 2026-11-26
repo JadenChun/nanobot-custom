@@ -341,6 +341,17 @@ def create_provider_settings(
     return payload
 
 
+def delete_provider_settings(
+    query: QueryParams,
+    *,
+    config_path: Path | None = None,
+) -> dict[str, Any]:
+    config = _load_settings_config(config_path)
+    models.delete_provider_settings(config, query)
+    _save_settings_config(config, config_path)
+    return settings_payload(config_path=config_path)
+
+
 def update_provider_settings(
     query: QueryParams,
     *,

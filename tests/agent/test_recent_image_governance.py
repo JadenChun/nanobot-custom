@@ -43,7 +43,7 @@ def state_for(messages, source):
 
 @pytest.mark.parametrize("source", [False, True])
 @pytest.mark.parametrize("tools", [None, []])
-async def test_budget_sees_only_selected_images_and_keeps_all_text(monkeypatch, source, tools):
+async def test_budget_projects_images_under_pressure_and_keeps_all_text(monkeypatch, source, tools):
     raw = history()
     before = deepcopy(raw)
     state = state_for(raw, source)
@@ -58,6 +58,8 @@ async def test_budget_sees_only_selected_images_and_keeps_all_text(monkeypatch, 
         state, deepcopy(raw), tool_definitions=tools, transcript=raw,
     )
     assert images(result) == [image("new-a"), image("new-b")]
+    if source:
+        assert images(estimates.pop(0)) == images(before)
     assert estimates and all(images(request) == images(result) for request in estimates)
     # Legacy preparation merges adjacent users, but no text is snipped.
     expected = recent_image_messages(before)
@@ -135,7 +137,7 @@ class CaptureImages(Tool):
 
 @pytest.mark.parametrize("inline", [False, True])
 @pytest.mark.parametrize("finalization", [False, True])
-async def test_source_runner_advances_image_window_and_preserves_durable_tool_events(engine_config, inline, finalization):
+async def test_source_runner_appends_images_and_preserves_durable_tool_events(engine_config, inline, finalization):
     if finalization:
         engine_config.agents.defaults.max_tool_iterations = 2
     provider = CapturingProvider([
@@ -151,7 +153,7 @@ async def test_source_runner_advances_image_window_and_preserves_durable_tool_ev
         assert result.error is None and result.content == "compared"
         assert len(provider.calls) == 3
         assert images(provider.calls[1][0]) == tool_images("old", inline)
-        assert images(provider.calls[2][0]) == tool_images("new", inline)
+        assert images(provider.calls[2][0]) == tool_images("old", inline) + tool_images("new", inline)
         events = backend.source.load_source_snapshot("cli:source").events
         assert not validate_execution_links(events)
         # Existing persistence never saves inline data images. Public references
@@ -164,9 +166,10 @@ async def test_source_runner_advances_image_window_and_preserves_durable_tool_ev
         assert tools[0]["content"] == persisted_old
         followup = await loop.execute_turn(TurnRequest(content="text follow-up", session_key="cli:source"))
         assert followup.error is None and followup.content == "follow-up"
-        assert images(provider.calls[-1][0]) == ([] if inline else tool_images("new", False))
+        assert images(provider.calls[-1][0]) == (
+            [] if inline else tool_images("old", False) + tool_images("new", False)
+        )
         assert all(call[3] is not None and call[3].fits for call in provider.calls)
-        assert recent_image_messages(provider.calls[-1][0]) == provider.calls[-1][0]
         assert backend.source.load_source_snapshot("cli:source").events[:len(events)] == events
     finally:
         await loop.aclose()

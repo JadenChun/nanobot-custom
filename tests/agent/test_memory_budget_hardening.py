@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import stat
 from copy import deepcopy
 
 import pytest
@@ -11,15 +10,6 @@ import pytest
 from kohaku.agent.context_governance import ContextGovernor, ContextWindowExceededError
 from kohaku.agent.hook import AgentHook
 from kohaku.agent.memory import MemoryStore
-from kohaku.agent.memory_recovery_coordinator import (
-    OfflineMemoryRecoveryError,
-    reconcile_pending_memory_receipt_offline,
-)
-from kohaku.agent.memory_recovery_quarantine_storage import inspect_receipt_quarantine
-from kohaku.agent.memory_recovery_receipt_finalizer import (
-    OfflineReceiptFinalizationError,
-    finalize_pending_memory_receipt_offline,
-)
 from kohaku.agent.runner import AgentRunner, AgentRunSpec
 from kohaku.agent.tools.execution import KnownToolResult
 from kohaku.agent.tools.registry import ToolRegistry
@@ -35,7 +25,6 @@ from kohaku.session.source import (
 from kohaku.session.source_projection import source_nodes
 from kohaku.session.turn_writer import SourceTurnWriter
 from kohaku.utils.llm_runtime import LLMRuntime
-from kohaku.utils.prompt_budget import PromptBudget, measure_prompt, reduce_messages_to_budget
 from tests.agent.p6_memory_contract_fixtures import (
     SummaryProvider,
     concrete_provider,
@@ -43,11 +32,9 @@ from tests.agent.p6_memory_contract_fixtures import (
     fitting_prefix,
     prepare_source,
     provider_limits,
-    receipt_layout,
     source_state,
     source_store,
 )
-from tests.state_stat import content_stat
 
 
 class _DeterministicCounter:
@@ -75,65 +62,6 @@ class _StreamingHook(AgentHook):
 
     def wants_streaming(self) -> bool:
         return self.enabled
-
-
-def _tool_turn(index: int) -> list[dict[str, object]]:
-    call_a = f"call-{index}-a"
-    call_b = f"call-{index}-b"
-    return [
-        {"role": "user", "content": f"turn-{index:04d} question"},
-        {
-            "role": "assistant",
-            "content": None,
-            "tool_calls": [
-                {"id": call_a, "type": "function", "function": {"name": "a", "arguments": "{}"}},
-                {"id": call_b, "type": "function", "function": {"name": "b", "arguments": "{}"}},
-            ],
-        },
-        {"role": "tool", "tool_call_id": call_a, "name": "a", "content": f"result-{index}-a"},
-        {"role": "tool", "tool_call_id": call_b, "name": "b", "content": f"result-{index}-b"},
-    ]
-
-
-def test_generated_history_reducer_keeps_newest_legal_turns(tmp_path) -> None:
-    """A 7,000-message history reduces deterministically without tool orphans."""
-
-    del tmp_path  # The reducer is request-local and must not write a workspace file.
-    counter = _DeterministicCounter()
-    messages: list[dict[str, object]] = [{"role": "system", "content": "system"}]
-    for index in range(1_750):
-        messages.extend(_tool_turn(index))
-
-    budget = PromptBudget(total_tokens=1_000, safety_buffer=0)
-    reduced = reduce_messages_to_budget(
-        messages,
-        counter,
-        "test-model",
-        [],
-        budget,
-    )
-    measurement = measure_prompt(counter, "test-model", reduced, [], budget)
-
-    assert len(messages) == 7_001
-    assert measurement.fits
-    assert measurement.prompt_tokens <= budget.prompt_limit
-    assert reduced[0] == messages[0]
-    assert any(message.get("content") == "turn-1749 question" for message in reduced)
-    assert any(message.get("content") == "turn-1748 question" for message in reduced)
-    assert not any(message.get("content") == "turn-0001 question" for message in reduced)
-
-    declared = {
-        str(call["id"])
-        for message in reduced
-        if message.get("role") == "assistant"
-        for call in message.get("tool_calls") or []
-    }
-    returned = {
-        str(message["tool_call_id"])
-        for message in reduced
-        if message.get("role") == "tool"
-    }
-    assert returned == declared
 
 
 def test_scheduled_ring_is_bounded_and_legacy_history_is_collapsed(tmp_path) -> None:
@@ -362,56 +290,6 @@ async def test_provider_budget_boundary_has_zero_or_one_transport_call(streaming
     assert oversized == before
 
 
-@pytest.mark.asyncio
-async def test_offline_receipt_reconcile_replay_finalize_and_stale_offset_preservation(tmp_path):
-    workspace, sessions, source, pending = receipt_layout(tmp_path / "positive")
-    memory = workspace / "memory"
-    original_events = source.read_bytes().splitlines()[1:]
-    raw, pending_stat = pending.read_bytes(), content_stat(pending.stat())
-    result = reconcile_pending_memory_receipt_offline(workspace, sessions_root=sessions)
-    assert result.phase == "COMPLETE"
-    assert pending.read_bytes() == raw and content_stat(pending.stat()) == pending_stat
-    targets = [pending, source, memory / "history.jsonl", memory / "MEMORY.md", memory / ".cursor"]
-    completed = {path: (path.read_bytes(), content_stat(path.stat())) for path in targets}
-    replay = reconcile_pending_memory_receipt_offline(workspace, sessions_root=sessions)
-    assert replay.phase == "COMPLETE" and replay.identity == result.identity
-    assert {path: (path.read_bytes(), content_stat(path.stat())) for path in targets} == completed
-    header = json.loads(source.read_bytes().splitlines()[0])
-    assert header["last_consolidated"] == 2
-    assert header["last_archived"] == 2
-    assert source.read_bytes().splitlines()[1:] == original_events
-    assert (memory / "history.jsonl").read_bytes().count(b"receipt-marker") == 1
-    assert (memory / "MEMORY.md").read_text() == "# Recovered\n"
-    assert pending.exists()
-    finalize_pending_memory_receipt_offline(workspace, sessions_root=sessions)
-    assert not pending.exists()
-    private_copy = memory / ".recovery" / "receipt-quarantine" / result.identity / "receipt.bin"
-    assert private_copy.read_bytes() == raw
-    assert stat.S_IMODE(private_copy.stat().st_mode) == 0o600
-    assert inspect_receipt_quarantine(workspace).sealed_identities == (result.identity,)
-    sealed = file_snapshot(memory / ".recovery" / "receipt-quarantine")
-    with pytest.raises(OfflineReceiptFinalizationError):
-        finalize_pending_memory_receipt_offline(workspace, sessions_root=sessions)
-    assert file_snapshot(memory / ".recovery" / "receipt-quarantine") == sealed
-    assert MemoryStore(workspace, sessions_root=sessions).read_memory() == "# Recovered\n"
-
-    stale_workspace, stale_sessions, stale_source, stale_pending = receipt_layout(
-        tmp_path / "stale", cursor=2, start=0, end=1, output="# Stale\n", marker="stale-marker",
-    )
-    visible = [stale_source, stale_pending, stale_workspace / "memory" / "MEMORY.md",
-               stale_workspace / "memory" / "HISTORY.md"]
-    before = {path: (path.read_bytes(), content_stat(path.stat())) for path in visible}
-    with pytest.raises(OfflineMemoryRecoveryError):
-        reconcile_pending_memory_receipt_offline(stale_workspace, sessions_root=stale_sessions)
-    with pytest.raises(OfflineReceiptFinalizationError):
-        finalize_pending_memory_receipt_offline(stale_workspace, sessions_root=stale_sessions)
-    assert {path: (path.read_bytes(), content_stat(path.stat())) for path in visible} == before
-    assert json.loads(stale_source.read_bytes().splitlines()[0])["last_consolidated"] == 2
-    assert json.loads(stale_source.read_bytes().splitlines()[0])["last_archived"] == 2
-    assert not (stale_workspace / "memory" / "history.jsonl").exists()
-    assert not (stale_workspace / "memory" / ".cursor").exists()
-
-
 def _pressure(writer, *, chunks=3):
     writer.append_message({"role": "user", "content": "objective"})
     for index in range(chunks):
@@ -469,7 +347,7 @@ async def test_failed_successful_failed_compaction_preserves_last_successful_che
     async with acquire_execution(backend, "test:compact", run_id="run") as owner:
         writer = SourceTurnWriter(backend.source, owner, run_id="run")
         state, provider = _pressure(writer)
-        provider.responses.appendleft(LLMResponse(content="partial", finish_reason="length"))
+        provider.responses.appendleft(LLMResponse(content="partial", finish_reason="error"))
         before, active = owner.read_snapshot(), state.source.transcript
         durable = file_snapshot(tmp_path)
         with pytest.raises(SourceValidationError, match="invalid_response"):

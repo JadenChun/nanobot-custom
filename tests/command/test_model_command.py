@@ -61,7 +61,6 @@ async def _make_loop(tmp_path, admitted_async, *, preset_snapshot_loader=None,
             session_manager=inputs.sessions, tool_registry=inputs.tools,
             cron_service=inputs.cron, turn_delivery_factory=inputs.delivery,
             tools_config=inputs.config.tools, restrict_to_workspace=True,
-            enable_legacy_auto_compact=False,
         )
 
     return await admitted_async(tmp_path, build, keys=keys)
@@ -347,23 +346,6 @@ def test_goal_command_in_help_and_palette() -> None:
     assert "/goal <goal>" in build_help_text()
 
 
-def test_model_command_rejects_pending_startup_receipt_before_effects(tmp_path) -> None:
-    from kohaku.agent.memory_recovery_startup_admission import StartupReceiptAdmissionError
-
-    pending = tmp_path / "memory" / ".consolidation.pending.json"
-    pending.parent.mkdir(parents=True)
-    pending.write_text("{broken", encoding="utf-8")
-
-    with pytest.raises(StartupReceiptAdmissionError):
-        AgentLoop(
-            bus=MagicMock(), provider=_provider("base-model"), workspace=tmp_path,
-            sessions_root=tmp_path / "sessions",
-            model="base-model",
-        )
-    assert pending.read_text(encoding="utf-8") == "{broken"
-    assert goal_mutation_allowed() is False
-
-
 @pytest.mark.asyncio
 async def test_model_command_managed_selection_persists_without_optional_activity(
     tmp_path, admitted_async,
@@ -371,7 +353,6 @@ async def test_model_command_managed_selection_persists_without_optional_activit
     loop = await _make_loop(tmp_path, admitted_async)
     assert loop.sessions.has_managed_authority
     assert loop.turn_delivery_factory.bus is loop.bus
-    assert loop.auto_compact is None
     assert not loop._background_tasks
     assert goal_mutation_allowed() is False
 

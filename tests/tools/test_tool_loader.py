@@ -43,7 +43,6 @@ def loader_context(tmp_path: Path, admitted_sync: SyncAdmittedFactory, monkeypat
             session_manager=inputs.sessions, tool_registry=inputs.tools,
             cron_service=inputs.cron, turn_delivery_factory=inputs.delivery,
             tools_config=inputs.config.tools, restrict_to_workspace=True,
-            session_ttl_minutes=0,
         )
 
     loop = admitted_sync(tmp_path, build, config=config)
@@ -473,9 +472,10 @@ def test_loader_registers_the_foreground_manifest_with_config_gates(loader_conte
 
     expected = {
         "read_file", "write_file", "edit_file", "list_dir", "find_files", "grep",
+        "memory_search",
         "exec", "exec_session", "list_exec_sessions",
         "web_search", "web_fetch",
-        "list_sessions", "search_sessions", "read_session",
+        "list_sessions", "read_session",
         "message", "cron", "plan_task", "delegate_task", "review_work", "explore",
         "followup_child",
         "repository_catalog", "save_knowledge",
@@ -494,7 +494,7 @@ def test_session_read_tools_are_available_in_managed_foreground(loader_context):
     registry = ToolRegistry()
     registered = ToolLoader().load(loader_context, registry)
 
-    for name in ("list_sessions", "search_sessions", "read_session"):
+    for name in ("list_sessions", "read_session"):
         assert name in registered
         assert name in MANAGED_WEBUI_TOOL_NAMES
         tool = registry.get(name)

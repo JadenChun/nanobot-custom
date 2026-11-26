@@ -31,8 +31,10 @@ class CheckpointAdmission:
         """Authorize all references before allowing any storage fallback."""
         checkpoint = checkpoint or self.checkpoint
         references = set(checkpoint.artifact_references if checkpoint else ())
-        bindings = [node.artifact for node in active.nodes
-                    if isinstance(node, SourceNode) and node.artifact is not None]
+        bindings = [
+            binding for node in active.nodes if isinstance(node, SourceNode)
+            for binding in node.artifact_bindings
+        ]
         references.update('artifact:' + binding.artifact_id for binding in bindings)
         if not references:
             return True

@@ -44,7 +44,7 @@ if TYPE_CHECKING:
     from kohaku.agent.write_guard import FileLockRegistry, WriteScope
     from kohaku.context_repo.policy import ResourceAccessPolicy
     from kohaku.security.workspace_access import ToolWorkspace
-    from kohaku.session.artifact import ArtifactDescriptor
+    from kohaku.session.artifact import ArtifactDescriptor, ToolOutputArtifactOrigin
     from kohaku.session.artifact_reader import ArtifactReader
     from kohaku.session.artifact_store import ArtifactBlobTransaction, PrivateArtifactStore
     from kohaku.session.source_store import ArtifactSourceLocation, SourceSnapshot
@@ -719,7 +719,7 @@ class ReadFileTool(_FsTool):
         blobs: "ArtifactBlobTransaction",
         *,
         store: "PrivateArtifactStore",
-    ) -> "FilesystemReadReceipt":
+    ) -> "FilesystemReadReceipt | ToolOutputArtifactOrigin":
         """Verify published evidence under held transactions; never grant a read."""
         from kohaku.session.artifact_verification import verify_published_artifact
 
@@ -1482,7 +1482,7 @@ class EditFileTool(_FsTool):
     def description(self) -> str:
         return (
             "Perform a small, exact replacement in one file. "
-            "Prefer apply_patch for multi-file, structural, or generated edits. "
+            "Use write_file for new files or intentional full-file rewrites. "
             "occurrence, line_hint, and replace_all=true are mutually exclusive."
         )
 

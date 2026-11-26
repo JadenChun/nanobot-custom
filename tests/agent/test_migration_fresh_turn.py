@@ -40,14 +40,12 @@ async def test_fresh_build_excludes_prior_state_but_appends_detail_history():
         save=lambda _session: None,
     )
     loop.tools_config = ToolsConfig()
-    loop.auto_compact = SimpleNamespace(prepare_session=lambda *args: pytest.fail('old compaction used'))
     loop._request_context_for_turn = lambda ctx: None
     loop._resolve_runtime_context_for_turn = AsyncMock(return_value=[])
     def persist(msg, target, **kwargs):
         target.add_message('user', msg.content)
         return True
     loop._persist_user_message_early = persist
-    await loop._compact_session(ctx)
     await loop._build_turn(ctx)
     assert ctx.history == [] and ctx.transcript_input.history == []
     assert ctx.transcript_input.session_summary is None
@@ -64,7 +62,6 @@ async def test_fresh_build_excludes_prior_state_but_appends_detail_history():
     assert [m['content'] for m in session.messages] == ['prior secret', 'prior answer', '/new', 'new answer']
     second = stage()
     second.session = session
-    await loop._compact_session(second)
     await loop._build_turn(second)
     assert second.transcript_input.history == []
     assert second.transcript_input.session_summary is None

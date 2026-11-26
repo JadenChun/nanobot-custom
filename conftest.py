@@ -59,7 +59,6 @@ def _isolate_sessions_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> I
 
     for target in (
         "kohaku.config.paths.get_default_sessions_root",
-        "kohaku.agent.memory.get_default_sessions_root",
         "kohaku.session.manager.get_default_sessions_root",
     ):
         monkeypatch.setattr(target, sessions_root)

@@ -183,8 +183,7 @@ def define_graph(config: Config, provider: Provider, effects: Effects, *, cron=F
 
     def agent(config, bus, sessions, tools, mcp, service, delivery):
         return AgentLoop.from_config(config, bus, tool_registry=tools, provider=provider,
-            session_manager=sessions, cron_service=service, turn_delivery_factory=delivery,
-            enable_legacy_auto_compact=False)
+            session_manager=sessions, cron_service=service, turn_delivery_factory=delivery)
 
     factories = RuntimeFactories(MessageBus, tools, lambda *_: MCP(effects),
         lambda report: CronService(report.workspace / "cron" / "jobs.json",

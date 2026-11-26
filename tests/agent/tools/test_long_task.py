@@ -473,7 +473,7 @@ async def test_normal_goal_registration_preserves_the_tool_contract(tmp_path, ad
             bus=inputs.bus, provider=provider, workspace=inputs.config.workspace_path,
             model="test-model", session_manager=inputs.sessions,
             tool_registry=inputs.tools, cron_service=inputs.cron,
-            turn_delivery_factory=inputs.delivery, enable_legacy_auto_compact=False,
+            turn_delivery_factory=inputs.delivery,
         )
 
     loop = await admitted_async(tmp_path, build)

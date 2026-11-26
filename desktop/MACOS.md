@@ -14,6 +14,12 @@ path, or rewrites a config that fails validation. No gateway starts before
 the normal provider and runtime checks pass; a fresh profile still needs a
 model provider if one is not configured in the environment.
 
+Kohaku opens a centered window with a default content size of 1120 × 780
+points. On smaller displays, it reduces the starting size to fit the usable
+area and leave room for the native title bar, subject to the window's minimum
+size. Setup and chat share the resizable window, so connecting or reopening
+it from the Dock does not reset its size.
+
 Both the gateway management and WebSocket listeners must be
 loopback-only. WebSocket authentication must be configured. A management bind
 of `0.0.0.0` is not eligible, even if WebSocket is already on loopback. The app

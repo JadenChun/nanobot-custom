@@ -82,6 +82,9 @@ class _SessionListEntry(TypedDict):
     )
 )
 class ListSessionsTool(Tool):
+    exposure = "deferred"
+    namespace = "sessions"
+    search_keywords = ("list sessions", "history", "conversations")
     """List other persisted sessions with optional metadata."""
 
     def __init__(self, sessions: SessionManager) -> None:
@@ -186,6 +189,8 @@ class ListSessionsTool(Tool):
     )
 )
 class SendSessionMessageTool(Tool):
+    exposure = "deferred"
+    namespace = "sessions"
     """Send text to another persisted session."""
 
     def __init__(

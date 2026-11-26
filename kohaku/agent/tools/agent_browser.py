@@ -139,6 +139,9 @@ def _resolve_npx() -> str | None:
 
 
 class AgentBrowserTool(Tool):
+    exposure = "deferred"
+    namespace = "ui"
+    search_keywords = ("browser", "screenshot", "web app", "click", "navigate")
     """Execute browser automation tasks via agent-browser."""
 
     def __init__(

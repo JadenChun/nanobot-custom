@@ -46,7 +46,6 @@ def forbid_legacy(loop, monkeypatch, *, allow_child_source_bootstrap=False):
         raise AssertionError('legacy save')
 
     monkeypatch.setattr(loop.sessions, 'save', guarded_save)
-    monkeypatch.setattr(loop.auto_compact, 'prepare_session', Mock(side_effect=AssertionError('legacy compaction')))
 
 
 async def test_canonical_source_turn_persists_each_event_once(engine_config, monkeypatch):
@@ -308,7 +307,7 @@ async def test_source_commands_never_full_save(engine_config, monkeypatch, comma
         result = await loop.execute_turn(TurnRequest(content=command, session_key='cli:source'))
         assert result.error is None, result.error
         after = backend.source.load_source_snapshot('cli:source')
-        assert len(after.events) == (0 if command == '/new' else 2)
+        assert len(after.events) == (1 if command == '/compact' else 0 if command == '/new' else 2)
         assert not provider.calls
         if command == '/new':
             assert after.state.generation == before.state.generation + 1
@@ -348,7 +347,7 @@ async def test_source_write_failure_stops_before_next_effect(engine_config, monk
         await loop.aclose()
 
 
-async def test_source_large_result_is_retained_without_legacy_offload(engine_config, monkeypatch):
+async def test_source_large_result_stays_durable_when_private_artifacts_are_disabled(engine_config):
     from kohaku.agent.tools.base import Tool
     class Large(Tool):
         name = 'large_fixture'
@@ -360,16 +359,18 @@ async def test_source_large_result_is_retained_without_legacy_offload(engine_con
         LLMResponse(content=None, tool_calls=[ToolCallRequest(id='large', name='large_fixture', arguments={})]),
         LLMResponse(content='done'),
     ])
+    engine_config.artifacts.enabled = False
     loop = AgentLoop.from_config(engine_config, tool_registry=ToolRegistry(), provider=provider)
     loop.tools.register(Large())
     backend = upgrade(loop)
-    monkeypatch.setattr('kohaku.agent.context_governance.maybe_persist_tool_result', Mock(side_effect=AssertionError('legacy offload')))
     try:
         result = await loop.execute_turn(TurnRequest(content='get fixture', session_key='cli:source'))
         assert result.error is None, result.error
         events = backend.source.load_source_snapshot('cli:source').events
         assert events[2]['content'] == 'large-result-' * 5000
-        assert any(m.get('content') == events[2]['content'] for m in provider.calls[1][0])
+        tool = next(m for m in provider.calls[1][0] if m.get('role') == 'tool')
+        assert len(tool['content']) <= engine_config.agents.defaults.max_tool_result_chars
+        assert '[tool output persisted]' in tool['content']
     finally:
         await loop.aclose()
 
@@ -541,13 +542,13 @@ async def test_source_initial_transcript_binds_actual_events_and_fresh_scope(eng
     loop = AgentLoop.from_config(engine_config, tool_registry=ToolRegistry(), provider=provider)
     backend = upgrade(loop)
     captured = []
-    run = loop.runner.run
+    start = loop.runner._initial_transcript_and_compaction
 
-    async def observe(spec):
+    def observe(spec):
         captured.append(spec.source_transcript)
-        return await run(spec)
+        return start(spec)
 
-    monkeypatch.setattr(loop.runner, 'run', observe)
+    monkeypatch.setattr(loop.runner, '_initial_transcript_and_compaction', observe)
     try:
         for mode in (HistoryMode.SESSION, HistoryMode.SESSION, HistoryMode.FRESH):
             result = await loop.execute_turn(TurnRequest(content='same', session_key='cli:source', history_mode=mode))
@@ -800,7 +801,8 @@ async def test_real_source_turn_reuses_scoped_checkpoint_after_restart(engine_co
             assert 'retained historical facts' in str(rows)
             assert 'old private detail' not in str(rows)
             assert 'retained historical facts' not in rows[0]['content']
-            assert [row['content'] for row in rows if row['role'] == 'user'] == ['new instruction']
+            assert rows[1]['role'] == 'user' and '<conversation_summary>' in rows[1]['content']
+            assert rows[-1]['content'].partition('\n\n')[0] == 'new instruction'
         else:
             assert 'retained historical facts' not in str(rows)
             assert 'old private detail' in str(rows)
@@ -950,7 +952,9 @@ async def test_real_pressure_compaction_publishes_checkpoint_and_reuses_after_re
         assert len(provider.calls) == 3
         assert 'old_fact' in str(provider.calls[1][0])  # Auxiliary canonical evidence.
         assert 'old_fact' not in str(provider.calls[2][0])
-        assert [row['content'] for row in provider.calls[2][0] if row['role'] == 'user'] == ['current objective']
+        request = provider.calls[2][0]
+        assert request[1]['role'] == 'user' and '<conversation_summary>' in request[1]['content']
+        assert request[-1]['content'].partition('\n\n')[0] == 'current objective'
         assert 'retained historical facts' not in provider.calls[2][0][0]['content']
         saved = backend.source.load_source_snapshot('cli:source')
         assert saved.events[:len(prefix)] == prefix and len(saved.events) == 4
@@ -1444,7 +1448,10 @@ async def test_engine_retrieval_pressure_checkpoint_restarts_with_admission(engi
     ])
     # Seed the large raw result with enough room for the offline byte fallback.
     # The pressure phase below still exercises the unchanged 12k compaction bound.
-    first = AgentLoop.from_config(engine_config, tool_registry=ToolRegistry(), provider=first_provider,
+    seed_config = engine_config.model_copy(deep=True)
+    seed_config.bind_source_path(engine_config.runtime_data_dir / "config.json")
+    seed_config.artifacts.enabled = False
+    first = AgentLoop.from_config(seed_config, tool_registry=ToolRegistry(), provider=first_provider,
                                   context_window_tokens=128_000)
     backend = upgrade(first, key)
     try:

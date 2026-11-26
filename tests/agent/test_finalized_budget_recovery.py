@@ -38,7 +38,9 @@ from kohaku.providers.base import (
     ToolCallRequest,
 )
 from kohaku.providers.conversation_state import ProviderConversationStateController
+from kohaku.providers.fallback_provider import FallbackProvider
 from kohaku.providers.openai_compat_provider import OpenAICompatProvider
+from kohaku.providers.pooled_provider import PooledProvider
 from kohaku.providers.registry import find_by_name
 from kohaku.providers.request_budget import (
     ESTIMATED_COMPAT_POLICY,
@@ -344,6 +346,8 @@ async def test_source_turn_recovers_one_finalized_request_budget_rejection(
         body = deepcopy(kwargs)
         messages = body.get("messages")
         assert isinstance(messages, list)
+        if messages and isinstance(messages[0], dict) and str(messages[0].get("content", "")).startswith("Extract reusable lessons"):
+            return _sdk_response(content="NO_REUSABLE_MEMORY")
         if _is_source_summary_request(messages):
             auxiliary_create_calls.append(body)
             source_operations.append(("auxiliary", len(auxiliary_create_calls)))
@@ -406,7 +410,11 @@ async def test_source_turn_recovers_one_finalized_request_budget_rejection(
         nonlocal main_guard_calls
         body_messages = body.get("messages")
         assert isinstance(body_messages, list)
-        is_auxiliary = _is_source_summary_request(body_messages)
+        is_auxiliary = _is_source_summary_request(body_messages) or (
+            bool(body_messages)
+            and isinstance(body_messages[0], dict)
+            and str(body_messages[0].get("content", "")).startswith("Extract reusable lessons")
+        )
         try:
             result = original_guard(
                 body,
@@ -459,7 +467,7 @@ async def test_source_turn_recovers_one_finalized_request_budget_rejection(
     terminal_budget_errors: list[
         tuple[FinalizedRequestBudgetExceeded | BackendContextOverflow, str | None]
     ] = []
-    original_budget_error = runner_module._context_budget_error_response
+    original_budget_error = runner_module._prompt_budget_error_response
 
     def observe_budget_error(
         exc: FinalizedRequestBudgetExceeded | BackendContextOverflow,
@@ -471,7 +479,7 @@ async def test_source_turn_recovers_one_finalized_request_budget_rejection(
         )
         return original_budget_error(exc, recovery_failure_reason)
 
-    monkeypatch.setattr(runner_module, "_context_budget_error_response", observe_budget_error)
+    monkeypatch.setattr(runner_module, "_prompt_budget_error_response", observe_budget_error)
 
     streamed: list[str] = []
     capture_hook = _CaptureHook(streaming)
@@ -629,7 +637,10 @@ async def test_source_turn_recovers_one_finalized_request_budget_rejection(
         assert recovered_checkpoint.checkpoint_id == recovered_ticket.checkpoint_id
         dispatched_messages = recovered_body.get("messages")
         assert isinstance(dispatched_messages, list)
-        assert current_user_nodes[0].message in dispatched_messages
+        current_wire_user = {
+            key: value for key, value in current_user_nodes[0].message.items() if key != "_meta"
+        }
+        assert current_wire_user in dispatched_messages
         assert all(node in recovered_source_nodes for node in pending_tail_nodes)
         pending_assistant = pending_tail_nodes[-2].message
         dispatched_assistants = [message for message in dispatched_messages
@@ -1244,7 +1255,7 @@ async def test_from_config_run_keeps_admitted_source_deadlines_and_generation(
     assert source_state is not None
     assert source_state.idle_timeout_seconds == idle_seconds
     assert source_state.overall_timeout_seconds == overall_seconds
-    assert source_state.runtime.generation == initial_generation
+    assert source_state.runtime.generation == replace(initial_generation, reasoning_effort="none")
 
 
 async def test_cancelled_auxiliary_summary_propagates_without_publication(store):
@@ -1636,9 +1647,11 @@ def test_local_usage_anchor_is_installed_after_usable_response_recording() -> No
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("wrapper", ["direct", "fallback", "pool"])
 async def test_sdk_usage_anchor_waits_for_source_ack_and_floors_next_request(
     engine_config: Config,
     monkeypatch: pytest.MonkeyPatch,
+    wrapper: str,
 ) -> None:
     tools = ToolRegistry()
     chunk_tool = _TextChunkTool(result_size=5)
@@ -1656,10 +1669,16 @@ async def test_sdk_usage_anchor_waits_for_source_ack_and_floors_next_request(
         reasoning_effort="none",
     )
     provider.generation = generation
+    route = provider
+    if wrapper == "fallback":
+        fallback = SimpleNamespace(model="unused", context_window_tokens=_CONTEXT_WINDOW)
+        route = FallbackProvider(provider, [fallback], lambda _: pytest.fail("unexpected failover"))
+    elif wrapper == "pool":
+        route = PooledProvider([provider], ["fixture-credential"])
     loop = AgentLoop.from_config(
         engine_config,
         tool_registry=tools,
-        provider=provider,
+        provider=route,
         model=_MODEL,
         context_window_tokens=_CONTEXT_WINDOW,
     )

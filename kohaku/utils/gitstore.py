@@ -41,7 +41,9 @@ if TYPE_CHECKING:
 # record. The structured per-file summary is always emitted in full regardless.
 _WORKING_TREE_DIFF_MAX_CHARS = 6000
 _DREAM_CURSOR_PATH = "memory/.dream_cursor"
-_DREAM_FIXED_PATHS = frozenset(("SOUL.md", "USER.md", "memory/MEMORY.md", _DREAM_CURSOR_PATH))
+_DREAM_FIXED_PATHS = frozenset((
+    "SOUL.md", "USER.md", "memory/MEMORY.md", "memory/memory_summary.md", _DREAM_CURSOR_PATH,
+))
 
 
 class GitStoreError(RuntimeError):
@@ -583,12 +585,22 @@ class GitStore:
         except Exception as exc:
             raise GitStoreError("Dream operation could not be reconciled") from exc
 
-    def reserve_dream_run(self, cursor_before: int, cursor_after: int) -> str:
-        """Persist one run owner before Dream receives file tools or dispatches."""
+    def reserve_dream_run(
+        self, cursor_before: int, cursor_after: int, *, allow_empty_batch: bool = False,
+    ) -> str:
+        """Persist one run owner before Dream receives file tools or dispatches.
+
+        ``allow_empty_batch`` admits ``cursor_after == cursor_before`` for rollout-only
+        consolidation, which has no legacy history range to advance.
+        """
 
         if not self.is_initialized():
             raise GitStoreError("Dream requires initialized memory versioning")
-        if type(cursor_before) is not int or type(cursor_after) is not int or cursor_after <= cursor_before:
+        if (
+            type(cursor_before) is not int or type(cursor_after) is not int
+            or cursor_after < cursor_before
+            or (cursor_after == cursor_before and not allow_empty_batch)
+        ):
             raise GitStoreError("Dream cursor batch is invalid")
         try:
             with dream_workspace_lock(self._workspace):

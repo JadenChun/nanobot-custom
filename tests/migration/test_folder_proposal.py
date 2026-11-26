@@ -48,7 +48,7 @@ async def test_folder_proposal_fresh_confirmation_recovers_after_unrelated_grant
     unrelated.mkdir()
     provider = _ProposeFolder(project)
     monkeypatch.setattr("kohaku.providers.factory.make_provider", lambda _config: provider)
-    composition = RuntimeComposition.define(config, sessions_root=tmp_path / "sessions", startup_receipt_admitted=True)
+    composition = RuntimeComposition.define(config, sessions_root=tmp_path / "sessions")
     handle = await composition.acquire()
     try:
         grants = FolderGrantStore.for_workspace(config.workspace_path, sessions_root=handle.sessions.sessions_root)
@@ -129,7 +129,7 @@ async def test_folder_proposal_rejects_stale_catalog_revision_during_renewal(
         directory.mkdir()
     provider = _ProposeFolder(project)
     monkeypatch.setattr("kohaku.providers.factory.make_provider", lambda _config: provider)
-    composition = RuntimeComposition.define(config, sessions_root=tmp_path / "sessions", startup_receipt_admitted=True)
+    composition = RuntimeComposition.define(config, sessions_root=tmp_path / "sessions")
     handle = await composition.acquire()
     try:
         grants = FolderGrantStore.for_workspace(config.workspace_path, sessions_root=handle.sessions.sessions_root)
@@ -205,7 +205,7 @@ async def test_folder_proposal_rejects_stale_original_and_renewed_catalog_approv
         directory.mkdir()
     provider = _ProposeFolder(project)
     monkeypatch.setattr("kohaku.providers.factory.make_provider", lambda _config: provider)
-    composition = RuntimeComposition.define(config, sessions_root=tmp_path / "sessions", startup_receipt_admitted=True)
+    composition = RuntimeComposition.define(config, sessions_root=tmp_path / "sessions")
     handle = await composition.acquire()
     try:
         grants = FolderGrantStore.for_workspace(config.workspace_path, sessions_root=handle.sessions.sessions_root)
@@ -289,7 +289,7 @@ async def test_folder_proposal_conflicts_when_catalog_changes_during_grant_write
         directory.mkdir()
     provider = _ProposeFolder(project)
     monkeypatch.setattr("kohaku.providers.factory.make_provider", lambda _config: provider)
-    composition = RuntimeComposition.define(config, sessions_root=tmp_path / "sessions", startup_receipt_admitted=True)
+    composition = RuntimeComposition.define(config, sessions_root=tmp_path / "sessions")
     handle = await composition.acquire()
     try:
         grants = FolderGrantStore.for_workspace(config.workspace_path, sessions_root=handle.sessions.sessions_root)
@@ -391,7 +391,7 @@ async def test_folder_proposal_changed_metadata_blocks_renewed_confirmation(
     unrelated.mkdir()
     provider = _ProposeFolder(project)
     monkeypatch.setattr("kohaku.providers.factory.make_provider", lambda _config: provider)
-    composition = RuntimeComposition.define(config, sessions_root=tmp_path / "sessions", startup_receipt_admitted=True)
+    composition = RuntimeComposition.define(config, sessions_root=tmp_path / "sessions")
     handle = await composition.acquire()
     try:
         grants = FolderGrantStore.for_workspace(config.workspace_path, sessions_root=handle.sessions.sessions_root)
@@ -446,7 +446,7 @@ async def test_folder_proposal_requires_current_user_approval(tmp_path: Path, mo
     project.mkdir()
     provider = _ProposeFolder(project)
     monkeypatch.setattr("kohaku.providers.factory.make_provider", lambda _config: provider)
-    composition = RuntimeComposition.define(config, sessions_root=tmp_path / "sessions", startup_receipt_admitted=True)
+    composition = RuntimeComposition.define(config, sessions_root=tmp_path / "sessions")
     handle = await composition.acquire()
     try:
         grants = FolderGrantStore.for_workspace(config.workspace_path, sessions_root=handle.sessions.sessions_root)

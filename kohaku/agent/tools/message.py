@@ -59,36 +59,28 @@ def capture_message_deliveries(records: list[OutboundMessage] | None = None) -> 
 
 @tool_parameters(
     tool_parameters_schema(
-        content=StringSchema(
-            "Message content for proactive or cross-channel delivery. "
-            "Do not use this for a normal reply in the current chat."
-        ),
-        channel=StringSchema(
-            "Optional target channel for cross-channel/proactive delivery. "
-            "Do not set this to the current runtime channel for a normal reply."
-        ),
+        content=StringSchema("Message text."),
+        channel=StringSchema("Target channel."),
         chat_id=StringSchema(
-            "Optional target chat/user ID for cross-channel/proactive delivery. "
-            "On WebSocket/WebUI turns: omit chat_id to use the server's conversation id "
-            "(never pass client_id values like anon-…). "
-            "Do not set this to the current runtime chat for a normal reply."
+            "Target chat ID. Omit in WebUI to use the current conversation."
         ),
         media=ArraySchema(
             StringSchema(""),
-            description=(
-                "Optional list of existing file paths to attach. "
-                "Use artifact paths returned by generate_image here when delivering generated images."
-            ),
+            description="File paths to attach. Use the paths returned by generate_image.",
         ),
         buttons=ArraySchema(
             ArraySchema(StringSchema("Button label")),
-            description="Optional: inline keyboard buttons as list of rows, each row is list of button labels.",
+            description="Rows of button labels.",
         ),
         required=["content"],
     )
 )
 class MessageTool(Tool):
     """Tool to send messages to users on chat channels."""
+
+    exposure = "deferred"
+    namespace = "messaging"
+    search_keywords = ("send", "deliver", "channel", "attachment", "media", "file", "image", "reminder")
 
     def __init__(
         self,
@@ -190,15 +182,8 @@ class MessageTool(Tool):
     @property
     def description(self) -> str:
         return (
-            "Proactively send a message to a user/channel, optionally with file attachments. "
-            "Use this for reminders, cross-channel delivery, or explicit proactive sends. "
-            "Do not use this for the normal reply in the current chat: answer naturally instead. "
-            "If channel/chat_id would target the current runtime conversation, do not call this tool "
-            "unless the user explicitly asked you to proactively send an existing file attachment. "
-            "When generate_image creates images in the current chat, use the message tool "
-            "with the artifact paths in the media parameter to deliver the images to the user. "
-            "For proactive attachment delivery, use the 'media' parameter with file paths. "
-            "Do NOT use read_file to send files — that only reads content for your own analysis."
+            "Send a reminder, a message to another chat, or a requested attachment. "
+            "Use a normal reply for text in the current chat. Attach generated images with media."
         )
 
     def _resolve_media(self, media: list[str]) -> list[str]:

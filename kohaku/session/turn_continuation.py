@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING, Any, Mapping, MutableMapping
 from loguru import logger
 
 from kohaku.session.goal_state import (
-    goal_state_runtime_lines,
+    active_goal_runtime_lines,
     sustained_goal_active,
     sustained_goal_turn,
 )
@@ -238,7 +238,7 @@ def _internal_continuation_metadata(
 
 
 def _goal_continuation_prompt(metadata: Mapping[str, Any] | None) -> str:
-    lines = goal_state_runtime_lines(metadata)
+    lines = active_goal_runtime_lines(metadata)
     if lines:
         goal = "\n".join(lines)
         return (

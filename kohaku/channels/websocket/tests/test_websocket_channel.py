@@ -4680,6 +4680,17 @@ async def test_settings_api_returns_safe_subset_and_updates_whitelist(
         assert saved.tools.image_generation.default_aspect_ratio == "16:9"
         assert saved.tools.image_generation.default_image_size == "2K"
         assert saved.tools.image_generation.max_images_per_turn == 3
+
+        removed_provider = await _webui_mutate(
+            webui_client,
+            "settings.provider.delete",
+            {"provider": custom_provider_name},
+        )
+        assert removed_provider.status_code == 200
+        assert custom_provider_name not in {
+            row["name"] for row in removed_provider.json()["providers"]
+        }
+        assert custom_provider_name not in (load_config(config_path).providers.model_extra or {})
     finally:
         if webui_client is not None:
             await webui_client.close()

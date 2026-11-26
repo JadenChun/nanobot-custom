@@ -56,6 +56,9 @@ def _is_string_mapping(value: object) -> TypeGuard[Mapping[str, object]]:
 
 
 class MyTool(Tool):
+    exposure = "deferred"
+    namespace = "runtime"
+    search_keywords = ("status", "model", "configuration", "runtime state", "limits")
     """Check and set the agent loop's runtime configuration."""
 
     config_key = "my"

@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Loader2, RefreshCw, Search } from "lucide-react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
+import { ChevronDown, Loader2, RefreshCw, Search } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import { ToggleButton } from "@/components/settings/ToggleButton";
@@ -14,6 +14,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { fetchProviderModels } from "@/lib/api";
 import type { ProviderModelsPayload, ProviderModelToggle, SettingsPayload } from "@/lib/types";
+import { cn } from "@/lib/utils";
 
 type Provider = SettingsPayload["providers"][number];
 type CatalogModel = ProviderModelsPayload["models"][number];
@@ -50,8 +51,36 @@ function catalogRevision(provider: Provider, token: string, refreshKey: number):
   return JSON.stringify([token, refreshKey, provider]);
 }
 
+const MODEL_WORD_CASE = new Map([
+  ["ai", "AI"],
+  ["deepseek", "DeepSeek"],
+  ["glm", "GLM"],
+  ["gpt", "GPT"],
+  ["minimax", "MiniMax"],
+  ["mimo", "MiMo"],
+  ["oss", "OSS"],
+  ["qwen", "Qwen"],
+]);
+
+function catalogModelName(model: CatalogModel): string {
+  const label = model.label?.trim();
+  if (label && label !== model.id) return label;
+
+  const name = model.id.split("/").filter(Boolean).at(-1) ?? model.id;
+  return name
+    .replace(/^(claude-(?:[a-z]+-)?\d+)-(\d{1,2})(?=-|$)/i, "$1.$2")
+    .split(/[-_]+/)
+    .filter(Boolean)
+    .map((word) =>
+      MODEL_WORD_CASE.get(word.toLowerCase()) ??
+      (/^\d+(?:\.\d+)?[bkmt]$/i.test(word) ? word.toUpperCase() : word[0].toUpperCase() + word.slice(1)),
+    )
+    .join(" ")
+    .replace(/^GPT (?=\d)/, "GPT-") || model.id;
+}
+
 function matchesSearch(model: CatalogModel, provider: Provider, search: string): boolean {
-  return [model.label, model.id, model.description, model.owned_by, provider.label]
+  return [catalogModelName(model), model.id, model.description, model.owned_by, provider.label]
     .some((value) => value?.toLowerCase().includes(search));
 }
 
@@ -77,6 +106,9 @@ export function ProviderModelsCatalog({
   const { t } = useTranslation();
   const [query, setQuery] = useState("");
   const [selectedProvider, setSelectedProvider] = useState<string | null>(null);
+  const [collapsedProviders, setCollapsedProviders] = useState<ReadonlySet<string>>(new Set());
+  const [collapsedSearchProviders, setCollapsedSearchProviders] = useState<ReadonlySet<string>>(new Set());
+  const listId = useId();
   const [results, setResults] = useState<Record<string, CatalogResult>>({});
   const [rowLimits, setRowLimits] = useState<Record<string, number>>({});
   const requests = useRef(new Map<string, CatalogRequest>());
@@ -85,6 +117,16 @@ export function ProviderModelsCatalog({
     ? selectedProvider
     : null;
   const search = query.trim().toLowerCase();
+  const collapsed = search ? collapsedSearchProviders : collapsedProviders;
+  const setProviderExpanded = (name: string, expanded: boolean) => {
+    const setCollapsed = search ? setCollapsedSearchProviders : setCollapsedProviders;
+    setCollapsed((previous) => {
+      const next = new Set(previous);
+      if (expanded) next.delete(name);
+      else next.add(name);
+      return next;
+    });
+  };
 
   const load = useCallback((provider: Provider, refresh = false) => {
     const name = provider.name;
@@ -214,6 +256,7 @@ export function ProviderModelsCatalog({
               value={query}
               onChange={(event) => {
                 setQuery(event.target.value);
+                setCollapsedSearchProviders(new Set());
                 setRowLimits({});
               }}
             />
@@ -231,7 +274,10 @@ export function ProviderModelsCatalog({
                   variant={filter === provider.name ? "secondary" : "outline"}
                   aria-pressed={filter === provider.name}
                   className="gap-1.5"
-                  onClick={() => setSelectedProvider(provider.name)}
+                  onClick={() => {
+                    setSelectedProvider(provider.name);
+                    setProviderExpanded(provider.name, true);
+                  }}
                 >
                   <ProviderPickerIcon provider={provider.name} showBrandLogos={showBrandLogos} />
                   {provider.label}
@@ -248,18 +294,29 @@ export function ProviderModelsCatalog({
           const count = result?.payload?.model_count;
           const message = result?.error || result?.payload?.message;
           const failed = Boolean(result?.error || (result?.payload && result.payload.status !== "available"));
+          const expanded = !collapsed.has(name);
+          const groupId = `${listId}-${name}`;
           return (
             <SettingsGroup key={name}>
-              <div className="flex min-h-12 items-center justify-between gap-2 px-4 py-2">
-                <div className="flex min-w-0 items-center gap-2">
-                  <ProviderPickerIcon provider={name} showBrandLogos={showBrandLogos} />
-                  <h3 className="min-w-0 truncate text-sm font-medium">{label}</h3>
-                  {count !== undefined && !failed ? (
-                    <span className="shrink-0 rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">
-                      {search && count !== matches.length ? `${matches.length} / ${count}` : count}
-                    </span>
-                  ) : null}
-                </div>
+              <div className="flex min-h-12 items-center gap-2 px-4 py-2">
+                <h3 className="min-w-0 flex-1">
+                  <button
+                    type="button"
+                    aria-expanded={expanded}
+                    aria-controls={groupId}
+                    onClick={() => setProviderExpanded(name, !expanded)}
+                    className="flex min-h-8 w-full min-w-0 items-center gap-2 rounded-control text-left text-sm font-medium outline-none hover:bg-muted/35 focus-visible:ring-2 focus-visible:ring-ring"
+                  >
+                    <ChevronDown className={cn("h-4 w-4 shrink-0 text-muted-foreground transition-transform", !expanded && "-rotate-90")} aria-hidden />
+                    <ProviderPickerIcon provider={name} showBrandLogos={showBrandLogos} />
+                    <span className="min-w-0 truncate">{label}</span>
+                    {count !== undefined && !failed ? (
+                      <span className="shrink-0 rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">
+                        {search && count !== matches.length ? `${matches.length} / ${count}` : count}
+                      </span>
+                    ) : null}
+                  </button>
+                </h3>
                 {result ? (
                   <Button
                     type="button"
@@ -275,63 +332,68 @@ export function ProviderModelsCatalog({
                       : <RefreshCw className="h-4 w-4" aria-hidden />}
                   </Button>
                 ) : defersCatalog(provider) ? (
-                  <Button type="button" variant="outline" size="sm" onClick={() => load(provider)}>
+                  <Button type="button" variant="outline" size="sm" onClick={() => {
+                    setProviderExpanded(name, true);
+                    load(provider);
+                  }}>
                     {t("settings.models.catalog.load", { defaultValue: "Load models" })}
                   </Button>
                 ) : null}
               </div>
-              {result?.loading || message || (result?.payload?.status === "available" && !matches.length) ? (
-                <p role="status" className="px-4 py-2 text-xs text-muted-foreground">
-                  {result?.loading
-                    ? t("settings.models.catalog.loading", { defaultValue: "Loading models…" })
-                    : message || t("settings.models.catalog.empty", { defaultValue: "No models available." })}
-                </p>
-              ) : null}
-              {matches.slice(0, limit).map((model) => {
-                const key = providerModelKey(name, model.id);
-                const enabledCount = enabledByModel.get(key)?.size ?? 0;
-                const enabled = enabledCount > 0;
-                const displayName = model.label || model.id;
-                return (
-                  <div key={model.id} className="flex items-center gap-2 px-4 py-2.5 sm:gap-3">
-                    <div className="min-w-0 flex-1">
-                      <div className="break-words text-sm font-medium">{displayName}</div>
-                      {displayName !== model.id || model.description ? (
-                        <p className="mt-0.5 break-words text-xs text-muted-foreground">
-                          {[displayName !== model.id ? model.id : null, model.description].filter(Boolean).join(" · ")}
-                        </p>
+              <div id={groupId} hidden={!expanded} className="divide-y divide-border/45">
+                {expanded && (result?.loading || message || (result?.payload?.status === "available" && !matches.length)) ? (
+                  <p role="status" className="px-4 py-2 text-xs text-muted-foreground">
+                    {result?.loading
+                      ? t("settings.models.catalog.loading", { defaultValue: "Loading models…" })
+                      : message || t("settings.models.catalog.empty", { defaultValue: "No models available." })}
+                  </p>
+                ) : null}
+                {expanded && matches.slice(0, limit).map((model) => {
+                  const key = providerModelKey(name, model.id);
+                  const enabledCount = enabledByModel.get(key)?.size ?? 0;
+                  const enabled = enabledCount > 0;
+                  const displayName = catalogModelName(model);
+                  return (
+                    <div key={model.id} className="flex items-center gap-2 px-4 py-2.5 sm:gap-3">
+                      <div className="min-w-0 flex-1">
+                        <div className="break-words text-sm font-medium">{displayName}</div>
+                        {displayName !== model.id || model.description ? (
+                          <p className="mt-0.5 break-words text-xs text-muted-foreground">
+                            {[displayName !== model.id ? model.id : null, model.description].filter(Boolean).join(" · ")}
+                          </p>
+                        ) : null}
+                      </div>
+                      {model.context_window ? (
+                        <span className="shrink-0 rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">
+                          {formatContextWindow(model.context_window)}
+                        </span>
                       ) : null}
+                      <ToggleButton
+                        label={t("settings.models.catalog.enable", { defaultValue: "Enable {{model}}", model: displayName })}
+                        checked={enabled}
+                        disabled={orderSaving || pendingToggles.has(key) || (enabled && enabledCount === enabledNames.size)}
+                        onChange={(checked) => onToggleProviderModel({
+                          provider: name,
+                          model: model.id,
+                          enabled: checked,
+                          label: displayName,
+                          contextWindowTokens: model.context_window ?? undefined,
+                        })}
+                      />
                     </div>
-                    {model.context_window ? (
-                      <span className="shrink-0 rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">
-                        {formatContextWindow(model.context_window)}
-                      </span>
-                    ) : null}
-                    <ToggleButton
-                      label={t("settings.models.catalog.enable", { defaultValue: "Enable {{model}}", model: displayName })}
-                      checked={enabled}
-                      disabled={orderSaving || pendingToggles.has(key) || (enabled && enabledCount === enabledNames.size)}
-                      onChange={(checked) => onToggleProviderModel({
-                        provider: name,
-                        model: model.id,
-                        enabled: checked,
-                        label: model.label ?? undefined,
-                        contextWindowTokens: model.context_window ?? undefined,
-                      })}
-                    />
+                  );
+                })}
+                {expanded && matches.length > limit ? (
+                  <div className="px-4 py-2">
+                    <Button type="button" variant="ghost" size="sm" onClick={() => setRowLimits((previous) => ({
+                      ...previous,
+                      [name]: limit + PAGE_SIZE,
+                    }))}>
+                      {t("settings.models.catalog.more", { defaultValue: "Show more" })}
+                    </Button>
                   </div>
-                );
-              })}
-              {matches.length > limit ? (
-                <div className="px-4 py-2">
-                  <Button type="button" variant="ghost" size="sm" onClick={() => setRowLimits((previous) => ({
-                    ...previous,
-                    [name]: limit + PAGE_SIZE,
-                  }))}>
-                    {t("settings.models.catalog.more", { defaultValue: "Show more" })}
-                  </Button>
-                </div>
-              ) : null}
+                ) : null}
+              </div>
             </SettingsGroup>
           );
         })}

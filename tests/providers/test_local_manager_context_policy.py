@@ -1542,15 +1542,14 @@ async def test_policy_comes_from_declared_spec_not_provider_name(
         None,
         None,
     )
-    if expected == "strict":
-        with pytest.raises(FinalizedRequestBudgetExceeded):
-            provider.validate_finalized_request(
-                body,
-                transport="openai_chat_completions",
-                model=MODEL,
-                provider_context=_context(5_000),
-                policy=provider._request_budget_policy,
-            )
+    measurement = provider.validate_finalized_request(
+        body, transport="openai_chat_completions", model=MODEL,
+        provider_context=_context(5_000), policy=provider._request_budget_policy,
+    )
+    assert measurement is not None and measurement.policy == expected
+    assert measurement.source == (
+        "strict_cl100k_calibrated" if expected == "strict" else "estimated_compat"
+    )
 
 
 def test_local_cl100k_is_labeled_and_special_marker_text_is_counted_as_text() -> None:

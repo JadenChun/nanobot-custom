@@ -73,7 +73,6 @@ async def _make_full_loop(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
             return AgentLoop.from_config(
                 cfg, bus, tool_registry=tools, provider=provider, session_manager=sessions,
                 cron_service=service, turn_delivery_factory=delivery,
-                enable_legacy_auto_compact=False,
             )
 
         graph = RuntimeComposition.define(
@@ -133,7 +132,6 @@ async def _execute_inbound(loop, msg, *, session_key=None, runtime=None, pending
         ),
         _options=_TurnExecutionOptions(
             inbound=msg, runtime=runtime, raise_errors=True,
-            trusted_foreground_activity=loop._trusted_foreground_inbound(msg),
             admission_scope=queue_scope if pending_queue is not None else None,
         ),
     )

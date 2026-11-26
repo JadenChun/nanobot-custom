@@ -143,7 +143,6 @@ async def test_default_definition_and_acquisition_are_read_only_and_fail_closed(
         config,
         session_authority=Stage1UnavailableSessionAuthority(),
         factories=_factories(calls),
-        startup_receipt_admitted=True,
     )
     assert composition.state is RuntimeState.NEW
     assert _tree(tmp_path) == before
@@ -178,7 +177,6 @@ async def test_explicit_authority_is_not_selected_by_truthiness(
         _config(tmp_path),
         session_authority=authority,
         factories=_factories(events),
-        startup_receipt_admitted=True,
     )
     assert composition._authority is authority
     assert events == []
@@ -197,7 +195,6 @@ async def test_shared_handle_concurrent_acquire_and_reverse_exact_close(tmp_path
     authority = Authority(manager, events, close=True)
     composition = RuntimeComposition.define(
         _config(tmp_path), session_authority=authority, factories=_factories(events, counts),
-        startup_receipt_admitted=True,
     )
     handles = await asyncio.gather(*(composition.acquire() for _ in range(100)))
     handle = handles[0]
@@ -219,7 +216,6 @@ async def test_shared_handle_concurrent_acquire_and_reverse_exact_close(tmp_path
 async def test_foreign_loop_cannot_acquire_or_close(tmp_path: Path) -> None:
     composition = RuntimeComposition.define(
         _config(tmp_path), session_authority=Authority(object(), []), factories=_factories([]),
-        startup_receipt_admitted=True,
     )
     await composition.acquire()
     errors: list[BaseException] = []
@@ -264,7 +260,6 @@ async def test_acquisition_failure_and_cleanup_failure_are_ordered(tmp_path: Pat
     )
     composition = RuntimeComposition.define(
         _config(tmp_path), session_authority=Authority(object(), events), factories=factories,
-        startup_receipt_admitted=True,
     )
     with pytest.raises(ExceptionGroup) as caught:
         await composition.acquire()
@@ -322,7 +317,6 @@ async def test_acquisition_rollback_retains_dependencies_of_owned_work(
             defaults.cron, reader,
         ),
         channel_options=ChannelBuildOptions(factory=fail_late),
-        startup_receipt_admitted=True,
     )
 
     def exception_nodes(error: BaseException):
@@ -408,7 +402,6 @@ async def test_composition_close_retries_only_unsettled_resources_in_reverse(
             agent,
         ),
         channel_options=ChannelBuildOptions(factory=Channels),
-        startup_receipt_admitted=True,
     )
     await composition.acquire()
     with pytest.raises(ExceptionGroup) as caught:
@@ -468,7 +461,6 @@ async def test_terminal_failure_replays_identical_exception_without_retry(
             factories.cron,
             factories.agent,
         ),
-        startup_receipt_admitted=True,
     )
     for _ in range(2):
         with pytest.raises(LookupError) as caught:
@@ -491,7 +483,6 @@ async def test_failed_and_closed_compositions_keep_foreign_loop_fence(tmp_path: 
         _config(tmp_path),
         session_authority=FailingAuthority(),  # type: ignore[arg-type]
         factories=_factories([]),
-        startup_receipt_admitted=True,
     )
     with pytest.raises(LookupError):
         await failed.acquire()
@@ -499,7 +490,6 @@ async def test_failed_and_closed_compositions_keep_foreign_loop_fence(tmp_path: 
         _config(tmp_path),
         session_authority=Authority(object(), []),
         factories=_factories([]),
-        startup_receipt_admitted=True,
     )
     await closed.acquire()
     await closed.aclose()
@@ -565,7 +555,6 @@ async def test_builder_cancellation_rolls_back_on_owner_loop(tmp_path: Path) -> 
         _config(tmp_path), session_authority=Authority(object(), []),
         factories=RuntimeFactories(factories.bus, factories.tools, mcp, factories.cron, agent),
         channel_options=ChannelBuildOptions(factory=Channels),
-        startup_receipt_admitted=True,
     )
     task = asyncio.create_task(composition.acquire())
     await entered.wait()
@@ -624,7 +613,6 @@ async def test_default_definition_and_acquire_never_construct_or_migrate_jsonl_s
     composition = RuntimeComposition.define(
         _config(tmp_path),
         session_authority=Stage1UnavailableSessionAuthority(),
-        startup_receipt_admitted=True,
     )
     with pytest.raises(SessionAuthorityUnavailableError):
         await composition.acquire()

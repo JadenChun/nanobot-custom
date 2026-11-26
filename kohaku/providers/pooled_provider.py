@@ -88,8 +88,13 @@ class PooledProvider(LLMProvider):
         super().__init__(api_key=leaves[0].api_key, api_base=leaves[0].api_base,
                          provider_name=leaves[0].provider_name)
         self.generation = generation
+        self.supports_native_tool_search = all(leaf.supports_native_tool_search for leaf in leaves)
         self._owners: tuple[str, ...] = tuple(secrets.token_hex(32) for _ in keys)
         self._pool: KeyPoolCoordinator = KeyPoolCoordinator(len(leaves), rate_limit)
+
+    @property
+    def anchor_provider(self) -> LLMProvider:
+        return self._leaves[0]
 
     @property
     def generation(self) -> GenerationSettings:
@@ -110,6 +115,9 @@ class PooledProvider(LLMProvider):
 
     def supports_native_compaction(self, model: str | None = None) -> bool:
         return any(leaf.supports_native_compaction(model) for leaf in self._leaves)
+
+    def native_tool_search_for_model(self, model: str | None) -> bool:
+        return all(leaf.native_tool_search_for_model(model) for leaf in self._leaves)
 
     @property
     def supports_source_summary(self) -> bool:
@@ -141,9 +149,11 @@ class PooledProvider(LLMProvider):
                     transport_receipt=None,
                     continuation_metadata_present=False,
                 )
-        if not states and response.local_usage_receipt is None:
-            return response
-        return replace(response, **states, local_usage_receipt=None)
+        if response.local_usage_receipt is not None and (
+            response.usage is None or response.finish_reason == "error"
+        ):
+            response = replace(response, local_usage_receipt=None)
+        return replace(response, **states) if states else response
 
     async def _attempt(self, kwargs: dict[str, Any], *, stream: bool, observed: bool,
                        stopped: list[bool | Literal['exhausted']],
@@ -170,7 +180,6 @@ class PooledProvider(LLMProvider):
                 local['provider_context'] = replace(
                     context, conversation_state=self._leaf_state(slot, context.conversation_state, local.get('model')),
                     context_window_tokens=context.context_window_tokens if leaf.supports_native_compaction(local.get('model')) else None,
-                    local_usage_anchor=None,
                 )
             await self._pool.admit()
             if attempts is not None:
@@ -207,7 +216,6 @@ class PooledProvider(LLMProvider):
         if isinstance(context, ProviderCallContext):
             local["provider_context"] = replace(
                 context,
-                local_usage_anchor=None,
                 conversation_state=self._leaf_state(
                     slot,
                     context.conversation_state,
@@ -242,7 +250,6 @@ class PooledProvider(LLMProvider):
                     if self._leaves[slot].supports_native_compaction(local.get("model"))
                     else None
                 ),
-                    local_usage_anchor=None,
             )
         await self._pool.admit()
         response = await self._leaves[slot].chat_stream_once(**local)
@@ -272,7 +279,7 @@ class PooledProvider(LLMProvider):
                 tools=tools,
                 model=model,
                 generation=generation,
-                provider_context=replace(provider_context, local_usage_anchor=None),
+                provider_context=provider_context,
                 stream=stream,
                 tool_choice=tool_choice,
             )
@@ -281,12 +288,15 @@ class PooledProvider(LLMProvider):
             previews.append(preview)
         first = previews[0]
         if any(
-            preview.measurement != first.measurement
+            replace(
+                preview.measurement, input_tokens=first.measurement.input_tokens,
+                source=first.measurement.source,
+            ) != first.measurement
             or preview.effective_body != first.effective_body
             for preview in previews[1:]
         ):
             return None
-        return first
+        return max(previews, key=lambda preview: preview.measurement.input_tokens)
 
     @staticmethod
     def _bind_positional_args(

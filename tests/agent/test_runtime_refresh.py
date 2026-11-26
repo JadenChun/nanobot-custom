@@ -7,7 +7,6 @@ from unittest.mock import MagicMock
 import pytest
 
 from kohaku.agent.loop import AgentLoop
-from kohaku.bus.queue import MessageBus
 from kohaku.bus.runtime_events import RuntimeModelChanged
 from kohaku.config.errors import ConfigLoadError
 from kohaku.config.loader import save_config
@@ -41,7 +40,7 @@ def _build_loop(inputs: AgentInputs, **options: object) -> AgentLoop:
         session_manager=inputs.sessions, tool_registry=inputs.tools,
         cron_service=inputs.cron, turn_delivery_factory=inputs.delivery,
         tools_config=inputs.config.tools, restrict_to_workspace=True,
-        enable_legacy_auto_compact=False, **options,
+        **options,
     )
 
 
@@ -80,7 +79,6 @@ def _make_config_loop(
             session_manager=inputs.sessions, cron_service=inputs.cron,
             turn_delivery_factory=inputs.delivery,
             provider_snapshot_loader=snapshot_loader,
-            enable_legacy_auto_compact=False,
         )
 
     loop = admitted(tmp_path, build, config=config)
@@ -397,34 +395,6 @@ def test_settings_context_window_refreshes_runtime_state(
     assert loop.llm_runtime().context_window_tokens == 262_144
 
 
-def test_runtime_refresh_unadmitted_constructor_refuses_before_effects(tmp_path, monkeypatch) -> None:
-    from kohaku.agent.memory_recovery_startup_admission import StartupReceiptAdmissionError
-    from kohaku.session.manager import SessionManager
-
-    provider = _provider("unadmitted-model")
-    bus = MessageBus()
-    workspace = tmp_path / "unadmitted"
-    pending = workspace / "memory" / ".consolidation.pending.json"
-    pending.parent.mkdir(parents=True)
-    pending.write_text("{broken", encoding="utf-8")
-
-    def denied(*_args, **_kwargs):
-        pytest.fail("unadmitted runtime refresh reached a session or directory effect")
-
-    monkeypatch.setattr(SessionManager, "__init__", denied)
-    monkeypatch.setattr(Path, "mkdir", denied)
-    before = tuple(tmp_path.iterdir())
-    with pytest.raises(StartupReceiptAdmissionError):
-        AgentLoop(
-            bus=bus, provider=provider, workspace=workspace,
-            sessions_root=tmp_path / "sessions",
-        )
-    assert tuple(tmp_path.iterdir()) == before
-    assert not bus._pending
-    provider.chat.assert_not_called()
-    provider.chat_with_retry.assert_not_called()
-
-
 def test_runtime_refresh_settings_use_acquired_config_without_optional_effects(
     tmp_path, monkeypatch, admitted_sync,
 ) -> None:
@@ -460,7 +430,6 @@ def test_runtime_refresh_settings_use_acquired_config_without_optional_effects(
     assert loop.sessions.has_managed_authority
     assert loop.turn_delivery_factory.bus is loop.bus
     assert loop.tools_config.restrict_to_workspace is True
-    assert loop.auto_compact is None
     assert not loop._background_tasks
     assert not loop.cron_service._running
 

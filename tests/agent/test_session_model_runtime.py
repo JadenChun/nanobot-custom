@@ -73,7 +73,6 @@ async def test_sessions_run_concurrently_with_isolated_model_presets(admitted_as
             session_manager=inputs.sessions, tool_registry=inputs.tools,
             cron_service=inputs.cron, turn_delivery_factory=inputs.delivery,
             tools_config=inputs.config.tools, restrict_to_workspace=True,
-            enable_legacy_auto_compact=False,
         )
 
     loop = await admitted_async(tmp_path, build, keys=("sdk:fast", "sdk:deep", "sdk:removed-preset", "sdk:queued"))
@@ -131,7 +130,6 @@ async def test_removed_session_model_preset_falls_back_and_clears_metadata(admit
             session_manager=inputs.sessions, tool_registry=inputs.tools,
             cron_service=inputs.cron, turn_delivery_factory=inputs.delivery,
             tools_config=inputs.config.tools, restrict_to_workspace=True,
-            enable_legacy_auto_compact=False,
         )
 
     loop = await admitted_async(tmp_path, build, keys=("sdk:fast", "sdk:deep", "sdk:removed-preset", "sdk:queued"))
@@ -183,7 +181,6 @@ async def test_streamed_sdk_resolves_session_runtime_after_lock_admission(admitt
             session_manager=inputs.sessions, tool_registry=inputs.tools,
             cron_service=inputs.cron, turn_delivery_factory=inputs.delivery,
             tools_config=inputs.config.tools, restrict_to_workspace=True,
-            enable_legacy_auto_compact=False,
         )
 
     loop = await admitted_async(tmp_path, build, keys=("sdk:fast", "sdk:deep", "sdk:removed-preset", "sdk:queued"))
@@ -232,7 +229,6 @@ async def test_sdk_custom_model_preset_metadata_does_not_select_runtime(admitted
             session_manager=inputs.sessions, tool_registry=inputs.tools,
             cron_service=inputs.cron, turn_delivery_factory=inputs.delivery,
             tools_config=inputs.config.tools, restrict_to_workspace=True,
-            enable_legacy_auto_compact=False,
         )
 
     loop = await admitted_async(tmp_path, build, borrowed=True)
@@ -280,7 +276,6 @@ async def test_sdk_invalid_internal_model_preset_metadata_fails_explicitly(admit
             session_manager=inputs.sessions, tool_registry=inputs.tools,
             cron_service=inputs.cron, turn_delivery_factory=inputs.delivery,
             tools_config=inputs.config.tools, restrict_to_workspace=True,
-            enable_legacy_auto_compact=False,
         )
 
     loop = await admitted_async(tmp_path, build, borrowed=True)
@@ -320,7 +315,6 @@ async def test_admitted_fixture_async_body_failure_closes_on_owner_loop(tmp_path
             session_manager=inputs.sessions, tool_registry=inputs.tools,
             cron_service=inputs.cron, turn_delivery_factory=inputs.delivery,
             tools_config=inputs.config.tools, restrict_to_workspace=True,
-            enable_legacy_auto_compact=False,
         )
 
     with pytest.MonkeyPatch.context() as patches:

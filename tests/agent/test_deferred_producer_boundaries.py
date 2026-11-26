@@ -177,7 +177,9 @@ async def test_irreducibly_oversized_receipt_free_output_aborts_without_transpor
     key = "cli:receipt-free-overflow"
     tool_name = "receipt_free_overflow_fixture"
     marker = "receipt-free-overflow-marker"
-    result_text = (marker + " caf\u00e9 \u6f22\u5b57 artifact: literal-only\n") * 1_500
+    # Keep this fixture below the artifact gate. The provider still rejects
+    # the retained content because the indivisible group exceeds its window.
+    result_text = (marker + " caf\u00e9 \u6f22\u5b57 artifact: literal-only\n") * 20
     adapter = _ReceiptFreeTool(tool_name, result_text)
     provider = _OverflowProvider(tool_name, marker)
     loop = AgentLoop.from_config(

@@ -12,8 +12,8 @@ from kohaku.config.schema import AgentDefaults, Config
 
 def test_source_compaction_defaults_and_config_aliases() -> None:
     defaults = AgentDefaults()
-    assert defaults.source_compaction.idle_timeout_seconds == 300.0
-    assert defaults.source_compaction.overall_timeout_seconds == 900.0
+    assert defaults.source_compaction.idle_timeout_seconds == 45.0
+    assert defaults.source_compaction.overall_timeout_seconds == 120.0
 
     config = Config.model_validate({
         "agents": {"defaults": {"sourceCompaction": {

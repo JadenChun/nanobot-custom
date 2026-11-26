@@ -277,19 +277,16 @@ async def test_dynamic_list_view_does_not_claim_validated_call_elements(wire_sto
         assert writer.failed and events == [("append", "assistant")]
 
 
-def test_constructed_context_run_summaries_remain_ordered_and_omit_blank_files(
-    tmp_path, monkeypatch
-) -> None:
-    builder = ContextBuilder(tmp_path)
-    folder = tmp_path / "context-repo" / "runs"
-    folder.mkdir(parents=True)
-    paths = [folder / name for name in ("one.md", "blank.md", "two.md")]
-    for path, text in zip(paths, (" first summary ", " \n", " second summary ")):
-        path.write_text(text, encoding="utf-8")
-    monkeypatch.setattr(builder.context_manager, "run_summary_files", lambda: paths)
+def test_constructed_project_context_omits_volatile_run_summaries(tmp_path) -> None:
+    repo = tmp_path / "context-repo"
+    (repo / "runs").mkdir(parents=True)
+    (repo / "CONTEXT.md").write_text("Project instructions", encoding="utf-8")
+    (repo / "runs" / "summaries.md").write_text("Prior run summary", encoding="utf-8")
+    (repo / "runs" / "current.json").write_text("Current run state", encoding="utf-8")
+    builder = ContextBuilder(tmp_path, context_paths=[repo])
 
-    prompt = builder.build_system_prompt(include_memory=False)
+    prompt = builder.build_system_prompt(workspace=repo, include_memory=False)
 
-    assert prompt.index("first summary") < prompt.index("second summary")
-    assert "context-repo/runs/one.md" in prompt and "context-repo/runs/two.md" in prompt
-    assert "blank.md" not in prompt
+    assert "Project instructions" in prompt
+    assert "Prior run summary" not in prompt
+    assert "Current run state" not in prompt

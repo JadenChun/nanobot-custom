@@ -37,7 +37,7 @@ def _build(inputs: AgentInputs) -> AgentLoop:
         context_window_tokens=32_000, session_manager=inputs.sessions,
         tool_registry=inputs.tools, cron_service=inputs.cron,
         turn_delivery_factory=inputs.delivery, tools_config=inputs.config.tools,
-        restrict_to_workspace=True, enable_legacy_auto_compact=False,
+        restrict_to_workspace=True,
     )
     assert loop.bus is inputs.bus
     assert loop.sessions is inputs.sessions

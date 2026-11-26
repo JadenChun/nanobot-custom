@@ -47,8 +47,7 @@ async def test_process_continuation_queues_behind_foreground_and_keeps_its_own_p
         return AgentLoop(bus=inputs.bus, provider=provider, workspace=inputs.config.workspace_path,
                          model="test-model", session_manager=inputs.sessions, tool_registry=inputs.tools,
                          cron_service=inputs.cron, turn_delivery_factory=inputs.delivery,
-                         tools_config=inputs.config.tools, restrict_to_workspace=True,
-                         enable_legacy_auto_compact=False)
+                         tools_config=inputs.config.tools, restrict_to_workspace=True)
 
     loop = await admitted_async(tmp_path, build)
     loop.sessions.admit_persistent_write("websocket:c1")

@@ -14,12 +14,13 @@ from typing import Any, cast
 
 from loguru import logger
 
+from kohaku.context.compiler import use_native_system_blocks
 from kohaku.providers.base import (
-    FinalizedRequestBudgetExceeded,
     LLMProvider,
     LLMResponse,
     LLMUsage,
     ProviderCallContext,
+    ProviderRequestRejected,
     ToolCallRequest,
     resolve_stream_idle_timeout_s,
     tool_arguments_object_for_replay,
@@ -544,30 +545,46 @@ class AnthropicProvider(LLMProvider):
         system: str | list[dict[str, Any]],
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]] | None,
+        *,
+        split_system: bool = False,
+        direct_tool_count: int | None = None,
     ) -> tuple[str | list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]] | None]:
         marker = {"type": "ephemeral"}
+        remaining = 4
 
-        if isinstance(system, str) and system:
-            system = [{"type": "text", "text": system, "cache_control": marker}]
-        elif isinstance(system, list) and system:
-            system = list(system)
-            system[-1] = {**system[-1], "cache_control": marker}
-
+        # Always prioritize the rolling conversation-history breakpoint so
+        # multi-turn history stays cached even when both system and tools split.
         new_msgs = list(messages)
         if len(new_msgs) >= 3:
             m = new_msgs[-2]
             c = m.get("content")
             if isinstance(c, str):
                 new_msgs[-2] = {**m, "content": [{"type": "text", "text": c, "cache_control": marker}]}
+                remaining -= 1
             elif isinstance(c, list) and c:
                 nc = list(cast(list[dict[str, Any]], c))
                 nc[-1] = {**nc[-1], "cache_control": marker}
                 new_msgs[-2] = {**m, "content": nc}
+                remaining -= 1
 
+        if isinstance(system, str) and system and remaining > 0:
+            system = [{"type": "text", "text": system, "cache_control": marker}]
+            remaining -= 1
+        elif isinstance(system, list) and system and remaining > 0:
+            system = list(system)
+            system[-1] = {**system[-1], "cache_control": marker}
+            remaining -= 1
+            if split_system and len(system) == 2 and remaining > 0:
+                system[0] = {**system[0], "cache_control": marker}
+                remaining -= 1
+
+        tool_markers = cls._tool_cache_marker_indices(tools or [], direct_tool_count)
+        split_tools = direct_tool_count is not None and len(tool_markers) == 2
         new_tools = tools
-        if tools:
+        if tools and remaining > 0:
             new_tools = list(tools)
-            for idx in cls._tool_cache_marker_indices(new_tools):
+            indices = tool_markers[:remaining] if split_tools else tool_markers[-remaining:]
+            for idx in indices:
                 new_tools[idx] = {**new_tools[idx], "cache_control": marker}
 
         return system, new_msgs, new_tools
@@ -586,14 +603,17 @@ class AnthropicProvider(LLMProvider):
         reasoning_effort: str | None,
         tool_choice: str | dict[str, Any] | None,
         supports_caching: bool = True,
+        direct_tool_count: int | None = None,
     ) -> dict[str, Any]:
         model_name = self._strip_prefix(model or self.default_model)
+        messages, split_system = use_native_system_blocks(messages)
         system, anthropic_msgs = self._convert_messages(self._sanitize_empty_content(messages))
         anthropic_tools = self._convert_tools(tools)
 
         if supports_caching:
             system, anthropic_msgs, anthropic_tools = self._apply_cache_control(
-                system, anthropic_msgs, anthropic_tools,
+                system, anthropic_msgs, anthropic_tools, split_system=split_system,
+                direct_tool_count=direct_tool_count,
             )
 
         max_tokens = max(1, max_tokens)
@@ -757,6 +777,7 @@ class AnthropicProvider(LLMProvider):
         kwargs = self._build_kwargs(
             messages, tools, model, max_tokens, temperature,
             reasoning_effort, tool_choice,
+            direct_tool_count=provider_context.direct_tool_count if provider_context else None,
         )
         try:
             self.validate_finalized_request(
@@ -765,7 +786,7 @@ class AnthropicProvider(LLMProvider):
             )
             response = cast(Any, await self._client.messages.create(**kwargs))
             return self._parse_response(response)
-        except FinalizedRequestBudgetExceeded:
+        except ProviderRequestRejected:
             raise
         except Exception as e:
             if self._is_streaming_required_error(e):
@@ -803,6 +824,7 @@ class AnthropicProvider(LLMProvider):
         kwargs = self._build_kwargs(
             messages, tools, model, max_tokens, temperature,
             reasoning_effort, tool_choice,
+            direct_tool_count=provider_context.direct_tool_count if provider_context else None,
         )
         idle_timeout_s = resolve_stream_idle_timeout_s()
         try:
@@ -883,7 +905,7 @@ class AnthropicProvider(LLMProvider):
                 finish_reason="error",
                 error_kind="timeout",
             )
-        except FinalizedRequestBudgetExceeded:
+        except ProviderRequestRejected:
             raise
         except Exception as e:
             return self._handle_error(e)

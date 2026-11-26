@@ -408,7 +408,7 @@ def test_get_history_synthesizes_breadcrumb_for_image_only_turn():
     assert history[0] == {"role": "user", "content": "[image: /m/pic.png]"}
 
 
-def test_get_history_synthesizes_cli_app_attachment_breadcrumb():
+def test_get_history_keeps_user_text_without_cli_app_breadcrumb():
     session = Session(key="test:cli-app")
     session.messages.append(
         {
@@ -423,14 +423,7 @@ def test_get_history_synthesizes_cli_app_attachment_breadcrumb():
 
     history = session.get_history(max_messages=500)
 
-    assert history == [{
-        "role": "user",
-        "content": (
-            "please use @drawio\n"
-            "[CLI App Attachment: @drawio; tool=run_cli_app; "
-            "entry_point=cli-anything-drawio; skill=skills/cli-app-drawio/SKILL.md]"
-        ),
-    }]
+    assert history == [{"role": "user", "content": "please use @drawio"}]
 
 
 def test_get_history_does_not_duplicate_persisted_cli_app_runtime_context():
@@ -458,8 +451,7 @@ def test_get_history_does_not_duplicate_persisted_cli_app_runtime_context():
         include_runtime_context=False,
     )
 
-    assert model_history == [{"role": "user", "content": content}]
-    assert model_history[0]["content"].count("CLI App Attachment: @drawio") == 1
+    assert model_history == [{"role": "user", "content": "please use @drawio"}]
     assert public_history == [{"role": "user", "content": "please use @drawio"}]
 
 
@@ -540,7 +532,7 @@ def test_fork_session_drops_source_runtime_context(tmp_path):
     assert RUNTIME_CONTEXT_HISTORY_META not in forked.messages[0]
     model_content = forked.get_history()[0]["content"]
     assert model_content.startswith("round1")
-    assert "CLI App Attachment: @drawio" in model_content
+    assert "CLI App Attachment: @drawio" not in model_content
     assert "host-only goal guidance" not in model_content
 
 

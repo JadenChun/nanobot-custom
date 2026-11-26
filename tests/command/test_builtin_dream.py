@@ -5,6 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from kohaku.agent.context import ContextBuilder
 from kohaku.agent.memory import MemoryStore
 from kohaku.bus.events import InboundMessage, OutboundMessage
 from kohaku.command.builtin import (
@@ -177,10 +178,30 @@ async def test_dream_no_history_explains_how_to_create_input(tmp_path) -> None:
     content = bus.outbound[0].content
     assert "Dream has no conversation history to process yet." in content
     assert "`memory/history.jsonl`" in content
-    assert "idle auto-compact" in content
     assert "Dream cursor" in content
-    assert "agents.defaults.idleCompactAfterMinutes" in content
     assert "/dream-prompt" in content
+
+
+@pytest.mark.asyncio
+async def test_manual_dream_refreshes_the_requesting_session_prompt(tmp_path):
+    ctx, bus = _make_dream_ctx(tmp_path)
+    builder = ContextBuilder(tmp_path)
+    ctx.loop.context.refresh_prompt_snapshot = builder.refresh_prompt_snapshot
+    memory = builder.memory.memory_file
+    memory.parent.mkdir(parents=True, exist_ok=True)
+    memory.write_text("Memory before Dream marker", encoding="utf-8")
+    session = ctx.loop.sessions.get_or_create(ctx.key)
+    before = builder.compile_system_prompt(session=session)
+    memory.write_text("Memory after Dream marker", encoding="utf-8")
+    assert builder.compile_system_prompt(session=session) == before
+
+    await cmd_dream(ctx)
+    await asyncio.sleep(0)
+
+    assert bus.outbound
+    after = builder.compile_system_prompt(session=session)
+    assert "Memory after Dream marker" in after.full_system_text
+    assert "Memory before Dream marker" not in after.full_system_text
 
 
 @pytest.mark.asyncio

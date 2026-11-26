@@ -227,7 +227,9 @@ async def test_repeated_pressure_compaction_keeps_live_instruction_and_advances_
         assert second.checkpoint['parent_checkpoint_id'] == first_checkpoint
         assert second.checkpoint['boundary'] > first.checkpoint['boundary']
         assert second.events[:len(first.events)] == first.events
-        assert [row['content'] for row in messages if row['role'] == 'user'] == ['current instruction']
+        summary, current = [row['content'] for row in messages if row['role'] == 'user']
+        assert '<conversation_summary>' in summary
+        assert current == 'current instruction'
         payloads = [json.loads(call[0][1]['content']) for call in state.config.provider.calls[3:]]
         assert all('objective' not in str(payload['events']) for payload in payloads)
         assert payloads[0]['previous_summary'] == 'retained facts'
@@ -243,7 +245,7 @@ async def test_local_manager_prefix_then_disjoint_canonical_fold_uses_real_sourc
 
     model = 'Qwen3.8-27B-UD-Q6_K_XL'
     context_window = 12000
-    generation = GenerationSettings(temperature=0.2, max_tokens=256, reasoning_effort='medium')
+    generation = GenerationSettings(temperature=0.2, max_tokens=256, reasoning_effort='none')
     provider = OpenAICompatProvider(
         api_key='fixture-credential', api_base='http://manager.test/v1',
         default_model=model, provider_name='local_manager',

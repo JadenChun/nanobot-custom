@@ -128,27 +128,13 @@ app.add_typer(attachments_app, name="attachments")
 def _admitted_browser_artifacts_dir(
     config: str | None, workspace: str | None,
 ) -> Generator[Path, None, None]:
-    """Select only this workspace's browser-test directory under startup admission."""
-    from kohaku.agent.memory_recovery_startup_admission import (
-        StartupReceiptAdmissionError,
-        admitted_startup_mutation,
-        require_startup_receipt_admission,
-    )
-    from kohaku.config.paths import (
-        get_browser_test_artifacts_dir,
-        get_default_sessions_root,
-    )
+    """Select only this workspace's browser-test directory."""
+    from kohaku.config.paths import get_browser_test_artifacts_dir
     from kohaku.migration_guard import require_runtime_ready
 
     require_runtime_ready()
     runtime_config = _load_runtime_config(config, workspace)
     workspace_path = runtime_config.workspace_path.resolve(strict=False)
-    if runtime_config.runtime_data_dir is not None:
-        sessions_root = runtime_config.runtime_data_dir / "sessions"
-    elif config:
-        sessions_root = Path(config).expanduser().resolve(strict=False).parent / "sessions"
-    else:
-        sessions_root = get_default_sessions_root()
     candidate = runtime_config.workspace_path / "artifacts" / "browser-tests"
     if (
         candidate.parent.is_symlink()
@@ -157,13 +143,7 @@ def _admitted_browser_artifacts_dir(
     ):
         console.print("[red]Error: browser test artifacts must remain inside the workspace.[/red]")
         raise typer.Exit(1)
-    try:
-        require_startup_receipt_admission(workspace_path, sessions_root=sessions_root)
-        with admitted_startup_mutation(workspace_path, sessions_root=sessions_root):
-            yield get_browser_test_artifacts_dir(runtime_config.workspace_path)
-    except StartupReceiptAdmissionError as exc:
-        console.print(f"[red]Error: {exc}[/red]")
-        raise typer.Exit(1) from None
+    yield get_browser_test_artifacts_dir(runtime_config.workspace_path)
 
 
 @artifacts_app.command("path")
@@ -304,13 +284,9 @@ def onboard(
     """Initialize kohaku configuration and workspace."""
     from kohaku.migration_guard import require_runtime_ready
     require_runtime_ready()
-    from kohaku.agent.memory_recovery_startup_admission import (
-        StartupReceiptAdmissionError,
-        admitted_startup_mutation,
-        require_startup_receipt_admission,
-    )
     from kohaku.config.loader import get_config_path, load_config, save_config, set_config_path
     from kohaku.config.schema import Config
+    from kohaku.utils.workspace_lock import open_workspace_memory_lock
 
     explicit_config = config is not None
     if config:
@@ -376,22 +352,16 @@ def onboard(
             raise typer.Exit(1)
     workspace_path = loaded_config.workspace_path.resolve(strict=False)
     workspace_was_missing = not workspace_path.exists()
-    sessions_root = (loaded_config.runtime_data_dir or config_path.parent) / "sessions"
-    try:
-        require_startup_receipt_admission(workspace_path, sessions_root=sessions_root)
-        with admitted_startup_mutation(workspace_path, sessions_root=sessions_root):
-            save_config(loaded_config, config_path)
-            if save_note:
-                console.print(f"[green]✓[/green] {save_note}")
-            _onboard_plugins(config_path)
-            if not workspace_path.exists():
-                workspace_path.mkdir(parents=True, exist_ok=True)
-            if workspace_was_missing:
-                console.print(f"[green]✓[/green] Created workspace at {workspace_path}")
-            sync_workspace_templates(workspace_path)
-    except StartupReceiptAdmissionError as exc:
-        console.print(f"[red]Error: {exc}[/red]")
-        raise typer.Exit(1) from None
+    save_config(loaded_config, config_path)
+    if save_note:
+        console.print(f"[green]✓[/green] {save_note}")
+    _onboard_plugins(config_path)
+    if not workspace_path.exists():
+        workspace_path.mkdir(parents=True, exist_ok=True)
+    if workspace_was_missing:
+        console.print(f"[green]✓[/green] Created workspace at {workspace_path}")
+    with open_workspace_memory_lock(workspace_path):
+        sync_workspace_templates(workspace_path)
 
     webui_cmd = "kohaku webui"
     if explicit_config:
@@ -529,11 +499,6 @@ def serve(
         console.print("[red]aiohttp is required. Install with: kohaku plugins enable api[/red]")
         raise typer.Exit(1)
 
-    from kohaku.agent.memory_recovery_startup_admission import (
-        StartupReceiptAdmissionError,
-        admitted_startup_mutation,
-        require_startup_receipt_admission,
-    )
     from kohaku.api.server import create_app
     from kohaku.config.paths import get_default_sessions_root
     from kohaku.runtime_composition import RuntimeComposition, RuntimePreflightError
@@ -560,17 +525,11 @@ def serve(
     else:
         sessions_root = get_default_sessions_root()
     try:
-        require_startup_receipt_admission(workspace_path, sessions_root=sessions_root)
-    except StartupReceiptAdmissionError as exc:
-        console.print(f"[red]Error: {exc}[/red]")
-        raise typer.Exit(1) from None
-    try:
         composition = RuntimeComposition.define(
             runtime_config,
             sessions_root=sessions_root,
-            startup_receipt_admitted=True,
         )
-    except (StartupReceiptAdmissionError, RuntimePreflightError) as exc:
+    except RuntimePreflightError as exc:
         console.print(f"[red]Error: {exc}[/red]")
         raise typer.Exit(1) from None
     model_name, preset_tag = _model_display(runtime_config)
@@ -592,7 +551,10 @@ def serve(
     )
 
     async def prepare_runtime_context(_app: web.Application) -> AsyncGenerator[None, None]:
-        with admitted_startup_mutation(workspace_path, sessions_root=sessions_root):
+        from kohaku.utils.workspace_lock import open_workspace_memory_lock
+
+        workspace_path.mkdir(parents=True, exist_ok=True)
+        with open_workspace_memory_lock(workspace_path):
             sync_workspace_templates(workspace_path)
         yield
 

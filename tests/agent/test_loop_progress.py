@@ -70,7 +70,6 @@ async def _make_loop(
             turn_delivery_factory=inputs.delivery,
             tools_config=inputs.config.tools,
             restrict_to_workspace=True,
-            session_ttl_minutes=0,
         )
 
     return await admitted_async(tmp_path, build, keys=keys)
@@ -1085,7 +1084,7 @@ class TestToolEventProgress:
         assert requests[0][-1]["content"].endswith("Background research completed")
         assert any(
             message.get("role") == "user"
-            and message.get("content") == "Can you include the key detail?"
+            and str(message.get("content")).partition("\n\n")[0] == "Can you include the key detail?"
             for message in requests[1]
         )
         assert len(request_contexts) == 1

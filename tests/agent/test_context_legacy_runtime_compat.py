@@ -259,15 +259,7 @@ def test_canonical_context_and_source_boundaries_remain_metadata_free(tmp_path, 
     assert history == original and source == source_original
 
 
-def test_video_rules_are_global_and_operatively_complete(tmp_path: Path):
-    prompt = ContextBuilder(tmp_path, disabled_skills=["video-understanding"]).build_system_prompt()
-    for rule in (
-        "inspect the actual visual artifacts first",
-        "If a source video file is available, extract timestamped representative frames",
-        "before planning edits or claiming understanding",
-        "use inspect_* tools before preview_* tools",
-        "Sample timeline previews sequentially, not in parallel",
-        "a few targeted timestamps over a broad fan-out",
-        "preview_clip for motion/timing checks and preview_frame for spot checks",
-    ):
-        assert rule in prompt
+def test_disabled_video_skill_does_not_add_video_rules_to_system_prompt(tmp_path: Path):
+    compiled = ContextBuilder(tmp_path, disabled_skills=["video-understanding"]).compile_system_prompt()
+    assert "- video-understanding —" not in compiled.full_system_text
+    assert "Sample timeline previews sequentially" not in compiled.full_system_text

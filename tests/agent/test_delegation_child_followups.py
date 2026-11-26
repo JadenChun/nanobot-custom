@@ -72,12 +72,28 @@ class _FollowupProvider(ScriptedProvider):
         call = (detached_messages, tools, model)
         self.calls.append(call)
         names = _tool_names(tools)
-        child_request = "delegate_task" not in names and "followup_child" not in names
+        child_request = any(
+            row.get("role") == "system" and "Worker Role" in str(row.get("content"))
+            for row in detached_messages
+        )
         if not child_request:
             self.parent_calls.append(call)
             assert self.responses, "unexpected extra parent provider request"
+            discoveries = [
+                ToolCallRequest(
+                    id=f"discover-{planned.id}",
+                    name="tool_search",
+                    arguments={"query": planned.name, "limit": 1},
+                )
+                for planned in self.responses[0].tool_calls
+                if planned.name in {"delegate_task", "followup_child"} and planned.name not in names
+            ]
+            if discoveries:
+                assert "tool_search" in names
+                return LLMResponse(content=None, tool_calls=discoveries)
             return self.responses.popleft()
 
+        assert {"delegate_task", "followup_child"}.isdisjoint(names)
         self.child_calls.append(call)
         self.active_child_requests += 1
         self.max_active_child_requests = max(

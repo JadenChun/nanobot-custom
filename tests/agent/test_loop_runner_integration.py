@@ -63,7 +63,6 @@ async def _make_loop(tmp_path, admitted_async, provider=None, *, keys=()):
             model="test-model", session_manager=inputs.sessions, tool_registry=inputs.tools,
             cron_service=inputs.cron, turn_delivery_factory=inputs.delivery,
             tools_config=inputs.config.tools, restrict_to_workspace=True,
-            session_ttl_minutes=0,
         )
 
     return await admitted_async(tmp_path, build, keys=keys)
@@ -89,7 +88,6 @@ async def _execute_inbound(
         ),
         _options=_TurnExecutionOptions(
             inbound=msg, ephemeral=ephemeral, raise_errors=True,
-            trusted_foreground_activity=loop._trusted_foreground_inbound(msg),
         ),
     )
     return result.outbound
@@ -234,14 +232,14 @@ async def test_goal_command_can_implement_plan_from_prior_discussion(tmp_path, a
     assert "/goal implement the plan above" in str(first_request)
     assert _GOAL_RUNTIME_GUIDANCE_TAG in str(first_request)
     assert "create_goal is unavailable for this turn" in str(session.messages[-1]["content"])
-    assert _GOAL_RUNTIME_GUIDANCE_TAG in str(session.messages[2]["content"])
+    assert session.messages[2]["content"] == "/goal implement the plan above"
     assert _GOAL_RUNTIME_GUIDANCE_TAG not in str(
         public_history_message(session.messages[2])["content"]
     )
 
 
 @pytest.mark.asyncio
-async def test_runtime_context_is_persisted_as_next_turn_prompt_prefix(tmp_path, admitted_async):
+async def test_only_compact_runtime_context_replays_in_next_turn(tmp_path, admitted_async):
     from kohaku.bus.events import InboundMessage
     provider = MagicMock()
     provider.get_default_model.return_value = "test-model"
@@ -288,18 +286,20 @@ async def test_runtime_context_is_persisted_as_next_turn_prompt_prefix(tmp_path,
     second_request = provider.chat_with_retry.await_args_list[1].kwargs["messages"]
     first_wire = LLMProvider._sanitize_empty_content(first_request)
     second_wire = LLMProvider._sanitize_empty_content(second_request)
-    assert second_wire[: len(first_wire)] == first_wire
-    assert first_wire[1] == second_wire[1]
+    assert second_wire[1]["content"] == "first turn $review\n\n[Used skill: review]"
     assert first_wire[0] == second_wire[0]
     assert "Follow the unique review checklist." not in first_wire[0]["content"]
     assert "Follow the unique review checklist." in first_wire[1]["content"]
     assert second_wire[2]["role"] == "assistant"
     assert second_wire[2]["content"] == "first answer"
     assert second_wire[3]["content"].startswith("second turn")
+    assert first_wire[1]["content"].count("stable provider context") == 1
+    assert second_wire[3]["content"].count("stable provider context") == 1
+    assert "Follow the unique review checklist." not in str(second_wire)
     assert len(provider_calls) == 2
 
     persisted_first_user = session.messages[0]
-    assert persisted_first_user["content"] == first_wire[1]["content"]
+    assert persisted_first_user["content"] == "first turn $review"
     assert public_history_message(persisted_first_user)["content"] == "first turn $review"
 
 
@@ -329,7 +329,8 @@ async def test_webui_quote_reaches_model_without_leaking_into_public_history(tmp
     request = provider.chat_with_retry.await_args.kwargs["messages"]
     assert "What does this mean?" in str(request)
     assert "the selected answer excerpt" in str(request)
-    assert "the selected answer excerpt" in str(session.messages[0]["content"])
+    assert session.messages[0]["content"] == "What does this mean?"
+    assert "the selected answer excerpt" in str(session.get_history()[0]["content"])
     assert public_history_message(session.messages[0])["content"] == "What does this mean?"
 
 

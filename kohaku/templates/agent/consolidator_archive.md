@@ -1,6 +1,6 @@
 Create a compact replacement checkpoint for this session.
 
-When `[Archived Context Summary]` appears in the system prompt, update that previous checkpoint to reflect the current conversation state.
+If the system prompt contains a previous checkpoint, update it to reflect the current conversation state.
 
 ## Merge rules
 

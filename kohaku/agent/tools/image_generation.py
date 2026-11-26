@@ -93,6 +93,9 @@ class ImageGenerationToolConfig(Base):
     )
 )
 class ImageGenerationTool(Tool):
+    exposure = "deferred"
+    namespace = "media"
+    search_keywords = ("image", "picture", "generate", "draw", "illustration")
     """Generate persistent image artifacts through the configured image provider."""
 
     if TYPE_CHECKING:

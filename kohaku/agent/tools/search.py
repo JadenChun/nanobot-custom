@@ -238,11 +238,11 @@ class FindFilesTool(_SearchTool):
                 },
                 "glob": {
                     "type": "string",
-                    "description": "Path filter, e.g. '*.py' or 'tests/**/test_*.py'",
+                    "description": "Path glob.",
                 },
                 "type": {
                     "type": "string",
-                    "description": "File type, e.g. 'py', 'ts', 'md', or 'json'",
+                    "description": "File extension.",
                 },
                 "include_dirs": {
                     "type": "boolean",
@@ -251,7 +251,7 @@ class FindFilesTool(_SearchTool):
                 "sort": {
                     "type": "string",
                     "enum": ["path", "modified"],
-                    "description": "Sort order (default path)",
+                    "description": "Default: path.",
                 },
                 "head_limit": {
                     "type": "integer",
@@ -544,15 +544,15 @@ class GrepTool(_SearchTool):
                 },
                 "glob": {
                     "type": "string",
-                    "description": "Path filter, e.g. '*.py' or 'tests/**/test_*.py'",
+                    "description": "Path glob.",
                 },
                 "type": {
                     "type": "string",
-                    "description": "File type, e.g. 'py', 'ts', 'md', or 'json'",
+                    "description": "File extension.",
                 },
                 "pages": {
                     "type": "string",
-                    "description": "PDF page number or range, e.g. '7' or '101-200' (max 100 pages)",
+                    "description": "PDF page number or range. Maximum 100 pages.",
                 },
                 "case_insensitive": {
                     "type": "boolean",

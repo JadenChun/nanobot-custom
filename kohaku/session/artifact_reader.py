@@ -13,6 +13,7 @@ from kohaku.security.workspace_access import current_tool_workspace
 from kohaku.session.artifact import (
     ArtifactDescriptor,
     ArtifactValidationError,
+    ToolOutputArtifactOrigin,
     attested_artifact_origin,
     parse_artifact_reference,
     published_artifacts,
@@ -112,7 +113,7 @@ class ArtifactReader:
         blobs: ArtifactBlobTransaction,
         *,
         require_native: bool,
-    ) -> FilesystemReadReceipt:
+    ) -> FilesystemReadReceipt | ToolOutputArtifactOrigin:
         """Recheck all current evidence and policy without inferring a grant."""
         self._validate_private_root()
         writer = self.writer
@@ -137,24 +138,25 @@ class ArtifactReader:
             store=self.store,
         )
 
-    def authorize_source(self, descriptor: ArtifactDescriptor, snapshot: SourceSnapshot) -> FilesystemReadReceipt:
+    def authorize_source(self, descriptor: ArtifactDescriptor, snapshot: SourceSnapshot) -> FilesystemReadReceipt | ToolOutputArtifactOrigin:
         """Validate producer/scope/policy before publication or inline fallback."""
         return self._verify_native_source_locked(descriptor, snapshot)
 
     def _verify_native_source_locked(
         self, descriptor: ArtifactDescriptor, snapshot: SourceSnapshot
-    ) -> FilesystemReadReceipt:
+    ) -> FilesystemReadReceipt | ToolOutputArtifactOrigin:
         """Prove native canonical source using an already-locked exact snapshot."""
         self._validate_grant_issuer()
         if not self._native_permitted(descriptor, snapshot):
             raise ArtifactValidationError('Artifact is outside the admitted stream')
         receipt = attested_artifact_origin(descriptor, snapshot, workspace_id=self.store.workspace_id)
-        self.read_file.revalidate_artifact_source(receipt)
+        if isinstance(receipt, FilesystemReadReceipt):
+            self.read_file.revalidate_artifact_source(receipt)
         return receipt
 
     def verify_native_source_in_snapshot(
         self, descriptor: ArtifactDescriptor, snapshot: SourceSnapshot,
-    ) -> FilesystemReadReceipt:
+    ) -> FilesystemReadReceipt | ToolOutputArtifactOrigin:
         """Reprove real native source under the caller's retained source transaction."""
         return self._verify_native_source_locked(descriptor, snapshot)
 

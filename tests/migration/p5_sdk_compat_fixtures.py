@@ -101,7 +101,7 @@ async def sdk_bot_factory(monkeypatch, offline_sdk_positive):
                 loop = AgentLoop.from_config(
                     config, bus, tool_registry=tools, session_manager=sessions,
                     cron_service=cron, turn_delivery_factory=delivery,
-                    enable_legacy_auto_compact=False, hooks=list(hooks),
+                    hooks=list(hooks),
                     image_generation_provider_configs=image_gen_provider_configs(config),
                     hook_factories=[create_file_edit_activity_hook],
                 )
