@@ -1,6 +1,6 @@
 """Darwin process primitives for the Seatbelt executor (A3-2M, WP2).
 
-Everything here is read-only except seatbelt_self_test, which launches two
+Everything here is read-only except seatbelt_self_test, which launches three
 short-lived children that exit by themselves. The only signal this module can
 send is a last-resort kill of one of those direct children if it overruns its
 timeout. Signalling a command's process tree belongs to the launch-domain engine
@@ -294,6 +294,8 @@ class SelfTestResult:
 
 
 _CHILD_SECONDS = 3
+# EX_OSERR: sandbox-exec's exit status when sandbox_apply is refused.
+_APPLY_REFUSED_STATUS = 71
 _ESTABLISH_SECONDS = 2.5
 
 _DENY_DEFAULT_PROFILE = (
@@ -302,9 +304,9 @@ _DENY_DEFAULT_PROFILE = (
 )
 
 
-def _spawn_sandboxed(profile: Path) -> subprocess.Popen[bytes]:
+def _spawn_sandboxed(profile: Path, *wrapper: str) -> subprocess.Popen[bytes]:
     return subprocess.Popen(
-        [SANDBOX_EXEC, "-f", str(profile), "/bin/sleep", str(_CHILD_SECONDS)],
+        [SANDBOX_EXEC, "-f", str(profile), *wrapper, "/bin/sleep", str(_CHILD_SECONDS)],
         stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
         close_fds=True, start_new_session=True,
     )
@@ -313,9 +315,9 @@ def _spawn_sandboxed(profile: Path) -> subprocess.Popen[bytes]:
 def seatbelt_self_test() -> SelfTestResult:
     """Prove the membership predicate on this host before anything relies on it.
 
-    Launches one marked process and one deny-default control, both of which exit
-    by themselves. No signal is ever sent. Any failure means tree ownership must
-    stay unavailable.
+    Launches one marked process, one deny-default control, and one marked process
+    that tries to replace its profile. All exit by themselves and no signal is
+    sent. Any failure means tree ownership must stay unavailable.
     """
     if not abi_supported():
         return SelfTestResult(False, ("unsupported platform or ABI",))
@@ -358,6 +360,16 @@ def seatbelt_self_test() -> SelfTestResult:
             matched = scan_members(launch_id)
             if matched != [member.pid]:
                 failures.append(f"scan matched {len(matched)} processes, expected exactly 1")
+            # The proof assumes a member can never shed its markers.
+            other = root / "other.sb"
+            other.write_text(
+                "(version 1)\n(allow default)\n(deny network*)\n", encoding="ascii",
+            )
+            os.chmod(other, 0o600)
+            replacer = _spawn_sandboxed(marked, SANDBOX_EXEC, "-f", str(other))
+            children.append(replacer)
+            if replacer.wait(timeout=_CHILD_SECONDS + 5) != _APPLY_REFUSED_STATUS:
+                failures.append("a marked process was not refused a different profile")
     except (OSError, DarwinUnavailableError, ValueError, subprocess.SubprocessError) as exc:
         failures.append(f"self-test could not run: {type(exc).__name__}")
     finally:
