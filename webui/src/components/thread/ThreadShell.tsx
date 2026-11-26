@@ -1726,6 +1726,15 @@ export function ThreadShell({
   }, []);
 
   const displayMessages = useMemo(() => projectWebuiThreadMessages(messages), [messages]);
+  const transcriptUserTurnIds = useMemo(() => {
+    const turnIds = new Set<string>();
+    if (messagesReady) {
+      for (const message of displayMessages) {
+        if (message.role === "user" && message.turnId) turnIds.add(message.turnId);
+      }
+    }
+    return turnIds;
+  }, [displayMessages, messagesReady]);
   const currentDelegatedChildren = useMemo(
     () => delegatedChildRows(displayMessages),
     [displayMessages],
@@ -3808,6 +3817,7 @@ export function ThreadShell({
         onSend={session || historyKey ? handleThreadSend : handleWelcomeSend}
         onJoinQueuedAttempt={session || historyKey ? joinQueuedAttempt : undefined}
         onConsumeQueuedAttempt={session || historyKey ? consumeQueuedAttempt : undefined}
+        transcriptUserTurnIds={transcriptUserTurnIds}
         admissionRejectedTurn={session || historyKey ? admissionRejectedTurn : undefined}
         onAdmissionRejectedPromptRestored={
           session || historyKey ? handleAdmissionRejectedPromptRestored : undefined

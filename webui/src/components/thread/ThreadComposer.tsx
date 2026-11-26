@@ -226,6 +226,7 @@ interface ThreadComposerProps {
     binding: QueuedAttemptBinding,
   ) => Promise<QueuedAttemptOutcome> | null;
   onConsumeQueuedAttempt?: (binding: QueuedAttemptBinding) => boolean;
+  transcriptUserTurnIds?: ReadonlySet<string>;
   /** A queued send lost its admission and should return to the waiting stack. */
   admissionRejectedTurn?: { turnId: string; reason?: string } | null;
   onAdmissionRejectedPromptRestored?: (turnId: string) => void;
@@ -405,7 +406,7 @@ interface QueuedPrompt {
 
 type QueuedPromptSubmission =
   | { version: 1; state: "ready" }
-  | { version: 1; state: "submitted"; binding: QueuedAttemptBinding }
+  | { version: 1; state: "submitted"; binding: QueuedAttemptBinding; intent?: "new" | "steer" }
   | {
       version: 1;
       state: "not_admitted";
@@ -581,6 +582,7 @@ function normalizeQueuedPromptSubmission(value: unknown, promptId: string): Queu
     version?: unknown;
     state?: unknown;
     binding?: unknown;
+    intent?: unknown;
     reason?: unknown;
   };
   if (candidate.version !== 1) return { version: 1, state: "unknown" };
@@ -591,7 +593,13 @@ function normalizeQueuedPromptSubmission(value: unknown, promptId: string): Queu
   }
   const binding = normalizeQueuedAttemptBinding(candidate.binding, promptId);
   if (!binding) return { version: 1, state: "unknown" };
-  if (candidate.state === "submitted") return { version: 1, state: "submitted", binding };
+  if (candidate.state === "submitted") {
+    const { intent } = candidate;
+    return {
+      version: 1, state: "submitted", binding,
+      ...(intent === "new" || intent === "steer" ? { intent } : {}),
+    };
+  }
   const reason = typeof candidate.reason === "string" ? candidate.reason.trim().slice(0, 512) : "";
   return reason
     ? { version: 1, state: "not_admitted", binding, reason }
@@ -1040,6 +1048,7 @@ export function ThreadComposer({
   onSend,
   onJoinQueuedAttempt,
   onConsumeQueuedAttempt,
+  transcriptUserTurnIds,
   admissionRejectedTurn = null,
   onAdmissionRejectedPromptRestored,
   disabled,
@@ -2415,7 +2424,7 @@ export function ThreadComposer({
     commitQueuedPrompts(next);
   }, [commitQueuedPrompts]);
 
-  const prepareQueuedPrompt = useCallback((promptId: string): {
+  const prepareQueuedPrompt = useCallback((promptId: string, intent: "new" | "steer"): {
     prompt: QueuedPrompt;
     binding: QueuedAttemptBinding;
   } | null => {
@@ -2434,7 +2443,7 @@ export function ThreadComposer({
     const next = current.map((item) => item.id === prompt.id
       ? {
           ...item,
-          submission: { version: 1 as const, state: "submitted" as const, binding },
+          submission: { version: 1 as const, state: "submitted" as const, binding, intent },
         }
       : item);
     if (!commitQueuedPrompts(next)) return null;
@@ -2456,7 +2465,7 @@ export function ThreadComposer({
       ) return;
       queuedSubmissionInProgressRef.current.add(prompt.id);
       requestAnimationFrame(() => queuedSubmissionInProgressRef.current.delete(prompt.id));
-      const prepared = prepareQueuedPrompt(prompt.id);
+      const prepared = prepareQueuedPrompt(prompt.id, isStreaming ? "steer" : "new");
       if (!prepared) return;
       const { prompt: protectedPrompt, binding } = prepared;
       const text = protectedPrompt.text.trim();
@@ -2937,6 +2946,14 @@ export function ThreadComposer({
     />
   ) : null;
 
+  // Keep the receipt hold for a steer, but use its transcript row to show the
+  // attempt. Older saved rows can also use an exact transcript turn match.
+  const visibleQueuedPrompts = queuedPrompts.filter(({ submission }) => (
+    submission.state !== "submitted"
+    || submission.intent === "new"
+    || !transcriptUserTurnIds?.has(submission.binding.turnId)
+  ));
+
   return (
     <form
       ref={formRef}
@@ -3003,9 +3020,9 @@ export function ThreadComposer({
           ) : null}
         </div>
       ) : null}
-      {queuedPrompts.length > 0 ? (
+      {visibleQueuedPrompts.length > 0 ? (
         <QueuedPromptStack
-          prompts={queuedPrompts}
+          prompts={visibleQueuedPrompts}
           edit={queuedEdit ? (
             <div key={queuedEdit.id} data-queued-prompt-row="true" className="flex flex-wrap items-center gap-1 px-2 py-1">
               <textarea
