@@ -9,9 +9,37 @@ run everywhere.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+import sys
+from collections.abc import Callable, Mapping
+from typing import Any, TypeVar
+
+import pytest
 
 DESTRUCTIVE_ENV = "KOHAKU_DARWIN_DESTRUCTIVE_TESTS"
+
+
+_Test = TypeVar("_Test", bound=Callable[..., Any])
+
+
+def native_supervisor_marks() -> list[pytest.MarkDecorator]:
+    """Marks for tests that drive the real native supervisor.
+
+    Linux runs them whenever the supervisor is available. macOS runs them only on
+    an opted-in host, because they kill real processes, with the Seatbelt switch
+    enabled by the native_supervisor_host fixture.
+    """
+    if sys.platform == "darwin":
+        return [pytest.mark.darwin_host, pytest.mark.usefixtures("native_supervisor_host")]
+    return [pytest.mark.skipif(
+        sys.platform != "linux",
+        reason="requires a native whole-tree supervisor (Linux or macOS)",
+    )]
+
+
+def requires_native_supervisor(test: _Test) -> _Test:
+    for mark in native_supervisor_marks():
+        test = mark(test)
+    return test
 
 
 def darwin_host_skip_reason(platform: str, environ: Mapping[str, str]) -> str | None:

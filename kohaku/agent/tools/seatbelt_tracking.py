@@ -235,18 +235,23 @@ class LaunchDomain:
             self._sleep(_INTERVAL_SECONDS)
         return True
 
+    def kill_step(self, deadline: float) -> Quiescent | NotQuiescent | None:
+        """Run one kill pass; None while the outcome is still open."""
+        outcome = self.kill_pass()
+        if outcome.scan.empty:
+            if self.poll():
+                return Quiescent()
+        else:
+            self._first_empty = None
+        if self._clock() >= deadline:
+            return self._not_quiescent(outcome)
+        return None
+
     def kill_until_quiescent(self, deadline: float) -> Quiescent | NotQuiescent:
         """Kill members until quiescence is proven or the deadline passes."""
-        while True:
-            outcome = self.kill_pass()
-            if outcome.scan.empty:
-                if self.poll():
-                    return Quiescent()
-            else:
-                self._first_empty = None
-            if self._clock() >= deadline:
-                return self._not_quiescent(outcome)
+        while (result := self.kill_step(deadline)) is None:
             self._sleep(_INTERVAL_SECONDS)
+        return result
 
     def _not_quiescent(self, outcome: KillPass) -> NotQuiescent:
         if outcome.blocked:

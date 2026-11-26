@@ -1,0 +1,6 @@
+; Full access on macOS. Nothing is restricted here: the profile exists so that
+; every descendant of one launch carries that launch's two marker rules, which
+; the supervisor appends below (later rules win). Seatbelt itself still refuses
+; setuid programs and a different nested sandbox profile.
+(version 1)
+(allow default)

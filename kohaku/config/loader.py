@@ -47,7 +47,8 @@ def load_config(config_path: Path | None = None, *, apply_network_policy: bool =
 
     Args:
         config_path: Optional path to config file. Uses default if not provided.
-        apply_network_policy: Apply the loaded SSRF allowlist to the process.
+        apply_network_policy: Apply the loaded process-wide security settings
+            (SSRF allowlist, executor switch) to the process.
 
     Returns:
         Loaded configuration object.
@@ -80,7 +81,7 @@ def load_config(config_path: Path | None = None, *, apply_network_policy: bool =
             ) from exc
         config.bind_source_path(path)
         if apply_network_policy:
-            _apply_ssrf_whitelist(config)
+            _apply_process_policy(config)
         return config
 
     try:
@@ -150,8 +151,16 @@ def load_config(config_path: Path | None = None, *, apply_network_policy: bool =
 
     config.bind_source_path(path)
     if apply_network_policy:
-        _apply_ssrf_whitelist(config)
+        _apply_process_policy(config)
     return config
+
+
+def _apply_process_policy(config: Config) -> None:
+    """Apply the loaded settings that govern this whole process."""
+    from kohaku.agent.tools.executor_capabilities import configure_macos_seatbelt
+
+    _apply_ssrf_whitelist(config)
+    configure_macos_seatbelt(config.tools.exec.macos_seatbelt)
 
 
 def _apply_ssrf_whitelist(config: Config) -> None:

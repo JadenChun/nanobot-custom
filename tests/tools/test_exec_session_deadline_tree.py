@@ -8,11 +8,9 @@ import pytest
 
 from kohaku.agent.tools.exec_session import ExecSessionManager
 from kohaku.security.native_admission import NativeAdmissionLedger
+from tests.darwin.gate import native_supervisor_marks
 
-pytestmark = pytest.mark.skipif(
-    sys.platform != "linux",
-    reason="The native whole-tree supervisor is Linux-only.",
-)
+pytestmark = native_supervisor_marks()
 
 
 def _write_child(tmp_path: Path) -> None:

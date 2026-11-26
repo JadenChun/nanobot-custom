@@ -1,4 +1,4 @@
-"""Root-process facade backed by a Linux whole-tree subreaper supervisor."""
+"""Root-process facade backed by a whole-tree supervisor for this platform."""
 
 from __future__ import annotations
 
@@ -11,7 +11,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Literal, cast
 
-from kohaku.agent.tools.executor_capabilities import tree_ownership_available
+from kohaku.agent.tools.executor_capabilities import (
+    tree_ownership,
+    tree_ownership_available,
+)
 from kohaku.security.native_admission import (
     NativeProcessReservation,
     process_start_time,
@@ -265,6 +268,11 @@ def native_supervisor_available() -> bool:
     return tree_ownership_available()
 
 
+def _supervisor_module() -> str:
+    module = "kohaku.agent.tools.native_process_supervisor"
+    return f"{module}_darwin" if tree_ownership() == "darwin_seatbelt" else module
+
+
 async def spawn_native_process(
     *,
     command: str,
@@ -274,7 +282,7 @@ async def spawn_native_process(
     login: bool,
     reservation: NativeProcessReservation,
 ) -> NativeProcessHandle:
-    """Start a subreaper, persist its identity, then release its launch gate."""
+    """Start a supervisor, persist its identity, then release its launch gate."""
     if not native_supervisor_available():
         reservation.mark_unproven()
         raise RuntimeError("whole-tree native process proof is unavailable on this platform")
@@ -296,7 +304,7 @@ async def spawn_native_process(
             sys.executable,
             "-I",
             "-m",
-            "kohaku.agent.tools.native_process_supervisor",
+            _supervisor_module(),
             "--gate-fd",
             str(gate_read),
             "--status-fd",

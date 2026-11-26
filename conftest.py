@@ -119,6 +119,29 @@ def _use_windows_system_ca_for_default_http_clients() -> Iterator[None]:
         ssl.create_default_context = original
 
 
+@pytest.fixture
+def native_supervisor_host() -> Iterator[None]:
+    """Enable the macOS Seatbelt executor for one test and require its self-test."""
+    from kohaku.agent.tools import executor_capabilities
+
+    executor_capabilities.configure_macos_seatbelt(True)
+    try:
+        assert executor_capabilities.tree_ownership_available()
+        yield
+    finally:
+        executor_capabilities.configure_macos_seatbelt(False)
+
+
+@pytest.fixture(autouse=True)
+def _isolate_macos_seatbelt_switch() -> Iterator[None]:
+    """A test that loads a config must not leave the executor switch enabled."""
+    from kohaku.agent.tools import executor_capabilities
+
+    executor_capabilities.configure_macos_seatbelt(False)
+    yield
+    executor_capabilities.configure_macos_seatbelt(False)
+
+
 def pytest_configure(config: pytest.Config) -> None:
     config.addinivalue_line(
         "markers",

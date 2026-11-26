@@ -7,9 +7,11 @@ Managed command execution rests on two independent guarantees:
   authority can be retired with nothing left running.
 
 Linux gets confinement from bubblewrap and ownership from the subreaper
-supervisor. Any other platform reports neither, so shell admission fails closed
-there. Platform support is added by teaching the two selectors below a new
-value, not by branching in call sites.
+supervisor. macOS gets ownership from Seatbelt markers, only when the operator
+enabled it (tools.exec.macosSeatbelt) and the host passes the self-test. Anything
+else reports neither, so shell admission fails closed there. Platform support is
+added by teaching the two selectors below a new value, not by branching in call
+sites.
 
 The legacy managed_bwrap_available and native_supervisor_available functions
 remain the entry points that existing call sites and tests patch. The latter
@@ -18,10 +20,13 @@ now delegates here; the former is the bubblewrap probe itself.
 
 from __future__ import annotations
 
+import functools
 import os
 import sys
 from dataclasses import dataclass
 from typing import Literal
+
+from loguru import logger
 
 Platform = Literal["linux", "darwin", "other"]
 Confinement = Literal["bwrap", "seatbelt"]
@@ -45,10 +50,40 @@ def current_platform() -> Platform:
     return "other"
 
 
+_macos_seatbelt_enabled = False
+
+
+def configure_macos_seatbelt(enabled: bool) -> None:
+    """Apply the operator's macOS Seatbelt switch to this process."""
+    global _macos_seatbelt_enabled
+    _macos_seatbelt_enabled = enabled
+
+
+@functools.lru_cache(maxsize=1)
+def _macos_self_test_passed() -> bool:
+    """Run the host self-test once; it takes a few seconds."""
+    from kohaku.security.darwin_proc import seatbelt_self_test
+
+    result = seatbelt_self_test()
+    if not result.ok:
+        logger.warning(
+            "macOS Seatbelt executor disabled, self-test failed: {}",
+            "; ".join(result.failures),
+        )
+    return result.ok
+
+
+def macos_seatbelt_ready() -> bool:
+    return _macos_seatbelt_enabled and _macos_self_test_passed()
+
+
 def tree_ownership() -> TreeOwnership | None:
     """Name the mechanism that can prove a whole launch tree has exited."""
-    if current_platform() == "linux" and os.name == "posix":
+    platform = current_platform()
+    if platform == "linux" and os.name == "posix":
         return "linux_subreaper"
+    if platform == "darwin" and macos_seatbelt_ready():
+        return "darwin_seatbelt"
     return None
 
 

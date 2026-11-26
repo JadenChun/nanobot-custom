@@ -138,6 +138,7 @@ allow-direct-references = true
 [tool.hatch.build]
 include = [
     "kohaku/**/*.py",
+    "kohaku/agent/tools/seatbelt/*.sbpl",
     "kohaku/templates/**/*.md",
     "kohaku/skills/**/*.md",
     "kohaku/skills/**/*.sh",
