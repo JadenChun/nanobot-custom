@@ -1,155 +1,106 @@
 # Permission model review: sandbox, policy and workspace scope
 
-Status: proposal, not implemented. Date: 2026-11-27.
+Status: **design accepted (2026-11-27).** Implementation proceeds in three phases (see [§6](#6-phased-refactor-plan) and [`managed-allowlist-removal-handoff.md`](managed-allowlist-removal-handoff.md)).
 
 ## 1. Why this review
 
-A WebUI chat in Sandbox mode was asked to read a Figma link. The same prompt
-on the same model in Codex opened the link in a browser, took screenshots and
-read the design. Kohaku could not:
+A WebUI chat in Sandbox mode was asked to read a Figma link. The same prompt on the same model in Codex opened the link in a browser, took screenshots, and read the design. Kohaku could not:
 
-- `tool_search("browser screenshot navigate")` and `tool_search("desktop")`
-  returned "No deferred tools matched", although `agent_browser` and
-  `desktop_use` are enabled and `agent-browser` 0.25.3 is installed.
-- Cause: in a managed WebUI turn the registry is narrowed to
-  `MANAGED_WEBUI_TOOL_NAMES` (`kohaku/agent/tools/registry.py:35`, applied at
-  `kohaku/agent/loop.py:7455`). Browser, desktop and device tools are not on
-  that list, and `ToolSurface.search` drops tools with a dispatch error, so
-  the denial looks like "tool does not exist".
+- `tool_search("browser screenshot navigate")` and `tool_search("desktop")` returned `"No deferred tools matched"`, although `agent_browser` and `desktop_use` are enabled and `agent-browser` 0.25.3 is installed.
+- Cause: in a managed WebUI turn, the registry was narrowed to `MANAGED_WEBUI_TOOL_NAMES` (`kohaku/agent/tools/registry.py`, applied in `kohaku/agent/loop.py`). Browser, desktop, device, CLI-app, VPN, and plugin tools were not on that list, and `ToolSurface.search` drops tools with a `dispatch_error`, so the denial looked like *"tool does not exist"*.
+- A second wall inside `agent_browser` and `agent_device` (`ResourceAccessPolicy.allows_unconfined_automation()`) refused in every managed chat, **including Full access**.
 
-The incident is a symptom. The underlying question is whether the layering is
-right. We compare it with Codex's model below.
+Auditing `origin/staging` against Kohaku's own product goals, its A3 decisions (`docs/architecture/a3/decisions.md`), its external coding harness (`kohaku/harness/claude_sdk.py`), and Codex's permission model showed that the incident is a symptom of overlapping layers rather than a one-off bug.
 
-## 2. Current layers (as implemented)
+## 2. Current layers on `staging` (~10.8k LOC)
 
 | # | Layer | What it decides | Where |
 |---|---|---|---|
-| L1 | Permission profile and rules (`autonomous` / `balanced` / `strict`, allow/ask/deny rules) | Whether a specific tool call may run or must be approved | `kohaku/agent/policy.py`, `kohaku/agent/permission_rules.py`, `ToolPermissionsConfig` |
-| L2 | Sandbox mode per chat (`restricted` = Sandbox, `full` = Full access) | Write boundary for commands and file tools | `kohaku/security/workspace_access.py`, `kohaku/agent/tools/sandbox.py` (Seatbelt / bwrap) |
-| L3 | Folder grants (Settings → Folders, `folder-grants.json`) | Which folders are writable inside Sandbox | `kohaku/security/folder_grants.py`, `kohaku/context_repo/policy.py:316` |
-| L4 | Managed tool allowlist | Which tools exist at all in a WebUI turn once grants are active | `MANAGED_WEBUI_TOOL_NAMES`, `ManagedToolDispatchGuard` |
-| L5 | Legacy workspace restriction (`restrict_to_workspace`) | Project folder as a hard limit for file tools and an app-level exec guard | `ToolWorkspace.allowed_root`, `kohaku/agent/tools/filesystem.py:272` |
-| L6 | Full access / task references, native-process admission ledger | Proof objects that authorize unconfined work and barriers for grant activation | `kohaku/security/desktop_permissions.py` (1.7k lines), `kohaku/security/native_admission.py` (1.2k lines) |
+| L1 | Permission profile, rules & auto-reviewer (`autonomous` / `balanced` / `strict`, `allow`/`ask`/`deny` rules, `sandbox_exclusions`, 2-stage LLM `auto_review.py`) | Whether a specific tool call may run, be auto-reviewed, or prompt the user | `kohaku/agent/policy.py`, `kohaku/agent/permission_rules.py`, `kohaku/agent/auto_review.py` |
+| L2 | OS execution sandbox (`restricted` = Sandbox, `full` = Full access) | Write boundary and private-runtime masking for commands and file tools | `kohaku/security/workspace_access.py`, `kohaku/agent/tools/sandbox.py` (Linux `bwrap` / macOS Seatbelt) |
+| L3 | Folder grants (`Settings → Folders`, `folder-grants.json`) | Which folders are writable inside Sandbox | `kohaku/security/folder_grants.py`, `kohaku/context_repo/policy.py` |
+| L4 | Managed tool allowlist | Which tools exist at all in a WebUI turn once grants are active | `MANAGED_WEBUI_TOOL_NAMES`, `ManagedToolDispatchGuard`, `allows_unconfined_automation()` |
+| L5 | Legacy workspace restriction (`restrict_to_workspace`) | Project folder as a hard read/write limit for file tools and an app-level exec guard | `ToolWorkspace.allowed_root`, `kohaku/agent/tools/filesystem.py`, `webui/src/App.tsx` |
+| L6 | Authority references, native-process admission ledger & folder-access recovery | Proof tokens (`WorkspaceFullAccessReference`, `WorkspaceTaskAccessReference`), process-tree retirement, gateway-wide `.folder-grants-active` barrier, remote owner adapter | `kohaku/security/desktop_permissions.py`, `kohaku/security/native_admission.py`, `kohaku/session/workspace_access_recovery.py`, `kohaku/remote/permissions.py` |
 
-L1 already handles the browser well (`kohaku/agent/policy.py:678`): read-only
-navigation runs, state-changing actions (click, type, upload, download,
-eval, screenshot) ask, explicit rules override, `autonomous` skips prompts.
-`desktop_use` and `agent_device` have matching rules. L4 removes these
-tools before L1 is consulted.
+### Observed defects on `staging`
 
-Observed behaviour on a real install (`~/.nanobot`):
+1. **L4 conflates filesystem sandboxing with tool existence and rots silently.** Beyond intentionally blocking host-process tools (`agent_browser`, `agent_device`, `desktop_use`, `run_cli_app`, `trend_vpn_*`), the hardcoded 27-name list accidentally hid newer built-in tools (`search_sessions`, `create_goal`, `update_goal`, `my`, `crawl_research`, `social_crawl`), all entry-point plugins (`nanobot.tools`), and delegated reviewer subagents' read-only browser/device tools (`REVIEWER_CAPABILITIES` in `kohaku/agent/delegation.py`).
+2. **Gateway-wide `.folder-grants-active` (`grants.is_managed`) leaks across chat modes.** Full access chats still hit L4 narrowing because `grants.is_managed` is gateway-wide rather than per-chat. Now that WebUI starts with `sandbox_default=True`, the "unmanaged → managed" activation latch is vestigial.
+3. **Internal divergence on what "Sandbox" means for the active workspace.** Native Kohaku WebUI keeps the chat's selected **Working in** (`project_path`) read-only until a saved grant or `Once` grant is added, while Kohaku's own `kohaku/harness/claude_sdk.py` already treats `self.workspace` as implicitly writable in Sandbox (matching Codex `workspace-write`).
+4. **Legacy L5 (`restrict_to_workspace`) still overlaps WebUI Sandbox.** `webui/src/App.tsx` still sets `restrict_to_workspace: access_mode === "restricted"` even though `docs/sandbox-folders.md` states Sandbox allows broad reads under the OS account and enforces writes via `bwrap`/Seatbelt.
+5. **Silent discovery denials.** `ToolSurface.search()` drops blocked tools silently instead of reporting why a tool is blocked.
+6. **`auto_review.py` is artificially limited to `exec`.** `AgentLoop` already routes every live `RiskyActionPolicy` approval through `review_sandbox_escalation()`, but Stage 1 rejects every non-`exec` tool, and `PendingTurnApproval` sends `{}` instead of tool arguments for non-`exec` calls.
 
-- `.folder-grants-active` exists, so `grants.is_managed` is true for the
-  whole gateway. It is not a per-chat setting.
-- The L4 condition is `grants.is_managed or local_private_workspace_authority`
-  with no Full access exemption, so Full access chats appear to be narrowed
-  too. (From reading the code; needs a regression test to confirm.)
-- Subagents with a read-only browser (`REVIEWER_CAPABILITIES`,
-  `kohaku/agent/delegation.py:1292`) get the same guard
-  (`kohaku/agent/delegation.py:1316`), so they lose the browser too.
-- In managed mode the writable set is the agent home, context repo write roots,
-  explicit grants and task grants (`kohaku/context_repo/policy.py:357-376`).
-  The chat's selected project folder is not writable by default; writing to it
-  needs a saved grant or a `request_folder_access` turn stop.
+## 3. What we keep vs what we change (Kohaku requirements, not blind Codex copying)
 
-## 3. Codex reference model
+Kohaku is a persistent personal assistant (WebUI/desktop, multi-folder **Working in**, Agent Map, browser/desktop/device automation, channels, Android remote client) rather than a single-repo terminal CLI. We adopt Codex's clean **three-layer separation** while preserving Kohaku's own A3 safety guarantees:
 
-Source: developers.openai.com/codex/concepts/sandboxing,
-/codex/permissions, /codex/browser, /codex/computer-use.
+### Deliberately KEPT (do not weaken)
+- **OS Sandbox confinement (`bwrap` / macOS Seatbelt)** with fail-loud behavior (never fall back silently to Full access).
+- **Private runtime masking** (`~/.kohaku` credentials, sessions, `config.json` hidden inside Sandbox and protected from agent writes).
+- **Nested read-only overrides** (an explicit `read_only` folder grant beats a writable parent or workspace).
+- **Real process-tree ownership & settlement (`A3-2`)**: volatile Full access ends on restart; returning from Full access → Sandbox fences new work and tracks descendant settlement.
+- **Exact single-use effect approvals** bound to real tool preflight (`RiskyActionPolicy`), plus Android remote `OwnerPermissionAdapter` and remote preview confinement.
+- **Legacy L5 (`restrict_to_workspace`) for non-WebUI channels** (Telegram, Discord, CLI, API) that do not run the WebUI OS sandbox.
 
-1. **Two controls, kept separate.** "The sandbox defines technical boundaries.
-   The approval policy decides when the agent must stop and ask before crossing
-   them." Modes: `read-only`, `workspace-write`, `danger-full-access`.
-   Approvals: `on-request`, `never`, with an optional auto-reviewer.
-2. **The sandbox covers spawned commands (plus file edits) only.** "Permission
-   profiles govern sandboxed commands that run on your machine. Connectors, MCP
-   servers, browser or computer-use surfaces ... use their own controls."
-   "To limit these surfaces, configure each capability directly."
-3. **The workspace is the default working area, not a fence on reading.**
-   `:workspace` "allows writes inside the active workspace roots and system temp
-   directories"; reads are broad. The session's workspace root is writable
-   without a separate grant. `writable_roots` / `--add-dir` add more roots.
-   Protected paths (`.git`, `.agents`, `.codex`, `.aws`) stay read-only, and
-   deny rules (for example `**/*.env`) win over broader access.
-4. **Per-capability controls for non-sandboxable surfaces.**
-   - Browser: site permissions for browsing, downloads and uploads, with
-     per-site exceptions and confirmation for consequential actions.
-   - Computer Use: an always-allowed app list plus OS permissions.
-   - MCP: server config and allowlists.
-   - Choosing a sandbox mode never removes these tools.
-5. **Fail loud.** If the platform sandbox cannot enforce a policy, the command
-   is refused with a reason. Tools are not silently removed.
+### Accepted design changes (locked in 2026-11-27)
+1. **Delete L4 (Managed tool allowlist) completely.** Every enabled tool stays discoverable and callable in WebUI chats (Sandbox and Full access) and delegated children (still bounded by role profiles).
+2. **Rule precedence in `RiskyActionPolicy` (L1):**
+   1. Explicit `deny` → refuse (and surface transparently in `tool_search`).
+   2. Explicit `allow` → **allow, including in Sandbox mode for host-process tools** (lets users opt a host tool in without disabling the filesystem Sandbox). *(Hard non-bypassable invariants on `exec` — nested-agent launch confinement and private-network/SSRF exceptions — remain above `allow`.)*
+   3. Sandbox crossing (`_sandbox_crossing_reason`) → ask before a `launches_host_process` tool performs a state-changing host action in Sandbox.
+   4. Profile (`autonomous` / `balanced` / `strict`) and explicit `ask` rules.
+3. **Generalize `auto_review.py` into a cross-tool 2-stage auto-reviewer:**
+   - Not limited to `exec`. Evaluates all live permission escalations so the agent stays as autonomous as possible while preserving deterministic guardrails against genuinely destructive actions.
+   - **Stage 1 (deterministic hard-stops → always `ask_user`, never auto-approve):**
+     - Explicit user `ask` or `deny` permission rules.
+     - Private-network / SSRF exceptions (already bypassed before auto-review in `loop.py`).
+     - `exec`: existing `sandbox_exec_risk_reason`, `DEFAULT_EXEC_DENY_PATTERNS`, credential paths (`~/.ssh`, `~/.aws`, `~/.gnupg`, `~/.kube`, `~/.netrc`, `/etc/shadow`, `/etc/sudoers`), pipe-to-shell (`curl|sh`), and **commands touching Kohaku's own config/runtime paths** (`~/.kohaku`, `~/.nanobot`, `config.json`) or installing into Kohaku's runtime environment.
+     - `agent_browser` / `agent_device`: `file:`, `javascript:`, `data:`, `view-source:file:` URLs; `upload` (exfiltrating host files); `eval`/`evaluate`; or file output paths outside workspace/media.
+     - `write_file` / `edit_file`: credential, system-auth, or Kohaku config/runtime paths.
+     - `desktop_use`, `run_cli_app`, `trend_vpn_*`, `cron`: deterministic checks for sensitive/destructive targets; bounded user-requested actions proceed to Stage 2.
+   - **Stage 2 (conservative LLM reviewer):** receives `user_request`, `workspace`, `approval_summary`, `tool_call.name`, and sanitized `tool_call.arguments`. Approves only when the action directly fulfills the user's explicit request, is bounded, and does not exfiltrate secrets, trigger irreversible external side effects/payments/submissions without explicit instruction, or damage host state. Otherwise falls back to the human live approval card.
+4. **Trust model for MCP servers and `nanobot.tools` entry-point plugins:**
+   - User-configured MCP servers and user-installed `nanobot.tools` plugins are **trusted on configuration/install** (`launches_host_process = False` by default; plugins that want Sandbox prompts can opt in with `launches_host_process = True`).
+   - **Invariant against agent self-trust:** the agent must never be able to self-edit `~/.kohaku/config.json` / register MCP servers without explicit manual approval. In Sandbox, `sandbox_private_roots` already blocks access to `config.json`; Stage 1 of `auto_review.py` additionally forbids auto-approving any escalation that touches `~/.kohaku` / `~/.nanobot` / `config.json`. Any future agent tool that proposes adding an MCP server must require explicit manual confirmation before persisting.
+5. **User-selected "Working in" (`project_path`) = implicit `workspace-write` root in Sandbox (Phase 2):**
+   - Aligns native Kohaku WebUI with `kohaku/harness/claude_sdk.py` and Codex `workspace-write`.
+   - Writable roots in Sandbox = **user-selected `project_path` (priority 0)** + agent home (priority 0) + context-repo write roots (priority 0) + private temp/cache + saved RW entries in Settings → Folders (priority 1) + one-shot `Once` task grants (priority 2).
+   - **Overrides preserved:** explicit `read_only` grants in Settings → Folders (priority 1) still beat the implicit workspace write (priority 0); private `~/.kohaku` runtime paths, system-control directories (`_overlaps_system_control`), and context-repo protected-file policies remain enforced.
+   - **Critical provenance invariant for `select_workspace`:** `SelectWorkspaceTool` (`kohaku/agent/tools/workspace.py`) is model-callable. Model-called `select_workspace` **must NOT widen write authority** to an ungranted directory (it may only focus inside already-authorized roots, or change relative-path focus without conferring write access). Only human-selected **Working in** (WebUI picker / session scope) confers implicit workspace-write authority.
+6. **Retire gateway-wide `.folder-grants-active` (`grants.is_managed`) & WebUI L5 (Phases 2–3):**
+   - Stop setting `restrict_to_workspace: access_mode === "restricted"` in WebUI (`App.tsx`); keep L5 strictly for non-WebUI channels.
+   - Retire the gateway-wide `grants.is_managed` latch and `HostProcessAdmissionGuard` pre-activation barrier while keeping per-chat Full-access retirement and remote owner verification intact.
 
-## 4. Gaps
+## 4. Target three-layer model
 
-| ID | Gap | Effect |
+1. **Execution Sandbox (commands & file tools only, per-chat mode: `Sandbox` | `Full access`):**
+   - Broad reads (excluding `~/.kohaku` private runtime and explicit deny rules); writes confined to user-selected `project_path`, agent home, private temp/cache, and Settings → Folders extra RW roots, with nested `read_only` overrides and protected subpaths (`.git` internals, private runtime).
+   - Enforced by `bwrap` / Seatbelt; fail loud if unavailable.
+2. **Approval Policy (every tool call — single source of truth):**
+   - `RiskyActionPolicy` (`deny` → `allow` → Sandbox crossing → profile/`ask`) + exact single-use `effect_id` + live in-turn approval + generalized 2-stage `auto_review.py` + shared `sandbox_exclusions`.
+3. **Per-Capability Controls (browser, desktop, device, CLI apps, VPN, MCP, plugins):**
+   - Enabled by own config; never hidden by Sandbox mode.
+   - Declare `launches_host_process` and action classifiers (`classify_browser_action`, `classify_device_action`, `READ_ONLY_DESKTOP_ACTIONS`).
+   - Browser returns screenshots inline as images (or via Kohaku's media dir) so visual flows (e.g. Figma) work end-to-end in Sandbox without weakening filesystem boundaries.
+   - `tool_search` reports policy-blocked tools (`blocked by deny rule`) instead of `"No deferred tools matched"`.
+
+## 5. Coupled subsystems to keep in sync
+
+| Subsystem | Files | Coupling to respect |
 |---|---|---|
-| G1 | L4 ties non-shell capabilities to the filesystem sandbox. Codex governs them per capability. | The browser, desktop and device tools are lost in every managed WebUI chat, although L1 already has rules for them. |
-| G2 | Managed activation is gateway-wide and sticky (`.folder-grants-active`), not part of the chat's mode. | Full access chats and subagents inherit Sandbox restrictions. |
-| G3 | Two workspace models coexist: legacy L5 (project folder = hard limit) and L3 grants. `access_mode = restricted` also sets `restrict_to_workspace=True`. | Behaviour depends on which path a tool takes; the docs say "reads anywhere" but L5 still exists. |
-| G4 | The project folder is not an implicit writable root. | The first edit in a newly opened project triggers a grant prompt or a turn stop. Codex treats it as the working area by default. |
-| G5 | Denials are silent in discovery (`tool_search` says "no match"; the namespace index omits the tool). | The agent cannot explain the problem or suggest switching mode. |
-| G6 | Authority machinery (L6) is large and serves L3/L4. | Every new capability needs special-casing; there is a high cost to change. |
+| OS Sandbox mount builder | `kohaku/agent/tools/sandbox.py::_managed_mounts()`, `shell.py`, `seatbelt_profile.py` | Phase 2 must add user-selected `project_path` here in lockstep with `context_repo/policy.py`. |
+| External coding harness | `kohaku/harness/backend.py`, `claude_sdk.py`, `direct.py`, `runner.py` | Shares `auto_review.py` (`ExternalToolPolicy` already uses workspace-write). Keep `auto_review` compatible with both native and harness callers. |
+| Live approval payload | `kohaku/agent/loop.py` (`PendingTurnApproval`) | Must include sanitized tool arguments for non-`exec` tools so both auto-review and human approval cards show real call details. |
+| Delegation & subagents | `kohaku/agent/delegation.py`, `loop.py` | Children already inherit `RiskyActionPolicy(sandbox_active=...)` via `CompositeToolPolicy`; `_ChildAuthorityPolicy` uses `dispatch_error` for Dream/MCP/revocation. |
+| Remote / Mobile | `kohaku/remote/permissions.py`, `webui/file_preview.py`, `webui/media_gateway.py` | Phase 3 must preserve `OwnerPermissionAdapter`, `DesktopPermissionOwner` tokens, and remote preview scope checks. |
+| WebUI frontend | `webui/src/App.tsx`, `ThreadShell.tsx`, `FolderAccessRequestCard.tsx`, `SecuritySettings.tsx` | Phase 1 needs zero WebUI changes; Phase 2 drops `restrict_to_workspace` binding in `App.tsx` and updates copy; Phase 3 touches permission projection only if needed. |
 
-## 5. Target model
+## 6. Phased refactor plan
 
-Three layers, each with one job.
-
-**A. Execution sandbox (commands and file tools only).**
-- Per-chat mode: `read-only` | `workspace` (default) | `full`.
-- In `workspace` mode, the writable roots are the chat's project folder, the
-  agent home, private temp/cache, and any extra roots from Settings → Folders.
-  Folder grants become additional roots, not the base.
-- Reads are broad, except deny-listed paths (kohaku private runtime, user
-  deny globs). Protected subpaths inside roots are read-only (`.git`
-  internals, kohaku config).
-- Enforced by Seatbelt or bwrap. If the sandbox is unavailable, refuse with a
-  reason; never fall back silently.
-- Retire L5 for WebUI chats. Keep it only for channels that have no OS
-  sandbox (Telegram etc.), documented as an app-level guard.
-
-**B. Approval policy (every tool call).**
-- The existing L1 profiles and rules stay as they are.
-- Crossing the sandbox (write outside the roots, unsandboxed exec, network
-  exceptions) is an approval request under `balanced` / `strict`, not a turn
-  stop. `autonomous` uses the auto-reviewer for these.
-
-**C. Per-capability controls (browser, desktop, device, MCP).**
-- A tool is present when its own config enables it. The sandbox mode never
-  removes it.
-- Browser: L1 action classes plus the following.
-  - `file://` and local-path navigation count as state-changing (they ask).
-  - Upload and download count as state-changing (already the case).
-  - In `workspace` mode, screenshots and downloads go only to a
-    kohaku-owned media directory.
-  - Optional per-site allow/deny rules later.
-- Desktop: action classes plus an optional always-allowed app list.
-- MCP: `enabledTools` as today.
-- An explicit `deny` rule is the only way to hide a tool in a mode, and
-  `tool_search` reports "blocked by <rule>" instead of "no match".
-
-What we give up: in `workspace` mode, an approved browser upload or desktop
-action can reach outside the writable roots. This is the same trade Codex
-makes, and approvals cover it.
-
-## 6. Migration plan
-
-| Phase | Change | Size | Tests |
+| Phase | Scope | Branch / PR | Blast radius |
 |---|---|---|---|
-| P1 | Remove the L4 name gate for `agent_browser`, `desktop_use`, `agent_device` (main agent and subagents); add the `file://` and screenshot-path rules to the browser classifier; make `tool_search` and the namespace index report policy-blocked tools. | Small | Reproduce the Figma case in a managed WebUI turn; update `tests/agent/test_managed_exec.py:535` and `tests/agent/test_managed_mcp_access.py:209` (they encode the current design on purpose). |
-| P2 | Make managed narrowing a property of the chat mode: `full` never narrows; drop the gateway-wide activation flag as the switch. | Small–medium | Full access chat keeps every enabled tool; Sandbox chat keeps the write boundary. |
-| P3 | Treat the chat's project folder as an implicit writable root in `workspace` mode; folder grants become extra roots; retire L5 for WebUI. | Medium | First edit in a new project needs no prompt; writes outside the roots still ask; private runtime stays hidden. |
-| P4 | Reassess L6 (task/full references, native-admission ledger) once L4 is gone; keep only what A and B need. | Medium–large | Follow the P6 validation rules in `AGENTS.md` (type-regression comparator, full suite). |
-
-P1 unblocks the browser on its own. P2 and P3 change behaviour users see and
-should ship with updated docs (`docs/sandbox-folders.md`, `.agent/security.md`).
-
-## 7. Open questions
-
-1. Should `autonomous` auto-approve sandbox crossings through the auto-reviewer,
-   or still ask for writes outside the roots?
-2. Should browser site permissions (per-domain allow/deny) be in P1, or wait
-   until there is a need?
-3. Does anything still depend on the gateway-wide `.folder-grants-active` flag
-   (for example the native-process barrier) after P2?
-
+| **Phase 1** | Finish removing L4 allowlist; fix `allow` precedence above `_sandbox_crossing_reason`; generalize `auto_review.py` to all tools + fix `PendingTurnApproval` non-`exec` args; tighten `agent_browser` classifier & return screenshots inline as images; surface explicit `deny` rules in `tool_search`; update tests & docs. | Current branch: `codex/remove-managed-tool-allowlist` | **Low** — backend-only, zero WebUI/remote protocol changes. |
+| **Phase 2** | Make user-selected **Working in** (`project_path`) an implicit writable root in Sandbox in both `context_repo/policy.py` and `sandbox.py::_managed_mounts()`; enforce `select_workspace` provenance guard (model cannot widen writes); decouple WebUI from legacy `restrict_to_workspace` (`App.tsx`); update `docs/sandbox-folders.md`. | Follow-up PR | **Medium** — touches `context_repo/policy.py`, `sandbox.py`, `workspace_focus.py`, `webui/src/App.tsx`. |
+| **Phase 3** | Retire gateway-wide `.folder-grants-active` (`grants.is_managed`) latch and `HostProcessAdmissionGuard` pre-activation barrier; keep per-chat Full-access retirement and remote owner verification; trim obsolete L6 branches. | Follow-up PR | **Medium–High** — touches `security/`, `session/`, `remote/`, `webui/`. |
