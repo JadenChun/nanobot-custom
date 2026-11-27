@@ -87,9 +87,9 @@ def _make_runtime(provider: LLMProvider, model: str = "test-active-model") -> LL
 
 
 def test_config_schema_sandbox_auto_review_default_and_alias() -> None:
-    assert ToolPermissionsConfig().sandbox_auto_review is False
-    parsed = ToolPermissionsConfig.model_validate({"sandboxAutoReview": True})
-    assert parsed.sandbox_auto_review is True
+    assert ToolPermissionsConfig().sandbox_auto_review is True
+    parsed = ToolPermissionsConfig.model_validate({"sandboxAutoReview": False})
+    assert parsed.sandbox_auto_review is False
 
 
 @pytest.mark.parametrize("command", [
@@ -315,13 +315,13 @@ async def test_live_approval_auto_approved_without_human_prompt_or_whitelist_mut
         assert len(provider.requests) == 3  # initial tool call + auto-review + final response
 
 
-async def test_live_approval_disabled_by_default_prompts_human_without_calling_reviewer(
+async def test_live_approval_when_disabled_prompts_human_without_calling_reviewer(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     config = _config(tmp_path)
     config.tools.permissions.profile = "balanced"
-    assert config.tools.permissions.sandbox_auto_review is False
+    config.tools.permissions.sandbox_auto_review = False
 
     cmd = "invoiceshelf up && invoiceshelf render-pdf invoice.yaml"
     provider = _ScriptedProvider([
@@ -455,17 +455,17 @@ async def test_live_approval_ineligible_command_prompts_human_without_calling_re
 
 def test_settings_api_round_trip_sandbox_auto_review() -> None:
     config = Config()
-    assert network_safety_payload(config)["sandbox_auto_review"] is False
-
-    changed, _ = update_network_safety_settings(config, {"sandbox_auto_review": ["true"]})
-    assert changed is True
-    assert config.tools.permissions.sandbox_auto_review is True
     assert network_safety_payload(config)["sandbox_auto_review"] is True
 
     changed_off, _ = update_network_safety_settings(config, {"sandboxAutoReview": ["false"]})
     assert changed_off is True
     assert config.tools.permissions.sandbox_auto_review is False
     assert network_safety_payload(config)["sandbox_auto_review"] is False
+
+    changed_on, _ = update_network_safety_settings(config, {"sandbox_auto_review": ["true"]})
+    assert changed_on is True
+    assert config.tools.permissions.sandbox_auto_review is True
+    assert network_safety_payload(config)["sandbox_auto_review"] is True
 
 
 async def test_live_approval_skips_auto_review_on_private_network_exception(

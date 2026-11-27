@@ -18,7 +18,7 @@ import type {
 export const DEFAULT_NETWORK_SAFETY_FORM: NetworkSafetySettingsUpdate = {
   webuiAllowLocalServiceAccess: true,
   webuiDefaultAccessMode: "default",
-  sandboxAutoReview: false,
+  sandboxAutoReview: true,
 };
 
 export function networkSafetyFormFromPayload(payload: SettingsPayload): NetworkSafetySettingsUpdate {
@@ -30,7 +30,7 @@ export function networkSafetyFormFromPayload(payload: SettingsPayload): NetworkS
     webuiDefaultAccessMode: visibleWebuiDefaultAccessMode(
       payload.advanced.webui_default_access_mode,
     ),
-    sandboxAutoReview: payload.advanced.sandbox_auto_review ?? false,
+    sandboxAutoReview: payload.advanced.sandbox_auto_review ?? true,
   };
 }
 
@@ -131,12 +131,12 @@ export function AdvancedSettings({
             )}
           >
             <ToggleButton
-              checked={form.sandboxAutoReview ?? false}
+              checked={form.sandboxAutoReview ?? true}
               onChange={(sandboxAutoReview) =>
                 onChangeForm((prev) => ({ ...prev, sandboxAutoReview }))
               }
               ariaLabel={tx("settings.rows.sandboxAutoReview", "Auto-review Sandbox requests")}
-              label={(form.sandboxAutoReview ?? false) ? tx("settings.values.on", "On") : tx("settings.values.off", "Off")}
+              label={(form.sandboxAutoReview ?? true) ? tx("settings.values.on", "On") : tx("settings.values.off", "Off")}
             />
           </SettingsRow>
           <RestartSettingsFooter

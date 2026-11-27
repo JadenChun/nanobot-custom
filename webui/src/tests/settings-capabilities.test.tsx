@@ -130,8 +130,10 @@ describe("Settings capabilities", () => {
     expect(screen.getByRole("button", { name: "Sandbox" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Full access" })).toBeInTheDocument();
 
+    const autoReviewSwitch = screen.getByRole("switch", { name: "Auto-review Sandbox requests" });
+    expect(autoReviewSwitch).toHaveAttribute("aria-checked", "true");
     fireEvent.click(screen.getByRole("switch", { name: "Local services" }));
-    fireEvent.click(screen.getByRole("switch", { name: "Auto-review Sandbox requests" }));
+    fireEvent.click(autoReviewSwitch);
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
 
     await waitFor(() =>
@@ -140,7 +142,7 @@ describe("Settings capabilities", () => {
         {
           webui_allow_local_service_access: false,
           webui_default_access_mode: "default",
-          sandbox_auto_review: true,
+          sandbox_auto_review: false,
         },
         20_000,
       ),

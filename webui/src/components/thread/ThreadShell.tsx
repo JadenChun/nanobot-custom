@@ -3804,15 +3804,13 @@ export function ThreadShell({
       <ThreadComposer
         aboveInput={!session && !historyKey && !openingConversation
           && (!isMobileRuntimeActive() || mobileOwnerCapability()) ? (
-          <div className="flex min-w-0 items-center px-1">
-            <HarnessControl
-              value={activeHarness}
-              claudeAvailable={claudeAvailable}
-              temporary={temporaryChatEnabled || temporary}
-              disabled={booting || preparingFull}
-              onChange={setDraftHarness}
-            />
-          </div>
+          <HarnessControl
+            value={activeHarness}
+            claudeAvailable={claudeAvailable}
+            temporary={temporaryChatEnabled || temporary}
+            disabled={booting || preparingFull}
+            onChange={setDraftHarness}
+          />
         ) : null}
         onSend={session || historyKey ? handleThreadSend : handleWelcomeSend}
         onJoinQueuedAttempt={session || historyKey ? joinQueuedAttempt : undefined}

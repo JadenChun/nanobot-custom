@@ -4542,6 +4542,42 @@ describe("ThreadComposer — mobile controls", () => {
     ).toBeInTheDocument();
     expect(within(workspaceRow as HTMLElement).queryByText("project")).not.toBeInTheDocument();
   });
+
+  it("renders harness selector, workspace picker, and context usage in the same row", () => {
+    const scope: WorkspaceScopePayload = {
+      project_path: "/tmp/project",
+      project_name: "project",
+      access_mode: "restricted",
+      restrict_to_workspace: true,
+    };
+    const { container } = render(
+      <ThreadComposer
+        onSend={vi.fn()}
+        variant="hero"
+        placeholder="Type your message..."
+        aboveInput={<button type="button">Harness: Kohaku</button>}
+        workspaceScope={scope}
+        workspaceDefaultScope={scope}
+        workspaceControls={{
+          can_change_project: true,
+          can_use_full_access: false,
+          permission_v2: true,
+        }}
+        workspaces={permissionV2Workspaces(scope)}
+        workspacePermissions={permissionProjection({ can_enable_full: false })}
+        contextUsage={{ contextTokens: 1_000, contextWindowTokens: 10_000 }}
+        hasConfiguredModel
+        onWorkspaceScopeChange={vi.fn()}
+      />,
+    );
+
+    const contextRows = container.querySelectorAll(".thread-composer-context-row");
+    expect(contextRows).toHaveLength(1);
+    const row = contextRows[0] as HTMLElement;
+    expect(within(row).getByRole("button", { name: "Harness: Kohaku" })).toBeInTheDocument();
+    expect(within(row).getByRole("button", { name: "Choose project folder" })).toBeInTheDocument();
+    expect(within(row).getByTestId("composer-context-usage")).toBeInTheDocument();
+  });
 });
 
 describe("composer access control semantics", () => {

@@ -81,7 +81,7 @@ export function HarnessControl({
             title={title}
             disabled={disabled}
             className={cn(
-              "touch-target h-8 min-w-0 max-w-[min(15rem,45vw)] whitespace-nowrap rounded-control border border-transparent px-1.5 text-[12px] font-semibold shadow-none",
+              "touch-target h-7 min-w-0 max-w-[min(15rem,45vw)] whitespace-nowrap rounded-control border border-transparent px-1.5 text-[12px] font-semibold shadow-none",
               isClaude
                 ? "bg-transparent text-amber-700 hover:bg-amber-500/10 dark:text-amber-300 dark:hover:bg-amber-400/10"
                 : "bg-transparent text-muted-foreground hover:bg-foreground/[0.045] hover:text-foreground dark:text-foreground/70 dark:hover:bg-white/[0.06]",

@@ -2838,8 +2838,10 @@ export function ThreadComposer({
         )
       : "min-h-[50px] px-3.5 pb-1.5 pt-3 text-[16px] leading-5 sm:px-4",
   );
-  const showContextRow = !voiceRecorder.isRecording && !composerChromeHidden
+  const showContextControls = !voiceRecorder.isRecording && !composerChromeHidden
     && (showWorkspacePicker || contextUsage != null || hasConfiguredModel || recentRoundUsage.length > 0);
+  const showAboveInput = Boolean(aboveInput) && !voiceRecorder.isRecording && !composerChromeHidden;
+  const showContextRow = showContextControls || showAboveInput;
 
   const accessControl = workspaceScope && !workspaceControlsHidden ? (
     <WorkspacePermissionV2Control
@@ -2948,33 +2950,40 @@ export function ThreadComposer({
       ) : null}
       {showContextRow ? (
         <div className={cn(
-          "thread-composer-context-row mx-auto mb-1 flex min-h-7 w-full items-center justify-end gap-1 px-3 empty:hidden",
+          "thread-composer-context-row mx-auto mb-1.5 flex min-h-7 w-full items-center gap-2 px-2.5 empty:hidden",
           isHero ? "max-w-[58rem]" : "max-w-[49.5rem]",
         )}>
-          {showWorkspacePicker ? (
-            <WorkspaceProjectPicker
-              ownerKey={pendingQueueKey}
-              disabled={interactionDisabled || workspaceScopeDisabled || workspaceLocked}
-              locked={workspaceLocked}
-              scope={workspaceScope}
-              defaultScope={workspaceDefaultScope}
-              controls={workspaceControls}
-              workspaces={workspaces}
-              error={workspaceError}
-              onDismissError={onDismissWorkspaceError}
-              nextTurnScope={nextWorkspaceScope}
-              nextTurnPending={nextTurnSettingsPending}
-              turnActive={isStreaming}
-              onPickFolder={onPickWorkspaceFolder}
-              onRefreshWorkspaces={onRefreshWorkspaces}
-              onChange={onWorkspaceScopeChange}
-            />
+          {showAboveInput ? (
+            <div className="flex min-w-0 items-center">{aboveInput}</div>
           ) : null}
-          <ComposerUsagePopover
-            context={contextUsage}
-            hasConfiguredModel={hasConfiguredModel}
-            rounds={recentRoundUsage}
-          />
+          {showContextControls ? (
+            <div className="ml-auto flex min-w-0 items-center justify-end gap-1">
+              {showWorkspacePicker ? (
+                <WorkspaceProjectPicker
+                  ownerKey={pendingQueueKey}
+                  disabled={interactionDisabled || workspaceScopeDisabled || workspaceLocked}
+                  locked={workspaceLocked}
+                  scope={workspaceScope}
+                  defaultScope={workspaceDefaultScope}
+                  controls={workspaceControls}
+                  workspaces={workspaces}
+                  error={workspaceError}
+                  onDismissError={onDismissWorkspaceError}
+                  nextTurnScope={nextWorkspaceScope}
+                  nextTurnPending={nextTurnSettingsPending}
+                  turnActive={isStreaming}
+                  onPickFolder={onPickWorkspaceFolder}
+                  onRefreshWorkspaces={onRefreshWorkspaces}
+                  onChange={onWorkspaceScopeChange}
+                />
+              ) : null}
+              <ComposerUsagePopover
+                context={contextUsage}
+                hasConfiguredModel={hasConfiguredModel}
+                rounds={recentRoundUsage}
+              />
+            </div>
+          ) : null}
         </div>
       ) : null}
       {visibleQueuedPrompts.length > 0 ? (
@@ -3027,9 +3036,6 @@ export function ThreadComposer({
             if (dragId) moveQueuedPrompt(dragId, targetId);
           }}
         />
-      ) : null}
-      {aboveInput ? (
-        <div className="mx-auto mb-2 w-full max-w-[58rem]">{aboveInput}</div>
       ) : null}
       <div
         ref={surfaceRef}
