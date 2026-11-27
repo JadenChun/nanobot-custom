@@ -94,11 +94,9 @@ from kohaku.agent.tools.exec_session import ExecCompletionSink, ExecSessionManag
 from kohaku.agent.tools.file_state import FileStateStore, bind_file_states, reset_file_states
 from kohaku.agent.tools.message import capture_message_deliveries
 from kohaku.agent.tools.registry import (
-    MANAGED_WEBUI_TOOL_NAMES,
-    ManagedToolDispatchGuard,
+    HostProcessAdmissionGuard,
     PolicyToolView,
     ToolRegistry,
-    is_managed_mcp_tool,
 )
 from kohaku.agent.tools.runtime_control import AgentRuntimeControl
 from kohaku.agent.trace import sanitize_trace
@@ -4093,6 +4091,7 @@ class AgentLoop:
             context_manager=run_context.policy.context_manager,
             effect_authority=run_context.policy.effect_authority,
             permissions=self.tools_config.permissions,
+            sandbox_active=self._fork_dependencies.resource_policy.sandbox_active,
         )
         request = run_context.request
         live_controls = request.metadata.get("live_turn_controls") if request is not None else None
@@ -7399,7 +7398,6 @@ class AgentLoop:
         if not session.policy.persist:
             disabled_tools.update({"repository_catalog", "save_knowledge"})
         grants = self._fork_dependencies.resource_policy.folder_grants
-        managed_tool_names = MANAGED_WEBUI_TOOL_NAMES
         run_context = ctx.run_context
         local_private_workspace_authority = False
         if (
@@ -7458,9 +7456,11 @@ class AgentLoop:
             and grants is not None
             and (grants.is_managed or local_private_workspace_authority)
         ):
-            managed_registry = PolicyToolView(
-                tools, lambda tool: tool.name in managed_tool_names or is_managed_mcp_tool(tool),
-            )
+            # Every tool stays available in a managed chat. The policy layer
+            # decides per call (ask outside Sandbox, deny by explicit rule).
+            # A per-turn view only keeps the WebUI-local tools below out of the
+            # shared registry.
+            managed_registry = PolicyToolView(tools, lambda tool: True)
             if self.tools_config.file.enable:
                 from kohaku.agent.tools.workspace import (
                     RequestFolderAccessTool,
@@ -7500,15 +7500,15 @@ class AgentLoop:
         admitted_tools = tools
         if not issued_dream:
             tools = PolicyToolView(admitted_tools, lambda tool: True)
-        tools.set_dispatch_guard(
-            ManagedToolDispatchGuard(
-                self._fork_dependencies.resource_policy.folder_grants,
-                allowed_names=managed_tool_names,
-                allowed_live=lambda name: (
-                    (tool := admitted_tools.get(name)) is not None and is_managed_mcp_tool(tool)
-                ),
+            tools.set_dispatch_guard(
+                HostProcessAdmissionGuard(
+                    grants,
+                    host_process=lambda name: (
+                        (tool := admitted_tools.get(name)) is not None
+                        and tool.launches_host_process
+                    ),
+                )
             )
-        )
         apply_surface = getattr(self, "_apply_tool_surface", None)
         surface = None
         if apply_surface is not None and not issued_dream:

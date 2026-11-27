@@ -135,12 +135,32 @@ class ResourceAccessPolicy:
             return focus.task_reference
         return None
 
-    def allows_unconfined_automation(self) -> bool:
-        """Allow raw host automation only in native unrestricted scope."""
+    def sandbox_active(self) -> bool:
+        """Whether this turn runs in Sandbox (managed and not under Full access)."""
+        return self.managed_mode and self._current_full_reference() is None
+
+    def automation_working_dir(self, requested: str | None, default: str | None) -> Path | None:
+        """Resolve a host-automation working directory under the current scope.
+
+        Host automation (browser/device) is admitted by the policy layer, not
+        here. This only keeps the process's relative-path anchor inside the
+        workspace when the scope is restricted. It returns ``None`` when a
+        requested directory leaves the restricted workspace.
+        """
         access = current_tool_workspace(
             self.workspace, restrict_to_workspace=self.restrict_to_workspace,
         )
-        return not (access.restrict_to_workspace or self.managed_mode)
+        root = access.allowed_root
+        if root is None:
+            return Path(requested or default or os.getcwd()).expanduser()
+        root = root.expanduser().resolve(strict=False)
+        if requested is None:
+            return root
+        candidate = Path(requested).expanduser()
+        if not candidate.is_absolute():
+            candidate = root / candidate
+        candidate = candidate.resolve(strict=False)
+        return candidate if _is_under(candidate, root) else None
 
     @staticmethod
     def _current_full_reference(

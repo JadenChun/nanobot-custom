@@ -105,6 +105,11 @@ def _error(message: str) -> str:
 
 class _TrendVpnTool(Tool):
     @property
+    def launches_host_process(self) -> bool:
+        # The broker changes host network state outside Sandbox.
+        return True
+
+    @property
     def supports_parallel_calls(self) -> bool:
         # Session lifecycle and network setup must remain serialized.
         return False

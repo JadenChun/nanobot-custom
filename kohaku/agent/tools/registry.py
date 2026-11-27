@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import Callable, Collection, Iterable, Iterator
+from collections.abc import Callable, Collection, Iterator
 from contextlib import ExitStack, contextmanager
 from copy import deepcopy
 from dataclasses import dataclass, replace
@@ -32,34 +32,11 @@ if TYPE_CHECKING:
     from kohaku.runtime_context import RuntimeContextProvider
 
 
-MANAGED_WEBUI_TOOL_NAMES = frozenset({
-    "read_file", "write_file", "edit_file", "list_dir", "find_files", "grep", "exec",
-    "exec_session", "list_exec_sessions", "web_search", "web_fetch",
-    "list_sessions", "read_session", "memory_search",
-    "message", "cron", "generate_image", "repository_catalog",
-    "save_knowledge", "select_workspace", "plan_task", "delegate_task",
-    "request_folder_access", "review_work", "explore", "followup_child", "tool_search",
-})
-
-_MANAGED_CAPABILITY_DENIAL = (
-    "Tool '{name}' is unavailable with managed folder access. This unconfined "
-    "host capability is not part of the configured managed tool set. Do not "
-    "retry the denied tool or reach the same external capability through another tool."
+_HOST_ADMISSION_CHANGED = (
+    "Tool '{name}' was not started: workspace access changed to Sandbox while the "
+    "call was being admitted. Retry the call so it is checked against the current "
+    "permissions."
 )
-
-
-def managed_webui_tool_names(tools: Iterable[Tool]) -> frozenset[str]:
-    """Return built-in managed tools plus the user's configured MCP capabilities.
-
-    MCP servers are opt-in configuration, not ambient host work. The MCP
-    connection owns the server lifetime; each call is a configured capability
-    rather than a new unconfined process launch.
-    """
-    names = set(MANAGED_WEBUI_TOOL_NAMES)
-    for tool in tools:
-        if is_managed_mcp_tool(tool):
-            names.add(tool.name)
-    return frozenset(names)
 
 
 def is_managed_mcp_tool(tool: Tool) -> bool:
@@ -73,41 +50,41 @@ def is_managed_mcp_tool(tool: Tool) -> bool:
     return type(tool) in {MCPMetaTool, MCPToolWrapper, MCPResourceWrapper, MCPPromptWrapper}
 
 
-class ManagedToolDispatchGuard:
-    """Deny stale unconfined WebUI tools and serialize their legacy admission."""
+class ToolDispatchGuard:
+    """Live admission hook shared by one registry's dispatches.
+
+    The base guard admits everything. Whether a tool call may run is decided by
+    the tool policy and permission mode (``RiskyActionPolicy``), not by a name
+    list here. Subclasses implement narrow lifecycle fences, such as Dream's
+    operation fence or the host-process admission reservation below.
+    """
+
+    def error(self, name: str) -> str | None:
+        return None
+
+    @contextmanager
+    def admit(self, name: str) -> Generator[str | None, None, None]:
+        yield self.error(name)
+
+
+class HostProcessAdmissionGuard(ToolDispatchGuard):
+    """Fence Sandbox activation against host-process tools that are running.
+
+    Tools that declare ``launches_host_process`` start work outside Sandbox
+    (for example a browser daemon). Whether such a call may run is decided by
+    the policy layer. This guard does not deny by name. It only reserves native
+    admission while the grant store is not yet managed, so turning Sandbox on
+    cannot race with an unconfined launch that is already in flight.
+    """
 
     def __init__(
         self,
         grants: FolderGrantView | None,
         *,
-        allowed_names: Collection[str] | None = None,
-        allowed_live: Callable[[str], bool] | None = None,
+        host_process: Callable[[str], bool],
     ) -> None:
         self._grants = grants
-        self._allowed_names = frozenset(
-            MANAGED_WEBUI_TOOL_NAMES if allowed_names is None else allowed_names
-        )
-        self._allowed_live = allowed_live
-
-    def _allowed(self, name: str) -> bool:
-        return name in self._allowed_names or (
-            self._allowed_live is not None and self._allowed_live(name)
-        )
-
-    def _managed_context(self) -> bool:
-        request = current_request_context()
-        grants = self._grants
-        return bool(
-            request is not None
-            and request.channel == "websocket"
-            and grants is not None
-            and grants.is_managed
-        )
-
-    def error(self, name: str) -> str | None:
-        if not self._managed_context() or self._allowed(name):
-            return None
-        return _MANAGED_CAPABILITY_DENIAL.format(name=name)
+        self._host_process = host_process
 
     @contextmanager
     def admit(self, name: str) -> Generator[str | None, None, None]:
@@ -117,18 +94,15 @@ class ManagedToolDispatchGuard:
             request is None
             or request.channel != "websocket"
             or grants is None
-            or self._allowed(name)
+            or grants.is_managed
+            or not self._host_process(name)
         ):
             yield None
             return
-        if self._managed_context():
-            yield self.error(name) or _MANAGED_CAPABILITY_DENIAL.format(name=name)
-            return
-        # Reserve before first activation even when the store is not managed
-        # yet; the grant change may activate confinement while this call runs.
         reservation = grants.try_begin_native_process()
         if reservation is None:
-            yield _MANAGED_CAPABILITY_DENIAL.format(name=name)
+            # Sandbox was activated after the policy assessed this call.
+            yield _HOST_ADMISSION_CHANGED.format(name=name)
             return
         try:
             yield None
@@ -144,7 +118,7 @@ def is_tool_error_result(result: Any) -> bool:
 class _ToolAdmission:
     """Live guard state that can outlive an unowned registry overlay's issuer."""
 
-    guard: ManagedToolDispatchGuard | None = None
+    guard: ToolDispatchGuard | None = None
     parent: _ToolAdmission | None = None
 
     def error(self, name: str) -> str | None:
@@ -222,12 +196,12 @@ class ToolRegistry:
         self._admission = _ToolAdmission()
         self._dispatch_parent: ReferenceType[ToolRegistry] | None = None
 
-    def set_dispatch_guard(self, guard: ManagedToolDispatchGuard | None) -> None:
+    def set_dispatch_guard(self, guard: ToolDispatchGuard | None) -> None:
         """Install a live admission check shared by this turn's tool dispatches."""
         self._admission.guard = guard
 
     def dispatch_error(self, name: str) -> str | None:
-        """Return a current managed-capability denial, if one applies."""
+        """Return a current dispatch-guard denial, if one applies."""
         registration = self._registrations.get(name)
         if registration is not None and (error := registration.error()) is not None:
             return error

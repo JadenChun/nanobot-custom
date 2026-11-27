@@ -70,9 +70,8 @@ from kohaku.agent.tools.mcp import (
 )
 from kohaku.agent.tools.registry import (
     CapturedToolBindings,
-    ManagedToolDispatchGuard,
+    HostProcessAdmissionGuard,
     ToolRegistry,
-    managed_webui_tool_names,
 )
 from kohaku.agent.tools.web import (
     WebFetchConfig,
@@ -1256,12 +1255,7 @@ class ForegroundAgentManager:
 
         extension_tools = optional_role_tools(profile.role)
         if extension_tools is not None:
-            extension_tools.set_dispatch_guard(
-                ManagedToolDispatchGuard(
-                    self.resource_policy.folder_grants,
-                    allowed_names=managed_webui_tool_names(extension_tools.iter_tools()),
-                ),
-            )
+            extension_tools.set_dispatch_guard(self._host_admission_guard(extension_tools))
             return extension_tools
 
         allowed_dir = self.workspace if self.restrict_to_workspace else None
@@ -1313,13 +1307,21 @@ class ForegroundAgentManager:
                 read_only=True,
                 resource_policy=self.resource_policy,
             ))
-        tools.set_dispatch_guard(
-            ManagedToolDispatchGuard(
-                self.resource_policy.folder_grants,
-                allowed_names=managed_webui_tool_names(tools.iter_tools()),
-            )
-        )
+        tools.set_dispatch_guard(self._host_admission_guard(tools))
         return tools
+
+    def _host_admission_guard(self, tools: ToolRegistry) -> HostProcessAdmissionGuard:
+        """Reserve Sandbox activation around child host-process tools.
+
+        Child authority comes from the role profile and the delegated policy,
+        not from a name allowlist.
+        """
+        return HostProcessAdmissionGuard(
+            self.resource_policy.folder_grants,
+            host_process=lambda name: (
+                (tool := tools.get(name)) is not None and tool.launches_host_process
+            ),
+        )
 
     def _read_only_tools(self, role: str = "planner") -> ToolRegistry:
         """Compatibility alias for callers that need a specific read-only role."""
@@ -1385,7 +1387,7 @@ class ForegroundAgentManager:
         # A worker may start one read-only nested child. This cannot widen its
         # tool, file, approval, or network authority.
         tools.register(ExploreTool(self, max_iterations=12))
-        tools.set_dispatch_guard(ManagedToolDispatchGuard(self.resource_policy.folder_grants))
+        tools.set_dispatch_guard(self._host_admission_guard(tools))
         return tools
 
     @staticmethod
@@ -1415,12 +1417,7 @@ class ForegroundAgentManager:
         for tool in role_tools.iter_tools():
             if tool.name in effective_names:
                 scoped.register(tool)
-        scoped.set_dispatch_guard(
-            ManagedToolDispatchGuard(
-                self.resource_policy.folder_grants,
-                allowed_names=managed_webui_tool_names(scoped.iter_tools()),
-            )
-        )
+        scoped.set_dispatch_guard(self._host_admission_guard(scoped))
         return scoped, borrowed
 
     def _parent_source_owner_is_current(

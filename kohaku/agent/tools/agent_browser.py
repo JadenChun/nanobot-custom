@@ -52,6 +52,39 @@ _CONFIG_OWNED_OPTIONS = frozenset({
     "--no-pin-tab",
     "--executable-path",
 })
+# Screenshot options that only shape the image. Without a path or
+# ``--screenshot-dir``, agent-browser writes the image to a temporary directory.
+_TEMP_SCREENSHOT_FLAGS = frozenset({"--full", "-f", "--annotate", "--json"})
+_TEMP_SCREENSHOT_VALUE_OPTIONS = frozenset({"--screenshot-format", "--screenshot-quality"})
+# Local or script URLs read host files or run code; they are not read-navigation.
+_NON_NAVIGATION_URL_SCHEMES = ("file:", "javascript:")
+
+
+def _is_temp_screenshot(args: Sequence[str]) -> bool:
+    """Return whether args are exactly ``screenshot [@ref] [shaping options]``.
+
+    Any other positional argument could be an output path, so it is not
+    accepted here.
+    """
+    if not args or args[0] != "screenshot":
+        return False
+    refs = 0
+    index = 1
+    while index < len(args):
+        arg = args[index]
+        option, has_value, _ = arg.partition("=")
+        if option in _TEMP_SCREENSHOT_FLAGS and not has_value:
+            index += 1
+            continue
+        if option in _TEMP_SCREENSHOT_VALUE_OPTIONS:
+            index += 1 if has_value else 2
+            continue
+        if arg.startswith("@") and refs == 0:
+            refs += 1
+            index += 1
+            continue
+        return False
+    return index == len(args)
 
 
 def _config_owned_option(args: Sequence[str]) -> str | None:
@@ -82,9 +115,14 @@ def classify_browser_action(args: object) -> str:
         return "state_changing"
     normalized_args = [arg.strip().lower() for arg in cast(Sequence[object], args) if isinstance(arg, str)]
     option_names = [arg.split("=", 1)[0] for arg in normalized_args]
+    if any(arg.startswith(_NON_NAVIGATION_URL_SCHEMES) for arg in normalized_args):
+        return "state_changing"
+    if _is_temp_screenshot(normalized_args):
+        # Viewing the page: the image goes to agent-browser's temporary directory.
+        return "read_navigation"
     # Screenshots are potentially file-producing even when no output path is
-    # present in the invocation.  Treat every screenshot form, including
-    # option-based forms such as ``open --screenshot=page.png``, as a write.
+    # present in the invocation. Every other screenshot form, including
+    # option-based forms such as ``open --screenshot=page.png``, is a write.
     if "screenshot" in normalized_args or any(
         arg.startswith("--screenshot") for arg in normalized_args
     ):
@@ -180,6 +218,10 @@ class AgentBrowserTool(Tool):
 
     @property
     def exclusive(self) -> bool:
+        return True
+
+    @property
+    def launches_host_process(self) -> bool:
         return True
 
     @property
@@ -339,12 +381,6 @@ class AgentBrowserTool(Tool):
         working_dir: str | None = None,
         **kwargs: Any,
     ) -> str | ToolOutcome:
-        if self._resource_policy is not None and not self._resource_policy.allows_unconfined_automation():
-            return ToolOutcome(
-                content="Error: Browser automation requires unrestricted native workspace access",
-                stop_reason="policy_blocked",
-                policy_metadata={"policy": "workspace_access", "requires_approval": False},
-            )
         if not args:
             return "Error: args must include at least one CLI argument"
         if len(args) > 80:
@@ -385,6 +421,15 @@ class AgentBrowserTool(Tool):
 
         run_timeout = timeout if timeout is not None else self.timeout
         cwd = working_dir or self.working_dir or os.getcwd()
+        if self._resource_policy is not None:
+            confined = self._resource_policy.automation_working_dir(working_dir, self.working_dir)
+            if confined is None:
+                return ToolOutcome(
+                    content="Error: working_dir is outside the workspace for this chat",
+                    stop_reason="policy_blocked",
+                    policy_metadata={"policy": "workspace_access", "requires_approval": False},
+                )
+            cwd = str(confined)
 
         npx_command = _resolve_npx()
         if not npx_command:

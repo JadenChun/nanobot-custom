@@ -225,6 +225,10 @@ class DesktopUseTool(Tool):
         return "desktop_use"
 
     @property
+    def launches_host_process(self) -> bool:
+        return True
+
+    @property
     def description(self) -> str:
         return (
             "Drive the local desktop with raw pixel coordinates. Stateless and "

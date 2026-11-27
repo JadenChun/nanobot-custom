@@ -633,7 +633,7 @@ class MemoryStore:
         from kohaku.agent.tools.apply_patch import ApplyPatchTool
         from kohaku.agent.tools.file_state import FileStates
         from kohaku.agent.tools.filesystem import EditFileTool, ReadFileTool, WriteFileTool
-        from kohaku.agent.tools.registry import ManagedToolDispatchGuard, ToolRegistry
+        from kohaku.agent.tools.registry import ToolDispatchGuard, ToolRegistry
 
         tools = ToolRegistry()
         file_states = FileStates()
@@ -671,10 +671,7 @@ class MemoryStore:
         if operation_id is not None:
             denial = "Dream file tools are unavailable because their operation is no longer current."
 
-            class _DreamOperationDispatchGuard(ManagedToolDispatchGuard):
-                def __init__(self) -> None:
-                    super().__init__(None)
-
+            class _DreamOperationDispatchGuard(ToolDispatchGuard):
                 def error(self, name: str) -> str | None:
                     try:
                         with dream_workspace_lock(workspace):

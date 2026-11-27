@@ -12,7 +12,7 @@ from kohaku.agent.loop import AgentLoop
 from kohaku.agent.tools.base import Tool, unsupported_json_schema_constraint
 from kohaku.agent.tools.context import ToolContext
 from kohaku.agent.tools.loader import _SKIP_MODULES, ToolLoader
-from kohaku.agent.tools.registry import MANAGED_WEBUI_TOOL_NAMES, ToolRegistry
+from kohaku.agent.tools.registry import ToolRegistry
 from kohaku.agent.tools.runtime_control import AgentRuntimeControl
 from kohaku.config.schema import Config, ToolsConfig
 from kohaku.providers.base import GenerationSettings, LLMResponse
@@ -496,11 +496,9 @@ def test_session_read_tools_are_available_in_managed_foreground(loader_context):
 
     for name in ("list_sessions", "read_session"):
         assert name in registered
-        assert name in MANAGED_WEBUI_TOOL_NAMES
         tool = registry.get(name)
         assert tool is not None and tool.read_only is True
     assert "send_session_message" not in registered
-    assert "send_session_message" not in MANAGED_WEBUI_TOOL_NAMES
 
 
 def test_non_core_loader_scope_stays_closed_without_registry_mutation():

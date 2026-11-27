@@ -20,7 +20,7 @@ from kohaku.agent.tools.context import RequestContext, request_context
 from kohaku.agent.tools.exec_session import ExecSessionManager, ExecSessionTool
 from kohaku.agent.tools.filesystem import ReadFileTool
 from kohaku.agent.tools.native_process import native_supervisor_available
-from kohaku.agent.tools.registry import ManagedToolDispatchGuard, ToolRegistry
+from kohaku.agent.tools.registry import HostProcessAdmissionGuard, ToolRegistry
 from kohaku.agent.tools.sandbox import wrap_managed_command
 from kohaku.agent.tools.shell import ExecTool
 from kohaku.agent.turn import ToolOutcome
@@ -33,6 +33,7 @@ from kohaku.security.desktop_permissions import (
 )
 from kohaku.security.folder_grants import (
     FolderGrantStore,
+    FolderGrantView,
     NativeProcessesActiveError,
     NativeProcessesUnknownError,
 )
@@ -488,6 +489,10 @@ class _NativeHostTool(Tool):
         return "agent_browser"
 
     @property
+    def launches_host_process(self) -> bool:
+        return True
+
+    @property
     def description(self) -> str:
         return "A fake unconfined host browser wrapper."
 
@@ -503,8 +508,14 @@ class _NativeHostTool(Tool):
         return "host call completed"
 
 
+def _host_guard(grants: FolderGrantView | None) -> HostProcessAdmissionGuard:
+    return HostProcessAdmissionGuard(grants, host_process=lambda name: name == "agent_browser")
+
+
 @pytest.mark.asyncio
-async def test_captured_legacy_registry_rechecks_host_tool_after_activation(tmp_path: Path) -> None:
+async def test_host_tool_stays_callable_after_sandbox_activation(tmp_path: Path) -> None:
+    # No name allowlist: once Sandbox is active, the policy layer (not the
+    # registry) decides whether a host tool call needs approval.
     home = tmp_path / "agent-home"
     project = tmp_path / "project"
     instance = tmp_path / "instance"
@@ -517,8 +528,9 @@ async def test_captured_legacy_registry_rechecks_host_tool_after_activation(tmp_
     )
     registry = ToolRegistry()
     tool = _NativeHostTool()
+    tool.release.set()
     registry.register(tool)
-    registry.set_dispatch_guard(ManagedToolDispatchGuard(store.view))
+    registry.set_dispatch_guard(_host_guard(store.view))
     request = RequestContext(
         channel="websocket",
         chat_id="fixture-chat",
@@ -532,12 +544,11 @@ async def test_captured_legacy_registry_rechecks_host_tool_after_activation(tmp_
             {"path": str(project), "file_access": "read_only", "commands": False},
             expected_revision=0,
         )
-        denied = await registry.execute("agent_browser", {})
+        assert registry.dispatch_error("agent_browser") is None
+        result = await registry.execute("agent_browser", {})
 
-    assert isinstance(denied, ToolResult)
-    assert denied.is_error
-    assert "managed folder access" in denied
-    assert tool.calls == 0
+    assert result == "host call completed"
+    assert tool.calls == 1
 
 
 @pytest.mark.asyncio
@@ -564,7 +575,7 @@ async def test_opaque_native_host_return_keeps_first_activation_unknown(
     registry = ToolRegistry()
     tool = _NativeHostTool()
     registry.register(tool)
-    registry.set_dispatch_guard(ManagedToolDispatchGuard(store.view))
+    registry.set_dispatch_guard(_host_guard(store.view))
     request = RequestContext(
         channel="websocket",
         chat_id="fixture-chat",
@@ -594,22 +605,19 @@ async def test_opaque_native_host_return_keeps_first_activation_unknown(
 
 
 @pytest.mark.asyncio
-async def test_managed_temporary_websocket_denies_unconfined_host_tool(tmp_path: Path) -> None:
+async def test_managed_temporary_websocket_admits_host_tool_for_policy(tmp_path: Path) -> None:
     home, project, _store, policy = _managed_tools(tmp_path)
     registry = ToolRegistry()
     tool = _NativeHostTool()
+    tool.release.set()
     registry.register(tool)
-    registry.set_dispatch_guard(
-        ManagedToolDispatchGuard(policy.folder_grants),
-    )
+    registry.set_dispatch_guard(_host_guard(policy.folder_grants))
     scope_token, request = _bind_managed_turn(home, project, persistent=False)
     try:
         with request:
             result = await registry.execute("agent_browser", {})
-        assert isinstance(result, ToolResult)
-        assert result.is_error
-        assert "managed folder access" in result
-        assert tool.calls == 0
+        assert result == "host call completed"
+        assert tool.calls == 1
     finally:
         reset_workspace_scope(scope_token)
 

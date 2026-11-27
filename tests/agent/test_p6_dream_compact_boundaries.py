@@ -15,7 +15,7 @@ import pytest
 from kohaku.agent.loop import AgentLoop
 from kohaku.agent.memory import MemoryStore
 from kohaku.agent.tools.base import Tool
-from kohaku.agent.tools.registry import ManagedToolDispatchGuard, ToolRegistry
+from kohaku.agent.tools.registry import ToolDispatchGuard, ToolRegistry
 from kohaku.bus.events import InboundMessage
 from kohaku.bus.outbound_events import ContextCompactionEvent, StopTargetEvent
 from kohaku.bus.runtime_events import TurnCompleted
@@ -135,9 +135,8 @@ async def test_dream_owner_subsets_filter_exclusions_and_weak_lifetime(loop):
 async def test_filtered_dream_dispatch_preserves_live_admission_after_issuer_collection(loop):
     store = loop.context.memory
 
-    class LiveGuard(ManagedToolDispatchGuard):
+    class LiveGuard(ToolDispatchGuard):
         def __init__(self):
-            super().__init__(None)
             self.denied = False
             self.admitted = 0
 

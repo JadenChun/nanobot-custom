@@ -149,10 +149,9 @@ _PRIVATE_NETWORK_RECOVERY_NOTE = (
     "that does not touch the denied target, or explain the limitation to the user."
 )
 _MANAGED_CAPABILITY_RECOVERY_NOTE = (
-    "A tool call was denied before it ran because that unconfined host capability is "
-    "unavailable in this managed chat. Do not retry the denied tool or reach the same "
-    "external capability through another tool. Continue with a permitted tool or "
-    "explain the limitation to the user."
+    "A tool call was denied before it ran because that tool is not available in the "
+    "current run. Do not retry the denied tool or reach the same capability through "
+    "another tool. Continue with a permitted tool or explain the limitation to the user."
 )
 _RESOURCE_POLICY_RECOVERY_NOTE = (
     "A tool call was rejected before it ran by Kohaku's resource policy. "

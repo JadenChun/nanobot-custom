@@ -106,6 +106,10 @@ class CliAppsTool(Tool):
         return "run_cli_app"
 
     @property
+    def launches_host_process(self) -> bool:
+        return True
+
+    @property
     def description(self) -> str:
         return (
             "Run a CLI App that the user explicitly installed in Settings or attached as @app. "

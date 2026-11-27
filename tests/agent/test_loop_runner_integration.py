@@ -1171,6 +1171,10 @@ async def test_stale_websocket_registry_rechecks_managed_host_capability(
             return "raw_host_wrapper"
 
         @property
+        def launches_host_process(self) -> bool:
+            return True
+
+        @property
         def description(self) -> str:
             return "Harmless fake host tool for managed dispatch testing."
 
@@ -1217,5 +1221,6 @@ async def test_stale_websocket_registry_rechecks_managed_host_capability(
         await asyncio.gather(pending, return_exceptions=True)
 
     assert result is not None
-    assert "managed folder access" in result.content
+    # The tool stays available; the live policy sees Sandbox and asks first.
+    assert "outside Sandbox" in result.content
     assert browser.calls == 0
