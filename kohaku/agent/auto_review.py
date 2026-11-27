@@ -352,8 +352,8 @@ def check_auto_review_eligibility(
 
         return None
 
-    if call.name in {"write_file", "edit_file"}:
-        raw_path = call.arguments.get("path")
+    if call.name in {"write_file", "edit_file", "Write", "Edit"}:
+        raw_path = call.arguments.get("path") or call.arguments.get("file_path")
         path_str = raw_path.strip() if isinstance(raw_path, str) else ""
         if not path_str:
             return f"empty {call.name} path requires human approval"
