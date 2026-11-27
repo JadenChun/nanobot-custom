@@ -2870,3 +2870,187 @@ async def test_send_delta_stream_end_rich_not_modified_after_timeout_is_success(
     assert channel._app.bot.do_api_request.await_count == 2
     channel._app.bot.edit_message_text.assert_not_awaited()
     assert "123" not in channel._stream_bufs
+
+
+def test_compact_and_evaluator_prompt_commands_are_routed() -> None:
+    assert any(command.command == "compact" for command in TelegramChannel.BOT_COMMANDS)
+    assert TelegramChannel.TELEGRAM_BUS_SLASH_COMMAND_RE.fullmatch("/compact")
+    assert TelegramChannel.TELEGRAM_BUS_SLASH_COMMAND_RE.fullmatch("/compact@kohaku_bot")
+    assert TelegramChannel._normalize_telegram_command("/evaluator_prompt") == "/evaluator-prompt"
+    assert TelegramChannel._normalize_telegram_command("/evaluator_prompt init") == "/evaluator-prompt init"
+
+
+@pytest.mark.asyncio
+async def test_on_start_uses_kohaku_branding() -> None:
+    channel = TelegramChannel(
+        TelegramConfig(enabled=True, token="123:abc", allow_from=["42"]),
+        MessageBus(),
+    )
+    reply_text = AsyncMock()
+    update = SimpleNamespace(
+        message=SimpleNamespace(
+            chat_id=42,
+            chat=SimpleNamespace(type="private"),
+            reply_text=reply_text,
+        ),
+        effective_user=SimpleNamespace(id=42, username="alice", first_name="Alice"),
+    )
+
+    await channel._on_start(update, None)
+
+    reply_text.assert_awaited_once()
+    text = reply_text.await_args.args[0]
+    assert "Kohaku" in text
+    assert "nanobot" not in text.lower()
+
+
+@pytest.mark.asyncio
+async def test_send_non_final_events_preserve_typing_and_reaction() -> None:
+    from kohaku.bus.outbound_events import ContextCompactionEvent, DelegatedChildEvent
+
+    channel = TelegramChannel(
+        TelegramConfig(enabled=True, token="123:abc", allow_from=["*"]),
+        MessageBus(),
+    )
+    _install_ready_app(channel)
+    channel._app.bot.send_message = AsyncMock(return_value=SimpleNamespace(message_id=10))
+    channel._stop_typing = Mock()
+    channel._remove_reaction = AsyncMock()
+
+    # Empty structured event (e.g. delegated child update) must be a no-op.
+    await channel.send(OutboundMessage(
+        channel="telegram",
+        chat_id="123",
+        content="",
+        metadata={"message_id": 77},
+        event=DelegatedChildEvent(parent_session_key="telegram:123", child_session_key="delegated:c1", child_id="c1", state="active"),
+    ))
+    channel._stop_typing.assert_not_called()
+    channel._remove_reaction.assert_not_awaited()
+    channel._app.bot.send_message.assert_not_awaited()
+
+    # Compaction notification is non-final: must not stop typing or remove reaction.
+    await channel.send(OutboundMessage(
+        channel="telegram",
+        chat_id="123",
+        content="Compressing context…",
+        metadata={"message_id": 77},
+        event=ContextCompactionEvent(compaction_id="c1", phase="started"),
+    ))
+    channel._stop_typing.assert_not_called()
+    channel._remove_reaction.assert_not_awaited()
+    channel._app.bot.send_message.assert_awaited_once()
+
+    # Final response clears typing and reaction.
+    await channel.send(OutboundMessage(
+        channel="telegram",
+        chat_id="123",
+        content="Done.",
+        metadata={"message_id": 77},
+    ))
+    channel._stop_typing.assert_called_once_with("123")
+    channel._remove_reaction.assert_awaited_once_with("123", 77)
+
+
+@pytest.mark.asyncio
+async def test_send_delta_stream_end_resuming_keeps_reaction_and_typing() -> None:
+    channel = TelegramChannel(
+        TelegramConfig(enabled=True, token="123:abc", allow_from=["*"]),
+        MessageBus(),
+    )
+    _install_ready_app(channel)
+    channel._app.bot.edit_message_text = AsyncMock()
+    channel._stop_typing = Mock()
+    channel._remove_reaction = AsyncMock()
+    channel._stream_bufs["123"] = _StreamBuf(text="Checking...", message_id=7, last_edit=0.0)
+
+    await channel.send_delta("123", "", metadata={"message_id": 88}, stream_end=True, resuming=True)
+
+    channel._stop_typing.assert_not_called()
+    channel._remove_reaction.assert_not_awaited()
+
+    channel._stream_bufs["123"] = _StreamBuf(text="Final answer", message_id=8, last_edit=0.0)
+    await channel.send_delta("123", "", metadata={"message_id": 88}, stream_end=True, resuming=False)
+
+    channel._stop_typing.assert_called_once_with("123")
+    channel._remove_reaction.assert_awaited_once_with("123", 88)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("task_update_mode,expect_compaction_on_telegram", [
+    ("result", False),
+    ("verbose", True),
+])
+async def test_channel_manager_filters_compaction_and_delegated_child_for_telegram(
+    task_update_mode: str,
+    expect_compaction_on_telegram: bool,
+) -> None:
+    from kohaku.bus.outbound_events import ContextCompactionEvent, DelegatedChildEvent
+    from kohaku.channels.manager import ChannelManager
+    from kohaku.config.schema import Config
+
+    bus = MessageBus()
+    config = Config()
+    config.channels.task_update_mode = task_update_mode
+    manager = ChannelManager(config, bus)
+
+    telegram_sent: list[OutboundMessage] = []
+    websocket_sent: list[OutboundMessage] = []
+
+    class _StubChannel:
+        def __init__(self, sink: list[OutboundMessage]) -> None:
+            self._sink = sink
+            self.send_progress = True
+            self.send_tool_hints = False
+            self.show_reasoning = False
+
+        async def send(self, msg: OutboundMessage) -> None:
+            self._sink.append(msg)
+
+        def should_retry_send_error(self, error: Exception) -> bool:
+            return False
+
+    manager.channels["telegram"] = _StubChannel(telegram_sent)  # type: ignore[assignment]
+    manager.channels["websocket"] = _StubChannel(websocket_sent)  # type: ignore[assignment]
+
+    dispatch = asyncio.create_task(manager._dispatch_outbound())
+    try:
+        for ch in ("telegram", "websocket"):
+            await bus.publish_outbound(OutboundMessage(
+                channel=ch,
+                chat_id="123",
+                content="",
+                event=DelegatedChildEvent(parent_session_key=f"{ch}:123", child_session_key="delegated:c1", child_id="c1", state="active"),
+            ))
+            await bus.publish_outbound(OutboundMessage(
+                channel=ch,
+                chat_id="123",
+                content="Compressing context…",
+                event=ContextCompactionEvent(compaction_id="c1", phase="started"),
+            ))
+            await bus.publish_outbound(OutboundMessage(
+                channel=ch,
+                chat_id="123",
+                content="Final reply",
+            ))
+
+        deadline = asyncio.get_running_loop().time() + 2.0
+        while (len(telegram_sent) < (2 if expect_compaction_on_telegram else 1)
+               or len(websocket_sent) < 3):
+            if asyncio.get_running_loop().time() >= deadline:
+                break
+            await asyncio.sleep(0.01)
+    finally:
+        dispatch.cancel()
+        await dispatch
+
+    assert [type(m.event) for m in websocket_sent] == [
+        DelegatedChildEvent,
+        ContextCompactionEvent,
+        type(None),
+    ]
+    if expect_compaction_on_telegram:
+        assert [type(m.event) for m in telegram_sent] == [ContextCompactionEvent, type(None)]
+    else:
+        assert [type(m.event) for m in telegram_sent] == [type(None)]
+        assert telegram_sent[0].content == "Final reply"

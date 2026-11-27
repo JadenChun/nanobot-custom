@@ -4527,13 +4527,14 @@ describe("ThreadShell", () => {
     expect(screen.getByText("queued guidance")).toBeInTheDocument();
   });
 
-  it("keeps active-run timing attached to the original turn after guidance", async () => {
+  it.each(["admitted", "refused"] as const)("shows a queued steer once when it is %s", async (outcome) => {
     const client = makeClient();
+    const chatId = `timing-chat-${outcome}`;
     const turnId = "turn-active-timing";
     vi.stubGlobal(
       "fetch",
       vi.fn(async (input: RequestInfo | URL) => {
-        if (String(input).includes("websocket%3Atiming-chat/webui-thread")) {
+        if (String(input).includes(`websocket%3A${chatId}/webui-thread`)) {
           return httpJson(transcriptFromSimpleMessages([{
             role: "user",
             content: "research this",
@@ -4548,7 +4549,7 @@ describe("ThreadShell", () => {
       wrap(
         client,
         <ThreadShell
-          session={session("timing-chat")}
+          session={session(chatId)}
           title="Timing chat"
           onToggleSidebar={() => {}}
           onNewChat={() => {}}
@@ -4558,23 +4559,23 @@ describe("ThreadShell", () => {
 
     await waitFor(() => expect(screen.getByText("research this")).toBeInTheDocument());
     act(() => {
-      client._emitChat("timing-chat", {
+      client._emitChat(chatId, {
         event: "goal_status",
-        chat_id: "timing-chat",
+        chat_id: chatId,
         status: "running",
         started_at: Date.now() / 1000 - 215,
         turn_id: turnId,
       });
-      client._emitChat("timing-chat", {
+      client._emitChat(chatId, {
         event: "message",
-        chat_id: "timing-chat",
+        chat_id: chatId,
         kind: "progress",
         text: "web_search()",
         turn_id: turnId,
       });
-      client._emitChat("timing-chat", {
+      client._emitChat(chatId, {
         event: "message",
-        chat_id: "timing-chat",
+        chat_id: chatId,
         text: "Continuing the search.",
         latency_ms: 1_000,
         turn_id: turnId,
@@ -4583,36 +4584,62 @@ describe("ThreadShell", () => {
 
     await waitFor(() => expect(screen.getByText("Continuing the search.")).toBeInTheDocument());
     const input = screen.getByRole("textbox", { name: "Message input" });
-    fireEvent.change(input, { target: { value: "How is it going?" } });
+    const guidance = "Use the short answer format.";
+    const followUp = "Include one example.";
+    fireEvent.change(input, { target: { value: guidance } });
     fireEvent.keyDown(input, { key: "Enter" });
     fireEvent.keyDown(input, { key: "Enter" });
+    if (outcome === "admitted") {
+      fireEvent.change(input, { target: { value: followUp } });
+      fireEvent.keyDown(input, { key: "Enter" });
+    }
     expect(client.sendMessage).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole("button", { name: "Steer", exact: true }));
-
-    // The queued guidance leaves the queue only when its own owner receipt
-    // arrives; the row is still visible as guidance before that.
-    const queuedRow = () => document.querySelector("[data-queued-prompt-row='true']");
-    expect(queuedRow()?.textContent).toContain("How is it going?");
+    const guidanceRow = within(screen.getByRole("group", { name: "Queued guidance" }))
+      .getByText(guidance).closest<HTMLElement>("[data-queued-prompt-row='true']")!;
+    fireEvent.click(within(guidanceRow).getByRole("button", { name: "Steer", exact: true }));
 
     await waitFor(() => expect(client.sendMessage).toHaveBeenCalledWith(
-      "timing-chat",
-      "How is it going?",
+      chatId,
+      guidance,
       undefined,
       expect.objectContaining({ requestIntent: "steer", targetTurnId: turnId }),
     ));
     const steerTurnId = client.sendMessage.mock.calls.at(-1)?.[3]?.turnId;
     expect(typeof steerTurnId).toBe("string");
-    act(() => client._emitChat("timing-chat", {
+
+    expect(guidanceRow).not.toBeInTheDocument();
+    expect(screen.getByText(guidance)).toBeInTheDocument();
+    if (outcome === "refused") {
+      await act(async () => client._emitChat(chatId, {
+        event: "error",
+        chat_id: chatId,
+        turn_id: steerTurnId,
+        detail: "not_admitted",
+        reason: "steering_target_changed",
+      }));
+      const restoredQueue = within(screen.getByRole("group", { name: "Queued guidance" }));
+      expect(restoredQueue.getByText(guidance)).toBeInTheDocument();
+      expect(restoredQueue.getByRole("button", { name: "Edit guidance" })).toBeEnabled();
+      expect(restoredQueue.getByRole("button", { name: "Steer", exact: true })).toBeEnabled();
+      expect(screen.getAllByText(guidance)).toHaveLength(1);
+      return;
+    }
+
+    const remainingQueue = within(screen.getByRole("group", { name: "Queued guidance" }));
+    expect(remainingQueue.getByText(followUp)).toBeInTheDocument();
+    expect(remainingQueue.queryByText("Awaiting confirmation")).not.toBeInTheDocument();
+    expect(remainingQueue.getByRole("button", { name: "Edit guidance" })).toBeEnabled();
+    await act(async () => client._emitChat(chatId, {
       event: "message_admitted",
-      chat_id: "timing-chat",
+      chat_id: chatId,
       turn_id: steerTurnId,
       attempt_id: steerTurnId,
       active_turn_id: turnId,
       starts_turn: false,
     }));
 
-    await waitFor(() => expect(queuedRow()).toBeNull());
-    expect(screen.getByText("How is it going?")).toBeInTheDocument();
+    expect(remainingQueue.queryByText(guidance)).not.toBeInTheDocument();
+    expect(screen.getByText(guidance)).toBeInTheDocument();
     expect(screen.getByRole("status", { name: /^Working(?: · |$)/ })).toBeInTheDocument();
     expect(screen.queryByText("Worked for 1s")).not.toBeInTheDocument();
     expect(screen.queryByRole("status", { name: /^Thinking for / })).not.toBeInTheDocument();

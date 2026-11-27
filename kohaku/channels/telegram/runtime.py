@@ -497,6 +497,7 @@ class TelegramChannel(BaseChannel):
     BOT_COMMANDS: list[BotCommand] = [
         BotCommand("start", "Start the bot"),
         BotCommand("new", "Start a new conversation"),
+        BotCommand("compact", "Compact conversation context"),
         BotCommand("stop", "Stop the current task"),
         BotCommand("restart", "Restart the bot"),
         BotCommand("status", "Show bot status"),
@@ -515,9 +516,9 @@ class TelegramChannel(BaseChannel):
     ]
 
     # Regex for slash commands routed to AgentLoop via ``_forward_command``.
-    # Hyphenated ``dream-*`` commands stay on a separate handler (below).
+    # Hyphenated ``dream-*`` / ``evaluator-prompt`` commands stay on a separate handler (below).
     TELEGRAM_BUS_SLASH_COMMAND_RE = re.compile(
-        r"^/(?:new|stop|restart|status|quota|dream|history|goal|trigger|pairing|model|skill)(?:@\w+)?(?:\s+.*)?$"
+        r"^/(?:new|compact|stop|restart|status|quota|dream|history|goal|trigger|pairing|model|skill)(?:@\w+)?(?:\s+.*)?$"
     )
 
     @classmethod
@@ -587,7 +588,7 @@ class TelegramChannel(BaseChannel):
 
     @staticmethod
     def _normalize_telegram_command(content: str) -> str:
-        """Map Telegram-safe command aliases back to canonical nanobot commands."""
+        """Map Telegram-safe command aliases back to canonical Kohaku commands."""
         if not content.startswith("/"):
             return content
         if content == "/dream_log" or content.startswith("/dream_log "):
@@ -596,6 +597,8 @@ class TelegramChannel(BaseChannel):
             return content.replace("/dream_restore", "/dream-restore", 1)
         if content == "/dream_prompt" or content.startswith("/dream_prompt "):
             return content.replace("/dream_prompt", "/dream-prompt", 1)
+        if content == "/evaluator_prompt" or content.startswith("/evaluator_prompt "):
+            return content.replace("/evaluator_prompt", "/evaluator-prompt", 1)
         return content
 
     async def start(self) -> None:
@@ -693,7 +696,7 @@ class TelegramChannel(BaseChannel):
         self._app.add_handler(
             MessageHandler(
                 filters.Regex(
-                    r"^/(dream-log|dream_log|dream-restore|dream_restore|dream-prompt|dream_prompt)(?:@\w+)?(?:\s+.*)?$"
+                    r"^/(dream-log|dream_log|dream-restore|dream_restore|dream-prompt|dream_prompt|evaluator-prompt|evaluator_prompt)(?:@\w+)?(?:\s+.*)?$"
                 ),
                 self._forward_command,
             )
@@ -1017,9 +1020,13 @@ class TelegramChannel(BaseChannel):
             return
 
         progress_event = msg.event if isinstance(msg.event, ProgressEvent) else None
+        is_final_response = msg.event is None
+
+        if not is_final_response and not msg.media and (not msg.content or msg.content == "[empty message]"):
+            return
 
         # Only stop typing indicator and remove reaction for final responses
-        if progress_event is None:
+        if is_final_response:
             self._stop_typing(msg.chat_id)
             if reply_to_message_id := msg.metadata.get("message_id"):
                 with suppress(ValueError):
@@ -1464,9 +1471,9 @@ class TelegramChannel(BaseChannel):
                 return
             if not resuming:
                 self._stop_typing(chat_id)
-            if reply_to_message_id := meta.get("message_id"):
-                with suppress(ValueError):
-                    await self._remove_reaction(chat_id, int(reply_to_message_id))
+                if reply_to_message_id := meta.get("message_id"):
+                    with suppress(ValueError):
+                        await self._remove_reaction(chat_id, int(reply_to_message_id))
             thread_kwargs: dict[str, int] = {}
             if message_thread_id := meta.get("message_thread_id"):
                 thread_kwargs["message_thread_id"] = message_thread_id
@@ -1673,7 +1680,7 @@ class TelegramChannel(BaseChannel):
         if not self._is_update_allowed(update.message, user):
             return
         await update.message.reply_text(
-            f"👋 Hi {user.first_name}! I'm nanobot.\n\n"
+            f"👋 Hi {user.first_name}! I'm Kohaku.\n\n"
             "Send me a message and I'll respond!\n"
             "Type /help to see available commands."
         )
