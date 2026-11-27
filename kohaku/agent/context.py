@@ -513,10 +513,13 @@ class ContextBuilder:
     def _managed_prompt_metadata() -> str:
         return (
             "# Sandbox Folder Rules\n\n"
-            "Sandbox allows ordinary OS-account reads and commands. Writes are limited to approved "
-            "folders, agent home, and private temporary or cache storage. More specific read-only "
-            "rules override writable parents. Full access uses normal OS permissions. "
-            "Kohaku's private runtime files and configured context policies remain protected."
+            "Sandbox allows ordinary OS-account reads and commands. Writes are allowed in the "
+            "user-selected **Working in** workspace, agent home, private temporary/cache storage, "
+            "and additional approved folders from Settings -> Folders (or one-shot `Once` grants). "
+            "More specific explicit `read_only` rules override writable parents and the workspace. "
+            "Calling `select_workspace` changes focus only and does not grant write access. "
+            "Full access uses normal OS permissions; Kohaku's private runtime files and configured "
+            "context-repository policies remain protected."
         )
 
     @staticmethod

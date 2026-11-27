@@ -12,6 +12,10 @@ Shell execution (`ExecTool`, `agent/tools/shell.py`) also respects `restrict_to_
 
 **Rule**: Any new path-handling logic must go through the workspace path resolver or perform an equivalent containment check with explicit read/write capability semantics.
 
+- **WebUI Sandbox workspace-write**: Human-selected **Working in** (`selection_source == "user"`) grants implicit write access (priority 0) in Sandbox, enforced in both `ResourceAccessPolicy` and `bwrap`/Seatbelt `_managed_mounts()`, with explicit `read_only` grants (priority 1) overriding workspace write.
+- **Tool focus provenance**: Model-called `select_workspace` (`selection_source == "tool"`) changes relative-path focus only and must never widen write authority.
+- **Non-WebUI channels**: Legacy `restrict_to_workspace` remains active for non-WebUI channels (Telegram, Discord, CLI, API) that do not run the WebUI OS sandbox.
+
 ## SSRF Protection
 
 All outbound HTTP requests from agent tools must pass through the shared URL guards in `security/network.py` (`validate_url_target` or `resolve_url_target`). By default they block loopback, RFC1918 private addresses, CGNAT ranges, link-local ranges, and cloud metadata endpoints (including `169.254.169.254`).
