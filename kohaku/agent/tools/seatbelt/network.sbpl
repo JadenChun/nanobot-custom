@@ -1,0 +1,33 @@
+; Rules added when a managed command may use the network.
+; Derived from OpenAI Codex, codex-rs/sandboxing/src/seatbelt_network_policy.sbpl
+; at commit 8727186a0a0e, Apache License 2.0. Copyright 2025 OpenAI. Modified.
+(allow network-outbound (remote ip))
+(allow network-inbound (local ip))
+(allow network-bind (local ip))
+
+; Name resolution goes through this socket.
+(allow system-socket (socket-domain AF_UNIX))
+(allow network-outbound (literal "/private/var/run/mDNSResponder"))
+
+(allow system-socket
+  (require-all
+    (socket-domain AF_SYSTEM)
+    (socket-protocol 2)
+  )
+)
+
+(allow mach-lookup
+  (global-name "com.apple.bsd.dirhelper")
+  (global-name "com.apple.system.opendirectoryd.membership")
+  (global-name "com.apple.SecurityServer")
+  (global-name "com.apple.networkd")
+  (global-name "com.apple.ocspd")
+  (global-name "com.apple.trustd.agent")
+  (global-name "com.apple.TrustEvaluationAgent")
+  (global-name "com.apple.SystemConfiguration.DNSConfiguration")
+  (global-name "com.apple.SystemConfiguration.configd")
+)
+
+(allow sysctl-read
+  (sysctl-name-regex #"^net.routetable")
+)

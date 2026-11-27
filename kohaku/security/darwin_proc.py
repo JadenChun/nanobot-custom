@@ -48,6 +48,11 @@ _FILTER_NONE = 0
 _FILTER_GLOBAL_NAME = 2
 _ZOMBIE = 5
 _LAUNCH_ID_LENGTH = 32
+# sys/fcntl.h and unistd.h values that Python does not expose on every platform.
+_F_GETPATH = 50
+_O_EVTONLY = 0x8000
+_PATH_BUFFER = 1024
+_CS_DARWIN_USER_TEMP_DIR = 65537
 
 
 class DarwinUnavailableError(RuntimeError):
@@ -285,6 +290,71 @@ def rename_excl(source: Path, target: Path) -> None:
     if int(function(os.fsencode(source), os.fsencode(target), _RENAME_EXCL)) != 0:
         code = ctypes.get_errno()
         raise OSError(code or errno.EIO, os.strerror(code or errno.EIO), str(target))
+
+
+def canonical_path(path: Path) -> Path:
+    """Spell an absolute path the way the kernel does, as Seatbelt rules require.
+
+    Symlinks, firmlinks and letter case are resolved for the part that exists;
+    the rest is kept as given. Raises if an existing part cannot be spelled,
+    because a rule with another spelling would not match.
+    """
+    current = path.resolve(strict=False)
+    missing: list[str] = []
+    while True:
+        try:
+            spelled = _kernel_path(current)
+            break
+        except (FileNotFoundError, NotADirectoryError):
+            pass
+        except OSError:
+            # Sockets cannot be opened; find their on-disk name in the parent.
+            parent = canonical_path(current.parent)
+            spelled = parent / _entry_name(parent, current)
+            break
+        if current == current.parent:
+            raise DarwinUnavailableError("the filesystem root cannot be spelled")
+        missing.append(current.name)
+        current = current.parent
+    return spelled.joinpath(*reversed(missing))
+
+
+def _kernel_path(path: Path) -> Path:
+    if platform.system() != "Darwin":
+        raise DarwinUnavailableError("kernel path spelling needs macOS")
+    import fcntl
+
+    flags = _O_EVTONLY | os.O_NONBLOCK | os.O_CLOEXEC
+    descriptor = os.open(path, flags)
+    try:
+        raw = fcntl.fcntl(descriptor, _F_GETPATH, bytes(_PATH_BUFFER))
+    finally:
+        os.close(descriptor)
+    return Path(os.fsdecode(raw.split(b"\0", 1)[0]))
+
+
+def _entry_name(parent: Path, path: Path) -> str:
+    wanted = path.lstat()
+    with os.scandir(parent) as entries:
+        matches = [
+            entry.name for entry in entries
+            if os.path.samestat(entry.stat(follow_symlinks=False), wanted)
+        ]
+    if path.name in matches:
+        return path.name
+    if len(matches) != 1:
+        raise DarwinUnavailableError("a path has no single on-disk name")
+    return matches[0]
+
+
+def user_temp_dir() -> str | None:
+    """The per-user temporary folder macOS assigns, if this host reports one."""
+    if platform.system() != "Darwin":
+        return None
+    try:
+        return os.confstr(_CS_DARWIN_USER_TEMP_DIR)
+    except (OSError, ValueError):
+        return None
 
 
 @dataclass(frozen=True)
