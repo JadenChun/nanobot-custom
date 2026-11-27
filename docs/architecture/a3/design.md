@@ -160,6 +160,14 @@ separately from the stronger unrestricted-native proof path.
 | Durable session writer | The lifetime writer lease uses a [POSIX descriptor proof boundary][session-lease]. | Startup and read-only compatibility are distinct from managed writer admission. |
 | Private remote owner IPC | [`OwnerIPCServer._check_peer`][ipc-peer] uses `SO_PEERCRED` and otherwise refuses. | A Darwin `LOCAL_PEERCRED` repair exists separately and needs reconciliation. |
 
+**Later observation (2026-11-27, not part of the pin).** Branch
+`codex/macos-seatbelt-executor` adds a macOS executor for the first two rows: Seatbelt confinement
+and whole-tree proof through per-launch Seatbelt markers, on Apple Silicon only, behind
+`tools.exec.macosSeatbelt` (off by default). Linux behaviour is unchanged. Its guarantees differ
+from Linux, and some workloads fail; see
+[packet A3-2M](../../audits/implementation-packets/A3-2M-macos-seatbelt-executor.md#5-executor-capability-matrix-target-state)
+and the [qualification record](macos-seatbelt-qualification-2026-11-27.md).
+
 The historical alternative was a smaller executor matrix or a Linux executor serving
 another client OS. The selected direction requires Linux and macOS executors, with
 Android remote. Each native adapter needs its own isolation, owner-authentication and

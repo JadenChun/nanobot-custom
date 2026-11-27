@@ -1,6 +1,6 @@
 # A3-2M — macOS Seatbelt executor (Sandbox and Full access)
 
-**Status.** WP0-WP3 are implemented on branch `codex/macos-seatbelt-executor`; see §11. All gates are decided (D-M6, D-M7). WP3's real-signal criterion (AC3.2) has not run yet and should pass on a disposable macOS host before WP4 relies on killing. Linux behaviour is unchanged and macOS still fails closed.
+**Status.** WP0-WP8 are implemented on branch `codex/macos-seatbelt-executor`; see §11. AC8.1 and AC8.2 pass ([qualification](../../architecture/a3/macos-seatbelt-qualification-2026-11-27.md)). AC8.3 is open: `tools.exec.macosSeatbelt` stays off by default, so macOS still fails closed unless an operator turns it on. Three decisions are needed before it can default to on (§10): setuid programs, Keychain access from Sandbox, and Swift/Xcode builds. A full code review is still to be done. Linux behaviour is unchanged.
 **Platform.** macOS 27.2.1 (Apple Silicon) is the evidence host. Linux behaviour stays the same.
 **Parent packets.** [A3-2 runtime and processes](A3-2-runtime-process-ownership.md) §2 asks for the executor-mode matrix and per-OS proofs before a new backend. This packet supplies them for macOS.
 **Design references.** [A3 design capability table](../../architecture/a3/design.md) · [D1 platform scope](../../architecture/a3/decisions.md) · [macOS qualification 2026-11-16](../../architecture/a3/macos-qualification-2026-11-16.md) · OpenAI Codex Seatbelt implementation (`codex-rs/sandboxing/src/seatbelt.rs`, `seatbelt_base_policy.sbpl`, `codex-rs/core/src/spawn.rs`, read on 2026-11-26)
@@ -55,6 +55,8 @@ The table keeps the options as they were put to the user. The outcomes are in D-
 | E9 | `sandbox_check` on a **nonexistent** pid, or an unreaped exited child, reports sandboxed with every name denied. Both are therefore non-members. |
 | E10 | `PROC_PIDTBSDINFO` returned nothing for 213 of 784 processes (other users). `PROC_PIDT_SHORTBSDINFO` answered for all 784 and agreed on pid, ppid and uid where both worked. It does not answer for a zombie. |
 | E11 | A scan of 786 processes took about 7 ms in Python. Polling every 20 ms would keep a large share of a core busy while a long-lived tree runs. |
+| E12 | Under `(deny default)` alone, a confined command read another same-user process's arguments and environment (`sysctl KERN_PROCARGS2`), and its open files and working directory. `(deny process-info*)` followed by `(allow process-info* (target same-sandbox))` closes this: its own child stays readable; outsiders, the parent and a second sandbox with the same profile are refused. Looking up a process's name and owner by pid (`kern.proc.pid.`) still works. |
+| E13 | A Full access profile (`allow default`) refuses to run setuid programs and refuses a different nested profile. |
 
 ## 5. Executor capability matrix (target state)
 
@@ -64,7 +66,8 @@ The table keeps the options as they were put to the user. The outcomes are in D-
 | Sandbox tree ownership | Bubblewrap `--unshare-pid` / `--die-with-parent` + process group | Seatbelt launch domain (§6) through the Darwin supervisor |
 | Once/task commands | Bubblewrap + subreaper supervisor | Seatbelt confinement + launch domain |
 | Full access ownership | Subreaper supervisor + `ECHILD` receipt | Allow-default Seatbelt profile with markers + launch-domain receipt |
-| Network policy | `--unshare-net` when local binding is disallowed | `deny network*` except allowlisted Unix sockets; G3 decides the Mach services |
+| Network policy | `--unshare-net` when local binding is disallowed | IP traffic and the G3 Mach services only when allowed. Unix sockets work under writable folders, the launch temp folder and the allowlist, **even with network off** (looser than a private network namespace for sockets in those folders) |
+| Other processes | PID namespace | Arguments, environment and open files are refused (E12); name and owner by pid stay visible |
 | Process-tree receipt | `renameat2(RENAME_NOREPLACE)`, `/proc` identity | `renamex_np(RENAME_EXCL)`; `gethostuuid`/`kern.bootsessionuuid`; `pid_namespace = 1` (one host namespace); start time from `proc_pidinfo(PROC_PIDTBSDINFO)` |
 | Owner IPC peer check | `SO_PEERCRED` | `LOCAL_PEERCRED` is already in `kohaku/remote/ipc.py:174` (no work) |
 | Known gaps vs Linux | — | Nested Seatbelt is refused (G2). `input_files` are read live (G4). Children started through launchd/XPC (`open`, Apple Events) are outside the tree, as with D-Bus activation on Linux. |
@@ -164,7 +167,7 @@ Write sets don't overlap. Every package keeps the strict-type repair gate from `
   - `(deny default)`, process exec/fork, and `signal`/`process-info` with `(target same-sandbox)`.
   - `(allow file-read*)`, then `deny file-read* file-write*` for `grants.sandbox_instance_root`, `grants.sandbox_private_roots`, managed-repository roots, other entries in `/private/tmp`, and the user's `$TMPDIR`.
   - `allow file-write*` for the agent home, read-write grants, read-write Once roots, and a per-launch private temp dir. The cache variables (`TMPDIR`, `XDG_CACHE_HOME`, …) point inside that dir.
-  - `/dev/null` and PTY rules taken from Codex. Network follows G3 and `allow_local_binding`. Unix-socket allowlist entries become `network-outbound (path …)`.
+  - `/dev/null` and PTY rules taken from Codex. Network follows G3 and `allow_local_binding`. Unix-socket allowlist entries become literal `network-outbound (remote unix-socket …)` rules.
   - The launch-domain markers.
   - Paths are passed with `-D` parameters, ordered most-specific-last. Later rules override earlier ones (E2).
 - **AC5.1 (golden).** Profile-generation tests cover parameter escaping, ordering (private masks win over a broad writable parent), and refusal for system-control overlap.
@@ -215,6 +218,16 @@ Write sets don't overlap. Every package keeps the strict-type repair gate from `
 - Pid reuse between the final check and `kill` is narrowed by K2, not eliminated. Linux has a similar small window.
 - Children started through launchd/XPC are outside the tracked tree. This is the same class of gap as Linux D-Bus activation.
 - Nested-Seatbelt tools (G2) are unavailable in both modes on macOS.
+- **Open decision.** setuid programs (for example `sudo`, `ps`, `top`) are refused inside any Seatbelt profile, so macOS Full access can do less than Linux Full access. Decide whether that is acceptable before the switch defaults to on.
+- **Open decision.** A Sandbox command with network access can reach the login Keychain service. Removing the `com.apple.SecurityServer` rule blocked it in the WP8 harness without changing a workload result. Reading a stored secret was not tested.
+- **Open decision.** Swift and Xcode package builds fail in Sandbox, because they need the per-user temp folder and Xcode services. In Full access they work only with the tool's own sandbox turned off.
+- Compiler and Xcode shims are slower in Sandbox (about 2-5 s against 0.1 s) while `xcrun` cannot write its cache.
+- A confined command can still learn another process's name and owner by pid (E12).
+- A confined command cannot write to the per-user `/var/folders` temp folder, so `mktemp` without a template fails there; tools that honour `TMPDIR` get the launch temp folder.
+- If the gateway or supervisor dies, receipt and launch temp folders can remain on disk.
+- An ephemeral session whose tree cannot be proven keeps its session slot.
+- A protected path that does not exist yet could be created under a different letter case.
+- The host self-test and profile probe run on first use and block the event loop while they do.
 
 
 ## 11. Implementation log
@@ -289,3 +302,75 @@ Write sets don't overlap. Every package keeps the strict-type repair gate from `
 - Ruff over `kohaku/` and `tests/`: 10 findings, identical to HEAD.
 
 **Next.** Run the `macos` job (or `tests/darwin` with the opt-in variable on a disposable host) to close AC3.2, then WP4.
+
+### 2026-11-27 — WP4 Darwin supervisor for Full access (committed on the work branch)
+
+**Done.**
+- The supervisor is split into a shared relay (I/O, launch gate, status protocol, receipt) and a `SupervisorBackend`. The Linux subreaper backend keeps its behaviour.
+- `native_process_supervisor_darwin.py` launches under `seatbelt/full.sbpl` plus the launch markers, kills and proves the tree, and publishes a receipt only for a proven one. A backend that gives up leaves the launch unknown (AC4.3).
+- The self-test now also requires that a marked process cannot replace its profile.
+- The feature switch `tools.exec.macosSeatbelt` (D-M5, default off) and the self-test gate `tree_ownership` on Darwin (AC4.1).
+- A different nested sandbox profile is reported with a note, and `KOHAKU_SANDBOX=seatbelt` is exported (G2a).
+
+**Not done.** AC4.4's optional re-scan after a restart stays out of scope.
+
+**Evidence.**
+- Full local suite: 15,772 passed, 15 failed (the known base set), 87 skipped; `tests/cli/test_commands.py`: 129 passed. Ruff: the same 10 findings as the base.
+- Hosted `macos` job (run 45829026417): 147 passed, 1 skipped. This ran the real-signal tests, which closes AC3.2 and the macOS part of AC4.2.
+
+### 2026-11-27 — WP5 Seatbelt Sandbox confinement (committed on the work branch)
+
+**Done.**
+- `seatbelt_profile.py`, `seatbelt/managed.sbpl` and `seatbelt/network.sbpl`, derived from OpenAI Codex (attribution and Apache-2.0 text in `THIRD_PARTY_NOTICES.md`).
+- `sandbox.prepare_managed_seatbelt` shares the mount, private-mask and socket selection with the bubblewrap path. `managed_seatbelt_available()` needs the switch, the self-test and a live probe that the gateway's process arguments are unreadable.
+- Confined launches get `/private/tmp/kh-<id>` with tool caches inside it, cannot reach receipt or profile files, and have leftovers killed when the root exits. The temp folder is removed only after proof, without following links.
+- Managed commands with no admission ledger use a private ephemeral receipt and stop if their owner disappears. The foreground result waits up to 15 s for the proof and says so if it does not arrive.
+
+**Deviations.**
+1. The planned `_wrap_managed_seatbelt` returns a `SeatbeltConfinement` (rules, parameters, argv, cwd) that the supervisor applies, instead of a wrapped command string. There is no unconfined fallback.
+2. A command keeps its real working directory.
+3. Hidden folders refuse access with "Operation not permitted"; bubblewrap shows them empty.
+4. Unix sockets follow the file rules (see §5).
+5. `process-info` needs an explicit deny (E12).
+
+**Acceptance.**
+- AC5.1: `tests/agent/test_seatbelt_profile.py`.
+- AC5.2: `tests/darwin/test_managed_confinement_host.py` runs the real sandbox without signalling (safe on any Mac). Escaped descendants are covered by two cases in `tests/agent/test_managed_exec.py`, which run only on the opted-in macOS job.
+- AC5.3: the managed exec scenarios now run on macOS in CI. The Linux-subreaper cases stay Linux-only; the Once descendant case moves to WP6.
+
+**Evidence (macOS 27.2.1 arm64).**
+- Linux bubblewrap command lines are byte-identical to the previous commit.
+- Strict types: 0 introduced in default, Darwin and Linux modes. Ruff: the same 10 findings as the base.
+- Full local suite: 15,837 passed, 15 failed (the known base set), 87 skipped; `tests/cli/test_commands.py`: 129 passed. Run before the two descendant cases were added and one test moved between files; each commit was then tested in a clean worktree.
+- Local workload probe under the managed profile: git, node, swift (version only), pty, multiprocessing semaphores and HTTPS worked; the WP8 matrix is still to be run.
+- Not run: a real Codex comparison, any Intel host, and any real-signal test on this machine.
+
+**Next.** WP6.
+
+### 2026-11-27 — WP6 Projection and Once/task commands (committed on the work branch)
+
+**Done.** `workspace_focus.py` asks for bubblewrap first and then Seatbelt, so a ready macOS host reports `commands.backend: "seatbelt"`. Linux projections and reason codes are unchanged. The Once descendant scenario became `test_once_sandbox_descendant_is_supervised_until_owner_receipt` and runs on both platforms.
+
+**Deviation.** `workspaces.py`, `workspace_access_recovery.py` and `exec_session.py` needed no further change: the WP1 seam and WP4/WP5 routing already covered them.
+
+**Evidence.**
+- AC6.1: `tests/agent/test_macos_seatbelt_switch.py`.
+- AC6.2: the session-close and deadline descendant cases in the `macos` job (run 45940179923: 239 passed, 7 skipped).
+- AC6.3: the parity test passes.
+
+### 2026-11-27 — WP7 WebUI (committed on the work branch)
+
+**Done.** `"seatbelt"` is accepted in the command backend type and in the `api.ts` parser. The plan listed only the type; the parser rejected unknown backends and would have dropped the whole effective-access projection.
+
+**Evidence.** AC7.1: 1,952 WebUI tests, build and lint passed. The existing composer test offers Full access when `can_enable_full` is true; the permission projection has no platform field, so no macOS-specific copy of it was added. No locale or menu change.
+
+### 2026-11-27 — WP8 Qualification (committed on the work branch)
+
+**Done.** The [qualification record](../../architecture/a3/macos-seatbelt-qualification-2026-11-27.md), a dated note under the A3 design capability table, and a `macos` CI step that runs the executor tests against the built wheel.
+
+**Evidence.**
+- Local full suite at WP7: 15,841 passed, 15 failed (the known base set), 89 skipped; `tests/cli/test_commands.py`: 129 passed. Strict types: 0 introduced in default, Darwin and Linux modes. Ruff: the same 10 findings as the base.
+- CI run 45940179923 (`aaff9140e`): `macos` and `webui` passed. Linux Python had 14 failures: 13 also fail on `staging`; the other, `test_io_volume_is_identical_for_short_and_long_history`, is timing-dependent and comes from base commit `85b19db76`.
+- CI run 45941759662 (`569619849`): the installed-wheel step passed (239 passed, 7 skipped).
+
+**Next.** The three open decisions, then the full code review.
