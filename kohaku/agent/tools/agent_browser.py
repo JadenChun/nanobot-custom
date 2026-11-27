@@ -678,9 +678,19 @@ class AgentBrowserTool(Tool):
         )
         if result.returncode == 0 and _is_screenshot_invocation(args):
             screenshot_path = _extract_screenshot_path(stdout_text, cwd)
+            grants = (
+                self._resource_policy.folder_grants
+                if self._resource_policy is not None
+                else None
+            )
+            is_private = (
+                screenshot_path is not None
+                and grants is not None
+                and grants.is_private_path(screenshot_path)
+            )
             image_block = (
                 _inline_screenshot_image(screenshot_path)
-                if screenshot_path is not None
+                if screenshot_path is not None and not is_private
                 else None
             )
             if image_block is not None:
