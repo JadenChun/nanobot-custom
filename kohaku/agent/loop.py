@@ -3956,7 +3956,7 @@ class AgentLoop:
         user_prompt: str = "",
     ) -> EffectApprovalAuthority | None:
         from kohaku.agent.approvals import PendingTurnApproval
-        from kohaku.agent.auto_review import review_sandbox_escalation
+        from kohaku.agent.auto_review import review_sandbox_escalation, sanitize_tool_arguments
 
         key = context.session_key
         owner = context.execution_owner
@@ -3984,11 +3984,18 @@ class AgentLoop:
             save_exclusion_command=decision.metadata.get("save_exclusion_command")
             if isinstance(decision.metadata.get("save_exclusion_command"), str) else None,
         )
-        command = call.arguments.get("command")
+        if call.name == "exec":
+            command = call.arguments.get("command")
+            serialized_arguments = json.dumps({"command": command} if isinstance(command, str) else {})
+        else:
+            serialized_arguments = json.dumps(
+                sanitize_tool_arguments(call.arguments),
+                ensure_ascii=False,
+            )
         approval = PendingTurnApproval(
             pending.approval_id, key, source.incarnation, context.run_id, source.generation,
             effect, call.name,
-            json.dumps({"command": command} if isinstance(command, str) else {}),
+            serialized_arguments,
             summary, pending.saveable_command(),
         )
 

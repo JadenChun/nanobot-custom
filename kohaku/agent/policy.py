@@ -677,10 +677,10 @@ class RiskyActionPolicy(ToolPolicy):
         explicit = match_explicit_rule(self.permissions, tool_call, workspace=self.workspace)
         if explicit == "deny":
             return self._refuse_denied_rule(tool_call)
-        if (crossing := self._sandbox_crossing_reason(tool_call)) is not None:
-            return crossing
         if explicit == "allow":
             return None
+        if (crossing := self._sandbox_crossing_reason(tool_call)) is not None:
+            return crossing
 
         if tool_call.name == "cron":
             return "schedule a recurring automation" if (explicit == "ask" or profile == "strict") else None

@@ -167,14 +167,13 @@ async def test_explicit_ask_or_deny_rule_bypasses_llm(tmp_path: Path) -> None:
     assert provider.calls == []
 
 
-def test_non_exec_tool_is_ineligible(tmp_path: Path) -> None:
+def test_safe_non_exec_tool_is_eligible(tmp_path: Path) -> None:
     reason = check_auto_review_eligibility(
         ToolCallRequest(id="call-1", name="write_file", arguments={"path": "a.txt", "content": "x"}),
         permissions=ToolPermissionsConfig(sandbox_auto_review=True),
         workspace=tmp_path,
     )
-    assert reason is not None
-    assert "non-exec" in reason
+    assert reason is None
 
 
 @pytest.mark.parametrize("raw_content", [
