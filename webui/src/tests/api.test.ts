@@ -400,6 +400,45 @@ describe("webui API helpers", () => {
     });
   });
 
+  it.each([
+    ["seatbelt", true],
+    ["unknown-sandbox", false],
+  ])("accepts only known command backends: %s", async (backend, accepted) => {
+    const emitted = onceResponseFixture as WorkspaceOnceActionResult;
+    const request = emitted.workspace_access_request;
+    const receipt = emitted.once_receipt;
+    const selected = request.selected_access!;
+    const effectiveAccess = {
+      ...selected,
+      commands: { requested: true, available: true, backend, reason: null },
+    };
+    requestMutation.mockResolvedValueOnce({
+      ...emitted,
+      workspace_access_request: { ...request, selected_access: effectiveAccess },
+      workspace_scope: { ...emitted.workspace_scope, effective_access: effectiveAccess },
+    });
+
+    const parsed = allowWorkspaceAccessOnce(mutationTransport, {
+      chat_id: request.chat_id,
+      access_request_id: request.access_request_id,
+      expected_revision: request.revision - 1,
+      path: receipt.submitted_path,
+      file_access: receipt.file_access,
+      commands: receipt.commands,
+      expected_grants_revision: 0,
+      expected_runtime_id: receipt.runtime_id,
+      expected_permission_revision: receipt.permission_revision - 1,
+    }, request.task.turn_id);
+
+    if (accepted) {
+      await expect(parsed).resolves.toMatchObject({
+        workspace_scope: { effective_access: { commands: { backend } } },
+      });
+    } else {
+      await expect(parsed).rejects.toThrow();
+    }
+  });
+
   it("accepts an exact home-relative submitted path with a canonical Once receipt path", async () => {
     const emitted = onceResponseFixture as WorkspaceOnceActionResult;
     const submittedPath = "~/Documents/Client project";

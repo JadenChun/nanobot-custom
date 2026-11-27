@@ -251,6 +251,7 @@ function parseWorkspaceGrantReceipt(
   };
 }
 
+const COMMAND_BACKENDS = new Set(["native", "bwrap", "seatbelt", "none"]);
 const PERMISSION_FULL_REASONS = new Set([
   "controls_unavailable",
   "session_required",
@@ -341,7 +342,7 @@ function parseEffectiveWorkspaceAccess(value: unknown): EffectiveWorkspaceAccess
     || (value.boundary !== "folder" && value.boundary !== "unrestricted")
     || typeof commands.requested !== "boolean"
     || typeof commands.available !== "boolean"
-    || (commands.backend !== "native" && commands.backend !== "bwrap" && commands.backend !== "none")
+    || !COMMAND_BACKENDS.has(String(commands.backend))
     || (commands.reason !== null && (typeof commands.reason !== "string" || !commandReasons.has(commands.reason)))
   ) return null;
   return value as unknown as EffectiveWorkspaceAccess;

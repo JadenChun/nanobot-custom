@@ -748,7 +748,7 @@ export interface EffectiveWorkspaceAccess {
   commands: {
     requested: boolean;
     available: boolean;
-    backend: "native" | "bwrap" | "none";
+    backend: "native" | "bwrap" | "seatbelt" | "none";
     reason: CommandUnavailableReason | null;
   };
 }
