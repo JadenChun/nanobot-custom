@@ -157,10 +157,7 @@ def load_config(config_path: Path | None = None, *, apply_network_policy: bool =
 
 def _apply_process_policy(config: Config) -> None:
     """Apply the loaded settings that govern this whole process."""
-    from kohaku.agent.tools.executor_capabilities import configure_macos_seatbelt
-
     _apply_ssrf_whitelist(config)
-    configure_macos_seatbelt(config.tools.exec.macos_seatbelt)
 
 
 def _apply_ssrf_whitelist(config: Config) -> None:

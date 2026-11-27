@@ -1,4 +1,4 @@
-"""The macOS executor switch gates tree ownership and fails closed (D-M5)."""
+"""The macOS executor is gated by the host self-test alone and fails closed (D-M5)."""
 
 from __future__ import annotations
 
@@ -41,19 +41,8 @@ def _platform(monkeypatch: pytest.MonkeyPatch, platform: str) -> None:
     monkeypatch.setattr(capabilities, "current_platform", lambda: platform)
 
 
-def test_switch_off_never_runs_the_self_test(monkeypatch, self_test) -> None:
+def test_a_passing_self_test_enables_ownership_once(monkeypatch, self_test) -> None:
     _platform(monkeypatch, "darwin")
-
-    assert capabilities.tree_ownership() is None
-    assert self_test.runs == []
-    assert native_process._supervisor_module().endswith("native_process_supervisor")
-
-
-def test_switch_on_with_a_passing_self_test_enables_ownership_once(
-    monkeypatch, self_test,
-) -> None:
-    _platform(monkeypatch, "darwin")
-    capabilities.configure_macos_seatbelt(True)
 
     assert capabilities.tree_ownership() == "darwin_seatbelt"
     assert capabilities.tree_ownership() == "darwin_seatbelt"
@@ -64,19 +53,19 @@ def test_switch_on_with_a_passing_self_test_enables_ownership_once(
 def test_a_failing_self_test_fails_closed(monkeypatch, self_test) -> None:
     _platform(monkeypatch, "darwin")
     self_test.ok = False
-    capabilities.configure_macos_seatbelt(True)
 
     assert capabilities.tree_ownership() is None
     assert capabilities.confinement() is None
+    assert native_process._supervisor_module().endswith("native_process_supervisor")
 
 
 @pytest.mark.parametrize("platform", ["linux", "other"])
-def test_switch_changes_nothing_off_macos(monkeypatch, self_test, platform: str) -> None:
+def test_the_self_test_never_runs_off_macos(monkeypatch, self_test, platform: str) -> None:
     _platform(monkeypatch, platform)
-    before = capabilities.tree_ownership()
-    capabilities.configure_macos_seatbelt(True)
 
-    assert capabilities.tree_ownership() == before
+    capabilities.tree_ownership()
+    capabilities.confinement()
+
     assert self_test.runs == []
 
 
@@ -90,22 +79,22 @@ def _macos(monkeypatch: pytest.MonkeyPatch, *, profile_ok: bool) -> None:
 
 
 @pytest.mark.parametrize(
-    ("switch", "profile_ok", "full_expected", "once_expected"),
+    ("self_test_ok", "profile_ok", "full_expected", "once_expected"),
     [
-        (False, True, (False, "none", "supervisor_unavailable"),
-         (False, "none", "supervisor_unavailable")),
         (True, True, (True, "native", None), (True, "seatbelt", None)),
         # Ownership alone opens Full access. Once also needs confinement.
         (True, False, (True, "native", None), (False, "none", "sandbox_unavailable")),
+        # A host that fails the self-test gets neither.
+        (False, True, None, (False, "none", "supervisor_unavailable")),
     ],
 )
-def test_macos_projections_follow_the_switch(
-    tmp_path: Path, monkeypatch, self_test, switch: bool, profile_ok: bool,
-    full_expected: tuple[bool, str, str | None],
+def test_macos_projections_follow_the_host_check(
+    tmp_path: Path, monkeypatch, self_test, self_test_ok: bool, profile_ok: bool,
+    full_expected: tuple[bool, str, str | None] | None,
     once_expected: tuple[bool, str, str | None],
 ) -> None:
     _macos(monkeypatch, profile_ok=profile_ok)
-    capabilities.configure_macos_seatbelt(switch)
+    self_test.ok = self_test_ok
     owner, sessions, _home = _build(tmp_path)
     enable = functools.partial(
         sessions.desktop_permissions.enable_full,
@@ -116,7 +105,7 @@ def test_macos_projections_follow_the_switch(
     )
     project = tmp_path / "project"
     project.mkdir()
-    if not switch:
+    if full_expected is None:
         with pytest.raises(WorkspacePermissionUnavailableError):
             enable()
     else:
@@ -141,50 +130,34 @@ def test_macos_projections_follow_the_switch(
     assert (once["source"], _commands(once)) == ("task", once_expected)
 
 
-@pytest.mark.parametrize(
-    ("tools", "enabled"),
-    [({}, False), ({"exec": {"macosSeatbelt": True}}, True)],
-)
-def test_loading_a_config_applies_the_switch(
-    tmp_path: Path, monkeypatch, self_test, tools: dict[str, object], enabled: bool,
+@pytest.mark.parametrize("tools", [{}, {"exec": {"macosSeatbelt": False}}])
+def test_loading_a_config_does_not_gate_the_executor(
+    tmp_path: Path, monkeypatch, self_test, tools: dict[str, object],
 ) -> None:
+    """An old config that still carries the retired switch loads and changes nothing."""
     _platform(monkeypatch, "darwin")
-    capabilities.configure_macos_seatbelt(not enabled)
     path = tmp_path / "config.json"
     path.write_text(json.dumps({"tools": tools}), encoding="utf-8")
 
     load_config(path)
 
-    assert capabilities.macos_seatbelt_ready() is enabled
-
-
-def test_loading_without_process_policy_leaves_the_switch_alone(
-    tmp_path: Path, monkeypatch, self_test,
-) -> None:
-    _platform(monkeypatch, "darwin")
-    capabilities.configure_macos_seatbelt(True)
-    path = tmp_path / "config.json"
-    path.write_text("{}", encoding="utf-8")
-
-    load_config(path, apply_network_policy=False)
-
     assert capabilities.macos_seatbelt_ready() is True
 
 
 @pytest.mark.parametrize(
-    ("switch", "profile_ok", "expected"),
+    ("self_test_ok", "profile_ok", "expected"),
     [
-        (False, True, (False, "none", "unsupported_platform")),
         (True, True, (True, "seatbelt", None)),
+        (False, True, (False, "none", "unsupported_platform")),
         (True, False, (False, "none", "unsupported_platform")),
     ],
 )
-def test_macos_sandbox_commands_follow_the_switch(
-    tmp_path: Path, monkeypatch, self_test, switch: bool, profile_ok: bool,
+def test_macos_sandbox_commands_follow_the_host_check(
+    tmp_path: Path, monkeypatch, self_test, self_test_ok: bool, profile_ok: bool,
     expected: tuple[bool, str, str | None],
 ) -> None:
     _macos(monkeypatch, profile_ok=profile_ok)
-    capabilities.configure_macos_seatbelt(switch)
+    self_test.ok = self_test_ok
     owner, _sessions, home = _build(tmp_path)
 
     access = owner.effective_access(home)

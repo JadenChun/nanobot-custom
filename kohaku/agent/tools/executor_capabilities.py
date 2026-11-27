@@ -7,8 +7,7 @@ Managed command execution rests on two independent guarantees:
   authority can be retired with nothing left running.
 
 Linux gets confinement from bubblewrap and ownership from the subreaper
-supervisor. macOS gets both from Seatbelt, only when the operator enabled it
-(tools.exec.macosSeatbelt) and the host passes the self-test. Anything else
+supervisor. macOS gets both from Seatbelt when the host passes the self-test. Anything else
 reports neither, so shell admission fails closed there. Platform support is added
 by teaching the two selectors below a new value, not by branching in call sites.
 
@@ -49,15 +48,6 @@ def current_platform() -> Platform:
     if sys.platform == "darwin":
         return "darwin"
     return "other"
-
-
-_macos_seatbelt_enabled = False
-
-
-def configure_macos_seatbelt(enabled: bool) -> None:
-    """Apply the operator's macOS Seatbelt switch to this process."""
-    global _macos_seatbelt_enabled
-    _macos_seatbelt_enabled = enabled
 
 
 _RETRY_AFTER_FAILURE_SECONDS = 300.0
@@ -118,7 +108,7 @@ def _macos_self_test_passed() -> bool:
 
 
 def macos_seatbelt_ready() -> bool:
-    return _macos_seatbelt_enabled and _macos_self_test_passed()
+    return _macos_self_test_passed()
 
 
 def tree_ownership() -> TreeOwnership | None:

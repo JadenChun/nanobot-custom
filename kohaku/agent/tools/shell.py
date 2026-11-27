@@ -185,9 +185,6 @@ class ExecToolConfig(Base):
     sandbox_excluded_commands: list[str] = Field(default_factory=list)
     sandbox_allow_local_binding: bool = True
     sandbox_allow_unix_sockets: list[str] = Field(default_factory=list)
-    # macOS only, off until qualified: run commands under Seatbelt so that their
-    # whole process tree can be tracked. Takes effect after a restart.
-    macos_seatbelt: bool = False
     allowed_env_keys: list[str] = Field(default_factory=list)
     allow_patterns: list[str] = Field(default_factory=list)
     deny_patterns: list[str] = Field(default_factory=list)

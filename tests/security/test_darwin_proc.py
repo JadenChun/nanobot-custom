@@ -155,6 +155,7 @@ def test_rename_excl_publishes_once_and_never_replaces(tmp_path: Path) -> None:
 
 
 @on_darwin
+@pytest.mark.real_macos_self_test
 def test_self_test_passes_on_this_host() -> None:
     result = darwin.seatbelt_self_test()
 
@@ -163,6 +164,7 @@ def test_self_test_passes_on_this_host() -> None:
 
 
 @on_darwin
+@pytest.mark.real_macos_self_test
 def test_self_test_detects_a_predicate_that_matches_everything(monkeypatch) -> None:
     monkeypatch.setattr(darwin, "_CHILD_SECONDS", 2)
     monkeypatch.setattr(darwin, "is_member", lambda pid, launch_id: True)
@@ -174,6 +176,7 @@ def test_self_test_detects_a_predicate_that_matches_everything(monkeypatch) -> N
 
 
 @on_darwin
+@pytest.mark.real_macos_self_test
 def test_self_test_detects_a_predicate_that_matches_nothing(monkeypatch) -> None:
     monkeypatch.setattr(darwin, "_CHILD_SECONDS", 2)
     monkeypatch.setattr(darwin, "_ESTABLISH_SECONDS", 0.3)

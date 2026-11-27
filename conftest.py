@@ -6,8 +6,9 @@ import json
 import os
 import ssl
 import sys
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from pathlib import Path
+from typing import Any
 
 import certifi
 import pytest
@@ -119,33 +120,58 @@ def _use_windows_system_ca_for_default_http_clients() -> Iterator[None]:
         ssl.create_default_context = original
 
 
-@pytest.fixture
-def native_supervisor_host() -> Iterator[None]:
-    """Enable the macOS Seatbelt executor for one test and require its self-test."""
-    from kohaku.agent.tools import executor_capabilities
-
-    executor_capabilities.configure_macos_seatbelt(True)
-    try:
-        assert executor_capabilities.tree_ownership_available()
-        yield
-    finally:
-        executor_capabilities.configure_macos_seatbelt(False)
+_REAL_SEATBELT_SELF_TEST: Callable[[], Any] | None = None
 
 
 @pytest.fixture(autouse=True)
-def _isolate_macos_seatbelt_switch() -> Iterator[None]:
-    """A test that loads a config must not leave the executor switch enabled."""
-    from kohaku.agent.tools import executor_capabilities
+def _hermetic_macos_self_test(
+    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
+) -> Iterator[None]:
+    """Keep the real macOS self-test out of tests unless one asks for it.
 
-    executor_capabilities.configure_macos_seatbelt(False)
+    The executor is gated by the host self-test alone. Without this, a test run on
+    a Mac would launch real Seatbelt probes and change what every test sees. A test
+    that wants a capable macOS host patches the self-test or uses native_supervisor_host.
+    A test of the self-test itself opts out with the real_macos_self_test marker.
+    """
+    global _REAL_SEATBELT_SELF_TEST
+    from kohaku.agent.tools import executor_capabilities
+    from kohaku.security import darwin_proc
+
+    if _REAL_SEATBELT_SELF_TEST is None:
+        _REAL_SEATBELT_SELF_TEST = darwin_proc.seatbelt_self_test
+    if request.node.get_closest_marker("real_macos_self_test") is None:
+        monkeypatch.setattr(
+            darwin_proc,
+            "seatbelt_self_test",
+            lambda: darwin_proc.SelfTestResult(False, ("not exercised in tests",)),
+        )
+    executor_capabilities._macos_self_test_passed.cache_clear()
     yield
-    executor_capabilities.configure_macos_seatbelt(False)
+    executor_capabilities._macos_self_test_passed.cache_clear()
+
+
+@pytest.fixture
+def native_supervisor_host(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """Run one test against the real macOS self-test and require that it passes."""
+    from kohaku.agent.tools import executor_capabilities
+    from kohaku.security import darwin_proc
+
+    assert _REAL_SEATBELT_SELF_TEST is not None
+    monkeypatch.setattr(darwin_proc, "seatbelt_self_test", _REAL_SEATBELT_SELF_TEST)
+    executor_capabilities._macos_self_test_passed.cache_clear()
+    assert executor_capabilities.tree_ownership_available()
+    yield
 
 
 def pytest_configure(config: pytest.Config) -> None:
     config.addinivalue_line(
         "markers",
         "darwin_host: signals real processes; runs only on an opted-in macOS host",
+    )
+    config.addinivalue_line(
+        "markers",
+        "real_macos_self_test: runs the real Seatbelt self-test instead of the test double",
     )
 
 
