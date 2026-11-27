@@ -1,4 +1,4 @@
-import { memo, type RefObject, useCallback, useEffect, useMemo, useRef } from "react";
+import { memo, type RefObject, useCallback, useEffect, useLayoutEffect, useMemo, useRef } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useTranslation } from "react-i18next";
 import { MessageBubble } from "@/components/MessageBubble";
@@ -37,6 +37,8 @@ interface ThreadMessagesProps {
   delegatedStatusAvailable?: boolean;
   /** Prompt id (stable ``promptId`` or row ``id``) currently highlighted after a reveal. */
   highlightedPromptId?: string | null;
+  childJump?: { childId: string } | null;
+  onChildJumpTarget?: (row: HTMLElement) => void;
   /** Scrollport ref for virtualized infinite scrolling from the bottom. */
   scrollRef?: RefObject<HTMLDivElement | null>;
   /** Enable TanStack Virtual end-anchored virtualization (disabled in layoutless DOMs). */
@@ -95,6 +97,8 @@ export const ThreadMessages = memo(function ThreadMessages({
   onOpenChildHistory,
   delegatedStatusAvailable = true,
   highlightedPromptId = null,
+  childJump = null,
+  onChildJumpTarget,
   scrollRef,
   virtualize = false,
   onRegisterScrollToPrompt,
@@ -259,6 +263,28 @@ export const ThreadMessages = memo(function ThreadMessages({
     return () => onRegisterScrollToPrompt(null);
   }, [onRegisterScrollToPrompt, shouldVirtualize, units, virtualizer]);
 
+  const childJumpIndex = useMemo(() => !childJump ? -1 : units.findIndex((unit) => (
+    unit.type === "activity"
+      ? unit.messages.some((message) => message.delegatedChild?.child_id === childJump.childId)
+      : unit.message.delegatedChild?.child_id === childJump.childId
+  )), [childJump, units]);
+  const virtualItems = virtualizer.getVirtualItems();
+  const childJumpMounted = !shouldVirtualize || virtualItems.some((item) => item.index === childJumpIndex);
+  useLayoutEffect(() => {
+    if (!childJump || childJumpIndex === -1 || !onChildJumpTarget) return;
+    if (!childJumpMounted) {
+      virtualizer.scrollToIndex(childJumpIndex, { align: "center", behavior: "auto" });
+      return;
+    }
+    // An activity fold opens in its layout effect before we measure the row.
+    const frame = window.requestAnimationFrame(() => {
+      const rows = messageListRef.current?.querySelectorAll<HTMLElement>("[data-delegated-child]");
+      const row = rows && Array.from(rows).find((element) => element.dataset.delegatedChild === childJump.childId);
+      if (row) onChildJumpTarget(row);
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [childJump, childJumpIndex, childJumpMounted, onChildJumpTarget, virtualizer]);
+
   const renderUnit = (unit: DisplayUnit, index: number, usePaddingSpacing: boolean) => {
     const prev = units[index - 1];
     const marginTop =
@@ -355,12 +381,12 @@ export const ThreadMessages = memo(function ThreadMessages({
         onForkFromMessage={onForkFromMessage}
         onOpenChildHistory={onOpenChildHistory}
         delegatedStatusAvailable={delegatedStatusAvailable}
+        childJump={index === childJumpIndex ? childJump : null}
       />
     );
   };
 
   if (shouldVirtualize) {
-    const virtualItems = virtualizer.getVirtualItems();
     return (
       <div ref={messageListRef} className="flex w-full flex-col">
         <AssistantSelectionAction
@@ -455,6 +481,7 @@ interface ThreadDisplayUnitProps {
   onForkFromMessage?: (beforeUserIndex: number) => void;
   onOpenChildHistory?: (child: DelegatedChildReference, trigger: HTMLButtonElement) => void;
   delegatedStatusAvailable: boolean;
+  childJump: { childId: string } | null;
 }
 
 const ThreadDisplayUnit = memo(function ThreadDisplayUnit({
@@ -483,6 +510,7 @@ const ThreadDisplayUnit = memo(function ThreadDisplayUnit({
   onForkFromMessage,
   onOpenChildHistory,
   delegatedStatusAvailable,
+  childJump,
 }: ThreadDisplayUnitProps) {
   const onForkFromHere = useCallback(() => {
     if (forkIndex !== undefined) onForkFromMessage?.(forkIndex);
@@ -513,6 +541,9 @@ const ThreadDisplayUnit = memo(function ThreadDisplayUnit({
             cliApps={cliApps}
             mcpPresets={mcpPresets}
             onOpenFilePreview={onOpenFilePreview}
+            onOpenChildHistory={onOpenChildHistory}
+            delegatedStatusAvailable={delegatedStatusAvailable}
+            childJump={childJump}
           />
         ) : (
           <MessageBubble
@@ -566,6 +597,7 @@ function threadDisplayUnitPropsEqual(
     && previous.onOpenFilePreview === next.onOpenFilePreview
     && previous.onOpenChildHistory === next.onOpenChildHistory
     && previous.delegatedStatusAvailable === next.delegatedStatusAvailable
+    && previous.childJump === next.childJump
     && previous.onForkFromMessage === next.onForkFromMessage
   );
 }

@@ -1,9 +1,10 @@
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { SessionInfoPopover } from "@/components/thread/SessionInfoPopover";
+import { SessionInfoPopover, SessionSummaryCard } from "@/components/thread/SessionInfoPopover";
 import { setAppLanguage } from "@/i18n";
+import type { DelegatedChildPayload } from "@/lib/types";
 
 function automationJob(
   nextRunAt = Date.now() + 3_600_000,
@@ -43,6 +44,45 @@ describe("SessionInfoPopover", () => {
     vi.unstubAllGlobals();
   });
 
+  it("lists session subagents newest first, with their own status, metrics and actions", async () => {
+    const user = userEvent.setup();
+    const older: DelegatedChildPayload = {
+      child_id: "old", child_session_key: "delegated:old", profile: "worker",
+      state: "completed", runtime_generation: 0, task_label: "Review setup",
+    };
+    const newer: DelegatedChildPayload = {
+      ...older, child_id: "new", child_session_key: "delegated:new", harness: "claude_sdk",
+      task_label: "Trace recent work", outcome: "partial", duration_ms: 62_000, step_count: 0,
+    };
+    const onJump = vi.fn();
+    const onOpenHistory = vi.fn();
+    render(
+      <SessionSummaryCard sessionKey="websocket:chat-1" token="tok" title="Release work" active
+        subagents={{
+          entries: [{ child: older, createdAt: 1000, canJump: false }, { child: newer, createdAt: 2000, canJump: true }],
+          statusAvailable: true, onJump, onOpenHistory,
+        }}
+      />,
+    );
+    const section = within(screen.getByRole("region", { name: "Subagents (2)" }));
+    const [first, second] = section.getAllByRole("listitem");
+    expect(first).toHaveTextContent("Trace recent work");
+    expect(first).toHaveTextContent("Claude");
+    expect(first).toHaveTextContent("Partial");
+    expect(first).toHaveTextContent("1m 2s");
+    expect(first).toHaveTextContent("0 steps");
+    expect(second).toHaveTextContent("Review setup");
+    expect(second).toHaveTextContent("Kohaku");
+    expect(second).not.toHaveTextContent(/\d steps/);
+    expect(within(second).getByRole("button", { name: /Jump to.*Review setup/ })).toBeDisabled();
+    await user.click(within(first).getByRole("button", { name: /Jump to.*Trace recent work/ }));
+    expect(onJump).toHaveBeenCalledWith(newer);
+    const openHistory = within(first).getByRole("button", { name: /Open history.*Trace recent work/ });
+    await user.click(openHistory);
+    expect(onOpenHistory).toHaveBeenCalledWith(newer, openHistory);
+    expect(await screen.findByText("Morning check")).toBeInTheDocument();
+  });
+
   it("loads and displays session automations when opened", async () => {
     const user = userEvent.setup();
 
@@ -67,6 +107,7 @@ describe("SessionInfoPopover", () => {
       );
     });
     expect(await screen.findByText("Morning check")).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: /Subagents/ })).not.toBeInTheDocument();
     expect(screen.getByText("Check the project status")).toBeInTheDocument();
   });
 

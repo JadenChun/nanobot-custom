@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
 import math
 import re
 import threading
@@ -23,7 +24,7 @@ import time
 import uuid
 import weakref
 from dataclasses import dataclass, field, replace
-from typing import Any, Literal, Mapping, cast
+from typing import Any, Literal, Mapping, Sequence, cast
 
 from loguru import logger
 
@@ -58,6 +59,11 @@ _TERMINAL_STATES = frozenset({
 })
 _HISTORICAL_TERMINAL_STATES = frozenset({"completed", "failed", "stopped", "refused"})
 _SAFE_RUN_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
+# Completed children with one of these outcomes returned usable work and accept follow-ups.
+SETTLED_RESULT_OUTCOMES = frozenset({"completed", "partial"})
+_TASK_LABEL_LIMIT = 60
+_RESULT_SUMMARY_LIMIT = 1000
+_EXPLORE_REPORT = re.compile(r"---EXPLORE---\s*\n(.*?)\n\s*---END---", re.DOTALL)
 STOP_SETTLE_TIMEOUT = 10.0
 
 
@@ -226,6 +232,13 @@ class ChildAdmission:
     background_result: PendingBackgroundResult | None = None
     created_at: float = field(default_factory=time.time)
     updated_at: float = field(default_factory=time.time)
+    # Parent tool call that spawned this child. Display anchoring only.
+    spawn_call_id: str | None = None
+    # Current run timing. Display only; the totals are written when the run finishes.
+    run_started_at: float | None = None
+    run_tool_baseline: int | None = None
+    duration_ms: int | None = None
+    step_count: int | None = None
 
     @property
     def live(self) -> bool:
@@ -246,6 +259,7 @@ class ChildAdmission:
             **({"harness": self.harness} if self.harness != "native" else {}),
             "depth": self.depth,
             "attempt_id": self.attempt_id,
+            **({"spawn_call_id": self.spawn_call_id} if self.spawn_call_id is not None else {}),
             "assignment_digest": self.assignment_digest,
             "assignment": self.assignment,
             "task_label": self.task_label,
@@ -278,6 +292,16 @@ class ChildAdmission:
             ),
             "created_at": self.created_at,
             "updated_at": self.updated_at,
+            **{
+                name: value
+                for name, value in (
+                    ("run_started_at", self.run_started_at),
+                    ("run_tool_baseline", self.run_tool_baseline),
+                    ("duration_ms", self.duration_ms),
+                    ("step_count", self.step_count),
+                )
+                if value is not None
+            },
         }
 
 
@@ -296,10 +320,95 @@ def assignment_digest(
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
-def _display_preview(value: str, limit: int) -> tuple[str, bool]:
-    """Normalize whitespace for a bounded display field only."""
-    normalized = " ".join(value.split())
-    return normalized[:limit], len(normalized) > limit
+def _relative_paths(text: str, roots: Sequence[str]) -> str:
+    """Shorten absolute workspace paths; a bare root becomes its folder name."""
+    for root in sorted({item.rstrip("/\\") for item in roots}, key=len, reverse=True):
+        name = re.split(r"[/\\]", root)[-1]
+        if not name or name == root:
+            continue
+        start = r"(?<![\w./\\-])" + re.escape(root)
+        text = re.sub(start + r"[/\\](?=[\w.])", "", text)
+        text = re.sub(start + r"[/\\]?(?![\w/\\-]|\.\w)", lambda _: name, text)
+    return text
+
+
+def _first_sentence(text: str) -> str:
+    """First sentence of the first paragraph, skipping generic contract headings."""
+    paragraph: list[str] = []
+    for line in text.splitlines():
+        marker = re.match(r"\s*(?:#{1,6}\s+|[-*+>]\s+|\d+[.)]\s+)+", line)
+        if marker is not None and paragraph:
+            break
+        cleaned = line[marker.end() if marker else 0:].replace("**", "").replace("`", "").strip()
+        cleaned = re.sub(
+            r"^(?:objective|goal|task contract|task|contract|context|assignment)\s*(?::\s*|$)",
+            "", cleaned, flags=re.IGNORECASE,
+        )
+        if not cleaned:
+            if paragraph:
+                break
+            continue
+        paragraph.append(cleaned)
+        if marker is not None and "#" in marker.group():
+            break
+    sentence = " ".join(" ".join(paragraph).split())
+    for end in re.finditer(r"[.!?](?=\s|$)|[。！？]", sentence):
+        if not re.search(r"\b(?:e\.g|i\.e|vs|etc)\.$", sentence[:end.end()], re.IGNORECASE):
+            sentence = sentence[:end.end()]
+            break
+    return sentence.removesuffix(".")
+
+
+def _task_label(
+    assignment: str, label: str | None, workspace_roots: Sequence[str],
+) -> tuple[str, bool]:
+    """Short display title: the caller's label, else the first sentence of the assignment."""
+    text = " ".join((label or "").split())
+    if not text:
+        relative = _relative_paths(assignment, workspace_roots)
+        text = _first_sentence(relative) or " ".join(relative.split())
+    if len(text) <= _TASK_LABEL_LIMIT:
+        return text, False
+    cut = text[:_TASK_LABEL_LIMIT]
+    space = cut.rfind(" ")
+    cut = cut[:space] if space >= _TASK_LABEL_LIMIT // 2 else cut[:-1]
+    return cut.rstrip(" ,;:(") + "…", True
+
+
+def parse_explore_report(text: str) -> dict[str, object] | None:
+    """Read the structured report that ends an exploration reply, when it is valid."""
+    match = _EXPLORE_REPORT.search(text)
+    if match is None:
+        return None
+    try:
+        payload: object = json.loads(match.group(1).strip())
+    except ValueError:
+        return None
+    return cast(dict[str, object], payload) if isinstance(payload, dict) else None
+
+
+def _readable_explore_reply(text: str) -> str:
+    """Hide the machine report from display text, or render it when nothing else was said."""
+    report = parse_explore_report(text)
+    if report is None:
+        return text
+    if prose := _EXPLORE_REPORT.sub("", text).strip():
+        return prose
+    findings = report.get("findings")
+    bullets = "\n".join(
+        f"- {item}" for item in cast(list[object], findings if isinstance(findings, list) else [])
+    )
+    return "\n\n".join(
+        part for part in (str(report.get("summary") or "").strip(), bullets) if part
+    ) or text
+
+
+def _result_preview(value: str) -> tuple[str, bool]:
+    """Bound a result summary while keeping its line structure."""
+    unix = value.replace("\r\n", "\n").replace("\r", "\n")
+    normalized = re.sub(r"\n{3,}", "\n\n", unix)
+    normalized = normalized.strip()
+    return normalized[:_RESULT_SUMMARY_LIMIT], len(normalized) > _RESULT_SUMMARY_LIMIT
 
 
 def _source_state_payload(state: SourceState | None) -> dict[str, object] | None:
@@ -538,6 +647,13 @@ def _parse_child_admission(key: str, data: Mapping[str, object]) -> ChildAdmissi
             raise ValueError(f"child timestamp {name!r} is invalid")
         return float(value)
 
+    def run_total(name: str) -> int | None:
+        # Optional display facts: older or malformed values read as unknown.
+        value = data.get(name)
+        return value if type(value) is int and value >= 0 else None
+
+    run_started_at = data.get("run_started_at")
+
     return ChildAdmission(
         child_id=child_id,
         session_key=session_key,
@@ -576,6 +692,17 @@ def _parse_child_admission(key: str, data: Mapping[str, object]) -> ChildAdmissi
         background_result=background_result,
         created_at=timestamp("created_at"),
         updated_at=timestamp("updated_at"),
+        spawn_call_id=optional_text("spawn_call_id"),
+        run_started_at=(
+            float(run_started_at)
+            if isinstance(run_started_at, (int, float))
+            and not isinstance(run_started_at, bool)
+            and math.isfinite(run_started_at)
+            else None
+        ),
+        run_tool_baseline=run_total("run_tool_baseline"),
+        duration_ms=run_total("duration_ms"),
+        step_count=run_total("step_count"),
     )
 
 
@@ -1048,7 +1175,7 @@ class DelegationTree:
                     updated_at=time.time(),
                 )
             else:
-                summary, summary_truncated = _display_preview(intent.result, 1000)
+                summary, summary_truncated = self._result_summary(current, intent.result)
                 updated = replace(
                     current,
                     background_result=replace(
@@ -1466,6 +1593,9 @@ class DelegationTree:
         expected_parent_source_state: SourceState | None = None,
         background_delivery: BackgroundDeliveryIntent | None = None,
         harness: ChatHarness = "native",
+        spawn_call_id: str | None = None,
+        label: str | None = None,
+        workspace_roots: Sequence[str] = (),
     ) -> ChildAdmission | ChildRefusal:
         """Reserve one child slot before launch, or return an existing attempt."""
         if profile not in SUPPORTED_CHILD_PROFILES:
@@ -1479,7 +1609,7 @@ class DelegationTree:
             assignment=assignment,
             policy_facts=facts,
         )
-        task_label, task_label_truncated = _display_preview(assignment, 160)
+        task_label, task_label_truncated = _task_label(assignment, label, workspace_roots)
         parent_runtime = read_runtime_session(self.sessions, parent_key)
         if parent_runtime.present and not parent_runtime.executable:
             return ChildRefusal(
@@ -1610,6 +1740,7 @@ class DelegationTree:
                 parent_source_state=parent_source_state,
                 root_source_state=root_source_state,
                 background_delivery=background_delivery,
+                spawn_call_id=spawn_call_id,
             )
             try:
                 if self.sessions.has_managed_authority:
@@ -1682,6 +1813,10 @@ class DelegationTree:
                 result_summary=None,
                 result_summary_truncated=False,
                 outcome=None,
+                run_started_at=time.time(),
+                run_tool_baseline=self._tool_result_count(current),
+                duration_ms=None,
+                step_count=None,
                 updated_at=time.time(),
             )
             if not self._persist(updated):
@@ -1705,7 +1840,7 @@ class DelegationTree:
             if (
                 current is None
                 or current.state != "completed"
-                or current.outcome != "completed"
+                or current.outcome not in SETTLED_RESULT_OUTCOMES
                 or current.holds_capacity
                 or current.current_run_id != expected_run_id
                 or expected.child_id != child_id
@@ -1742,6 +1877,10 @@ class DelegationTree:
                 outcome=None,
                 result_summary=None,
                 result_summary_truncated=False,
+                run_started_at=time.time(),
+                run_tool_baseline=self._tool_result_count(current),
+                duration_ms=None,
+                step_count=None,
                 updated_at=time.time(),
             )
             if not self._persist(updated):
@@ -1937,7 +2076,7 @@ class DelegationTree:
         if result_text:
             messages.append({"role": "assistant", "content": result_text[:8000]})
         summary, summary_truncated = (
-            _display_preview(result_text, 1000)
+            self._result_summary(child, result_text)
             if result_text is not None
             else ("", False)
         )
@@ -1953,6 +2092,65 @@ class DelegationTree:
             return False
         self._children[child_id] = updated
         return True
+
+    def _source_events(self, child: ChildAdmission) -> Sequence[Mapping[str, Any]] | None:
+        """Read child history for display facts; an unreadable source is not an error here."""
+        try:
+            backend = self.sessions.source_backend(child.session_key)
+            if backend is None:
+                return None
+            return backend.source.load_source_snapshot(child.session_key).events
+        except Exception:
+            logger.warning("Delegated child {} history is unreadable", child.child_id)
+            return None
+
+    def _tool_result_count(self, child: ChildAdmission) -> int | None:
+        events = self._source_events(child)
+        if events is None:
+            return None
+        return sum(event.get("role") == "tool" for event in events)
+
+    def _run_totals(self, child: ChildAdmission, state: str) -> ChildAdmission:
+        """Add duration and tool steps when a live run reaches a settled state."""
+        if (
+            not child.live
+            or state not in _HISTORICAL_TERMINAL_STATES - {"refused"}
+            or child.run_started_at is None
+        ):
+            return child
+        total = self._tool_result_count(child)
+        return replace(
+            child,
+            duration_ms=max(0, round((time.time() - child.run_started_at) * 1000)),
+            step_count=(
+                max(0, total - child.run_tool_baseline)
+                if total is not None and child.run_tool_baseline is not None
+                else None
+            ),
+        )
+
+    def _result_summary(self, child: ChildAdmission, result_text: str) -> tuple[str, bool]:
+        """Preview the final reply only; external harnesses also return earlier narration."""
+        reply = result_text
+        for event in reversed(self._source_events(child) or ()):
+            if (
+                event.get("_run_id") != child.current_run_id
+                or event.get("role") != "assistant"
+                or event.get("tool_calls")
+            ):
+                continue
+            content = event.get("content")
+            # Use the saved reply only when it is how this result ends (not an error notice).
+            if (
+                isinstance(content, str)
+                and content.strip()
+                and result_text.rstrip().endswith(content.strip())
+            ):
+                reply = content
+            break
+        if child.policy_facts.get("role") == "explorer":
+            reply = _readable_explore_reply(reply)
+        return _result_preview(reply)
 
     def record_exchange(
         self,
@@ -2250,7 +2448,7 @@ class DelegationTree:
             if current.terminal and state != current.state:
                 return current
             updated = replace(
-                current,
+                self._run_totals(current, state),
                 state=state,
                 state_sequence=current.state_sequence + 1,
                 holds_capacity=state in _LIVE_STATES or state == "uncertain",

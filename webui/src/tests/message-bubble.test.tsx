@@ -1222,7 +1222,7 @@ describe("MessageBubble", () => {
 
     const row = screen.getByRole("region", { name: "Inspect the API contract" });
     expect(within(row).getByText(/^Working(?: · |$)/)).toBeInTheDocument();
-    expect(within(row).getByText("Two compatible routes were found.")).toBeInTheDocument();
+    expect(within(row).queryByText("Two compatible routes were found.")).not.toBeInTheDocument();
     const inspect = within(row).getByRole("button", {
       name: "Inspect Inspect the API contract activity",
     });
@@ -1230,6 +1230,48 @@ describe("MessageBubble", () => {
     await user.click(inspect);
 
     expect(onOpen).toHaveBeenCalledWith(child, inspect);
+  });
+
+  it("shows partial status and run totals with a separate markdown result disclosure", async () => {
+    const user = userEvent.setup();
+    const onOpen = vi.fn();
+    const message: UIMessage = {
+      id: "delegated-child-result",
+      role: "assistant",
+      content: "",
+      createdAt: 1,
+      kind: "delegated_child",
+      delegatedChild: {
+        child_session_key: "delegated:child-a",
+        child_id: "child-a",
+        profile: "delegated",
+        harness: "claude_sdk",
+        state: "completed",
+        outcome: "partial",
+        task_label: "Trace the routes",
+        runtime_generation: 0,
+        duration_ms: 62_000,
+        step_count: 2,
+        result_summary: "## Findings\n\n- [Pull request](https://github.com/example/repo/pull/1)",
+      },
+    };
+
+    render(<MessageBubble message={message} onOpenChildHistory={onOpen} />);
+    const row = within(screen.getByRole("region", { name: "Trace the routes" }));
+    const inspect = row.getByRole("button", { name: "Inspect Trace the routes activity" });
+    expect(within(inspect).getByText("Trace the routes")).toBeInTheDocument();
+    expect(within(inspect).getByText("Partial")).toBeInTheDocument();
+    expect(within(inspect).getByText("1m 2s")).toBeInTheDocument();
+    expect(within(inspect).getByText("2 steps")).toBeInTheDocument();
+    expect(row.queryByRole("link")).not.toBeInTheDocument();
+
+    await user.click(row.getByRole("button", { name: "Show result" }));
+    expect(await row.findByRole("heading", { name: "Findings" })).toBeInTheDocument();
+    expect(row.getByRole("link", { name: "Open link: Pull request" }))
+      .toHaveAttribute("href", "https://github.com/example/repo/pull/1");
+    expect(onOpen).not.toHaveBeenCalled();
+    await user.click(row.getByRole("button", { name: "Hide result" }));
+    expect(row.queryByRole("link")).not.toBeInTheDocument();
   });
 
   it("keeps delegated rows read-only and marks stale status unavailable", () => {

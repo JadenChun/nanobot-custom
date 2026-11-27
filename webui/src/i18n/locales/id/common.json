@@ -1130,6 +1130,15 @@
     "error": "Kesalahan koneksi"
   },
   "thread": {
+    "delegatedChild": {
+      "assignment": "Tugas",
+      "partial": "Sebagian",
+      "showResult": "Tampilkan hasil",
+      "hideResult": "Sembunyikan hasil",
+      "stepCount_one": "{{count}} langkah",
+      "stepCount_many": "{{count}} langkah",
+      "stepCount_other": "{{count}} langkah"
+    },
     "runStopped": "Proses dihentikan",
     "compaction": {
       "cancelled": "Pemadatan konteks dibatalkan",
@@ -1207,6 +1216,13 @@
       "sessionInfo": "Detail sesi"
     },
     "sessionInfo": {
+      "subagents": "Subagen",
+      "subagentsCount": "Subagen ({{count}})",
+      "jumpTo": "Lompat ke",
+      "jumpToSubagent": "Lompat ke {{task}}",
+      "subagentNotLoaded": "Aktivitas ini tidak ada di bagian riwayat yang sedang ditampilkan",
+      "openHistory": "Buka riwayat",
+      "openSubagentHistory": "Buka riwayat {{task}}",
       "title": "Sesi",
       "untitled": "Topik tanpa judul",
       "automations": "Otomasi",

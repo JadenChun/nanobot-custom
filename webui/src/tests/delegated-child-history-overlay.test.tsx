@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { DelegatedChildHistoryOverlay } from "@/components/thread/DelegatedChildHistoryOverlay";
@@ -121,11 +121,13 @@ describe("DelegatedChildHistoryOverlay", () => {
     }));
 
     const onClose = vi.fn();
+    const legacyTitle = "A".repeat(80);
+    const legacyChild = { ...summaryChild, task_label: legacyTitle };
     render(
       <DelegatedChildHistoryOverlay
-        child={summaryChild}
+        child={legacyChild}
         rootKey={root.session_key}
-        rootRows={[canonicalChild, summaryChild]}
+        rootRows={[canonicalChild, legacyChild]}
         expectedRoot={root}
         provenanceComplete
         token="tok"
@@ -133,6 +135,7 @@ describe("DelegatedChildHistoryOverlay", () => {
       />,
     );
 
+    expect(screen.getByRole("heading", { name: "A".repeat(59) + "…" })).toHaveAttribute("title", legacyTitle);
     expect(await screen.findByText("Summary-only history · read only")).toBeInTheDocument();
     expect(screen.getByText(/A summary of the old delegated work\./)).toBeInTheDocument();
     expect(screen.getByText(/A message with a real epoch-zero timestamp\./)).toBeInTheDocument();
@@ -182,4 +185,164 @@ describe("DelegatedChildHistoryOverlay", () => {
     );
     expect(screen.queryByText("No canonical activity is available.")).not.toBeInTheDocument();
   });
+});
+
+const ASSIGNMENT = "Investigate the token contract.\nRules: do not change anything.";
+
+/** Rows shaped like the child history of a claude_sdk child: no event timestamps. */
+function toolRow(index: number, name: string, args: Record<string, unknown>, withTraces = true) {
+  const line = `${name}(${JSON.stringify(args)})`;
+  const output = `raw output ${index}`;
+  return {
+    id: `tool-${index}`,
+    role: "tool",
+    kind: "trace",
+    content: withTraces ? line : output,
+    ...(withTraces ? { traces: [line] } : {}),
+    toolEvents: [{
+      phase: "end",
+      call_id: `toolu_${index}|fc_${index}`,
+      name,
+      ...(withTraces ? { arguments: args } : {}),
+      result: output,
+    }],
+    createdAt: 0,
+    timestampAvailable: false,
+    turnId: "child-run",
+  };
+}
+
+function textRow(id: string, role: "user" | "assistant", content: string) {
+  return { id, role, content, createdAt: 0, timestampAvailable: false, turnId: "child-run" };
+}
+
+function historyPayload(
+  messages: unknown[],
+  extra: Record<string, unknown> = {},
+  beforeCursor: string | null = null,
+) {
+  return {
+    schemaVersion: 3,
+    read_only: true,
+    history_kind: "canonical",
+    parent_session_key: root.session_key,
+    root_key: root.session_key,
+    source: {
+      store_identity: canonicalChild.child_store_identity,
+      session_key: canonicalChild.child_session_key,
+      incarnation: canonicalChild.child_incarnation,
+      generation: canonicalChild.child_generation,
+    },
+    page: {
+      before_cursor: beforeCursor,
+      has_more_before: beforeCursor !== null,
+      loaded_message_count: messages.length,
+    },
+    messages,
+    ...extra,
+  };
+}
+
+function stubPages(...pages: unknown[]) {
+  const fetchMock = vi.fn();
+  for (const page of pages) {
+    fetchMock.mockResolvedValueOnce({ ok: true, status: 200, json: async () => page });
+  }
+  vi.stubGlobal("fetch", fetchMock);
+}
+
+function renderCanonical() {
+  render(
+    <DelegatedChildHistoryOverlay
+      child={canonicalChild}
+      rootKey={root.session_key}
+      rootRows={[canonicalChild]}
+      expectedRoot={root}
+      provenanceComplete
+      token="tok"
+      onClose={() => {}}
+    />,
+  );
+}
+
+/** Open every collapsed activity group so its steps are in the document. */
+function expandActivity() {
+  for (const toggle of screen.getAllByRole("button", { expanded: false })) {
+    if (/^(Worked|Activity)/.test(toggle.textContent ?? "")) fireEvent.click(toggle);
+  }
+}
+
+const assignmentToggle = () => screen.getByRole("button", { name: /^Assignment/ });
+
+describe("DelegatedChildHistoryOverlay child history", () => {
+  it("pins the assignment, collapsed to its first line, while older pages are unloaded", async () => {
+    stubPages(historyPayload(
+      [toolRow(1, "read_file", { path: "a.ts" })],
+      { assignment: ASSIGNMENT },
+      "older",
+    ));
+    renderCanonical();
+
+    await screen.findByRole("button", { name: "Load earlier activity" });
+    const toggle = assignmentToggle();
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    expect(toggle).toHaveTextContent("Investigate the token contract.");
+    expect(screen.queryByText(/Rules: do not change anything/)).not.toBeInTheDocument();
+
+    fireEvent.click(toggle);
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByText(/Rules: do not change anything/)).toBeInTheDocument();
+  });
+
+  it("shows the assignment once after the first page of history is loaded", async () => {
+    stubPages(
+      historyPayload([toolRow(2, "grep", { pattern: "x" })], { assignment: ASSIGNMENT }, "older"),
+      historyPayload(
+        [textRow("assignment", "user", ASSIGNMENT), toolRow(1, "read_file", { path: "a.ts" })],
+        { assignment: ASSIGNMENT },
+      ),
+    );
+    renderCanonical();
+
+    fireEvent.click(await screen.findByRole("button", { name: "Load earlier activity" }));
+    await waitFor(() => expect(
+      screen.queryByRole("button", { name: "Load earlier activity" }),
+    ).not.toBeInTheDocument());
+    expect(screen.getAllByText(/Investigate the token contract\./)).toHaveLength(1);
+    expect(assignmentToggle()).toBeInTheDocument();
+  });
+
+  it("shows the duration of the child", async () => {
+    stubPages(historyPayload(
+      [toolRow(1, "read_file", { path: "a.ts" }), textRow("report", "assistant", "Report")],
+      { assignment: ASSIGNMENT, duration_ms: 372_000 },
+    ));
+    renderCanonical();
+
+    expect(await screen.findByText("Worked for 6m 12s")).toBeInTheDocument();
+    expect(screen.getByRole("dialog").querySelectorAll("[data-message-timestamp]")).toHaveLength(0);
+  });
+
+  it.each([true, false])(
+    "describes tool steps like the main stream (server traces: %s)",
+    async (withTraces) => {
+      stubPages(historyPayload([
+        toolRow(1, "grep", { pattern: "token" }, withTraces),
+        toolRow(2, "read_file", { path: "src/a.ts" }, withTraces),
+        toolRow(3, "find_files", { pattern: "*.md" }, withTraces),
+        toolRow(4, "exec", { command: "rg token src" }, withTraces),
+      ]));
+      renderCanonical();
+
+      await screen.findByText(/Worked|Activity/);
+      expandActivity();
+      const text = screen.getByRole("dialog").textContent ?? "";
+      expect(text).toContain("Searched files");
+      expect(text).toContain("Read file");
+      expect(text).toContain("Found files");
+      expect(text).toMatch(/Ran |Searched/);
+      expect(text).not.toContain("Completed step");
+      expect(text).not.toContain("raw output");
+    },
+  );
 });

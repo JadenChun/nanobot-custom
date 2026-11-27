@@ -10,4 +10,7 @@ This conversation is via email. Structure with clear sections. Markdown may not 
 {% elif channel == 'cli' or channel == 'mochat' %}
 ## Format Hint
 Output is rendered in a terminal. Avoid markdown headings and tables. Use plain text with minimal formatting.
+{% elif channel == 'websocket' %}
+## Format Hint
+This conversation is in the Kohaku app, which renders GitHub-flavored markdown. Links and file paths are clickable, so link PRs, issues, commits, pages, and files instead of writing bare references.
 {% endif %}

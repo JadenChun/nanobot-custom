@@ -8141,6 +8141,167 @@ describe("ThreadShell", () => {
     }
   });
 
+  it.each([true, false])("navigates from Session details with the child row loaded: %s", async (inline) => {
+    const resizeObserver = stubThreadResizeObserver();
+    const client = makeClient();
+    const parentKey = `websocket:summary-child-${inline}`;
+    const childKey = "delegated:summary-child";
+    const rootSource = {
+      store_identity: "root-store",
+      session_key: parentKey,
+      incarnation: "root-incarnation",
+      generation: 0,
+    };
+    const childSource = {
+      store_identity: "child-store",
+      session_key: childKey,
+      incarnation: "child-incarnation",
+      generation: 0,
+    };
+    const task = "Check the release";
+    const child: DelegatedChildPayload = {
+      history_kind: "canonical",
+      harness: "claude_sdk",
+      child_id: "summary-child",
+      child_session_key: childKey,
+      parent_session_key: parentKey,
+      root_key: parentKey,
+      profile: "worker",
+      task_label: task,
+      task_label_truncated: false,
+      result_summary: null,
+      result_summary_truncated: false,
+      state: "completed",
+      outcome: "partial",
+      turn_id: "child-turn",
+      parent_run_id: "child-turn",
+      child_run_id: "child-run",
+      runtime_generation: 0,
+      parent_store_identity: rootSource.store_identity,
+      parent_incarnation: rootSource.incarnation,
+      parent_generation: rootSource.generation,
+      root_store_identity: rootSource.store_identity,
+      root_incarnation: rootSource.incarnation,
+      root_generation: rootSource.generation,
+      child_store_identity: childSource.store_identity,
+      child_incarnation: childSource.incarnation,
+      child_generation: childSource.generation,
+      run_sequence: 1,
+      state_sequence: 2,
+      control_epoch: 0,
+      holds_capacity: false,
+      can_stop: false,
+      owned_work: false,
+      pending_approval_id: null,
+      blocked_run_id: null,
+      result_disposition: "delivered",
+    };
+    const row: UIMessage = {
+      ...delegatedChildRow(parentKey, "summary-child", task),
+      delegatedChild: child,
+      turnId: "child-turn",
+    };
+    const turnId = inline ? "child-turn" : "latest-turn";
+    const parentPage = transcriptFromSimpleMessages([
+      { role: "user", content: "Review the release", turnId },
+      { role: "assistant", content: "The parent answer", turnId },
+    ]);
+    const parentRead = vi.fn(() => httpJson({
+      ...parentPage,
+      source: rootSource,
+      messages: inline
+        ? [parentPage.messages[0], row, parentPage.messages[1]]
+        : parentPage.messages,
+      page: { has_more_before: true, before_cursor: "earlier-page" },
+    }));
+    const inventoryRead = vi.fn(() => httpJson({
+      parentSessionKey: parentKey,
+      children: inline ? [
+        { ...child, created_at: 100 },
+        {
+          ...child,
+          child_id: "off-window",
+          child_session_key: "delegated:off-window",
+          task_label: "Check the earlier release",
+          turn_id: null,
+          parent_run_id: "older-turn",
+          created_at: 50,
+        },
+      ] : [{ ...child, created_at: 100 }],
+    }));
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes(`${encodeURIComponent(parentKey)}/webui-thread`)) return parentRead();
+      if (url.includes(`${encodeURIComponent(parentKey)}/delegated-children`)) return inventoryRead();
+      if (url.includes(`${encodeURIComponent(childKey)}/webui-thread`)) {
+        return httpJson({
+          ...transcriptFromSimpleMessages([{ role: "assistant", content: "The child findings." }]),
+          read_only: true,
+          history_kind: "canonical",
+          parent_session_key: parentKey,
+          root_key: parentKey,
+          source: childSource,
+          page: { has_more_before: false, before_cursor: null, loaded_message_count: 1 },
+        });
+      }
+      if (url.includes("/automations")) return httpJson({ jobs: [] });
+      return new Response(null, { status: 404 });
+    }));
+
+    try {
+      const { container } = render(wrap(client, <ThreadShell
+        session={session(`summary-child-${inline}`)}
+        title="Release review"
+        onToggleSidebar={() => {}}
+      />));
+      await screen.findByText(replyText("The parent answer"));
+      if (inline) await waitFor(() => expect(inventoryRead).toHaveBeenCalledTimes(1));
+      else expect(inventoryRead).not.toHaveBeenCalled();
+      const initialParentReads = parentRead.mock.calls.length;
+      const shell = container.querySelector("section") as HTMLElement;
+      const observer = resizeObserver.observers.find((entry) => entry.elements.includes(shell))!;
+      Object.defineProperty(shell, "clientWidth", { configurable: true, value: 1400 });
+      act(() => observer.callback([], observer as unknown as ResizeObserver));
+
+      const summaryButton = screen.getByRole("button", { name: "Session details" });
+      fireEvent.click(summaryButton);
+      const summary = await screen.findByTestId("session-summary-card");
+      const jump = await within(summary).findByRole("button", { name: `Jump to ${task}` });
+      const transcript = within(screen.getByTestId("thread-message-region"));
+      if (inline) {
+        expect(jump).toBeEnabled();
+        fireEvent.click(jump);
+        const exactRow = await transcript.findByLabelText(task);
+        await waitFor(() => expect(exactRow).toHaveFocus());
+        expect(exactRow).toHaveAttribute("data-jump-highlighted", "true");
+        expect(within(summary).getByRole("button", { name: "Jump to Check the earlier release" })).toBeDisabled();
+        expect(transcript.queryByLabelText("Check the earlier release")).not.toBeInTheDocument();
+      } else {
+        expect(jump).toBeDisabled();
+        expect(transcript.queryByLabelText(task)).not.toBeInTheDocument();
+      }
+      expect(parentRead).toHaveBeenCalledTimes(initialParentReads);
+      expect(inventoryRead).toHaveBeenCalledTimes(1);
+
+      // Toggling details doesn't reload the parent or rescan the inventory.
+      fireEvent.click(summaryButton);
+      expect(screen.queryByTestId("session-summary-card")).not.toBeInTheDocument();
+      fireEvent.click(summaryButton);
+      const history = await screen.findByRole("button", { name: `Open history for ${task}` });
+      history.focus();
+      fireEvent.click(history);
+      expect(await screen.findByText("The child findings.")).toBeVisible();
+      // The docked history takes the width of the summary card; closing it
+      // returns focus to the remounted Session details trigger.
+      fireEvent.click(screen.getByRole("button", { name: "Close subagent activity" }));
+      await waitFor(() => expect(screen.getByRole("button", { name: "Session details" })).toHaveFocus());
+      expect(parentRead).toHaveBeenCalledTimes(initialParentReads);
+      expect(inventoryRead).toHaveBeenCalledTimes(1);
+    } finally {
+      resizeObserver.restore();
+    }
+  });
+
   it("renders session summary as a non-overlapping container and hides it when space is tight", async () => {
     const resizeObserver = stubThreadResizeObserver();
     const client = makeClient();

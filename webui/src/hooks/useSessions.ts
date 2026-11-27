@@ -48,6 +48,7 @@ import type {
 } from "@/lib/types";
 
 const EMPTY_MESSAGES: UIMessage[] = [];
+const EMPTY_CHILD_INVENTORY: DelegatedChildReference[] = [];
 const EMPTY_TURN_INDEX: SessionTurnSummary[] = [];
 const EMPTY_PROMPT_INDEX: SessionPromptSummary[] = [];
 const INITIAL_HISTORY_PAGE_LIMIT = 40;
@@ -549,7 +550,7 @@ export function useSessions(): {
 }
 
 /** Lazy-load a session's on-disk messages the first time the UI displays it. */
-export function useSessionHistory(key: string | null): {
+export function useSessionHistory(key: string | null, includeDelegatedInventory = false): {
   messages: UIMessage[];
   loading: boolean;
   loadingOlder: boolean;
@@ -597,6 +598,8 @@ export function useSessionHistory(key: string | null): {
   delegatedChildrenLoading: boolean;
   /** True when a bounded child-history page failed or conflicted. */
   delegatedChildrenError: boolean;
+  /** Older child references for Session details only; not transcript rows or controls. */
+  sessionChildInventory: DelegatedChildReference[];
   workspaceAccessRequest: FolderAccessRequest | null;
   workspaceAccessRequestLoading: boolean;
   workspaceAccessRequestError: boolean;
@@ -649,6 +652,13 @@ export function useSessionHistory(key: string | null): {
   const permissionReadVersionRef = useRef(0);
   const controlsReadVersionRef = useRef(0);
   const [refreshSeq, setRefreshSeq] = useState(0);
+  const [deferredInventory, setDeferredInventory] = useState<{
+    client: typeof client;
+    key: string;
+    lineage: number;
+    source: SourceOrigin | null;
+    children: DelegatedChildReference[];
+  } | null>(null);
   const [turnIndex, setTurnIndex] = useState<SessionTurnSummary[]>([]);
   const [promptIndex, setPromptIndex] = useState<SessionPromptSummary[]>([]);
   const [promptIndexBeforeCursor, setPromptIndexBeforeCursor] = useState<string | null>(null);
@@ -692,6 +702,7 @@ export function useSessionHistory(key: string | null): {
     delegatedChildren: DelegatedChildReference[];
     delegatedChildrenLoading: boolean;
     delegatedChildrenError: boolean;
+    latestPageOmitsChildInventory?: boolean;
     workspaceAccessRequest: FolderAccessRequest | null;
     workspaceAccessRequestLoading: boolean;
     workspaceAccessRequestError: boolean;
@@ -741,6 +752,37 @@ export function useSessionHistory(key: string | null): {
   });
   const stateRef = useRef(state);
   stateRef.current = state;
+
+  const inventoryMatchesWindow = deferredInventory?.client === client
+    && deferredInventory.key === key
+    && deferredInventory.lineage === state.lineage
+    && (deferredInventory.source === state.sourceOrigin
+      || sameSourceOrigin(deferredInventory.source, state.sourceOrigin));
+  const canReadDeferredInventory = includeDelegatedInventory && !inventoryMatchesWindow
+    && state.client === client && state.key === key && state.lineage > 0
+    && !state.loading && !state.delegatedChildrenLoading && !state.historyAccessDenied && !state.error
+    && state.delegatedChildren.length === 0
+    && (state.latestPageOmitsChildInventory || state.hasMoreAfter) === true;
+  useEffect(() => {
+    if (!key || !canReadDeferredInventory) return;
+    const controller = new AbortController();
+    const { lineage, sourceOrigin: source } = state;
+    // A latest page with no child rows normally skips the expensive child scan.
+    // Session details can ask for it without reloading history, adding or
+    // moving inline rows, or replacing a newer live control snapshot.
+    const settle = (children: DelegatedChildReference[]) => {
+      const current = stateRef.current;
+      if (controller.signal.aborted || current.client !== client || current.key !== key
+        || current.lineage !== lineage || current.historyAccessDenied
+        || sourceOriginReplaced(source, current.sourceOrigin)) return;
+      setDeferredInventory({ client, key, lineage, source, children });
+    };
+    void fetchAllDelegatedChildren(getToken, key, controller.signal).then((page) => {
+      const hydrated = hydrateDelegatedChildren([], page.children, key, source);
+      settle(page.incomplete || hydrated.refreshRequired ? EMPTY_CHILD_INVENTORY : hydrated.children);
+    }).catch(() => settle(EMPTY_CHILD_INVENTORY));
+    return () => controller.abort();
+  }, [canReadDeferredInventory, client, getToken, key, state.lineage, state.sourceOrigin]);
 
   const readLiveControls = useCallback(async (requestedKey: string, signal?: AbortSignal) => {
     const controlsVersion = ++controlsReadVersionRef.current;
@@ -1151,6 +1193,7 @@ export function useSessionHistory(key: string | null): {
           return;
         }
         const persisted = persistedMessagesToUi(body?.messages ?? []);
+        const hasChildRows = persisted.some((message) => message.kind === "delegated_child");
         const ui = persisted.filter((message) => message.kind !== "delegated_child");
         const userMessageOffset = Math.max(0, body?.page?.user_message_offset ?? 0);
         const incomingOrigin = parseSourceOrigin(body?.source);
@@ -1357,6 +1400,7 @@ export function useSessionHistory(key: string | null): {
             delegatedChildren: [],
             delegatedChildrenLoading: body !== null,
             delegatedChildrenError: false,
+            latestPageOmitsChildInventory: !hasChildRows && body?.page?.has_more_before === true,
             workspaceAccessRequest: applyRequest
               ? body?.workspace_access_request ?? null
               : prev.workspaceAccessRequest,
@@ -1393,12 +1437,8 @@ export function useSessionHistory(key: string | null): {
         // Do not await controls before making the saved window renderable.
         if (separateControls) void readLiveControls(key, controller.signal);
 
-        // Fetch delegated children only when this page actually shows a child
-        // row. Codex loads children per-parent on demand rather than scanning
-        // every session on open, and the route is the most expensive read in
-        // the gateway (list_sessions plus a full snapshot per child). A
-        // conversation with no delegated activity has nothing to hydrate.
-        const hasChildRows = persisted.some((message) => message.kind === "delegated_child");
+        // The route scans the session store. Normal history reads only
+        // hydrate children when the latest page shows a child row.
         const childPages = hasChildRows
           ? await fetchAllDelegatedChildren(getToken, key, controller.signal)
             .catch(() => ({
@@ -2257,6 +2297,7 @@ export function useSessionHistory(key: string | null): {
       delegatedChildren: [],
       delegatedChildrenLoading: false,
       delegatedChildrenError: false,
+      sessionChildInventory: EMPTY_CHILD_INVENTORY,
       workspaceAccessRequest: null,
       workspaceAccessRequestLoading: false,
       workspaceAccessRequestError: false,
@@ -2325,6 +2366,7 @@ export function useSessionHistory(key: string | null): {
       delegatedChildren: [],
       delegatedChildrenLoading: true,
       delegatedChildrenError: false,
+      sessionChildInventory: EMPTY_CHILD_INVENTORY,
       workspaceAccessRequest: null,
       workspaceAccessRequestLoading: true,
       workspaceAccessRequestError: false,
@@ -2393,6 +2435,10 @@ export function useSessionHistory(key: string | null): {
     delegatedChildren: state.delegatedChildren,
     delegatedChildrenLoading: state.delegatedChildrenLoading,
     delegatedChildrenError: state.delegatedChildrenError,
+    sessionChildInventory: inventoryMatchesWindow && !state.historyAccessDenied
+      && state.delegatedChildren.length === 0 && !state.delegatedChildrenError
+      ? deferredInventory.children
+      : EMPTY_CHILD_INVENTORY,
     workspaceAccessRequest: state.workspaceAccessRequest,
     workspaceAccessRequestLoading: state.workspaceAccessRequestLoading,
     workspaceAccessRequestError: state.workspaceAccessRequestError,

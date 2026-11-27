@@ -178,6 +178,27 @@ def test_channel_format_hint_absent_for_unknown(tmp_path) -> None:
     assert "Format Hint" not in prompt2
 
 
+def test_channel_format_hint_websocket_asks_for_links(tmp_path) -> None:
+    """The WebUI channel renders markdown, so references should be clickable links."""
+    workspace = _make_workspace(tmp_path)
+    builder = ContextBuilder(workspace)
+
+    prompt = builder.build_system_prompt(channel="websocket")
+    assert "Format Hint" in prompt
+    assert "Links and file paths are clickable" in prompt
+
+
+def test_response_format_scales_depth_and_requires_links() -> None:
+    contract = (
+        pkg_files("kohaku") / "templates" / "agent" / "tool_contract.md"
+    ).read_text(encoding="utf-8")
+
+    assert "## Response Format" in contract
+    assert "a full explanation when the user asks to explain" in contract
+    assert "Aim for readability, not brevity." in contract
+    assert "[#1763](https://github.com/org/repo/pull/1763)" in contract
+
+
 def test_build_messages_passes_channel_to_system_prompt(tmp_path) -> None:
     """build_messages should pass channel through to build_system_prompt."""
     workspace = _make_workspace(tmp_path)
@@ -199,7 +220,7 @@ def test_system_prompt_keeps_message_tool_out_of_current_chat_replies(tmp_path) 
     prompt = builder.build_system_prompt(channel="slack")
 
     assert "Reply to the current chat normally. Use `message`" in prompt
-    assert "Give one clear, direct final response after the tool results." in prompt
+    assert "Give one clear final response after the tool results." in prompt
 
 
 def test_memory_skill_is_lazy_loaded_from_skills_index(tmp_path) -> None:

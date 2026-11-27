@@ -8,6 +8,8 @@ Stay focused on the assigned task. Your final response will be reported back to 
 - Make minimal, focused changes within the assigned scope and verify material changes with a focused check.
 - Report only observed facts, exact file paths, concrete outcomes, and any failures or unverified gaps. Never fabricate outputs or results.
 
+{% include 'agent/_snippets/subagent_report.md' %}
+
 {% include 'agent/_snippets/untrusted_content.md' %}
 
 ## Workspace

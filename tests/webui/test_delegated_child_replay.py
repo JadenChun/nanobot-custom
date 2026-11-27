@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
+import pytest
+
 from kohaku.webui.transcript import (
     replay_transcript_to_ui_messages,
     validate_retained_transcript_record,
@@ -328,3 +330,76 @@ def test_replay_ignores_old_conflicting_and_replaced_child_rows() -> None:
     assert child["run_sequence"] == 3
     assert child["state_sequence"] == 1
     assert child["child_incarnation"] == "child-inc-1"
+
+
+def test_replay_carries_spawn_call_id_and_keeps_one_trace_row_per_call() -> None:
+    def tool_message(phase: str, kind: str, seq: int) -> dict[str, Any]:
+        return {
+            "event": "message",
+            "kind": kind,
+            "text": 'explore("fixture")' if phase == "start" else "",
+            "tool_events": [{
+                "version": 1, "phase": phase, "call_id": "call-spawn",
+                "name": "explore", "arguments": {"task": "fixture"},
+            }],
+            "turn_id": "turn-1",
+            "turn_phase": "activity",
+            "turn_seq": seq,
+            "created_at_ms": 100 + seq,
+        }
+
+    def child(state: str, seq: int, **extra: Any) -> dict[str, Any]:
+        row = {
+            "event": "delegated_child",
+            "child_id": "child-a",
+            "child_session_key": "delegated:child-a",
+            "profile": "delegated",
+            "state": state,
+            "runtime_generation": 0,
+            "parent_session_key": "websocket:root",
+            "parent_store_identity": "store-a",
+            "parent_incarnation": "root-inc",
+            "parent_generation": 1,
+            "root_key": "websocket:root",
+            "root_store_identity": "store-a",
+            "root_incarnation": "root-inc",
+            "root_generation": 1,
+            "child_store_identity": "store-a",
+            "child_incarnation": "child-inc",
+            "child_generation": 1,
+            "run_sequence": 1,
+            "state_sequence": seq,
+            "turn_id": "turn-1",
+            "turn_phase": "activity",
+            "turn_seq": seq + 1,
+            "created_at_ms": 110 + seq,
+            **extra,
+        }
+        validate_retained_transcript_record(row)
+        return row
+
+    messages = replay_transcript_to_ui_messages([
+        tool_message("start", "tool_hint", 1),
+        child("active", 1, spawn_call_id="call-spawn"),
+        # A newer record from a later turn, without the field, keeps the known anchor.
+        child("completed", 2, turn_id="turn-follow-up"),
+        tool_message("end", "progress", 5),
+    ])
+
+    assert [message.get("kind") for message in messages] == ["trace", "delegated_child"]
+    assert messages[1]["delegatedChild"]["spawn_call_id"] == "call-spawn"
+    assert messages[1]["delegatedChild"]["state"] == "completed"
+    assert messages[1]["turnId"] == messages[1]["delegatedChild"]["turn_id"] == "turn-1"
+    assert [event["phase"] for event in messages[0]["toolEvents"]] == ["end"]
+
+
+def test_retained_delegated_row_rejects_non_string_spawn_call_id() -> None:
+    with pytest.raises(ValueError):
+        validate_retained_transcript_record({
+            "event": "delegated_child",
+            "child_id": "child-a",
+            "child_session_key": "delegated:child-a",
+            "profile": "delegated",
+            "state": "active",
+            "spawn_call_id": 7,
+        })

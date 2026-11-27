@@ -44,6 +44,7 @@ import type { RevealPromptTarget } from "@/hooks/useSessions";
 
 export interface ThreadViewportHandle {
   jumpToUserPrompt: (promptId: string) => void;
+  jumpToChild: (childId: string) => void;
   cancelAutoScroll: () => void;
   captureViewState: () => ThreadViewportState;
   restoreViewState: (state: ThreadViewportState | null) => void;
@@ -492,6 +493,8 @@ export const ThreadViewport = forwardRef<ThreadViewportHandle, ThreadViewportPro
   const [atBottom, setAtBottom] = useState(true);
   const [composerChromeHidden, setComposerChromeHidden] = useState(false);
   const [highlightedPromptId, setHighlightedPromptId] = useState<string | null>(null);
+  const [childJump, setChildJump] = useState<{ childId: string; conversationKey: string | null } | null>(null);
+  const childHighlightRef = useRef<{ row: HTMLElement; timer: number } | null>(null);
   const [composerDockHeight, setComposerDockHeight] = useState(0);
   const [keyboardInsetBottom, setKeyboardInsetBottom] = useState(0);
   const [hasVerticalOverflow, setHasVerticalOverflow] = useState(false);
@@ -906,6 +909,53 @@ export const ThreadViewport = forwardRef<ThreadViewportHandle, ThreadViewportPro
     setVisibleMessageCount((count) => Math.max(count, messages.length - index));
   }, [messages, navigateToVisiblePrompt]);
 
+  const clearChildHighlight = useCallback(() => {
+    const highlight = childHighlightRef.current;
+    if (!highlight) return;
+    delete highlight.row.dataset.jumpHighlighted;
+    window.clearTimeout(highlight.timer);
+    childHighlightRef.current = null;
+  }, []);
+  useLayoutEffect(() => clearChildHighlight, [clearChildHighlight, conversationKey]);
+
+  const jumpToChild = useCallback((childId: string) => {
+    const index = messages.findIndex((message) => message.delegatedChild?.child_id === childId);
+    if (index < 0) return;
+    threadMotionRef.current?.takeUserControl();
+    pendingConversationScrollRef.current = false;
+    pendingGoToLatestScrollRef.current = false;
+    pendingPromptJumpRef.current = null;
+    historyScrollAnchorRef.current = null;
+    setAtBottom(false);
+    setChildJump({ childId, conversationKey });
+    if (!virtualize) setVisibleMessageCount((count) => Math.max(count, messages.length - index));
+  }, [conversationKey, messages, virtualize]);
+
+  const onChildJumpTarget = useCallback((row: HTMLElement) => {
+    const scroller = scrollRef.current;
+    if (!scroller?.contains(row)) return;
+    const activity = row.closest<HTMLElement>("[data-thread-activity-scroll]");
+    if (activity) {
+      activity.scrollTop = Math.max(0, promptTop(activity, row) - (activity.clientHeight - row.offsetHeight) / 2);
+    }
+    const scrollRect = scroller.getBoundingClientRect();
+    const rowRect = row.getBoundingClientRect();
+    const hasRowGeometry = scrollRect.top !== 0 || rowRect.top !== 0
+      || scrollRect.height !== 0 || rowRect.height !== 0
+      || row.offsetTop > 0;
+    if (hasRowGeometry) {
+      const top = promptTop(scroller, row) - (scroller.clientHeight - row.offsetHeight) / 2;
+      threadMotionRef.current?.navigateHistoryTo(
+        Math.max(0, Math.min(top, scroller.scrollHeight - scroller.clientHeight)),
+      );
+    }
+    clearChildHighlight();
+    row.dataset.jumpHighlighted = "true";
+    childHighlightRef.current = { row, timer: window.setTimeout(clearChildHighlight, 2000) };
+    row.focus({ preventScroll: true });
+    setChildJump(null);
+  }, [clearChildHighlight]);
+
   const cancelAutoScroll = useCallback(() => {
     threadMotionRef.current?.takeUserControl();
   }, []);
@@ -953,11 +1003,12 @@ export const ThreadViewport = forwardRef<ThreadViewportHandle, ThreadViewportPro
     ref,
     () => ({
       jumpToUserPrompt,
+      jumpToChild,
       cancelAutoScroll,
       captureViewState,
       restoreViewState,
     }),
-    [cancelAutoScroll, captureViewState, jumpToUserPrompt, restoreViewState],
+    [cancelAutoScroll, captureViewState, jumpToChild, jumpToUserPrompt, restoreViewState],
   );
 
   useLayoutEffect(() => {
@@ -1007,6 +1058,7 @@ export const ThreadViewport = forwardRef<ThreadViewportHandle, ThreadViewportPro
     setAtBottom(true);
     setComposerChromeHidden(false);
     setHighlightedPromptId(null);
+    setChildJump(null);
     setVisibleMessageCount(INITIAL_HISTORY_WINDOW);
 
     const surface = messageRegionRef.current;
@@ -1467,6 +1519,8 @@ export const ThreadViewport = forwardRef<ThreadViewportHandle, ThreadViewportPro
                       delegatedStatusAvailable={delegatedStatusAvailable}
                       onQuoteSelection={onQuoteSelection}
                       highlightedPromptId={highlightedPromptId}
+                      childJump={childJump?.conversationKey === conversationKey ? childJump : null}
+                      onChildJumpTarget={onChildJumpTarget}
                       scrollRef={messageRegionRef}
                       virtualize={virtualize}
                       onRegisterScrollToPrompt={registerVirtualScrollToPrompt}

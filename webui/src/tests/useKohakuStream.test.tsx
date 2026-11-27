@@ -4478,65 +4478,69 @@ describe("useKohakuStream", () => {
     expect(answers[1].id).not.toBe(firstId);
   });
 
-  it("keeps streaming alive across stream_end when tool activity follows", async () => {
+  it("keeps streaming across tool activity and projects pre-tool text as a progress note", async () => {
     const fake = fakeClient();
+    const chatId = "chat-s";
+    const turn = { chat_id: chatId, turn_id: "active-turn" };
     const onTurnEnd = vi.fn();
-    const { result } = renderHook(() => useKohakuStream("chat-s", EMPTY_MESSAGES, false, onTurnEnd), {
+    const { result } = renderHook(() => useKohakuStream(chatId, EMPTY_MESSAGES, false, onTurnEnd), {
       wrapper: wrap(fake.client),
     });
 
-    act(() => {
-      fake.emit("chat-s", {
-        event: "delta",
-        chat_id: "chat-s",
-        text: "Hello",
-      });
-    });
-
+    act(() => fake.emit(chatId, { ...turn, event: "delta", text: "I'll read that", turn_seq: 1 }));
     await flushStreamFrame();
-
     expect(result.current.isStreaming).toBe(true);
-    expect(result.current.messages[0]).toMatchObject({
-      role: "assistant",
-      content: "Hello",
-      isStreaming: true,
-    });
+    expect(normalizeActivityTimeline(result.current.messages)).toMatchObject([{
+      type: "message", message: { content: "I'll read that", isStreaming: true },
+    }]);
 
-    act(() => {
-      fake.emit("chat-s", {
-        event: "stream_end",
-        chat_id: "chat-s",
-      });
-    });
-
+    act(() => fake.emit(chatId, { ...turn, event: "stream_end", turn_seq: 2 }));
     expect(result.current.isStreaming).toBe(true);
     expect(result.current.messages[0].isStreaming).toBe(true);
 
-    act(() => {
-      fake.emit("chat-s", {
-        event: "message",
-        chat_id: "chat-s",
-        kind: "progress",
-        text: "Calling tool",
-      });
-    });
-
+    const call = { call_id: "read-1", name: "read_file", arguments: { path: "README.md" } };
+    act(() => fake.emit(chatId, {
+      ...turn, event: "message", kind: "tool_hint", text: "", turn_seq: 3,
+      tool_events: [{ ...call, phase: "start" }],
+    }));
+    const interimUnits = [{
+      type: "activity",
+      messages: [
+        { content: "I'll read that", activityKind: "model", isStreaming: false },
+        { role: "tool", kind: "trace" },
+      ],
+    }];
     expect(result.current.isStreaming).toBe(true);
-    expect(result.current.messages.at(-1)).toMatchObject({
-      role: "tool",
-      content: "Calling tool",
-    });
+    expect(normalizeActivityTimeline(result.current.messages)).toMatchObject(interimUnits);
+
+    act(() => fake.emit(chatId, {
+      ...turn, event: "message", kind: "progress", text: "", turn_seq: 4,
+      tool_events: [{ ...call, phase: "progress", progress: 40, total: 100 }],
+    }));
+    expect(normalizeActivityTimeline(result.current.messages)).toMatchObject(interimUnits);
 
     act(() => {
-      fake.emit("chat-s", {
-        event: "turn_end",
-        chat_id: "chat-s",
+      fake.emit(chatId, {
+        ...turn, event: "message", kind: "tool_hint", text: "", turn_seq: 5,
+        tool_events: [{ ...call, phase: "end" }],
       });
+      fake.emit(chatId, { ...turn, event: "message", text: "The README describes the setup.", turn_seq: 6 });
+      fake.emit(chatId, { ...turn, event: "turn_end", turn_seq: 7 });
     });
 
     expect(result.current.isStreaming).toBe(false);
     expect(result.current.messages.every((message) => !message.isStreaming)).toBe(true);
     expect(onTurnEnd).toHaveBeenCalledTimes(1);
+    expect(normalizeActivityTimeline(result.current.messages)).toMatchObject([
+      {
+        type: "activity",
+        messages: [
+          ...interimUnits[0].messages,
+          { role: "tool", kind: "trace", toolEvents: [{ call_id: "read-1", phase: "end" }] },
+        ],
+      },
+      { type: "message", message: { content: "The README describes the setup.", isStreaming: false } },
+    ]);
   });
 
   it("replaces streamed content with final stream_end text when provided", async () => {

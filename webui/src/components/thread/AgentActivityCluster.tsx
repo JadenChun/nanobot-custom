@@ -21,6 +21,7 @@ import {
 import { useTranslation } from "react-i18next";
 
 import { MarkdownText } from "@/components/MarkdownText";
+import { DelegatedChildRow } from "@/components/MessageBubble";
 import { cliAppInitials, mcpPresetInitials } from "@/components/CliAppMentionText";
 import {
   ActivityDetailPanel,
@@ -49,6 +50,7 @@ import { ThinkingReasoningShell } from "@/components/thread/activity/ThinkingRea
 import { WebActivityRow } from "@/components/thread/activity/WebActivityRow";
 import {
   describeTraceLine,
+  traceLinesForMessage as traceLines,
   type TraceDescription,
 } from "@/components/thread/activity/trace-activity-model";
 import { WebSearchRun } from "@/components/thread/activity/WebSearchRun";
@@ -72,6 +74,7 @@ import { canonicalToolTrace, formatToolCallTrace } from "@/lib/tool-traces";
 import { cn } from "@/lib/utils";
 import type {
   CliAppInfo,
+  DelegatedChildReference,
   McpPresetInfo,
   RetryStatus,
   ToolProgressEvent,
@@ -80,6 +83,15 @@ import type {
 } from "@/lib/types";
 
 const ACTIVITY_SCROLL_NEAR_BOTTOM_PX = 24;
+const LIVE_CHILD_STATES = new Set([
+  "reserved",
+  "active",
+  "joining",
+  "waiting_approval",
+  "stopping",
+]);
+
+type OpenChildHistory = (child: DelegatedChildReference, trigger: HTMLButtonElement) => void;
 
 export { isAgentActivityMember };
 
@@ -174,6 +186,9 @@ interface AgentActivityClusterProps {
   cliApps?: CliAppInfo[];
   mcpPresets?: McpPresetInfo[];
   onOpenFilePreview?: (path: string) => void;
+  onOpenChildHistory?: OpenChildHistory;
+  delegatedStatusAvailable?: boolean;
+  childJump?: { childId: string } | null;
 }
 
 /**
@@ -192,6 +207,9 @@ export function AgentActivityCluster({
   cliApps = [],
   mcpPresets = [],
   onOpenFilePreview,
+  onOpenChildHistory,
+  delegatedStatusAvailable = true,
+  childJump = null,
 }: AgentActivityClusterProps) {
   const { t } = useTranslation();
   const fileEditDisplayMode = useFileEditDisplayMode();
@@ -239,12 +257,17 @@ export function AgentActivityCluster({
   const scrollFrameRef = useRef<number | null>(null);
   const wasTurnStreamingRef = useRef(isTurnStreaming);
   const wasTurnStreaming = wasTurnStreamingRef.current;
+  const children = activityMessages.filter((message) => message.kind === "delegated_child");
+  const hasLiveChild = delegatedStatusAvailable && children.some(
+    (message) => LIVE_CHILD_STATES.has(message.delegatedChild?.state ?? ""),
+  );
+  const hasOnlyChildren = children.length > 0 && children.length === activityMessages.length;
   /** Keep the last visible activity available when the run stops. */
   const outerExpanded = userToggledOuter
     ? outerOpenLocal
-    : isTurnStreaming || stopped || completionHoldOpen || (wasTurnStreaming && !isTurnStreaming);
+    : isTurnStreaming || hasLiveChild || stopped || completionHoldOpen || (wasTurnStreaming && !isTurnStreaming);
 
-  const hasVisibleActivity = reasoningSteps > 0 || toolCalls > 0 || modelSegments > 0 || cliCount > 0 || mcpCount > 0 || fileCount > 0;
+  const hasVisibleActivity = reasoningSteps > 0 || toolCalls > 0 || modelSegments > 0 || cliCount > 0 || mcpCount > 0 || fileCount > 0 || children.length > 0;
   const hasOnlyFileActivity = fileCount > 0 && activityMessages.every(messageHasOnlyFileActivity);
   const durationMs = showTurnDuration ? activityDurationMs(
     activityMessages,
@@ -347,12 +370,22 @@ export function AgentActivityCluster({
   };
 
   useLayoutEffect(() => {
-    if (!activityScrollRef.current || !outerExpanded || !autoFollowActivityRef.current) return;
+    if (!childJump) return;
+    // An explicit jump wins over the cluster's usual follow-the-last-step behavior.
+    autoFollowActivityRef.current = false;
+    cancelActivityScrollFrame();
+    setUserToggledOuter(true);
+    setOuterOpenLocal(true);
+  }, [cancelActivityScrollFrame, childJump]);
+
+  useLayoutEffect(() => {
+    if (childJump || !activityScrollRef.current || !outerExpanded || !autoFollowActivityRef.current) return;
     scrollActivityToBottom();
     scheduleActivityScrollToBottom();
-  }, [outerExpanded, activityMessages, isTurnStreaming, scrollActivityToBottom, scheduleActivityScrollToBottom]);
+  }, [childJump, outerExpanded, activityMessages, isTurnStreaming, scrollActivityToBottom, scheduleActivityScrollToBottom]);
 
   useEffect(() => {
+    if (childJump) return;
     if (!outerExpanded) {
       autoFollowActivityRef.current = true;
       lastActivityScrollTopRef.current = 0;
@@ -370,7 +403,7 @@ export function AgentActivityCluster({
     });
     observer.observe(target);
     return () => observer.disconnect();
-  }, [outerExpanded, scrollActivityToBottom, scheduleActivityScrollToBottom, syncActivityScrollFade]);
+  }, [childJump, outerExpanded, scrollActivityToBottom, scheduleActivityScrollToBottom, syncActivityScrollFade]);
 
   useEffect(() => cancelActivityScrollFrame, [cancelActivityScrollFrame]);
 
@@ -404,6 +437,21 @@ export function AgentActivityCluster({
     syncActivityScrollFade();
   }, [syncActivityScrollFade]);
 
+  // Children with no surrounding work have nothing to fold into.
+  if (hasOnlyChildren) {
+    return (
+      <div className={cn("w-full", hasBodyBelow && "mb-2")}>
+        {children.map((message) => message.delegatedChild ? (
+          <DelegatedChildRow
+            key={message.id}
+            child={message.delegatedChild}
+            onOpen={onOpenChildHistory}
+            statusAvailable={delegatedStatusAvailable}
+          />
+        ) : null)}
+      </div>
+    );
+  }
   if (!hasVisibleActivity && !isTurnStreaming && durationMs <= 0) return null;
   const showHeader = !hasOnlyFileActivity || (showTurnDuration && (isTurnStreaming || durationMs > 0));
 
@@ -419,6 +467,7 @@ export function AgentActivityCluster({
           fadeTop={activityScrollFade.top}
           fadeBottom={activityScrollFade.bottom}
           hasDetails={hasVisibleActivity && !hasOnlyFileActivity}
+          instantReveal={childJump !== null || (modelSegments > 0 && isTurnStreaming && !wasTurnStreaming)}
           onToggle={toggleOuter}
           onScroll={onActivityScroll}
         >
@@ -431,6 +480,8 @@ export function AgentActivityCluster({
             fileEditsByMessage={fileEditsByMessage}
             fileEditDisplayMode={fileEditDisplayMode}
             onOpenFilePreview={onOpenFilePreview}
+            onOpenChildHistory={onOpenChildHistory}
+            delegatedStatusAvailable={delegatedStatusAvailable}
           />
         </ThinkingReasoningShell>
       ) : null}
@@ -461,7 +512,9 @@ function activityDurationMs(
     return Math.round(completedLatencyMs!);
   }
   const timestamps = messages
-    .filter((message) => message.timestampAvailable !== false)
+    .filter((message) => (
+      message.timestampAvailable !== false && message.kind !== "delegated_child"
+    ))
     .map((message) => message.createdAt)
     .filter((value) => Number.isFinite(value));
   if (!timestamps.length) {
@@ -482,11 +535,6 @@ function activityDurationMs(
 
 function formatActivityDuration(ms: number): string {
   return formatWorkDuration(ms);
-}
-
-function traceLines(message: UIMessage): string[] {
-  if (message.traces?.length) return message.traces;
-  return message.content.trim() ? [message.content] : [];
 }
 
 function hasRunningToolEvent(message: UIMessage): boolean {
@@ -513,6 +561,8 @@ function ActivityMessageTimeline({
   fileEditsByMessage,
   fileEditDisplayMode,
   onOpenFilePreview,
+  onOpenChildHistory,
+  delegatedStatusAvailable,
 }: {
   messages: UIMessage[];
   active: boolean;
@@ -522,10 +572,29 @@ function ActivityMessageTimeline({
   fileEditsByMessage: Map<string, FileEditSummary[]>;
   fileEditDisplayMode: FileEditDisplayMode;
   onOpenFilePreview?: (path: string) => void;
+  onOpenChildHistory?: OpenChildHistory;
+  delegatedStatusAvailable: boolean;
 }) {
   const items: ReactNode[] = [];
+  // A trailing child row does not end the parent's current step.
+  const lastStepIndex = messages.reduce(
+    (last, message, index) => message.kind === "delegated_child" ? last : index,
+    -1,
+  );
 
   messages.forEach((message, index) => {
+    if (message.kind === "delegated_child") {
+      if (!message.delegatedChild) return;
+      items.push(
+        <DelegatedChildRow
+          key={message.id}
+          child={message.delegatedChild}
+          onOpen={onOpenChildHistory}
+          statusAvailable={delegatedStatusAvailable}
+        />,
+      );
+      return;
+    }
     if (message.activityKind === "model") {
       items.push(
         <ActivityModelMessage
@@ -543,7 +612,7 @@ function ActivityMessageTimeline({
           key={message.id}
           text={message.reasoning ?? ""}
           streaming={active && !!message.reasoningStreaming}
-          defaultExpanded={stopped && index === messages.length - 1}
+          defaultExpanded={stopped && index === lastStepIndex}
           durationMs={message.latencyMs}
           nestedInScrollViewport
         />,
@@ -556,7 +625,7 @@ function ActivityMessageTimeline({
         <Fragment key={message.id}>
           <ActivityTraceTimeline
             message={message}
-            active={active && (index === messages.length - 1 || hasRunningToolEvent(message))}
+            active={active && (index === lastStepIndex || hasRunningToolEvent(message))}
             cliAppsByName={cliAppsByName}
             mcpPresetsByName={mcpPresetsByName}
           />
@@ -598,6 +667,10 @@ function ActivityModelMessage({
       <MarkdownText
         streaming={active && !!message.isStreaming}
         preserveStreamingLayout
+        className={cn(
+          "text-muted-foreground [--tw-prose-body:hsl(var(--muted-foreground))]",
+          "[--tw-prose-headings:hsl(var(--muted-foreground))] [--tw-prose-bold:hsl(var(--muted-foreground))]",
+        )}
         onOpenFilePreview={onOpenFilePreview}
       >
         {message.content}

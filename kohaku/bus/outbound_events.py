@@ -133,6 +133,9 @@ class DelegatedChildEvent(AgentEvent):
     task_label_truncated: bool = False
     result_summary: str | None = None
     result_summary_truncated: bool = False
+    # Totals of the finished run. Absent while live and on older records.
+    duration_ms: int | None = None
+    step_count: int | None = None
     parent_run_id: str | None = None
     child_run_id: str | None = None
     parent_store_identity: str | None = None
@@ -155,6 +158,7 @@ class DelegatedChildEvent(AgentEvent):
     blocked_run_id: str | None = None
     result_disposition: str | None = None
     harness: str | None = None
+    spawn_call_id: str | None = None
 
 
 @dataclass(frozen=True)

@@ -9,6 +9,7 @@ import {
 import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
 
+import { SubagentList, type SessionSubagents } from "@/components/thread/SubagentList";
 import { Button } from "@/components/ui/button";
 import {
   Popover,
@@ -128,6 +129,7 @@ export interface SessionSummaryCardProps {
   active: boolean;
   onClose?: () => void;
   className?: string;
+  subagents?: SessionSubagents;
 }
 
 export function SessionSummaryCard({
@@ -137,6 +139,7 @@ export function SessionSummaryCard({
   active,
   onClose,
   className,
+  subagents,
 }: SessionSummaryCardProps) {
   const { t } = useTranslation("common");
   const { jobs, loading, loadFailed, now } = useSessionAutomationJobs(active, token, sessionKey);
@@ -211,6 +214,7 @@ export function SessionSummaryCard({
         </div>
 
         {automationContent}
+        {subagents ? <SubagentList {...subagents} /> : null}
       </div>
     </section>
   );

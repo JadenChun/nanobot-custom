@@ -1130,6 +1130,15 @@
     "error": "Connection error"
   },
   "thread": {
+    "delegatedChild": {
+      "assignment": "Assignment",
+      "partial": "Partial",
+      "showResult": "Show result",
+      "hideResult": "Hide result",
+      "stepCount_one": "{{count}} step",
+      "stepCount_many": "{{count}} steps",
+      "stepCount_other": "{{count}} steps"
+    },
     "runStopped": "Run stopped",
     "compaction": {
       "cancelled": "Context compaction cancelled",
@@ -1207,6 +1216,13 @@
       "sessionInfo": "Session details"
     },
     "sessionInfo": {
+      "subagents": "Subagents",
+      "subagentsCount": "Subagents ({{count}})",
+      "jumpTo": "Jump to",
+      "jumpToSubagent": "Jump to {{task}}",
+      "subagentNotLoaded": "This activity is not in the current history window",
+      "openHistory": "Open history",
+      "openSubagentHistory": "Open history for {{task}}",
       "title": "Session",
       "untitled": "Untitled topic",
       "automations": "Automations",

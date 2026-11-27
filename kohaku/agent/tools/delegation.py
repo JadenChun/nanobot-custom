@@ -122,6 +122,11 @@ class DelegateTaskTool(_ForegroundTool):
                 "items": {"type": "string", "minLength": 1},
                 "minItems": 1,
             },
+            "label": {
+                "type": "string",
+                "description": "Short title shown in the UI.",
+                "maxLength": 60,
+            },
             "artifact_references": _ARTIFACT_REFERENCES,
             "continue_from_child_id": {
                 "type": "string",
@@ -150,6 +155,7 @@ class DelegateTaskTool(_ForegroundTool):
         harness: ChatHarness = "native",
         background: bool = False,
         continue_from_child_id: str | None = None,
+        label: str | None = None,
         **_: Any,
     ) -> str | ToolOutcome:
         return await self._manager.run_worker(
@@ -160,6 +166,7 @@ class DelegateTaskTool(_ForegroundTool):
             harness=harness,
             background=background,
             continue_from_child_id=continue_from_child_id,
+            label=label,
         )
 
     async def execute_with_context(self, context: TurnContext, /, **kwargs: Any) -> str | ToolOutcome:

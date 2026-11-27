@@ -58,6 +58,9 @@ const CHILD_FACT_KEYS = [
   "result_summary_truncated",
 ] as const satisfies readonly (keyof DelegatedChildPayload)[];
 
+const CHILD_RUN_TOTAL_KEYS = ["duration_ms", "step_count"] as const;
+const CHILD_RUN_TOTAL_STATES = new Set(["completed", "failed", "stopped"]);
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -88,6 +91,27 @@ function nonNegativeInteger(record: Record<string, unknown>, key: string): numbe
     : null;
 }
 
+function childCreatedAt(record: Record<string, unknown>): { created_at?: number } {
+  const createdAt = record.created_at;
+  return typeof createdAt === "number" && Number.isFinite(createdAt) && createdAt > 0
+    ? { created_at: createdAt }
+    : {};
+}
+
+function parseChildRunTotals(
+  record: Record<string, unknown>,
+  state: string | null,
+): Pick<DelegatedChildPayload, (typeof CHILD_RUN_TOTAL_KEYS)[number]> | null {
+  const totals: Pick<DelegatedChildPayload, (typeof CHILD_RUN_TOTAL_KEYS)[number]> = {};
+  for (const key of CHILD_RUN_TOTAL_KEYS) {
+    if (!hasOwn(record, key)) continue;
+    const count = nonNegativeInteger(record, key);
+    if (count === null) return null;
+    if (state && CHILD_RUN_TOTAL_STATES.has(state)) totals[key] = count;
+  }
+  return totals;
+}
+
 function booleanField(record: Record<string, unknown>, key: string): boolean | null {
   return typeof record[key] === "boolean" ? record[key] as boolean : null;
 }
@@ -108,6 +132,7 @@ export function parseDelegatedChildPayload(value: unknown): DelegatedChildPayloa
   const childId = nonEmptyString(value, "child_id");
   const profile = nonEmptyString(value, "profile");
   const state = nonEmptyString(value, "state");
+  const runTotals = parseChildRunTotals(value, state);
   const taskLabel = value.task_label;
   const taskLabelTruncated = booleanField(value, "task_label_truncated");
   const resultSummary = requiredNullableString(value, "result_summary");
@@ -132,6 +157,7 @@ export function parseDelegatedChildPayload(value: unknown): DelegatedChildPayloa
   const outcome = requiredNullableString(value, "outcome");
   const turnId = nullableString(value, "turn_id");
   const parentRunId = requiredNullableString(value, "parent_run_id");
+  const spawnCallId = nullableString(value, "spawn_call_id");
   const childRunId = requiredNullableString(value, "child_run_id");
   const pendingApprovalId = requiredNullableString(value, "pending_approval_id");
   const blockedRunId = requiredNullableString(value, "blocked_run_id");
@@ -143,6 +169,7 @@ export function parseDelegatedChildPayload(value: unknown): DelegatedChildPayloa
     || !childId
     || !profile
     || !state
+    || runTotals === null
     || typeof taskLabel !== "string"
     || codePointLength(taskLabel) > 160
     || taskLabelTruncated === null
@@ -168,6 +195,7 @@ export function parseDelegatedChildPayload(value: unknown): DelegatedChildPayloa
     || ownedWork === null
     || outcome === undefined
     || (hasOwn(value, "turn_id") && turnId === undefined)
+    || (hasOwn(value, "spawn_call_id") && spawnCallId === undefined)
     || parentRunId === undefined
     || childRunId === undefined
     || pendingApprovalId === undefined
@@ -180,6 +208,8 @@ export function parseDelegatedChildPayload(value: unknown): DelegatedChildPayloa
     child_session_key: childSessionKey,
     child_id: childId,
     profile,
+    ...childCreatedAt(value),
+    ...runTotals,
     ...(value.harness === "claude_sdk" ? { harness: "claude_sdk" } : {}),
     task_label: taskLabel,
     task_label_truncated: taskLabelTruncated,
@@ -190,6 +220,7 @@ export function parseDelegatedChildPayload(value: unknown): DelegatedChildPayloa
     runtime_generation: runtimeGeneration,
     turn_id: turnId ?? null,
     parent_run_id: parentRunId,
+    ...(spawnCallId ? { spawn_call_id: spawnCallId } : {}),
     child_run_id: childRunId,
     parent_store_identity: parentStoreIdentity,
     parent_incarnation: parentIncarnation,
@@ -239,6 +270,7 @@ export function parseDelegatedChildSummaryPayload(
   const childId = nonEmptyString(value, "child_id");
   const profile = nonEmptyString(value, "profile");
   const state = nonEmptyString(value, "state");
+  const runTotals = parseChildRunTotals(value, state);
   const taskLabel = nullableString(value, "task_label");
   const taskLabelTruncated = booleanField(value, "task_label_truncated");
   const resultSummary = nullableString(value, "result_summary");
@@ -247,6 +279,7 @@ export function parseDelegatedChildSummaryPayload(
   const runtimeGeneration = nullableNonNegativeInteger(value, "runtime_generation");
   const turnId = nullableString(value, "turn_id");
   const parentRunId = nullableString(value, "parent_run_id");
+  const spawnCallId = nullableString(value, "spawn_call_id");
   const childRunId = nullableString(value, "child_run_id");
   const parentStoreIdentity = requiredNullableOriginField(value, "parent_store_identity");
   const parentIncarnation = requiredNullableOriginField(value, "parent_incarnation");
@@ -267,6 +300,7 @@ export function parseDelegatedChildSummaryPayload(
     || !childId
     || !profile
     || !state
+    || runTotals === null
     || taskLabel === undefined
     || (taskLabel !== null && codePointLength(taskLabel) > 160)
     || taskLabelTruncated === null
@@ -276,6 +310,7 @@ export function parseDelegatedChildSummaryPayload(
     || outcome === undefined
     || runtimeGeneration === undefined
     || (hasOwn(value, "turn_id") && turnId === undefined)
+    || (hasOwn(value, "spawn_call_id") && spawnCallId === undefined)
     || parentRunId === undefined
     || childRunId === undefined
     || parentStoreIdentity === undefined
@@ -299,6 +334,8 @@ export function parseDelegatedChildSummaryPayload(
     child_session_key: childSessionKey,
     child_id: childId,
     profile,
+    ...childCreatedAt(value),
+    ...runTotals,
     ...(value.harness === "claude_sdk" ? { harness: "claude_sdk" } : {}),
     state,
     task_label: taskLabel,
@@ -309,6 +346,7 @@ export function parseDelegatedChildSummaryPayload(
     runtime_generation: runtimeGeneration,
     ...(hasOwn(value, "turn_id") ? { turn_id: turnId as string | null } : {}),
     parent_run_id: parentRunId,
+    ...(spawnCallId ? { spawn_call_id: spawnCallId } : {}),
     child_run_id: childRunId,
     parent_store_identity: parentStoreIdentity,
     parent_incarnation: parentIncarnation,
@@ -488,7 +526,49 @@ function compareVersion(a: DelegatedChildPayload, b: DelegatedChildPayload): num
 }
 
 function canonicalFactsEqual(a: DelegatedChildPayload, b: DelegatedChildPayload): boolean {
-  return CHILD_FACT_KEYS.every((key) => a[key] === b[key]);
+  return CHILD_FACT_KEYS.every((key) => a[key] === b[key])
+    && CHILD_RUN_TOTAL_KEYS.every((key) => a[key] === undefined || b[key] === undefined || a[key] === b[key])
+    // An older record may omit the spawning call; only two different calls conflict.
+    && (!a.spawn_call_id || !b.spawn_call_id || a.spawn_call_id === b.spawn_call_id);
+}
+
+/** An older projection can omit display-only metrics for this same child run. */
+function withRunTotals<T extends DelegatedChildReference>(
+  payload: T,
+  fallback: DelegatedChildPayload,
+): T {
+  if (!CHILD_RUN_TOTAL_STATES.has(payload.state)
+    || !payload.child_run_id
+    || payload.child_run_id !== fallback.child_run_id
+    || payload.run_sequence !== fallback.run_sequence) return payload;
+  let result = payload;
+  for (const key of CHILD_RUN_TOTAL_KEYS) {
+    if (payload[key] === undefined && fallback[key] !== undefined) {
+      result = { ...result, [key]: fallback[key] };
+    }
+  }
+  return result;
+}
+
+/**
+ * Return \`\`payload\`\` carrying the spawn anchor. Anchor facts are set once:
+ * later runs and partial history payloads never move a child.
+ */
+function withSpawnAnchor<T extends DelegatedChildReference>(
+  payload: T,
+  first: DelegatedChildReference,
+  second: DelegatedChildReference,
+): T {
+  const turnId = first.turn_id ?? second.turn_id;
+  const spawnCallId = first.spawn_call_id ?? second.spawn_call_id;
+  const turnChanged = !!turnId && turnId !== payload.turn_id;
+  const callChanged = !!spawnCallId && spawnCallId !== payload.spawn_call_id;
+  if (!turnChanged && !callChanged) return payload;
+  return {
+    ...payload,
+    ...(turnChanged ? { turn_id: turnId } : {}),
+    ...(callChanged ? { spawn_call_id: spawnCallId } : {}),
+  };
 }
 
 function sourceIsAuthorized(
@@ -649,31 +729,137 @@ export function mergeDelegatedChildRows(
         refreshRequired = true;
         continue;
       }
+      const replacement = withSpawnAnchor(candidate, candidate, parsedCurrent);
       const next = messages.slice();
       next[index] = {
         ...next[index]!,
-        delegatedChild: candidate,
-        ...(candidate.turn_id ? { turnId: candidate.turn_id } : {}),
+        delegatedChild: replacement,
+        ...(replacement.turn_id ? { turnId: replacement.turn_id } : {}),
       };
       messages = next;
       continue;
     }
     const order = compareVersion(parsedCurrent, candidate);
-    if (order > 0) continue;
-    if (order === 0) {
-      if (!canonicalFactsEqual(parsedCurrent, candidate)) refreshRequired = true;
+    if (order === 0 && !canonicalFactsEqual(parsedCurrent, candidate)) {
+      refreshRequired = true;
       continue;
     }
+    // Stale events can supply an anchor, but not metadata for the displayed run.
+    const merged = order < 0
+      ? withRunTotals(withSpawnAnchor(candidate, parsedCurrent, candidate), parsedCurrent)
+      : withSpawnAnchor(order === 0 ? withRunTotals(current!, candidate) : current!, parsedCurrent, candidate);
+    // Creation time is display metadata for this same lifetime and is only
+    // present in inventory reads, not in transcript or live updates.
+    const createdAt = parsedCurrent.created_at ?? candidate.created_at;
+    const payload = createdAt !== undefined && merged.created_at !== createdAt
+      ? { ...merged, created_at: createdAt }
+      : merged;
+    if (payload === current) continue;
     const next = messages.slice();
     next[index] = {
       ...next[index]!,
-      delegatedChild: candidate,
-      ...(candidate.turn_id ? { turnId: candidate.turn_id } : {}),
+      delegatedChild: payload,
+      ...(payload.turn_id ? { turnId: payload.turn_id } : {}),
     };
     messages = next;
   }
 
-  return { messages, refreshRequired };
+  return { messages: anchorDelegatedChildRows(messages), refreshRequired };
+}
+
+function isDelegatedChildRow(message: UIMessage): boolean {
+  return message.kind === "delegated_child";
+}
+
+/** Rows that belong to a turn's work, as opposed to its visible answer. */
+function isTurnWorkRow(message: UIMessage): boolean {
+  return message.role === "user"
+    || message.kind === "trace"
+    || message.activityKind === "model"
+    || (message.role === "assistant" && !message.content.trim() && !!message.reasoning);
+}
+
+interface ChildPlacement {
+  /** Index of the transcript row the child follows; the length means "append". */
+  after: number;
+  /** Order among children that follow the same row. */
+  rank: number;
+  anchor?: UIMessage;
+}
+
+function placeChildRow(transcript: UIMessage[], row: UIMessage): ChildPlacement {
+  const child = row.delegatedChild;
+  const callId = child?.spawn_call_id;
+  if (callId) {
+    const matches = transcript.flatMap((message, index) => {
+      const rank = message.toolEvents?.findIndex((event) => event.call_id === callId) ?? -1;
+      return rank < 0 ? [] : [{ after: index, rank, anchor: message }];
+    });
+    // Some providers reuse call ids across turns, so prefer the child's own turn.
+    const match = matches.find(({ anchor }) => anchor.turnId === child.turn_id) ?? matches[0];
+    if (match) return match;
+  }
+  for (const turnId of [child?.turn_id, child?.parent_run_id]) {
+    if (!turnId) continue;
+    let first = -1;
+    let lastWork = -1;
+    transcript.forEach((message, index) => {
+      if (message.turnId !== turnId) return;
+      if (first < 0) first = index;
+      if (isTurnWorkRow(message)) lastWork = index;
+    });
+    if (first < 0) continue;
+    // Stay ahead of the final answer: follow the turn's last work row.
+    const after = lastWork < 0 ? first - 1 : lastWork;
+    return { after, rank: Number.MAX_SAFE_INTEGER, anchor: transcript[lastWork < 0 ? first : lastWork] };
+  }
+  return { after: transcript.length, rank: 0 };
+}
+
+/** Give a placed child its anchor's turn ordering, so turn sorting keeps it there. */
+function alignChildRow(row: UIMessage, anchor: UIMessage | undefined): UIMessage {
+  if (!anchor || (row.turnId === anchor.turnId && row.turnSeq === anchor.turnSeq)) return row;
+  const next: UIMessage = { ...row, turnId: anchor.turnId, turnSeq: anchor.turnSeq };
+  if (anchor.turnId === undefined) delete next.turnId;
+  if (anchor.turnSeq === undefined) delete next.turnSeq;
+  return next;
+}
+
+/**
+ * Place every child row after the tool call that spawned it, else at the end of
+ * its turn's work, else at the end. The result depends only on the rows, so live
+ * updates and reloaded history agree. Returns the input when nothing moves.
+ */
+export function anchorDelegatedChildRows(messages: UIMessage[]): UIMessage[] {
+  if (!messages.some(isDelegatedChildRow)) return messages;
+  const transcript = messages.filter((message) => !isDelegatedChildRow(message));
+  const placed = messages
+    .filter(isDelegatedChildRow)
+    .map((row, order) => ({ row, order, ...placeChildRow(transcript, row) }))
+    .sort((a, b) => a.after - b.after || a.rank - b.rank || a.order - b.order);
+  const result: UIMessage[] = [];
+  let nextChild = 0;
+  for (let index = -1; index <= transcript.length; index += 1) {
+    if (index >= 0 && index < transcript.length) result.push(transcript[index]!);
+    while (placed[nextChild]?.after === index) {
+      const { row, anchor } = placed[nextChild]!;
+      result.push(alignChildRow(row, anchor));
+      nextChild += 1;
+    }
+  }
+  return result.every((message, index) => message === messages[index]) ? messages : result;
+}
+
+/** Keep a known off-window child in the inventory, not under a later turn. */
+export function hideOffWindowDelegatedChildren(messages: UIMessage[]): UIMessage[] {
+  if (!messages.some(isDelegatedChildRow)) return messages;
+  const transcript = messages.filter((message) => !isDelegatedChildRow(message));
+  const visible = messages.filter((message) => {
+    const child = message.delegatedChild;
+    if (!child || !(child.spawn_call_id || child.turn_id || child.parent_run_id)) return true;
+    return placeChildRow(transcript, message).anchor !== undefined;
+  });
+  return visible.length === messages.length ? messages : visible;
 }
 
 export function delegatedChildRows(messages: UIMessage[]): DelegatedChildPayload[] {
