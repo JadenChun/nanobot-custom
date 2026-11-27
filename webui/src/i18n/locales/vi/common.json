@@ -1215,6 +1215,13 @@
       "sessionInfo": "Chi tiết phiên"
     },
     "sessionInfo": {
+      "subagents": "Tác nhân phụ",
+      "subagentsCount": "Tác nhân phụ ({{count}})",
+      "jumpTo": "Chuyển đến",
+      "jumpToSubagent": "Chuyển đến {{task}}",
+      "subagentNotLoaded": "Hoạt động này không có trong phần lịch sử đang hiển thị",
+      "openHistory": "Mở lịch sử",
+      "openSubagentHistory": "Mở lịch sử của {{task}}",
       "title": "Phiên",
       "untitled": "Chủ đề chưa đặt tên",
       "automations": "Tự động hóa",

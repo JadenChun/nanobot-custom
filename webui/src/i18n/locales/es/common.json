@@ -1215,6 +1215,13 @@
       "sessionInfo": "Detalles de la sesión"
     },
     "sessionInfo": {
+      "subagents": "Subagentes",
+      "subagentsCount": "Subagentes ({{count}})",
+      "jumpTo": "Ir a",
+      "jumpToSubagent": "Ir a {{task}}",
+      "subagentNotLoaded": "Esta actividad no está en la parte del historial cargada",
+      "openHistory": "Abrir historial",
+      "openSubagentHistory": "Abrir el historial de {{task}}",
       "title": "Sesión",
       "untitled": "Tema sin título",
       "automations": "Automatizaciones",

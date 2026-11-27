@@ -1215,6 +1215,13 @@
       "sessionInfo": "對話詳細資料"
     },
     "sessionInfo": {
+      "subagents": "子代理",
+      "subagentsCount": "子代理（{{count}}）",
+      "jumpTo": "跳轉",
+      "jumpToSubagent": "跳轉至{{task}}",
+      "subagentNotLoaded": "目前載入的歷史記錄中沒有這項活動",
+      "openHistory": "開啟歷史記錄",
+      "openSubagentHistory": "開啟{{task}}的歷史記錄",
       "title": "對話",
       "untitled": "未命名話題",
       "automations": "自動任務",

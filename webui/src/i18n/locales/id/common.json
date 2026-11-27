@@ -1215,6 +1215,13 @@
       "sessionInfo": "Detail sesi"
     },
     "sessionInfo": {
+      "subagents": "Subagen",
+      "subagentsCount": "Subagen ({{count}})",
+      "jumpTo": "Lompat ke",
+      "jumpToSubagent": "Lompat ke {{task}}",
+      "subagentNotLoaded": "Aktivitas ini tidak ada di bagian riwayat yang sedang ditampilkan",
+      "openHistory": "Buka riwayat",
+      "openSubagentHistory": "Buka riwayat {{task}}",
       "title": "Sesi",
       "untitled": "Topik tanpa judul",
       "automations": "Otomasi",

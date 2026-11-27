@@ -188,6 +188,7 @@ interface AgentActivityClusterProps {
   onOpenFilePreview?: (path: string) => void;
   onOpenChildHistory?: OpenChildHistory;
   delegatedStatusAvailable?: boolean;
+  childJump?: { childId: string } | null;
 }
 
 /**
@@ -208,6 +209,7 @@ export function AgentActivityCluster({
   onOpenFilePreview,
   onOpenChildHistory,
   delegatedStatusAvailable = true,
+  childJump = null,
 }: AgentActivityClusterProps) {
   const { t } = useTranslation();
   const fileEditDisplayMode = useFileEditDisplayMode();
@@ -368,12 +370,22 @@ export function AgentActivityCluster({
   };
 
   useLayoutEffect(() => {
-    if (!activityScrollRef.current || !outerExpanded || !autoFollowActivityRef.current) return;
+    if (!childJump) return;
+    // An explicit jump wins over the cluster's usual follow-the-last-step behavior.
+    autoFollowActivityRef.current = false;
+    cancelActivityScrollFrame();
+    setUserToggledOuter(true);
+    setOuterOpenLocal(true);
+  }, [cancelActivityScrollFrame, childJump]);
+
+  useLayoutEffect(() => {
+    if (childJump || !activityScrollRef.current || !outerExpanded || !autoFollowActivityRef.current) return;
     scrollActivityToBottom();
     scheduleActivityScrollToBottom();
-  }, [outerExpanded, activityMessages, isTurnStreaming, scrollActivityToBottom, scheduleActivityScrollToBottom]);
+  }, [childJump, outerExpanded, activityMessages, isTurnStreaming, scrollActivityToBottom, scheduleActivityScrollToBottom]);
 
   useEffect(() => {
+    if (childJump) return;
     if (!outerExpanded) {
       autoFollowActivityRef.current = true;
       lastActivityScrollTopRef.current = 0;
@@ -391,7 +403,7 @@ export function AgentActivityCluster({
     });
     observer.observe(target);
     return () => observer.disconnect();
-  }, [outerExpanded, scrollActivityToBottom, scheduleActivityScrollToBottom, syncActivityScrollFade]);
+  }, [childJump, outerExpanded, scrollActivityToBottom, scheduleActivityScrollToBottom, syncActivityScrollFade]);
 
   useEffect(() => cancelActivityScrollFrame, [cancelActivityScrollFrame]);
 
@@ -455,6 +467,7 @@ export function AgentActivityCluster({
           fadeTop={activityScrollFade.top}
           fadeBottom={activityScrollFade.bottom}
           hasDetails={hasVisibleActivity && !hasOnlyFileActivity}
+          instantReveal={childJump !== null}
           onToggle={toggleOuter}
           onScroll={onActivityScroll}
         >

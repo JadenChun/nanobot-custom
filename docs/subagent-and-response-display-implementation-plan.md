@@ -1,7 +1,7 @@
 # Subagent display and response format implementation plan
 
-Status as of 2026-11-27: P0, C, E, A, and B are implemented on
-`codex/subagent-response-display`. D and F have not started.
+Status as of 2026-11-27: P0, C, E, A, B, and D are implemented on
+`codex/subagent-response-display`. F is next.
 
 Reference session that reproduces every issue:
 parent `websocket:85f41d61-7609-46ac-af28-815123da98f5` and child
@@ -46,8 +46,8 @@ parent `websocket:85f41d61-7609-46ac-af28-815123da98f5` and child
 | 1 | E Desktop external links | C | `desktop/src-tauri/src/**` |
 | 2 | A Inline anchoring | none | `kohaku/bus/outbound_events.py`, `kohaku/bus/outbound_wire.py`, `kohaku/agent/child_sessions.py`, `kohaku/agent/delegation.py`, `kohaku/webui/transcript.py`, `webui/src/lib/types.ts`, `delegated-child-projection.ts`, `activity-timeline.ts`, `ThreadShell.tsx`, `AgentActivityCluster.tsx`, `MessageBubble.tsx` |
 | 3 | B Compact card, label, partial | none | `kohaku/agent/tools/explore.py`, `kohaku/agent/tools/delegation.py`, `kohaku/agent/child_sessions.py`, `kohaku/agent/delegation.py`, `MessageBubble.tsx`, `SubagentStatus.tsx`, `DelegatedChildHistoryOverlay.tsx` (title only) |
-| 4 | D Session panel subagent list | F | `SessionInfoPopover.tsx`, `ThreadInspector.tsx`, a new `SubagentList.tsx`, tests |
-| 4 | F Progress notes and subagent report shape | D | `webui/src/lib/activity-timeline.ts`, `MessageBubble.tsx`, `kohaku/templates/agent/subagent_system.md` |
+| 4 | D Session panel subagent list | none | `SessionInfoPopover.tsx`, `SubagentList.tsx`, the thread history/viewport path, session locales and tests |
+| 5 | F Progress notes and subagent report shape | none | `webui/src/lib/activity-timeline.ts`, `MessageBubble.tsx`, `kohaku/templates/agent/subagent_system.md` |
 
 Packages that share a file never run in the same wave. Each worker is told that it is not alone
 in the codebase. It must not revert edits it did not make, and it must not run
@@ -244,18 +244,22 @@ check, `cd webui && bun run test && bun run build`.
 
 **Objective.** The Session details panel lists the subagents in the session, with navigation.
 
-**Evidence.** `SessionInfoPopover.tsx` / `ThreadInspector.tsx` show only "Automations 0".
+**Starting point.** The `SessionSummaryCard` in `ThreadShell.tsx` showed automations but no list of subagents.
 
 **Acceptance criteria.**
 1. A "Subagents (n)" section lists each child with: short title, harness badge, status (including Partial),
    duration and step count, newest first.
-2. "Jump to" scrolls the thread to the child's inline row (uses A's anchor) and briefly highlights it.
-3. "Open history" opens `DelegatedChildHistoryOverlay`.
-4. The empty state is hidden or says "No subagents". The section reuses existing projection data and adds no
-   new endpoint unless one is needed.
+2. "Jump to" opens the activity group, centers and focuses the exact inline row, and briefly highlights it.
+   Disable the action when the row isn't in the current history window; Jump does not fetch older turns.
+3. "Open history" uses the existing parent/child authorization checks and `DelegatedChildHistoryOverlay`,
+   including for children outside the loaded window.
+4. Hide the section when there are no children. Keep the existing width and mobile rules. For a paged parent
+   without child rows on its latest page, load the existing inventory on demand without reloading or adding
+   false child rows to the transcript.
 
-**Test-first.** Extend `webui/src/tests/session-info-popover.test.tsx`: list rendering, status mapping,
-and that the jump and open callbacks are called.
+**Test-first.** Panel tests cover ordering, status, metrics, empty state and both actions. The thread tests
+exercise the production card with child history inside and outside the loaded page, exact row focus, and
+focus return when the inspector closes. Viewport tests exercise the folded and virtualized jump paths.
 
 **Validation.** `cd webui && bun run test && bun run build`.
 
@@ -303,7 +307,7 @@ For each package:
 | E | PASS 2026-11-27 | `native.rs` only: `classify_link` (Allow / OpenExternal / Deny), macOS on_navigation + on_new_window route safe http(s) to the system browser; chat URLs carrying `bootstrapSecret` never leave the webview. cargo test 21/21. Manual macOS click test pending. MACOS.md updated. |
 | A | PASS 2026-11-27 | Optional `spawn_call_id` in child record, event, wire, transcript and TS types (old records read as none). Child renders right after its spawning tool row inside the activity group; legacy records land after their turn's last work row, before the final answer. Reference session: child moved from below a later turn's answer into its own turn. Orchestrator re-run: 47 py + 39 TS tests pass, ruff clean; basedpyright 962→962. Extra approved edits: `loop.py` (`_publish_delegated_child`), `ws_http.py` (`_hydrated_child_payload`), `ThreadMessages.tsx` (2 props), `tests/webui/test_managed_display_origin.py` stub. |
 | B | PASS 2026-11-27 | Short titles, partial status, run metrics, and a separate Markdown result disclosure. See "Package B verification" below. |
-| D | not started | |
+| D | PASS (automated) 2026-11-27 | Session details lists children and opens their history even when Jump is unavailable. Full WebUI suite: 2,007 tests in 118 files; production build passed. Mocked gateway integration covers paged parents, no redundant reload, and focus return. Live desktop check against the reference session not run. |
 | F | not started | |
 
 ## Package B verification
@@ -325,7 +329,7 @@ For each package:
   persisted run totals. Its 160-character stored title projects to 60 characters. New partial rows and the
   Markdown disclosure were verified with WebUI component tests; no live desktop app check was run.
 
-Next: D and F (wave 4), as separate work from B.
+Next: F (progress notes and the default subagent report shape), separately from D.
 
 ## Follow-ups found during review
 

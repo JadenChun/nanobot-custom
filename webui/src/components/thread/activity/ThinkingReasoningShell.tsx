@@ -13,6 +13,7 @@ interface ThinkingReasoningShellProps {
   fadeTop: boolean;
   fadeBottom: boolean;
   hasDetails?: boolean;
+  instantReveal?: boolean;
   onToggle: () => void;
   onScroll: () => void;
 }
@@ -27,6 +28,7 @@ export function ThinkingReasoningShell({
   fadeTop,
   fadeBottom,
   hasDetails = true,
+  instantReveal = false,
   onToggle,
   onScroll,
 }: ThinkingReasoningShellProps) {
@@ -96,7 +98,8 @@ export function ThinkingReasoningShell({
           {...(!expanded ? { inert: "" } : {})}
           aria-hidden={!expanded}
           className={cn(
-            "grid transition-[grid-template-rows,opacity] [transition-duration:220ms] ease-out motion-reduce:transition-none",
+            "grid",
+            !instantReveal && "transition-[grid-template-rows,opacity] [transition-duration:220ms] ease-out motion-reduce:transition-none",
             expanded
               ? "grid-rows-[1fr] opacity-100"
               : "pointer-events-none grid-rows-[0fr] opacity-0",
@@ -108,6 +111,7 @@ export function ThinkingReasoningShell({
           >
             <div
               ref={viewportRef}
+              data-thread-activity-scroll=""
               data-testid={expanded ? "agent-activity-scroll" : undefined}
               data-fade-top={fadeTop}
               data-fade-bottom={fadeBottom}

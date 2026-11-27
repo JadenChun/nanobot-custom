@@ -141,6 +141,8 @@ export interface DelegatedChildPayload {
   child_session_key: string;
   child_id: string;
   profile: string;
+  /** Creation time from the child inventory, in Unix seconds. */
+  created_at?: number;
   harness?: ChatHarness;
   state: string;
   task_label?: string;
@@ -184,6 +186,7 @@ export interface DelegatedChildSummaryPayload {
   child_session_key: string;
   child_id: string;
   profile: string;
+  created_at?: number;
   harness?: ChatHarness;
   state: string;
   task_label: string | null;

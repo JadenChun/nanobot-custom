@@ -120,9 +120,10 @@ export function DelegatedChildRow({
     : t("thread.delegatedChild.showResult", "Show result");
   return (
     <section
-      className="my-1 max-w-[49.5rem]"
+      className="my-1 max-w-[49.5rem] rounded-control outline-none data-[jump-highlighted=true]:bg-primary/5 data-[jump-highlighted=true]:ring-2 data-[jump-highlighted=true]:ring-primary/40"
       data-delegated-child={child.child_id}
       aria-label={taskLabel.short}
+      tabIndex={-1}
     >
       <div className="flex min-w-0 items-center">
         <button

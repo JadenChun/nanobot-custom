@@ -81,6 +81,7 @@ import { parseRiskyApprovalPrompt } from "@/lib/risky-approval";
 import {
   delegatedChildReferences,
   delegatedChildRows,
+  hideOffWindowDelegatedChildren,
   mergeDelegatedChildRows,
   parseDelegatedChildSummaryPayload,
   parseDelegatedChildPayload,
@@ -1185,6 +1186,7 @@ export function ThreadShell({
   // A route can select a read before the sidebar supplies the chat summary.
   // Only the verified/optimistically created session can own a live composer.
   const historyKey = temporary ? null : session?.key ?? routeSessionKey;
+  const [sessionSummaryOpen, setSessionSummaryOpen] = useState(false);
   const permissionOwnerChatIdRef = useRef(chatId);
   permissionOwnerChatIdRef.current = chatId;
   const currentScopeFocus = workspaceFocusIdentity(workspaceScope);
@@ -1228,6 +1230,7 @@ export function ThreadShell({
     delegatedChildren,
     delegatedChildrenLoading,
     delegatedChildrenError,
+    sessionChildInventory,
     workspaceAccessRequest,
     workspaceAccessRequestLoading,
     workspaceAccessRequestError,
@@ -1262,7 +1265,7 @@ export function ThreadShell({
     clearPendingReveal,
     goToLatest,
     loadTurnAt,
-  } = useSessionHistory(historyKey);
+  } = useSessionHistory(historyKey, sessionSummaryOpen && composerActive);
   const viewingHistoricalWindow = historyKey !== null && hasMoreAfter;
   const effectivePromptTotal = Math.max(sessionPromptTotal, sessionTurnTotal);
   const refreshStopState = separateControls ? refreshLiveControls : refreshHistory;
@@ -1495,7 +1498,7 @@ export function ThreadShell({
   } | null>(null);
   const [shellWidth, setShellWidth] = useState(0);
   const [chatPaneWidth, setChatPaneWidth] = useState(0);
-  const [sessionSummaryOpen, setSessionSummaryOpen] = useState(false);
+  const sessionInfoTriggerRef = useRef<HTMLButtonElement>(null);
   const [selectedInspector, setSelectedInspector] = useState<InspectorTabId>("subagents");
   const [filePreview, setFilePreview] = useState<{ parentKey: string; path: string } | null>(null);
   const filePreviewPath = filePreview?.parentKey === historyKey ? filePreview.path : null;
@@ -1743,6 +1746,23 @@ export function ThreadShell({
     () => delegatedChildReferences(displayMessages),
     [displayMessages],
   );
+  const childHistoryReferences = useMemo(() => {
+    if (sessionChildInventory.length === 0) return currentDelegatedChildReferences;
+    // Supplemental inventory is for read-only inspection. The rendered/live
+    // projection still owns rows, status, approvals, and other controls.
+    const displayedIds = new Set(currentDelegatedChildReferences.map((child) => child.child_id));
+    return [
+      ...currentDelegatedChildReferences,
+      ...sessionChildInventory.filter((child) => (
+        child.root_key === historyKey && !displayedIds.has(child.child_id)
+      )),
+    ];
+  }, [currentDelegatedChildReferences, historyKey, sessionChildInventory]);
+  const childHistoryCanonicalRows = useMemo(() => (
+    childHistoryReferences.filter(
+      (child): child is DelegatedChildPayload => child.history_kind !== "summary",
+    )
+  ), [childHistoryReferences]);
   const childApprovalCandidates = useMemo(() => {
     if (!historyKey || temporary) return [];
     const expectedRoot = stopTarget?.source ?? historyStopTarget?.source ?? null;
@@ -1917,7 +1937,7 @@ export function ThreadShell({
   const childHistoryModal = inspectorModal && inspectorTab === "subagents";
   const delegatedStatusAvailable = connectionOpen && !delegatedChildrenLoading && !delegatedChildrenError;
   const inspectedCurrentChild = activeChildHistoryInspection
-    ? currentDelegatedChildReferences.find((child) => (
+    ? childHistoryReferences.find((child) => (
         child.child_id === activeChildHistoryInspection.child.child_id
       )) ?? null
     : null;
@@ -1946,7 +1966,7 @@ export function ThreadShell({
         )
         && delegatedChildHasValidAncestry(
           activeChildHistoryInspection.child,
-          currentDelegatedChildren,
+          childHistoryCanonicalRows,
           historyKey ?? "",
           inspectedExpectedRoot,
         )));
@@ -1963,7 +1983,7 @@ export function ThreadShell({
       ? parseDelegatedChildSummaryPayload(childValue)
       : parseDelegatedChildPayload(childValue);
     const current = child
-      ? currentDelegatedChildReferences.find((row) => row.child_id === child.child_id)
+      ? childHistoryReferences.find((row) => row.child_id === child.child_id)
       : undefined;
     const expectedRoot = isSummary
       ? null
@@ -1987,7 +2007,7 @@ export function ThreadShell({
         && sameDelegatedChildProvenance(child, candidate)
         && delegatedChildHasValidAncestry(
           candidate,
-          currentDelegatedChildren,
+          childHistoryCanonicalRows,
           historyKey,
           expectedRoot,
         );
@@ -2006,8 +2026,8 @@ export function ThreadShell({
       expectedRoot,
     });
   }, [
-    currentDelegatedChildren,
-    currentDelegatedChildReferences,
+    childHistoryCanonicalRows,
+    childHistoryReferences,
     delegatedChildrenError,
     delegatedChildrenLoading,
     historyKey,
@@ -2047,9 +2067,9 @@ export function ThreadShell({
         const focus = document.activeElement;
         if (focus === null || focus === document.body || !focus.isConnected) {
           window.requestAnimationFrame(() => {
-            if (returnState.trigger.isConnected && document.activeElement === document.body) {
-              returnState.trigger.focus({ preventScroll: true });
-            }
+            if (document.activeElement !== document.body) return;
+            const trigger = returnState.trigger.isConnected ? returnState.trigger : sessionInfoTriggerRef.current;
+            trigger?.focus({ preventScroll: true });
           });
         }
       }
@@ -2249,11 +2269,28 @@ export function ThreadShell({
         : displayMessages,
     [displayMessages, messagesReady, projectedHistorical, viewingHistoricalWindow],
   );
-  const viewportMessages = historyAccessDenied
+  const windowMessages = historyAccessDenied
     ? []
     : viewingHistoricalWindow
       ? historicalWindowMessages
       : showingOpeningPage || !messagesReady ? openingMessages : displayWithOlderHistory;
+  const viewportMessages = useMemo(() => (
+    hasMoreBefore || hasMoreAfter ? hideOffWindowDelegatedChildren(windowMessages) : windowMessages
+  ), [hasMoreAfter, hasMoreBefore, windowMessages]);
+  const sessionSubagentEntries = useMemo(() => {
+    if (!sessionSummaryOpen || historyAccessDenied) return [];
+    const timestamps = new Map(displayMessages.flatMap((message) => (
+      message.delegatedChild ? [[message.delegatedChild.child_id, message.createdAt] as const] : []
+    )));
+    const reachable = new Set(viewportMessages.flatMap((message) => (
+      message.delegatedChild ? [message.delegatedChild.child_id] : []
+    )));
+    return childHistoryReferences.map((child) => ({
+      child,
+      createdAt: child.created_at === undefined ? (timestamps.get(child.child_id) ?? 0) : child.created_at * 1000,
+      canJump: reachable.has(child.child_id),
+    }));
+  }, [childHistoryReferences, displayMessages, historyAccessDenied, sessionSummaryOpen, viewportMessages]);
   const useDirectHistoryMeta =
     viewingHistoricalWindow
     || showingOpeningPage
@@ -4007,10 +4044,27 @@ export function ThreadShell({
     && !inspectorModal;
   const sessionSummaryInGutter = effectiveChatPaneWidth >= SESSION_SUMMARY_GUTTER_MIN_WIDTH;
   const sessionSummaryVisible = sessionSummaryAvailable && sessionSummaryOpen;
+  const sessionSubagents = {
+    entries: sessionSubagentEntries,
+    statusAvailable: delegatedStatusAvailable,
+    onJump: (child: DelegatedChildReference) => viewportRef.current?.jumpToChild(child.child_id),
+    onOpenHistory: handleOpenChildHistory,
+  };
+  const sessionSummaryCard = sessionSummaryVisible && historyKey ? (
+    <SessionSummaryCard
+      sessionKey={historyKey}
+      token={token}
+      title={title}
+      active={sessionSummaryVisible}
+      onClose={() => setSessionSummaryOpen(false)}
+      subagents={sessionSubagents}
+    />
+  ) : null;
 
   // Only offer the toggle where the summary can appear beside the transcript.
   const sessionInfoAction = sessionSummaryAvailable ? (
     <Button
+      ref={sessionInfoTriggerRef}
       type="button"
       variant="ghost"
       size="icon"
@@ -4048,7 +4102,7 @@ export function ThreadShell({
       key={`${activeChildHistoryInspection.child.child_id}:${activeChildHistoryInspection.child.child_session_key}:${activeChildHistoryInspection.child.child_generation}`}
       child={activeChildHistoryInspection.child}
       rootKey={activeChildHistoryInspection.parentKey}
-      rootRows={currentDelegatedChildren}
+      rootRows={childHistoryCanonicalRows}
       expectedRoot={activeChildHistoryInspection.expectedRoot}
       provenanceComplete={childHistoryProvenanceComplete}
       currentChild={childHistoryProvenanceComplete ? inspectedCurrentChild : null}
@@ -4220,20 +4274,14 @@ export function ThreadShell({
               onQuoteSelection={session ? handleQuoteSelection : undefined}
             />
           </FilePreviewAvailabilityProvider>
-          {sessionSummaryVisible && historyKey ? (
+          {sessionSummaryCard ? (
             sessionSummaryInGutter ? (
               <div
                 data-testid="session-summary-gutter"
                 className="pointer-events-none absolute inset-y-0 right-0 z-20 flex w-[16.5rem] items-start justify-end py-3 pr-4 pl-2"
               >
                 <div className="pointer-events-auto max-h-full w-full">
-                  <SessionSummaryCard
-                    sessionKey={historyKey}
-                    token={token}
-                    title={title}
-                    active={sessionSummaryVisible}
-                    onClose={() => setSessionSummaryOpen(false)}
-                  />
+                  {sessionSummaryCard}
                 </div>
               </div>
             ) : (
@@ -4241,13 +4289,7 @@ export function ThreadShell({
                 data-testid="session-summary-rail"
                 className="flex w-[16.5rem] shrink-0 items-start py-3 pr-4 pl-2"
               >
-                <SessionSummaryCard
-                  sessionKey={historyKey}
-                  token={token}
-                  title={title}
-                  active={sessionSummaryVisible}
-                  onClose={() => setSessionSummaryOpen(false)}
-                />
+                {sessionSummaryCard}
               </aside>
             )
           ) : null}

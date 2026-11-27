@@ -91,6 +91,13 @@ function nonNegativeInteger(record: Record<string, unknown>, key: string): numbe
     : null;
 }
 
+function childCreatedAt(record: Record<string, unknown>): { created_at?: number } {
+  const createdAt = record.created_at;
+  return typeof createdAt === "number" && Number.isFinite(createdAt) && createdAt > 0
+    ? { created_at: createdAt }
+    : {};
+}
+
 function parseChildRunTotals(
   record: Record<string, unknown>,
   state: string | null,
@@ -201,6 +208,7 @@ export function parseDelegatedChildPayload(value: unknown): DelegatedChildPayloa
     child_session_key: childSessionKey,
     child_id: childId,
     profile,
+    ...childCreatedAt(value),
     ...runTotals,
     ...(value.harness === "claude_sdk" ? { harness: "claude_sdk" } : {}),
     task_label: taskLabel,
@@ -326,6 +334,7 @@ export function parseDelegatedChildSummaryPayload(
     child_session_key: childSessionKey,
     child_id: childId,
     profile,
+    ...childCreatedAt(value),
     ...runTotals,
     ...(value.harness === "claude_sdk" ? { harness: "claude_sdk" } : {}),
     state,
@@ -736,9 +745,15 @@ export function mergeDelegatedChildRows(
       continue;
     }
     // Stale events can supply an anchor, but not metadata for the displayed run.
-    const payload = order < 0
+    const merged = order < 0
       ? withRunTotals(withSpawnAnchor(candidate, parsedCurrent, candidate), parsedCurrent)
       : withSpawnAnchor(order === 0 ? withRunTotals(current!, candidate) : current!, parsedCurrent, candidate);
+    // Creation time is display metadata for this same lifetime and is only
+    // present in inventory reads, not in transcript or live updates.
+    const createdAt = parsedCurrent.created_at ?? candidate.created_at;
+    const payload = createdAt !== undefined && merged.created_at !== createdAt
+      ? { ...merged, created_at: createdAt }
+      : merged;
     if (payload === current) continue;
     const next = messages.slice();
     next[index] = {
@@ -833,6 +848,18 @@ export function anchorDelegatedChildRows(messages: UIMessage[]): UIMessage[] {
     }
   }
   return result.every((message, index) => message === messages[index]) ? messages : result;
+}
+
+/** Keep a known off-window child in the inventory, not under a later turn. */
+export function hideOffWindowDelegatedChildren(messages: UIMessage[]): UIMessage[] {
+  if (!messages.some(isDelegatedChildRow)) return messages;
+  const transcript = messages.filter((message) => !isDelegatedChildRow(message));
+  const visible = messages.filter((message) => {
+    const child = message.delegatedChild;
+    if (!child || !(child.spawn_call_id || child.turn_id || child.parent_run_id)) return true;
+    return placeChildRow(transcript, message).anchor !== undefined;
+  });
+  return visible.length === messages.length ? messages : visible;
 }
 
 export function delegatedChildRows(messages: UIMessage[]): DelegatedChildPayload[] {

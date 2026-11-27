@@ -1215,6 +1215,13 @@
       "sessionInfo": "세션 세부 정보"
     },
     "sessionInfo": {
+      "subagents": "하위 에이전트",
+      "subagentsCount": "하위 에이전트 ({{count}})",
+      "jumpTo": "이동",
+      "jumpToSubagent": "{{task}}(으)로 이동",
+      "subagentNotLoaded": "이 활동은 현재 표시 중인 기록에 없습니다",
+      "openHistory": "기록 열기",
+      "openSubagentHistory": "{{task}} 기록 열기",
       "title": "세션",
       "untitled": "제목 없는 주제",
       "automations": "자동화",

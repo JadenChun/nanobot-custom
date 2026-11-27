@@ -1,7 +1,9 @@
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { createRef } from "react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 import { ThreadMessages } from "@/components/thread/ThreadMessages";
+import { INITIAL_HISTORY_WINDOW, ThreadViewport, type ThreadViewportHandle } from "@/components/thread/ThreadViewport";
 import { formatToolCallTrace } from "@/lib/tool-traces";
 import type { DelegatedChildPayload, UIMessage } from "@/lib/types";
 
@@ -53,6 +55,68 @@ const disclosure = (container: HTMLElement) => (
 );
 
 describe("inline delegated child activity", () => {
+  it("jumps to an older loaded child, unfolds its activity and focuses the highlighted row", async () => {
+    const viewport = createRef<ThreadViewportHandle>();
+    const tail: UIMessage[] = Array.from({ length: INITIAL_HISTORY_WINDOW + 5 }, (_, index) => ({
+      id: `later-${index}`, role: "user", content: `Later prompt ${index}`, createdAt: 10 + index,
+      turnId: `later-${index}`,
+    }));
+    const { container } = render(
+      <ThreadViewport
+        ref={viewport}
+        messages={[...thread(childRow({ state: "completed" })), ...tail]}
+        conversationKey="websocket:parent"
+        conversationReady
+        virtualize={false}
+      />,
+    );
+    expect(childElement(container)).toBeNull();
+    act(() => { viewport.current?.jumpToChild?.("child-a"); });
+    await waitFor(() => expect(childElement(container)).toHaveFocus());
+    expect(disclosure(container)).toHaveAttribute("aria-expanded", "true");
+    expect(childElement(container)).toHaveAttribute("data-jump-highlighted", "true");
+    expect(childElement(container)?.closest('[aria-hidden="true"]')).toBeNull();
+  });
+
+  it("mounts an offscreen virtualized child before focusing the exact row", async () => {
+    const viewport = createRef<ThreadViewportHandle>();
+    const clientHeight = vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockImplementation(function (this: HTMLElement) {
+      return this.dataset.testid === "thread-message-region" ? 300 : 0;
+    });
+    const prompts = (prefix: string): UIMessage[] => Array.from({ length: 45 }, (_, i) => ({
+      id: `${prefix}-${i}`, role: "user", content: `${prefix} prompt ${i}`,
+      createdAt: i, turnId: `${prefix}-${i}`,
+    }));
+    try {
+      const { container } = render(
+        <ThreadViewport
+          ref={viewport}
+          messages={[...prompts("Earlier"), ...thread(childRow({ state: "completed" })), ...prompts("Later")]}
+          composer={<div />}
+          virtualize
+        />,
+      );
+      const scroller = screen.getByTestId("thread-message-region");
+      const virtualList = screen.getByTestId("thread-virtual-list");
+      Object.defineProperties(scroller, {
+        scrollHeight: { configurable: true, get: () => parseFloat(virtualList.style.height) || 6000 },
+        scrollTo: { configurable: true, value: ({ top }: ScrollToOptions) => {
+          if (top === undefined || scroller.scrollTop === top) return;
+          scroller.scrollTop = top;
+          // Browsers dispatch scroll events after the layout effect that initiated the scroll.
+          window.requestAnimationFrame(() => fireEvent.scroll(scroller));
+        } },
+      });
+      expect(childElement(container)).toBeNull();
+      act(() => viewport.current?.jumpToChild("child-a"));
+      await waitFor(() => expect(childElement(container)).toHaveFocus());
+      expect(childElement(container)).toHaveAttribute("data-jump-highlighted", "true");
+      expect(childElement(container)?.closest('[aria-hidden="true"]')).toBeNull();
+    } finally {
+      clientHeight.mockRestore();
+    }
+  });
+
   it("renders a live child inside the single activity group and opens its history", () => {
     const onOpen = vi.fn();
     const { container } = render(

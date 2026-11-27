@@ -1215,6 +1215,13 @@
       "sessionInfo": "セッション詳細"
     },
     "sessionInfo": {
+      "subagents": "サブエージェント",
+      "subagentsCount": "サブエージェント（{{count}}）",
+      "jumpTo": "移動",
+      "jumpToSubagent": "{{task}}に移動",
+      "subagentNotLoaded": "このアクティビティは現在表示中の履歴にはありません",
+      "openHistory": "履歴を開く",
+      "openSubagentHistory": "{{task}}の履歴を開く",
       "title": "セッション",
       "untitled": "無題のトピック",
       "automations": "自動タスク",

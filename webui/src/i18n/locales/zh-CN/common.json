@@ -1215,6 +1215,13 @@
       "sessionInfo": "会话详情"
     },
     "sessionInfo": {
+      "subagents": "子代理",
+      "subagentsCount": "子代理（{{count}}）",
+      "jumpTo": "跳转",
+      "jumpToSubagent": "跳转到{{task}}",
+      "subagentNotLoaded": "当前加载的历史记录中没有此活动",
+      "openHistory": "打开历史记录",
+      "openSubagentHistory": "打开{{task}}的历史记录",
       "title": "会话",
       "untitled": "未命名话题",
       "automations": "自动任务",
