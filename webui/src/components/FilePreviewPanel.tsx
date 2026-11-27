@@ -1,16 +1,22 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
-import { AlertCircle, ChevronLeft, ChevronRight, Loader2, X } from "lucide-react";
+import { AlertCircle, ChevronLeft, ChevronRight, Download, Loader2, Music, Play, X } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import { CodeBlock } from "@/components/CodeBlock";
 import { MarkdownText } from "@/components/MarkdownText";
 import { splitFilePath } from "@/components/FileReferenceChip";
+import { MobileVideoPlayer } from "@/components/MobileVideoPlayer";
 import { ThreadInspectorDialog } from "@/components/thread/ThreadInspector";
 import { useMobileBack } from "@/hooks/useMobileBack";
 import { ApiError, fetchFilePreview } from "@/lib/api";
+import { useMediaSource } from "@/lib/mobile-media";
+import { isMobileRuntimeActive } from "@/lib/mobile-runtime";
+import { isLinuxDesktopWebKit } from "@/lib/runtime";
 import type { FilePreviewPayload } from "@/lib/types";
 import { cn } from "@/lib/utils";
+
+const LazyPdfPreview = lazy(() => import("@/components/PdfPreview"));
 
 interface FilePreviewPanelProps {
   sessionKey: string;
@@ -119,6 +125,8 @@ export function FilePreviewPanel({
     fileName,
   ].join("/")}`;
   const payloadKind = state.status === "ready" ? state.payload.kind ?? "text" : "text";
+  const rawMediaUrl = state.status === "ready" ? state.payload.media_url : undefined;
+  const resolvedMediaUrl = useMediaSource(rawMediaUrl).src;
   const isDirectory = payloadKind === "directory";
   const isMarkdown = payloadKind === "text" && (
     (state.status === "ready" && state.payload.language === "markdown")
@@ -268,6 +276,22 @@ export function FilePreviewPanel({
             ))}
           </div>
         ) : null}
+        {state.status === "ready" && resolvedMediaUrl ? (
+          <a
+            href={resolvedMediaUrl}
+            download={fileName}
+            className={cn(
+              "inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md",
+              "text-muted-foreground transition-colors hover:bg-muted hover:text-foreground",
+              "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+            )}
+            title={t("filePreview.download", { defaultValue: "Download file" })}
+            aria-label={t("filePreview.download", { defaultValue: "Download file" })}
+            data-testid="file-preview-download"
+          >
+            <Download className="h-4 w-4" aria-hidden />
+          </a>
+        ) : null}
         {modal ? (
           <button
             ref={closeButtonRef}
@@ -303,16 +327,86 @@ export function FilePreviewPanel({
               <p>{errorMessage}</p>
             </div>
           </div>
-        ) : state.payload.kind === "image" && state.payload.media_url ? (
+        ) : state.payload.kind === "image" && resolvedMediaUrl ? (
           <div className="flex h-full items-center justify-center bg-muted/20 p-3">
             <img
-              src={state.payload.media_url}
+              src={resolvedMediaUrl}
               alt={fileName}
               className="max-h-full max-w-full rounded-control object-contain"
               loading="eager"
               decoding="async"
               draggable={false}
             />
+          </div>
+        ) : state.payload.kind === "video" && resolvedMediaUrl ? (
+          <div
+            className="flex h-full items-center justify-center bg-muted/20 p-3"
+            data-testid="file-preview-video"
+          >
+            {isMobileRuntimeActive() ? (
+              <MobileVideoPlayer
+                key={resolvedMediaUrl}
+                src={resolvedMediaUrl}
+                label={fileName}
+                containerClassName="flex h-full w-full items-center justify-center"
+                className="max-h-full max-w-full rounded-control"
+              />
+            ) : isLinuxDesktopWebKit() ? (
+              <DeferredPreviewVideo src={resolvedMediaUrl} label={fileName} />
+            ) : (
+              <StandardPreviewVideo src={resolvedMediaUrl} label={fileName} />
+            )}
+          </div>
+        ) : state.payload.kind === "audio" && resolvedMediaUrl ? (
+          <div
+            className="flex h-full items-center justify-center bg-muted/20 p-6"
+            data-testid="file-preview-audio"
+          >
+            <div className="w-full max-w-md space-y-4 rounded-xl border border-border/60 bg-background p-5 shadow-sm">
+              <div className="flex items-center gap-3">
+                <div className="grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-sky-500/10 text-sky-600 dark:text-sky-300">
+                  <Music className="h-5 w-5" aria-hidden />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm font-medium text-foreground">{fileName}</p>
+                  <p className="text-xs text-muted-foreground">
+                    {formatEntrySize(state.payload.size)}
+                    {state.payload.mime ? ` · ${state.payload.mime}` : ""}
+                  </p>
+                </div>
+              </div>
+              <audio
+                src={resolvedMediaUrl}
+                controls
+                preload="metadata"
+                aria-label={fileName}
+                className="w-full"
+              />
+            </div>
+          </div>
+        ) : state.payload.kind === "pdf" && resolvedMediaUrl ? (
+          <Suspense
+            fallback={(
+              <div className="flex h-full items-center justify-center gap-2 text-sm text-muted-foreground">
+                <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+                {t("filePreview.loading", { defaultValue: "Loading preview..." })}
+              </div>
+            )}
+          >
+            <LazyPdfPreview src={resolvedMediaUrl} fileName={fileName} />
+          </Suspense>
+        ) : state.payload.kind === "image"
+          || state.payload.kind === "video"
+          || state.payload.kind === "audio"
+          || state.payload.kind === "pdf" ? (
+          <div className="flex h-full items-center justify-center px-8 text-center text-sm text-muted-foreground">
+            <div className="max-w-sm">
+              <AlertCircle
+                className="mx-auto mb-3 h-5 w-5 text-muted-foreground/70"
+                aria-hidden
+              />
+              <p>{t("filePreview.failed", { defaultValue: "Could not preview this file." })}</p>
+            </div>
           </div>
         ) : state.payload.kind === "directory" ? (
           <ul className="min-h-full py-1" aria-label={t("filePreview.directory", { defaultValue: "Folder contents" })}>
@@ -396,5 +490,111 @@ export function FilePreviewPanel({
       <Dialog.Description className="sr-only">{breadcrumbTitle}</Dialog.Description>
       {content}
     </ThreadInspectorDialog>
+  );
+}
+
+function releaseVideoElement(video: HTMLVideoElement | null): void {
+  if (!video?.hasAttribute("src")) return;
+  video.removeAttribute("src");
+  if (typeof video.load === "function") {
+    video.load();
+  }
+}
+
+function StandardPreviewVideo({ src, label }: { src: string; label: string }) {
+  const ref = useRef<HTMLVideoElement>(null);
+
+  useEffect(() => {
+    const video = ref.current;
+    return () => releaseVideoElement(video);
+  }, [src]);
+
+  return (
+    <video
+      ref={ref}
+      src={src}
+      controls
+      playsInline
+      preload="metadata"
+      aria-label={label}
+      className="max-h-full max-w-full rounded-control bg-black"
+    />
+  );
+}
+
+function DeferredPreviewVideo({ src, label }: { src: string; label: string }) {
+  const { t } = useTranslation();
+  const ref = useRef<HTMLVideoElement>(null);
+  const [status, setStatus] = useState<"idle" | "loading" | "ready" | "error">("idle");
+  const showPlayer = status === "loading" || status === "ready";
+
+  useEffect(() => {
+    setStatus("idle");
+    const video = ref.current;
+    return () => releaseVideoElement(video);
+  }, [src]);
+
+  function play() {
+    const video = ref.current;
+    if (!video) return;
+    // Attach the source and start playback within the user's click so Linux
+    // desktop WebKitGTK does not allocate GStreamer pipelines until requested.
+    video.src = src;
+    setStatus("loading");
+    video.focus();
+    const pending = typeof video.play === "function" ? video.play() : undefined;
+    void pending?.catch(() => {
+      if (video.hasAttribute("src")) {
+        setStatus((current) => (current === "loading" ? "ready" : current));
+      }
+    });
+  }
+
+  return (
+    <div className="relative flex h-full w-full items-center justify-center">
+      <video
+        ref={ref}
+        controls={showPlayer}
+        playsInline
+        preload="none"
+        tabIndex={showPlayer ? 0 : -1}
+        aria-label={label}
+        aria-hidden={!showPlayer}
+        onLoadedData={() => setStatus("ready")}
+        onPlaying={() => setStatus("ready")}
+        onWaiting={() => setStatus("loading")}
+        onPause={() => setStatus((current) => (current === "loading" ? "ready" : current))}
+        onError={() => setStatus("error")}
+        className={cn(
+          "max-h-full max-w-full rounded-control bg-black",
+          !showPlayer && "pointer-events-none absolute opacity-0",
+        )}
+      />
+      {status === "idle" ? (
+        <button
+          type="button"
+          className={cn(
+            "z-10 inline-flex items-center gap-2 rounded-control border border-border/60",
+            "bg-background px-4 py-2 text-sm font-medium text-foreground shadow-sm",
+            "transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+          )}
+          onClick={play}
+        >
+          <Play className="h-4 w-4" aria-hidden />
+          {t("lightbox.playVideo", { defaultValue: "Play video" })}
+        </button>
+      ) : null}
+      {status === "loading" ? (
+        <Loader2
+          className="pointer-events-none absolute h-5 w-5 animate-spin text-white/80"
+          aria-hidden
+        />
+      ) : null}
+      {status === "error" ? (
+        <p role="status" className="text-center text-sm text-muted-foreground">
+          {t("message.attachmentUnavailable", { defaultValue: "Attachment unavailable" })}
+        </p>
+      ) : null}
+    </div>
   );
 }

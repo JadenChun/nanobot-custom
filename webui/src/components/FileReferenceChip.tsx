@@ -126,12 +126,13 @@ export function FileReferenceChip({
 
 /** Bare names are only references for media/document types, never code spans. */
 const BARE_FILE_REFERENCE_RE = new RegExp(
-  "^[\\w][\\w .()-]*\\.(" +
-    "png|jpe?g|gif|webp|bmp|svg|avif|heic|" +
-    "mp4|mov|webm|mkv|mp3|wav|ogg|m4a|flac|" +
-    "pdf|md|markdown|csv|tsv|jsonl|zip|tar|gz" +
+  "^[\\p{L}\\p{N}_][\\p{L}\\p{N}_ .()-]*\\.(" +
+    "png|jpe?g|gif|webp|bmp|svg|avif|heic|ico|" +
+    "mp4|m4v|mov|webm|mkv|ogv|avi|" +
+    "mp3|wav|ogg|oga|m4a|flac|aac|opus|weba|" +
+    "pdf|docx|xlsx|pptx|md|markdown|csv|tsv|jsonl|zip|tar|gz" +
   ")$",
-  "i",
+  "iu",
 );
 
 export function isLikelyFilePath(value: string): boolean {

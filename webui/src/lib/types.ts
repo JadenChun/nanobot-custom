@@ -2367,7 +2367,7 @@ export interface FilePreviewEntry {
 }
 
 export interface FilePreviewPayload {
-  kind?: "text" | "image" | "directory";
+  kind?: "text" | "image" | "video" | "audio" | "pdf" | "directory";
   path: string;
   display_path: string;
   project_path: string;
@@ -2375,7 +2375,7 @@ export interface FilePreviewPayload {
   content: string;
   size: number;
   truncated: boolean;
-  /** Images preview through a signed media URL instead of inline text. */
+  /** Media and PDFs preview through a signed media URL instead of inline text. */
   mime?: string;
   media_url?: string;
   entries?: FilePreviewEntry[];

@@ -49,6 +49,47 @@ def _default_media_dir(channel: str | None = None) -> Path:
     return get_media_dir(channel)
 
 
+# Deterministic extension-to-MIME lookup so OS MIME registries never fail to
+# classify safe media or PDFs consistently across Linux, macOS, and Windows.
+_MEDIA_EXTENSION_MIMES: dict[str, str] = {
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".webp": "image/webp",
+    ".gif": "image/gif",
+    ".svg": "image/svg+xml",
+    ".bmp": "image/bmp",
+    ".avif": "image/avif",
+    ".ico": "image/x-icon",
+    ".mp4": "video/mp4",
+    ".m4v": "video/mp4",
+    ".webm": "video/webm",
+    ".mov": "video/quicktime",
+    ".ogv": "video/ogg",
+    ".mkv": "video/x-matroska",
+    ".avi": "video/x-msvideo",
+    ".mp3": "audio/mpeg",
+    ".wav": "audio/wav",
+    ".ogg": "audio/ogg",
+    ".oga": "audio/ogg",
+    ".m4a": "audio/mp4",
+    ".flac": "audio/flac",
+    ".aac": "audio/aac",
+    ".weba": "audio/webm",
+    ".opus": "audio/opus",
+    ".pdf": "application/pdf",
+}
+
+
+def guess_media_mime(name: str) -> str | None:
+    """Return a deterministic MIME type for known media/PDF suffixes or fall back."""
+    ext = Path(name).suffix.lower()
+    if ext in _MEDIA_EXTENSION_MIMES:
+        return _MEDIA_EXTENSION_MIMES[ext]
+    mime, _ = mimetypes.guess_type(name)
+    return mime
+
+
 # Allowed MIME types we actually serve from the media endpoint. Anything
 # outside this set is degraded to ``application/octet-stream`` so an
 # attacker who somehow gets a signed URL for an unexpected file type can't
@@ -59,10 +100,34 @@ _MEDIA_ALLOWED_MIMES: frozenset[str] = frozenset({
     "image/webp",
     "image/gif",
     "image/svg+xml",
+    "image/bmp",
+    "image/avif",
+    "image/x-icon",
+    "image/vnd.microsoft.icon",
     "video/mp4",
     "video/webm",
     "video/quicktime",
+    "video/ogg",
+    "video/x-matroska",
+    "video/x-msvideo",
+    "audio/mpeg",
+    "audio/wav",
+    "audio/x-wav",
+    "audio/ogg",
+    "audio/mp4",
+    "audio/x-m4a",
+    "audio/flac",
+    "audio/x-flac",
+    "audio/aac",
+    "audio/webm",
+    "audio/opus",
+    "application/pdf",
 })
+
+
+def is_allowed_media_mime(mime: str | None) -> bool:
+    """Return True when ``mime`` may be served inline from the signed media route."""
+    return mime in _MEDIA_ALLOWED_MIMES
 _SVG_MEDIA_HEADERS: tuple[tuple[str, str], ...] = (
     (
         "Content-Security-Policy",
@@ -258,7 +323,7 @@ def sign_existing_media_path(
 
 def media_attachment_kind(name: str) -> str:
     """Infer the WebUI media attachment kind from a filename."""
-    mime, _ = mimetypes.guess_type(name)
+    mime = guess_media_mime(name)
     if mime and mime.startswith("video/"):
         return "video"
     if mime and mime.startswith("image/"):
@@ -320,8 +385,8 @@ def serve_signed_media(
     if not candidate.is_file():
         return _http_error(404, "not found")
 
-    mime, _ = mimetypes.guess_type(candidate.name)
-    if mime not in _MEDIA_ALLOWED_MIMES:
+    mime = guess_media_mime(candidate.name)
+    if mime is None or not is_allowed_media_mime(mime):
         mime = "application/octet-stream"
     common_headers = [
         ("Accept-Ranges", "bytes"),

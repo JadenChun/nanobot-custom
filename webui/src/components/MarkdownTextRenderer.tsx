@@ -307,8 +307,11 @@ const historyRevealRehypePlugins: NonNullable<StreamdownProps["rehypePlugins"]> 
 const DIRECT_LINKS = { enabled: false } as const;
 const SAFE_MARKDOWN_PROTOCOL = /^(https?|ircs?|mailto|xmpp)$/i;
 
-/** Preserve react-markdown's URL policy when rendering through Streamdown. */
+/** Preserve react-markdown's URL policy when rendering through Streamdown, plus safe local file links. */
 const safeMarkdownUrl: NonNullable<StreamdownProps["urlTransform"]> = (url) => {
+  if (/^file:\/\//i.test(url)) {
+    return fileReferenceFromLink(url) ? url : "";
+  }
   const colon = url.indexOf(":");
   const questionMark = url.indexOf("?");
   const hash = url.indexOf("#");
@@ -336,6 +339,9 @@ function cleanFileReferenceTarget(value: string): string {
   try {
     if (/^file:\/\//i.test(target)) {
       target = decodeURIComponent(new URL(target).pathname);
+      if (/^\/[A-Za-z]:[\\/]/.test(target)) {
+        target = target.slice(1);
+      }
     } else {
       target = decodeURIComponent(target);
     }
@@ -659,7 +665,7 @@ export default function MarkdownTextRenderer({
             />
           );
         }
-        if (isNonNavigableFilePatternLink(href)) {
+        if (isNonNavigableFilePatternLink(href) || /^file:/i.test(href)) {
           return <>{markdownChildren}</>;
         }
         return (
@@ -793,7 +799,7 @@ export default function MarkdownTextRenderer({
         void imgClassName;
         void props;
         const source = typeof src === "string" ? src : "";
-        if (!source) return null;
+        if (!source || /^file:/i.test(source)) return null;
         const label = typeof alt === "string" ? alt : "";
         const kind = markdownAttachmentKind(source, label);
         return (

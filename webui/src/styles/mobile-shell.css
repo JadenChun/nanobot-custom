@@ -33,40 +33,6 @@ html.mobile-runtime body {
   margin: auto;
 }
 
-/* Mobile composer keeps one control row plus a quiet workspace line above it. */
-.thread-composer-mobile-workspace-row {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 0.25rem;
-  width: 100%;
-  max-width: 49.5rem;
-  min-height: 1.75rem;
-  margin: 0 auto 0.25rem;
-  padding: 0 0.75rem;
-}
-
-.thread-composer-workspace-trigger::after,
-.thread-composer-mobile-workspace-row .thread-composer-context-usage::after {
-  position: absolute;
-  content: "";
-}
-
-.thread-composer-workspace-trigger::after {
-  inset: -0.5rem 0;
-}
-
-html.mobile-runtime .thread-composer-mobile-workspace-row .thread-composer-context-usage {
-  width: 1.75rem;
-  height: 1.75rem;
-  min-width: 1.75rem;
-  min-height: 1.75rem;
-}
-
-html.mobile-runtime .thread-composer-mobile-workspace-row .thread-composer-context-usage::after {
-  inset: -0.5rem -0.25rem;
-}
-
 html.mobile-runtime .thread-composer-footer-actions {
   max-width: 76%;
 }

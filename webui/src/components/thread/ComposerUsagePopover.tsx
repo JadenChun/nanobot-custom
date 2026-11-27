@@ -56,12 +56,10 @@ export function ComposerUsagePopover({
   context,
   hasConfiguredModel = false,
   rounds,
-  isHero = false,
 }: {
   context: ComposerContextUsage | null;
   hasConfiguredModel?: boolean;
   rounds: readonly ComposerRoundUsage[];
-  isHero?: boolean;
 }) {
   const { t, i18n } = useTranslation();
   const panelRef = useRef<HTMLDivElement>(null);
@@ -125,42 +123,30 @@ export function ComposerUsagePopover({
                 data-testid="composer-context-usage"
                 aria-label={triggerLabel}
                 className={cn(
-                  "thread-composer-context-usage touch-target relative inline-flex shrink-0 items-center justify-center rounded-full",
-                  isHero ? "h-8 w-8" : "h-9 w-9",
+                  "thread-composer-context-usage relative inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full",
                   "text-muted-foreground/75 transition-colors hover:bg-muted/65 hover:text-foreground/85 dark:text-foreground/70",
                   "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
                 )}
               >
-                {contextPercentage === null ? (
-                  <svg viewBox="0 0 16 16" aria-hidden="true" className="size-[20px]">
-                    <path
-                      d="M3 12V9m5 3V5m5 7V2"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="1.5"
-                      strokeLinecap="round"
-                    />
-                  </svg>
-                ) : (
-                  <svg
-                    viewBox="0 0 16 16"
-                    aria-hidden="true"
-                    className={cn(
-                      "size-[20px] shrink-0 -rotate-90",
-                      status === "critical" && "text-destructive",
-                      status === "caution" && "text-amber-600 dark:text-amber-400",
-                      status === "normal" && "text-muted-foreground/75 dark:text-foreground/70",
-                    )}
-                  >
-                    <circle
-                      cx="8"
-                      cy="8"
-                      r="6"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="1.5"
-                      className="opacity-20"
-                    />
+                <svg
+                  viewBox="0 0 16 16"
+                  aria-hidden="true"
+                  className={cn(
+                    "size-[20px] shrink-0 -rotate-90",
+                    status === "critical" && "text-destructive",
+                    status === "caution" && "text-amber-600 dark:text-amber-400",
+                  )}
+                >
+                  <circle
+                    cx="8"
+                    cy="8"
+                    r="6"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.5"
+                    className={contextPercentage === null ? "opacity-60" : "opacity-20"}
+                  />
+                  {contextPercentage !== null ? (
                     <circle
                       cx="8"
                       cy="8"
@@ -172,8 +158,8 @@ export function ComposerUsagePopover({
                       strokeDasharray={`${ringLength} ${ringCircumference}`}
                       data-testid="composer-context-meter"
                     />
-                  </svg>
-                )}
+                  ) : null}
+                </svg>
               </button>
             </PopoverTrigger>
           </TooltipTrigger>

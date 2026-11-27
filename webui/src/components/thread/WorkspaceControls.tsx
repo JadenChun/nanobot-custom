@@ -30,6 +30,7 @@ import {
   floatingItemClassName,
   floatingItemFocusClassName,
 } from "@/components/ui/floating-surface";
+import { formControlFocusClassName } from "@/components/ui/form-control";
 import {
   Popover,
   PopoverContent,
@@ -85,11 +86,6 @@ function effectiveAccessLabel(
 }
 
 export function WorkspaceProjectPicker({
-  compact = false,
-  line = false,
-  inline = false,
-  isHero = false,
-  connected = false,
   disabled,
   locked = false,
   scope,
@@ -103,13 +99,6 @@ export function WorkspaceProjectPicker({
   turnActive = false,
   onChange,
 }: {
-  compact?: boolean;
-  /** Render as a quiet line above the composer instead of a footer chip. */
-  line?: boolean;
-  /** Render in the desktop action row with the same styling as the access control. */
-  inline?: boolean;
-  isHero?: boolean;
-  connected?: boolean;
   disabled?: boolean;
   locked?: boolean;
   ownerKey?: string | null;
@@ -251,74 +240,70 @@ export function WorkspaceProjectPicker({
     })),
   ];
   const canClearDirectly = !!selectedScope && !disabled && canChangeFocus;
+  const clearProjectLabel = t("workspace.picker.clearProject", { defaultValue: "Clear project folder" });
   const clearProject = () => applyProjectPath(defaultScope.project_path, defaultScope.project_name);
 
   return (
     <>
-      <div className={cn(
-        line
-          ? "flex min-w-0 items-center gap-0.5"
-          : inline || compact
-            ? "inline-flex min-w-0 items-center gap-0.5"
-            : "flex min-w-0 items-center gap-2 rounded-b-[28px] bg-muted/45 px-3 py-1.5 dark:bg-white/[0.045] sm:px-4",
-      )}>
+      <div className="flex min-w-0 items-center gap-0.5">
         <Popover open={open} onOpenChange={setOpen}>
-          <PopoverTrigger asChild>
-            <button
-              ref={triggerRef}
-              type="button"
-              disabled={disabled || !canChangeFocus}
-              aria-label={lockedHint ? `${triggerAccessibleLabel}. ${lockedHint}` : triggerAccessibleLabel}
-              title={triggerTitle}
-              className={cn(
-                "transition-colors disabled:pointer-events-none disabled:opacity-55",
-                line
-                  ? cn(
-                      "thread-composer-workspace-trigger relative inline-flex h-7 max-w-full min-w-0 items-center gap-1.5 rounded-md border border-transparent bg-transparent text-[11px] font-medium text-muted-foreground/80 dark:text-foreground/65",
-                      !showTriggerLabel && "w-7 justify-center",
-                      "hover:bg-transparent hover:text-foreground active:opacity-70",
-                    )
-                  : inline
-                    ? cn(
-                        "inline-flex min-w-0 items-center gap-1.5 rounded-control border border-transparent bg-transparent font-semibold text-muted-foreground shadow-none dark:text-foreground/70",
-                        isHero ? "h-8 text-[12px]" : "h-9 text-[12.5px]",
-                        "hover:bg-foreground/[0.045] hover:text-foreground dark:hover:bg-white/[0.06]",
-                        "max-w-[min(15rem,45vw)] justify-start px-1.5",
-                        !showTriggerLabel && cn(
-                          "justify-center px-0",
-                          isHero ? "w-8" : "w-9",
-                        ),
-                      )
-                    : cn(
-                        "inline-flex rounded-full text-[12px] font-medium text-muted-foreground/90 hover:text-foreground",
-                        compact
-                          ? "thread-composer-action touch-target h-9 min-w-0 max-w-[9rem] items-center justify-start gap-1.5 border border-border/55 bg-card/70 px-2.5"
-                          : "h-8 min-w-0 max-w-full items-center gap-2 px-2.5 sm:max-w-[28rem]",
-                        compact ? "hover:bg-muted/65" : "hover:bg-background/70",
-                        connected && "text-primary",
-                      ),
-              )}
-            >
-              {nextTurnPending
-                ? <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" aria-hidden />
-                : selectedScope
-                  ? <FolderOpen className={cn("shrink-0", !line && compact ? "h-4 w-4" : "h-3.5 w-3.5")} aria-hidden />
-                  : <Folder className={cn("shrink-0", !line && compact ? "h-4 w-4" : "h-3.5 w-3.5")} aria-hidden />}
-              {showTriggerLabel ? (
-                <span className="thread-composer-project-label min-w-0 truncate">
-                  {folderName}
-                </span>
-              ) : null}
-              {locked ? (
-                <LockKeyhole className="h-3 w-3 shrink-0 text-muted-foreground" aria-hidden />
-              ) : !compact && showTriggerLabel ? (
-                <ChevronDown className="h-3 w-3 shrink-0 text-muted-foreground" aria-hidden />
-              ) : null}
-            </button>
-          </PopoverTrigger>
+          <div className={cn(
+            "inline-flex min-w-0 max-w-full rounded-compact",
+            showTriggerLabel && "ring-1 ring-inset ring-border/70",
+          )}>
+            <PopoverTrigger asChild>
+              <button
+                ref={triggerRef}
+                type="button"
+                disabled={disabled || !canChangeFocus}
+                aria-label={lockedHint ? `${triggerAccessibleLabel}. ${lockedHint}` : triggerAccessibleLabel}
+                title={triggerTitle}
+                className={cn(
+                  "thread-composer-workspace-action relative inline-flex h-7 min-w-0 items-center gap-1.5 rounded-compact text-[11px] font-medium text-muted-foreground transition-colors dark:text-foreground/70 disabled:pointer-events-none disabled:opacity-55",
+                  formControlFocusClassName,
+                  showTriggerLabel ? "px-2" : "w-7 justify-center",
+                  canClearDirectly && "rounded-e-none",
+                )}
+              >
+                {nextTurnPending
+                  ? <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" aria-hidden />
+                  : selectedScope
+                    ? <FolderOpen className="h-3.5 w-3.5 shrink-0" aria-hidden />
+                    : <Folder className="h-3.5 w-3.5 shrink-0" aria-hidden />}
+                {showTriggerLabel ? (
+                  <span className="min-w-0 truncate">
+                    {folderName}
+                  </span>
+                ) : null}
+                {locked ? (
+                  <LockKeyhole className="h-3 w-3 shrink-0 text-muted-foreground" aria-hidden />
+                ) : showTriggerLabel ? (
+                  <ChevronDown className="h-3 w-3 shrink-0 text-muted-foreground" aria-hidden />
+                ) : null}
+              </button>
+            </PopoverTrigger>
+            {canClearDirectly ? (
+              <button
+                type="button"
+                aria-label={clearProjectLabel}
+                title={clearProjectLabel}
+                onClick={() => {
+                  clearProject();
+                  triggerRef.current?.focus();
+                }}
+                className={cn(
+                  "thread-composer-workspace-action relative grid w-7 shrink-0 place-items-center rounded-e-compact text-muted-foreground transition-colors",
+                  "before:absolute before:inset-y-1.5 before:start-0 before:w-px before:bg-border/70",
+                  formControlFocusClassName,
+                )}
+              >
+                <X className="h-3 w-3" aria-hidden />
+              </button>
+            ) : null}
+          </div>
           <PopoverContent
             align="start"
-            side={line ? "top" : "bottom"}
+            side="top"
             sideOffset={8}
             aria-labelledby={pickerTitleId}
             onOpenAutoFocus={(event) => event.preventDefault()}
@@ -380,8 +365,8 @@ export function WorkspaceProjectPicker({
                       <button
                         type="button"
                         disabled={disabled || !canChangeFocus}
-                        aria-label={t("workspace.picker.clearProject", { defaultValue: "Clear project folder" })}
-                        title={t("workspace.picker.clearProject", { defaultValue: "Clear project folder" })}
+                        aria-label={clearProjectLabel}
+                        title={clearProjectLabel}
                         onClick={clearProject}
                         className="mr-1.5 grid h-6.5 w-6.5 shrink-0 place-items-center rounded-md text-primary/75 transition-colors hover:bg-primary/15 hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-45"
                       >
@@ -425,35 +410,6 @@ export function WorkspaceProjectPicker({
             ) : null}
           </PopoverContent>
         </Popover>
-        {canClearDirectly ? (
-          <button
-            type="button"
-            aria-label={t("workspace.picker.clearProject", { defaultValue: "Clear project folder" })}
-            title={t("workspace.picker.clearProject", { defaultValue: "Clear project folder" })}
-            onClick={clearProject}
-            className={cn(
-              "grid shrink-0 place-items-center rounded-md text-muted-foreground/75 transition-colors hover:bg-foreground/[0.06] hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring dark:text-foreground/60 dark:hover:bg-white/[0.08]",
-              line ? "h-5 w-5" : "h-6 w-6",
-            )}
-          >
-            <X className={cn(line ? "h-3 w-3" : "h-3.5 w-3.5")} aria-hidden />
-          </button>
-        ) : null}
-        {!line && !inline ? (
-          <span className={cn("min-w-0 truncate text-[10.5px] text-muted-foreground", compact && "sr-only")} title={currentAccess}>
-            {currentAccess}
-          </span>
-        ) : null}
-        {!line && !inline && !disabled && nextTurnHint ? (
-          <span className={cn("text-[10.5px] text-muted-foreground", compact && "sr-only")}>
-            {nextTurnHint}
-          </span>
-        ) : null}
-        {!line && !inline && !canChangeFocus && !disabled ? (
-          <span className={cn("text-[10.5px] text-muted-foreground", compact && "sr-only")}>
-            {t("workspace.picker.focusUnavailable", { defaultValue: "Folder focus cannot be changed from this connection." })}
-          </span>
-        ) : null}
         {!open && error ? (
           <span role="alert" className="inline-flex min-w-0 items-center gap-1 text-[11.5px] font-medium text-destructive">
             <span className="min-w-0 max-h-24 overflow-y-auto [overflow-wrap:anywhere]">{error}</span>

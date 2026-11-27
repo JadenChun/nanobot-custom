@@ -14,6 +14,7 @@ from kohaku.config.paths import get_media_dir
 from kohaku.context_repo.policy import ResourceAccessPolicy
 from kohaku.security.workspace_access import WorkspaceScope
 from kohaku.security.workspace_policy import WorkspaceBoundaryError, resolve_allowed_path
+from kohaku.webui.media_api import guess_media_mime, is_allowed_media_mime
 
 if TYPE_CHECKING:
     from kohaku.security.desktop_permissions import (
@@ -24,6 +25,34 @@ if TYPE_CHECKING:
 MAX_FILE_PREVIEW_BYTES = 384 * 1024
 _INLINE_PATH_RE = re.compile(r"(?<!`)`([^`\r\n]+)`(?!`)")
 _LINK_PATH_RE = re.compile(r"(?<!!)\[[^\]\r\n]*\]\(\s*(?:<([^>\r\n]+)>|([^\s)]+))")
+_QUOTED_ABSOLUTE_PATH_RE = re.compile(
+    r"""(?:"((?:/|[A-Za-z]:[\\/])[^"\r\n]+)"|'((?:/|[A-Za-z]:[\\/])[^'\r\n]+)')"""
+)
+_EMBEDDED_ABSOLUTE_PATH_RE = re.compile(
+    r"(?:->|=>|\b(?:path|file|out|output|saved(?:\s+to)?|wrote(?:\s+to)?|created)\s*[:=]?)\s*"
+    r"((?:/|~/|[A-Za-z]:[\\/])[^\r\n\"'<>]+?)"
+    r"(?=\s+\(\d[\d,.\s]*(?:bytes?|kb|mb|gb|b)\)\s*$|\s+(?:/|[A-Za-z]:[\\/])|$)",
+    re.IGNORECASE | re.MULTILINE,
+)
+_TOKEN_ABSOLUTE_PATH_RE = re.compile(
+    r"""(?:^|[\s=(>,]|:(?!//))((?:/(?!/)|~/|[A-Za-z]:[\\/])[^\s"'<>|;]+)"""
+)
+_NON_SINGLE_PATH_LINE_RE = re.compile(
+    r"""["']|\s(?:->|=>|&&|\|\||[|;]|--?[A-Za-z])|\s+(?:/|~/|[A-Za-z]:[\\/])"""
+)
+_OFFICE_DOCUMENT_EXTENSIONS = frozenset({".docx", ".xlsx", ".pptx"})
+_TOOL_ARGUMENT_PATH_KEYS = (
+    "path",
+    "file_path",
+    "absolute_path",
+    "command",
+    "output",
+    "out",
+    "output_path",
+    "dest",
+    "destination",
+    "target",
+)
 
 
 class WebUIFilePreviewError(ValueError):
@@ -82,7 +111,7 @@ def file_preview_reference(
             arguments = tool.get("arguments")
             if isinstance(arguments, dict):
                 args = cast(dict[str, object], arguments)
-                for key in ("path", "file_path", "absolute_path"):
+                for key in _TOOL_ARGUMENT_PATH_KEYS:
                     value = args.get(key)
                     if isinstance(value, str):
                         paths.update(_absolute_preview_paths(value))
@@ -128,7 +157,22 @@ def _preview_text_references(text: str) -> list[str]:
 
 def _absolute_preview_paths(text: str) -> set[Path]:
     paths: set[Path] = set()
-    for value in [*text.splitlines(), *_preview_text_references(text)]:
+    raw_candidates: list[str] = [
+        *[
+            line
+            for line in text.splitlines()
+            if not _NON_SINGLE_PATH_LINE_RE.search(line)
+        ],
+        *_preview_text_references(text),
+    ]
+    for match in _QUOTED_ABSOLUTE_PATH_RE.finditer(text):
+        raw_candidates.append(match.group(1) or match.group(2))
+    for match in _EMBEDDED_ABSOLUTE_PATH_RE.finditer(text):
+        raw_candidates.append(match.group(1).rstrip(".,;:)]}"))
+    for match in _TOKEN_ABSOLUTE_PATH_RE.finditer(text):
+        raw_candidates.append(match.group(1).rstrip(".,;:)]}"))
+
+    for value in raw_candidates:
         value = _clean_preview_path(value.strip().strip("\"'"))
         if not value or len(value) > 4096:
             continue
@@ -145,6 +189,21 @@ def _absolute_preview_paths(text: str) -> set[Path]:
     return paths
 
 
+def _preview_media_kind(path: Path) -> tuple[str, str] | None:
+    mime = guess_media_mime(path.name)
+    if mime is None or not is_allowed_media_mime(mime):
+        return None
+    if mime.startswith("image/"):
+        return ("image", mime)
+    if mime.startswith("video/"):
+        return ("video", mime)
+    if mime.startswith("audio/"):
+        return ("audio", mime)
+    if mime == "application/pdf":
+        return ("pdf", mime)
+    return None
+
+
 def file_preview_payload(
     raw_path: str | None,
     *,
@@ -157,9 +216,10 @@ def file_preview_payload(
     permission_reference: WorkspacePermissionReference | None = None,
     restrict_to_root: Path | None = None,
     image_url: Callable[[Path], dict[str, str] | None] | None = None,
+    media_url: Callable[[Path], dict[str, str] | None] | None = None,
     referenced_path: Path | None = None,
 ) -> dict[str, Any]:
-    """Return a text, image or directory preview for an allowed path."""
+    """Return a text, media, PDF, or directory preview for an allowed path."""
 
     resolved = _resolve_preview_path(
         raw_path,
@@ -175,22 +235,52 @@ def file_preview_payload(
     )
     if resolved.is_dir():
         return _directory_preview_payload(resolved, scope)
-    mime, _ = mimetypes.guess_type(resolved.name)
-    if (mime or "").startswith("image/"):
-        media = image_url(resolved) if image_url is not None else None
-        if media is not None:
-            return {
-                "kind": "image",
-                "path": str(resolved),
-                "display_path": _display_path(resolved, scope.project_path),
-                "project_path": str(scope.project_path),
-                "language": "",
-                "content": "",
-                "size": resolved.stat().st_size,
-                "truncated": False,
-                "mime": mime,
-                "media_url": media.get("url", ""),
-            }
+    signer = media_url if media_url is not None else image_url
+    media_info = _preview_media_kind(resolved)
+    if media_info is not None:
+        kind, mime = media_info
+        if signer is None:
+            raise WebUIFilePreviewError(415, "binary files cannot be previewed")
+        media = signer(resolved)
+        media_href = media.get("url", "") if media is not None else ""
+        if not media_href:
+            raise WebUIFilePreviewError(500, "failed to prepare media preview")
+        return {
+            "kind": kind,
+            "path": str(resolved),
+            "display_path": _display_path(resolved, scope.project_path),
+            "project_path": str(scope.project_path),
+            "language": "",
+            "content": "",
+            "size": resolved.stat().st_size,
+            "truncated": False,
+            "mime": mime,
+            "media_url": media_href,
+        }
+    if resolved.suffix.lower() in _OFFICE_DOCUMENT_EXTENSIONS:
+        from kohaku.utils.document import extract_text
+
+        extracted = extract_text(resolved)
+        if extracted is None or extracted.startswith("[error:"):
+            raise WebUIFilePreviewError(415, "binary files cannot be previewed")
+        truncated = len(extracted) > max_bytes
+        payload: dict[str, Any] = {
+            "kind": "text",
+            "path": str(resolved),
+            "display_path": _display_path(resolved, scope.project_path),
+            "project_path": str(scope.project_path),
+            "language": "text",
+            "content": extracted[:max_bytes],
+            "size": resolved.stat().st_size,
+            "truncated": truncated,
+        }
+        if signer is not None:
+            media = signer(resolved)
+            media_href = media.get("url", "") if media is not None else ""
+            if media_href:
+                payload["mime"] = mimetypes.guess_type(resolved.name)[0] or "application/octet-stream"
+                payload["media_url"] = media_href
+        return payload
 
     try:
         with open(resolved, "rb") as f:
@@ -233,7 +323,7 @@ def file_preview_availability_payload(
     restrict_to_root: Path | None = None,
     referenced_path: Path | None = None,
 ) -> dict[str, bool]:
-    """Confirm that a path is a readable text preview candidate without loading it fully."""
+    """Confirm that a path is a readable preview candidate without loading it fully."""
 
     resolved = _resolve_preview_path(
         raw_path,
@@ -249,8 +339,9 @@ def file_preview_availability_payload(
     )
     if resolved.is_dir():
         return {"available": True}
-    mime, _ = mimetypes.guess_type(resolved.name)
-    if (mime or "").startswith("image/"):
+    if _preview_media_kind(resolved) is not None:
+        return {"available": True}
+    if resolved.suffix.lower() in _OFFICE_DOCUMENT_EXTENSIONS:
         return {"available": True}
     try:
         with open(resolved, "rb") as f:

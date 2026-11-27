@@ -2838,57 +2838,8 @@ export function ThreadComposer({
         )
       : "min-h-[50px] px-3.5 pb-1.5 pt-3 text-[16px] leading-5 sm:px-4",
   );
-  const projectPickerInline = (
-    <WorkspaceProjectPicker
-      inline
-      isHero={isHero}
-      ownerKey={pendingQueueKey}
-      disabled={interactionDisabled || workspaceScopeDisabled || workspaceControlsHidden || workspaceLocked}
-      locked={workspaceLocked}
-      scope={workspaceScope}
-      defaultScope={workspaceDefaultScope}
-      controls={workspaceControls}
-      workspaces={workspaces}
-      error={workspaceError}
-      onDismissError={onDismissWorkspaceError}
-      nextTurnScope={nextWorkspaceScope}
-      nextTurnPending={nextTurnSettingsPending}
-      turnActive={isStreaming}
-      onPickFolder={onPickWorkspaceFolder}
-      onRefreshWorkspaces={onRefreshWorkspaces}
-      onChange={onWorkspaceScopeChange}
-    />
-  );
-  const projectPickerLine = (
-    <WorkspaceProjectPicker
-      line
-      ownerKey={pendingQueueKey}
-      disabled={interactionDisabled || workspaceScopeDisabled || workspaceControlsHidden || workspaceLocked}
-      locked={workspaceLocked}
-      scope={workspaceScope}
-      defaultScope={workspaceDefaultScope}
-      controls={workspaceControls}
-      workspaces={workspaces}
-      error={workspaceError}
-      onDismissError={onDismissWorkspaceError}
-      nextTurnScope={nextWorkspaceScope}
-      nextTurnPending={nextTurnSettingsPending}
-      turnActive={isStreaming}
-      onPickFolder={onPickWorkspaceFolder}
-      onRefreshWorkspaces={onRefreshWorkspaces}
-      onChange={onWorkspaceScopeChange}
-    />
-  );
-  const showMobileWorkspaceLine = mobileComposer
-    && !voiceRecorder.isRecording
-    && !workspaceControlsHidden
-    && projectPickerAvailable;
-  const hasMobileUsage = contextUsage != null
-    || hasConfiguredModel
-    || recentRoundUsage.length > 0;
-  const showMobileWorkspaceRow = mobileComposer
-    && !voiceRecorder.isRecording
-    && (showMobileWorkspaceLine || hasMobileUsage);
+  const showContextRow = !voiceRecorder.isRecording && !composerChromeHidden
+    && (showWorkspacePicker || contextUsage != null || hasConfiguredModel || recentRoundUsage.length > 0);
 
   const accessControl = workspaceScope && !workspaceControlsHidden ? (
     <WorkspacePermissionV2Control
@@ -2908,17 +2859,6 @@ export function ThreadComposer({
       onModeChange={onWorkspaceAccessModeChange}
       onRetryRestricted={onRetryWorkspaceRestricted}
     />
-  ) : null;
-  const accessControlSlot = accessControl ? (
-    <div
-      className={cn(
-        "thread-composer-access-slot flex min-w-0",
-        showWorkspacePicker && !mobileComposer && !voiceRecorder.isRecording
-          && "thread-composer-access-slot-after-workspace",
-      )}
-    >
-      {accessControl}
-    </div>
   ) : null;
 
   const mobileModelLabel = (modelLabel ?? "").replace(/\s*\([^)]*\)\s*$/, "").trim();
@@ -3006,18 +2946,35 @@ export function ThreadComposer({
           onChoose={chooseMentionCandidate}
         />
       ) : null}
-      {showMobileWorkspaceRow && !composerChromeHidden ? (
-        <div className="thread-composer-mobile-workspace-row">
-          {showMobileWorkspaceLine ? projectPickerLine : null}
-          {hasMobileUsage ? (
-            <div className="thread-composer-mobile-workspace-meta flex min-w-0 items-center">
-              <ComposerUsagePopover
-                context={contextUsage}
-                hasConfiguredModel={hasConfiguredModel}
-                rounds={recentRoundUsage}
-              />
-            </div>
+      {showContextRow ? (
+        <div className={cn(
+          "thread-composer-context-row mx-auto mb-1 flex min-h-7 w-full items-center justify-end gap-1 px-3 empty:hidden",
+          isHero ? "max-w-[58rem]" : "max-w-[49.5rem]",
+        )}>
+          {showWorkspacePicker ? (
+            <WorkspaceProjectPicker
+              ownerKey={pendingQueueKey}
+              disabled={interactionDisabled || workspaceScopeDisabled || workspaceLocked}
+              locked={workspaceLocked}
+              scope={workspaceScope}
+              defaultScope={workspaceDefaultScope}
+              controls={workspaceControls}
+              workspaces={workspaces}
+              error={workspaceError}
+              onDismissError={onDismissWorkspaceError}
+              nextTurnScope={nextWorkspaceScope}
+              nextTurnPending={nextTurnSettingsPending}
+              turnActive={isStreaming}
+              onPickFolder={onPickWorkspaceFolder}
+              onRefreshWorkspaces={onRefreshWorkspaces}
+              onChange={onWorkspaceScopeChange}
+            />
           ) : null}
+          <ComposerUsagePopover
+            context={contextUsage}
+            hasConfiguredModel={hasConfiguredModel}
+            rounds={recentRoundUsage}
+          />
         </div>
       ) : null}
       {visibleQueuedPrompts.length > 0 ? (
@@ -3336,8 +3293,6 @@ export function ThreadComposer({
                 <span className="sr-only">{t("thread.composer.attachImage")}</span>
               </Button>
             )}
-            {showWorkspacePicker && !mobileComposer && !voiceRecorder.isRecording ? projectPickerInline : null}
-            {mobileComposer && !voiceRecorder.isRecording ? accessControlSlot : null}
             {voiceRecorder.isRecording ? (
               <VoiceRecordingMeter
                 ariaLabel={voiceRecordingStatusLabel}
@@ -3346,7 +3301,7 @@ export function ThreadComposer({
                 isHero={isHero}
                 levels={voiceRecorder.levels}
               />
-            ) : !mobileComposer ? accessControlSlot : null}
+            ) : accessControl ? <div className="flex min-w-0">{accessControl}</div> : null}
           </div>
           <div
             className={cn(
@@ -3355,14 +3310,6 @@ export function ThreadComposer({
             )}
           >
             {modelControl}
-            {!voiceRecorder.isRecording && !mobileComposer ? (
-              <ComposerUsagePopover
-                context={contextUsage}
-                hasConfiguredModel={hasConfiguredModel}
-                rounds={recentRoundUsage}
-                isHero={isHero}
-              />
-            ) : null}
             {showVoiceButton ? (
               <TooltipProvider delayDuration={220} skipDelayDuration={80}>
                 <Tooltip>

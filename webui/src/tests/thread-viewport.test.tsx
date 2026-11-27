@@ -471,7 +471,7 @@ describe("ThreadViewport", () => {
       clientHeight: { configurable: true, value: 600 },
       scrollTop: { configurable: true, writable: true, value: 1_800 },
     });
-    const row = () => container.querySelector(".thread-composer-mobile-workspace-row");
+    const row = () => container.querySelector(".thread-composer-context-row");
     const input = screen.getByRole("textbox");
     fireEvent.change(input, { target: { value: "Keep my draft" } });
     expect(row()).toBeInTheDocument();

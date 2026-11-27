@@ -6,7 +6,12 @@ import { gzipSync } from "node:zlib";
 
 const GZIP_MIN_BYTES = 4 * 1024;
 const GZIP_ASSET_PATTERN = /\.(?:css|html|js|json|mjs|svg)$/i;
-const LAZY_FEATURE_CHUNK_PREFIXES = ["markdown-vendor-", "syntax-highlight-", "katex-"];
+const LAZY_FEATURE_CHUNK_PREFIXES = [
+  "markdown-vendor-",
+  "syntax-highlight-",
+  "katex-",
+  "pdf-viewer-",
+];
 
 export function entryLazyFeatureImports(imports: string[]): string[] {
   return imports.filter((fileName) =>
@@ -103,6 +108,9 @@ export function webuiManualChunk(id: string): string | undefined {
   }
   if (id.includes("node_modules/katex")) {
     return "katex";
+  }
+  if (id.includes("node_modules/pdfjs-dist")) {
+    return "pdf-viewer";
   }
 }
 

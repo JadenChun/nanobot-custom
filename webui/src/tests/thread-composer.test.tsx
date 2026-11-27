@@ -729,7 +729,7 @@ describe("ThreadComposer", () => {
     expect(screen.getByText("gpt-5.6-sol")).toBeInTheDocument();
   });
 
-  it("shows a compact context meter beside the model selector", async () => {
+  it("shows a compact context meter above the composer", async () => {
     render(
       <ThreadComposer
         onSend={vi.fn()}
@@ -745,7 +745,7 @@ describe("ThreadComposer", () => {
     );
 
     const context = screen.getByTestId("composer-context-usage");
-    expect(context).toHaveClass("h-9", "w-9", "rounded-full");
+    expect(context).toHaveClass("h-7", "w-7", "rounded-full");
     expect(context).not.toHaveTextContent("Context 74.9K / 1M");
     expect(screen.getByTestId("composer-context-meter")).toBeInTheDocument();
     expect(context).toHaveAccessibleName(
@@ -3471,7 +3471,7 @@ describe("ThreadComposer", () => {
           placeholder="Type your message..."
         />,
       );
-      const workspaceRow = container.querySelector(".thread-composer-mobile-workspace-row");
+      const workspaceRow = container.querySelector(".thread-composer-context-row");
       expect(workspaceRow).not.toBeNull();
       expect(
         within(workspaceRow as HTMLElement).getByTestId("composer-context-usage"),
@@ -4422,7 +4422,7 @@ describe("ThreadComposer — mobile controls", () => {
       />,
     );
 
-    const workspaceRow = container.querySelector(".thread-composer-mobile-workspace-row");
+    const workspaceRow = container.querySelector(".thread-composer-context-row");
     expect(workspaceRow).not.toBeNull();
     const trigger = within(workspaceRow as HTMLElement).getByTestId("composer-context-usage");
     expect(trigger).toBeInTheDocument();
@@ -4481,7 +4481,7 @@ describe("ThreadComposer — mobile controls", () => {
       />,
     );
 
-    const workspaceRow = container.querySelector(".thread-composer-mobile-workspace-row");
+    const workspaceRow = container.querySelector(".thread-composer-context-row");
     const footer = container.querySelector(".thread-composer-footer");
     expect(workspaceRow).not.toBeNull();
     expect(footer).not.toBeNull();
@@ -4533,7 +4533,7 @@ describe("ThreadComposer — mobile controls", () => {
       />,
     );
 
-    const workspaceRow = container.querySelector(".thread-composer-mobile-workspace-row");
+    const workspaceRow = container.querySelector(".thread-composer-context-row");
     expect(workspaceRow).not.toBeNull();
     expect(
       within(workspaceRow as HTMLElement).getByRole("button", {

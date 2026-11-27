@@ -42,10 +42,12 @@ describe("entryLazyFeatureImports", () => {
       "assets/markdown-vendor-abc.js",
       "assets/syntax-highlight-def.js",
       "assets/katex-ghi.js",
+      "assets/pdf-viewer-jkl.js",
     ])).toEqual([
       "assets/markdown-vendor-abc.js",
       "assets/syntax-highlight-def.js",
       "assets/katex-ghi.js",
+      "assets/pdf-viewer-jkl.js",
     ]);
   });
 });
@@ -89,7 +91,10 @@ describe("webuiManualChunk", () => {
     ).toBeUndefined();
   });
 
-  it("leaves language grammars as independently loaded chunks", () => {
+  it("keeps language grammars as independently loaded chunks and splits pdfjs-dist into pdf-viewer", () => {
     expect(webuiManualChunk("/repo/node_modules/refractor/lang/python.js")).toBeUndefined();
+    expect(
+      webuiManualChunk("/repo/node_modules/pdfjs-dist/legacy/build/pdf.mjs"),
+    ).toBe("pdf-viewer");
   });
 });
