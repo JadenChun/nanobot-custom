@@ -19,9 +19,11 @@ now delegates here; the former is the bubblewrap probe itself.
 
 from __future__ import annotations
 
-import functools
 import os
 import sys
+import threading
+import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Literal
 
@@ -58,9 +60,52 @@ def configure_macos_seatbelt(enabled: bool) -> None:
     _macos_seatbelt_enabled = enabled
 
 
-@functools.lru_cache(maxsize=1)
+_RETRY_AFTER_FAILURE_SECONDS = 300.0
+
+
+class CachedHostCheck:
+    """A slow host check: success is kept for good, failure only for a cooldown.
+
+    A transient failure, such as a timeout on a busy host, must not disable the
+    executor until restart. Concurrent callers wait for one shared attempt.
+    """
+
+    def __init__(
+        self,
+        check: Callable[[], bool],
+        *,
+        cooldown: float = _RETRY_AFTER_FAILURE_SECONDS,
+        clock: Callable[[], float] | None = None,
+    ) -> None:
+        self._check = check
+        self._cooldown = cooldown
+        self._clock = clock
+        self._lock = threading.Lock()
+        self._passed = False
+        self._failed_at: float | None = None
+
+    def __call__(self) -> bool:
+        with self._lock:
+            if self._passed:
+                return True
+            clock = self._clock or time.monotonic
+            if self._failed_at is not None and clock() - self._failed_at < self._cooldown:
+                return False
+            self._passed = self._check()
+            # The cooldown starts when the attempt ends, not when it began.
+            self._failed_at = None if self._passed else clock()
+            return self._passed
+
+    def cache_clear(self) -> None:
+        """Forget the last result, so the next call runs the check again."""
+        with self._lock:
+            self._passed = False
+            self._failed_at = None
+
+
+@CachedHostCheck
 def _macos_self_test_passed() -> bool:
-    """Run the host self-test once; it takes a few seconds."""
+    """Run the host self-test; it takes a few seconds."""
     from kohaku.security.darwin_proc import seatbelt_self_test
 
     result = seatbelt_self_test()

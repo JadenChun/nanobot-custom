@@ -14,7 +14,11 @@ import sys
 from pathlib import Path
 from typing import Callable, Iterable
 
-from kohaku.agent.tools.executor_capabilities import current_platform, macos_seatbelt_ready
+from kohaku.agent.tools.executor_capabilities import (
+    CachedHostCheck,
+    current_platform,
+    macos_seatbelt_ready,
+)
 from kohaku.agent.tools.seatbelt_profile import (
     LAUNCH_TMP_PARAM,
     SeatbeltConfinement,
@@ -415,7 +419,7 @@ _PROCESS_PRIVACY_CHECK = (
 )
 
 
-@functools.lru_cache(maxsize=1)
+@CachedHostCheck
 def _seatbelt_profile_probe() -> bool:
     """Return true when this host runs the managed profile and it keeps processes private.
 
