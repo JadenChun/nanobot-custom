@@ -27,3 +27,12 @@ HTTP/SSE MCP transports are part of this boundary: validate configured MCP URLs 
 `tools/sandbox.py` provides optional command wrapping. The only backend currently shipped is `bwrap` (bubblewrap), intended for containerized deployments. On Windows and bare-metal Linux without `bwrap`, commands run in the native shell with workspace restriction as an application-level guard only.
 
 **Rule**: If adding a new sandbox backend, implement `_wrap_<name>(command, workspace, cwd) -> str` and register it in `_BACKENDS`.
+
+## Host-Process Tools and Policy-Only Access
+
+Managed WebUI turns do not use a static tool allowlist; all enabled built-in tools, installed `nanobot.tools` plugins, and configured MCP servers remain discoverable in both Sandbox and Full access modes.
+
+- **Host-process declaration**: Tools that launch or drive host-level processes outside the OS Sandbox (`agent_browser`, `agent_device`, `desktop_use`, `run_cli_app`, `trend_vpn_*`) declare `Tool.launches_host_process = True` and resolve their working directory through `ResourceAccessPolicy.automation_working_dir()`.
+- **Policy & auto-review**: Every tool call is governed by `RiskyActionPolicy` (`deny` → `allow` → Sandbox host-process crossing → profile/`ask` rules) and the generalized 2-stage `auto_review.py` (which never auto-approves explicit `ask`/`deny` rules, credential/system paths, or Kohaku config/runtime paths such as `~/.kohaku`, `~/.nanobot`, and `config.json`).
+- **Transparent discovery denials**: Explicit `deny` rules block schema activation in `ToolSurface` and are reported transparently by `tool_search` instead of hiding the tool.
+- **Trusted MCP & plugins**: Configured MCP servers and installed `nanobot.tools` plugins are trusted on configuration/install (`launches_host_process = False` by default), while `config.json` and private runtime roots remain protected.

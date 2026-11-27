@@ -24,12 +24,28 @@ file tools for their permitted files. Ordinary indexed project folders do not
 acquire these special policies. Network policy is unchanged: a remote
 (non-loopback) WebUI client can preview only files inside the focused folder.
 
-Configured MCP servers are trusted integrations and their enabled tools are
-available in managed WebUI chats. An MCP server runs outside the Sandbox
-filesystem boundary, so review its command and `enabledTools` before enabling
-it. A shell command that targets a private or internal URL is rejected before
-launch; one such denial may be followed by a fresh model turn for unrelated
-permitted work, without replaying the command or its skipped batch.
+Configured MCP servers and installed `nanobot.tools` plugins are trusted
+integrations on configuration/install (`launches_host_process = False` by
+default) and their enabled tools are available in managed WebUI chats. An MCP
+server runs outside the Sandbox filesystem boundary, so review its command and
+`enabledTools` before enabling it. Kohaku's own runtime and `config.json`
+remain masked inside Sandbox and protected from unapproved agent writes and
+auto-review approvals.
+
+Managed WebUI chats do not use a static tool allowlist: all enabled tools
+remain discoverable and callable in both **Sandbox** and **Full access** modes,
+governed by `RiskyActionPolicy` (`deny` → `allow` → Sandbox host-process
+crossing → profile/`ask` rules) and the generalized 2-stage auto-reviewer
+(`auto_review.py`). Host-process tools (`agent_browser`, `agent_device`,
+`desktop_use`, `run_cli_app`, `trend_vpn_*`) declare
+`Tool.launches_host_process = True`: read-only actions and path-less screenshots
+run without prompting, while state-changing host actions in Sandbox ask for
+approval (unless explicitly allowed) and resolve their working directory via
+`automation_working_dir()`. Explicit `deny` rules block activation in
+`tool_search` and report the policy block transparently. A shell command that
+targets a private or internal URL is rejected before launch; one such denial
+may be followed by a fresh model turn for unrelated permitted work, without
+replaying the command or its skipped batch.
 
 ## Folders Settings
 

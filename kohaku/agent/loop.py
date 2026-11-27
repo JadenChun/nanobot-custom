@@ -3805,9 +3805,28 @@ class AgentLoop:
         session = ctx.require_session()
         registered = PolicyToolView(tools, lambda tool: True)
         saved: object = session.metadata.get(ACTIVATED_TOOLS_METADATA)
+        permissions = self.tools_config.permissions
+        deny_checker: Callable[[str], bool] | None = None
+        if permissions is not None and permissions.rules:
+            from kohaku.agent.permission_rules import match_explicit_rule
+
+            workspace = self.workspace
+
+            def _is_explicitly_denied(tool_name: str) -> bool:
+                return (
+                    match_explicit_rule(
+                        permissions,
+                        ToolCallRequest(id="", name=tool_name, arguments={}),
+                        workspace=workspace,
+                    )
+                    == "deny"
+                )
+
+            deny_checker = _is_explicitly_denied
         surface = ToolSurface(
             registered,
             ToolSurfaceState.from_metadata(saved) if not ctx.fresh_history else ToolSurfaceState(),
+            deny_checker=deny_checker,
         )
         if sustained_goal_turn(session.metadata, message_metadata=ctx.msg.metadata):
             surface.activate(["create_goal", "update_goal"])
