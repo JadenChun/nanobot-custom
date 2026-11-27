@@ -68,10 +68,9 @@ export function hasPendingAgentActivity(allMessages: UIMessage[]): boolean {
  *
  * Messages use ``turnSeq`` when every row in the turn provides it and fall
  * back to stable arrival order otherwise. Only contiguous rows of the same
- * display class are combined: activity rows share a collapsible surface, and
- * adjacent answer slices share an answer bubble. A visible answer is always a
- * hard boundary between activity surfaces; completed empty transport frames
- * have no display semantics and therefore create no boundary.
+ * display class are combined: activity rows (including pre-tool prose) share
+ * a collapsible surface, and adjacent final answer slices share an answer
+ * bubble. Completed empty transport frames create no display boundary.
  */
 export function normalizeActivityTimeline(
   messages: UIMessage[],
@@ -183,11 +182,69 @@ export function projectActivityTimeline(
   return normalizeActivityTimeline(messages);
 }
 
+/** Use the first occurrence of a tool call, not a late update to an older call,
+ * as evidence that the model continued working after a reply. */
+function toolEvidence(message: UIMessage, seenCalls: Set<string>): "start" | "tool" | null {
+  if (message.kind !== "trace") return null;
+  let evidence: "start" | "tool" | null = null;
+  for (const event of message.toolEvents ?? []) {
+    if (event.call_id && seenCalls.has(event.call_id)) continue;
+    if (event.call_id) seenCalls.add(event.call_id);
+    // Live progress patches update the start row in place, including its phase.
+    const live = event.phase === "start" || event.phase === "progress";
+    evidence = live ? "start" : evidence ?? "tool";
+  }
+  if (message.fileEdits?.some((edit) => edit.phase === "start" || edit.status === "editing")) return "start";
+  if (message.toolEvents?.length) return evidence;
+  return message.fileEdits?.length || message.content.trim() || message.traces?.some((line) => line.trim())
+    ? "tool"
+    : null;
+}
+
+function isStandaloneMessage(message: UIMessage): boolean {
+  return message.kind === "compaction" || message.kind === "run_stopped"
+    || !!message.sessionMessage || message.compactReply !== undefined;
+}
+
+function interimReplies(messages: UIMessage[]): Set<UIMessage> {
+  const seenCalls = new Set<string>();
+  const evidence = messages.map((message) => toolEvidence(message, seenCalls));
+  const interim = new Set<UIMessage>();
+  let answerFollows = false;
+  let toolBeforeAnswer = Infinity;
+  let toolStart = Infinity;
+  let identifiedTurnTool = Infinity;
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index]!;
+    if (isStandaloneMessage(message)) {
+      answerFollows = false;
+      toolBeforeAnswer = toolStart = identifiedTurnTool = Infinity;
+    } else if (evidence[index]) {
+      if (answerFollows) toolBeforeAnswer = index;
+      if (evidence[index] === "start") toolStart = index;
+      if (message.turnId) identifiedTurnTool = index;
+    } else if (!isRawActivity(message) && isAssistantAnswer(message) && !isCompletedDisplayNoop(message)) {
+      answerFollows = true;
+      // A legacy trace that only arrives after the last reply is ambiguous.
+      // Require a later answer, a tool start, or identified same-turn work.
+      const nextTool = messages[Math.min(
+        toolBeforeAnswer, toolStart, message.turnId ? identifiedTurnTool : Infinity,
+      )];
+      if (!nextTool || !message.content.trim() || hasAttachedMedia(message)) continue;
+      if (message.completedAt !== undefined && nextTool.timestampAvailable !== false
+        && message.completedAt < nextTool.createdAt) continue;
+      interim.add(message);
+    }
+  }
+  return interim;
+}
+
 function projectOrderedTurn(
   messages: UIMessage[],
   turnId?: string,
 ): TurnUnit[] {
   const units: TurnUnit[] = [];
+  const interim = interimReplies(messages);
   let activity: UIMessage[] = [];
   let activitySourceMessageCount = 0;
   let answers: UIMessage[] = [];
@@ -264,9 +321,14 @@ function projectOrderedTurn(
     }
     if (isAssistantAnswer(message)) {
       if (message.reasoning?.trim() || message.reasoningStreaming) {
-        // This raw message contributes one answer source plus a synthetic
-        // reasoning row, so count it only on the answer unit.
+        // The synthetic reasoning row carries no additional source count.
         appendActivity(reasoningOnlyMessageFromAnswer(message), 0);
+      }
+      if (interim.has(message)) {
+        appendActivity({
+          ...stripInlineReasoning(message), activityKind: "model", isStreaming: false,
+        }, 1);
+        continue;
       }
       flushActivity();
       // Keep media inline where the agent emitted it: once a buffered answer

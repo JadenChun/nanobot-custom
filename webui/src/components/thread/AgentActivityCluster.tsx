@@ -467,7 +467,7 @@ export function AgentActivityCluster({
           fadeTop={activityScrollFade.top}
           fadeBottom={activityScrollFade.bottom}
           hasDetails={hasVisibleActivity && !hasOnlyFileActivity}
-          instantReveal={childJump !== null}
+          instantReveal={childJump !== null || (modelSegments > 0 && isTurnStreaming && !wasTurnStreaming)}
           onToggle={toggleOuter}
           onScroll={onActivityScroll}
         >
@@ -667,6 +667,10 @@ function ActivityModelMessage({
       <MarkdownText
         streaming={active && !!message.isStreaming}
         preserveStreamingLayout
+        className={cn(
+          "text-muted-foreground [--tw-prose-body:hsl(var(--muted-foreground))]",
+          "[--tw-prose-headings:hsl(var(--muted-foreground))] [--tw-prose-bold:hsl(var(--muted-foreground))]",
+        )}
         onOpenFilePreview={onOpenFilePreview}
       >
         {message.content}

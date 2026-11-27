@@ -1,7 +1,7 @@
 # Subagent display and response format implementation plan
 
-Status as of 2026-11-27: P0, C, E, A, B, and D are implemented on
-`codex/subagent-response-display`. F is next.
+Status as of 2026-11-27: P0, C, E, A, B, D, and F are implemented on
+`codex/subagent-response-display`. The separate follow-ups below remain open.
 
 Reference session that reproduces every issue:
 parent `websocket:85f41d61-7609-46ac-af28-815123da98f5` and child
@@ -308,7 +308,7 @@ For each package:
 | A | PASS 2026-11-27 | Optional `spawn_call_id` in child record, event, wire, transcript and TS types (old records read as none). Child renders right after its spawning tool row inside the activity group; legacy records land after their turn's last work row, before the final answer. Reference session: child moved from below a later turn's answer into its own turn. Orchestrator re-run: 47 py + 39 TS tests pass, ruff clean; basedpyright 962→962. Extra approved edits: `loop.py` (`_publish_delegated_child`), `ws_http.py` (`_hydrated_child_payload`), `ThreadMessages.tsx` (2 props), `tests/webui/test_managed_display_origin.py` stub. |
 | B | PASS 2026-11-27 | Short titles, partial status, run metrics, and a separate Markdown result disclosure. See "Package B verification" below. |
 | D | PASS (automated) 2026-11-27 | Session details lists children and opens their history even when Jump is unavailable. Full WebUI suite: 2,007 tests in 118 files; production build passed. Mocked gateway integration covers paged parents, no redundant reload, and focus return. Live desktop check against the reference session not run. |
-| F | not started | |
+| F | PASS 2026-11-27 | Pre-tool Markdown joins the activity fold; final replies and delivered attachments keep their answer surface. Markdown subagent reports get a flexible default; Explore keeps its structured report. See verification below. |
 
 ## Package B verification
 
@@ -329,7 +329,16 @@ For each package:
   persisted run totals. Its 160-character stored title projects to 60 characters. New partial rows and the
   Markdown disclosure were verified with WebUI component tests; no live desktop app check was run.
 
-Next: F (progress notes and the default subagent report shape), separately from D.
+## Package F verification
+
+- In a read-only replay of the reference parent, seven progress notes moved into activity. Both
+  final replies and the inline child stayed in place; all 45 display source rows were accounted for.
+- Chromium smoke checked the live transition with and without earlier activity: the muted note
+  was readable in the fold on the first frame, with no second movement from opening the fold.
+- The full WebUI suite passed (2,012 tests across 119 files), and the production build succeeded.
+  Focused Python prompt and replay tests passed (62 tests), and Ruff passed on Kohaku source and
+  the changed Python test module. The full-source BasedPyright comparison found 962 → 962 diagnostics
+  across 547 files, with zero new signatures. This does not close the separate strict-zero gate.
 
 ## Follow-ups found during review
 

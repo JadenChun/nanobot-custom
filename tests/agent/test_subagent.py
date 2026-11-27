@@ -140,6 +140,14 @@ async def test_foreground_runner_receives_contents_already_read_by_parent(engine
             if any(marker in str(message.get("content")) for message in messages)
         ]
         assert len(child_calls) == 2
+        system = "\n".join(str(row["content"]) for row in child_calls[0] if row["role"] == "system")
+        if role == "explorer":
+            assert "---EXPLORE---" in system
+            assert "Status: done" not in system
+        else:
+            assert "Status: done" in system
+            assert "[file](path:line)" in system
+            assert "more detail" in system
         tool_rows = [row for row in child_calls[-1] if row.get("role") == "tool"]
         assert len(tool_rows) == 1
         assert "delegated evidence" in str(tool_rows[0]["content"])
@@ -203,6 +211,9 @@ def test_subagent_prompt_uses_relative_paths_in_agent_workspace(tmp_path):
 
     assert str(tmp_path.resolve()) not in prompt
     assert "History log: memory/history.jsonl" in prompt
+    assert all(f"Status: {status}" in prompt for status in ("done", "partial", "blocked"))
+    assert "[file](path:line)" in prompt
+    assert "more detail" in prompt
     assert "### Workspace skills (`skills`)" in prompt
 
 
