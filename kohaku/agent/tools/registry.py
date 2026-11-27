@@ -25,18 +25,10 @@ from kohaku.agent.tools.filesystem_effect import (
     capture_filesystem_effects,
 )
 from kohaku.agent.tools.producer_adapters import accepted_producer_receipt
-from kohaku.security.folder_grants import FolderGrantView
 
 if TYPE_CHECKING:
     from kohaku.agent.tools.mcp import MCPGenerationLease
     from kohaku.runtime_context import RuntimeContextProvider
-
-
-_HOST_ADMISSION_CHANGED = (
-    "Tool '{name}' was not started: workspace access changed to Sandbox while the "
-    "call was being admitted. Retry the call so it is checked against the current "
-    "permissions."
-)
 
 
 def is_managed_mcp_tool(tool: Tool) -> bool:
@@ -56,7 +48,7 @@ class ToolDispatchGuard:
     The base guard admits everything. Whether a tool call may run is decided by
     the tool policy and permission mode (``RiskyActionPolicy``), not by a name
     list here. Subclasses implement narrow lifecycle fences, such as Dream's
-    operation fence or the host-process admission reservation below.
+    operation fence.
     """
 
     def error(self, name: str) -> str | None:
@@ -65,49 +57,6 @@ class ToolDispatchGuard:
     @contextmanager
     def admit(self, name: str) -> Generator[str | None, None, None]:
         yield self.error(name)
-
-
-class HostProcessAdmissionGuard(ToolDispatchGuard):
-    """Fence Sandbox activation against host-process tools that are running.
-
-    Tools that declare ``launches_host_process`` start work outside Sandbox
-    (for example a browser daemon). Whether such a call may run is decided by
-    the policy layer. This guard does not deny by name. It only reserves native
-    admission while the grant store is not yet managed, so turning Sandbox on
-    cannot race with an unconfined launch that is already in flight.
-    """
-
-    def __init__(
-        self,
-        grants: FolderGrantView | None,
-        *,
-        host_process: Callable[[str], bool],
-    ) -> None:
-        self._grants = grants
-        self._host_process = host_process
-
-    @contextmanager
-    def admit(self, name: str) -> Generator[str | None, None, None]:
-        request = current_request_context()
-        grants = self._grants
-        if (
-            request is None
-            or request.channel != "websocket"
-            or grants is None
-            or grants.is_managed
-            or not self._host_process(name)
-        ):
-            yield None
-            return
-        reservation = grants.try_begin_native_process()
-        if reservation is None:
-            # Sandbox was activated after the policy assessed this call.
-            yield _HOST_ADMISSION_CHANGED.format(name=name)
-            return
-        try:
-            yield None
-        finally:
-            grants.end_native_process(reservation)
 
 
 def is_tool_error_result(result: Any) -> bool:

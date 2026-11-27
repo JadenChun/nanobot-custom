@@ -18,7 +18,6 @@ from kohaku.agent.tools.base import (
 from kohaku.agent.tools.context import RequestContext, request_context
 from kohaku.agent.tools.mcp import MCPToolWrapper
 from kohaku.agent.tools.registry import (
-    HostProcessAdmissionGuard,
     ToolDispatchGuard,
     ToolRegistry,
 )
@@ -106,9 +105,6 @@ async def test_managed_chat_has_no_tool_name_allowlist(tmp_path: Path) -> None:
     registry = ToolRegistry()
     for name in ("agent_browser", "create_goal", "my", "list_dir"):
         registry.register(_RecordingTool(name, calls))
-    registry.set_dispatch_guard(
-        HostProcessAdmissionGuard(store.view, host_process=lambda name: name == "agent_browser")
-    )
     request = RequestContext(
         channel="websocket",
         chat_id="fixture-chat",
@@ -135,7 +131,6 @@ async def test_managed_chat_calls_configured_mcp_tool(tmp_path: Path) -> None:
     search = _mcp_tool("comfy", "search", session)
     registry = ToolRegistry()
     registry.register(search)
-    registry.set_dispatch_guard(HostProcessAdmissionGuard(store.view, host_process=lambda _: False))
     request = RequestContext(
         channel="websocket",
         chat_id="fixture-chat",

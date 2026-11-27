@@ -229,7 +229,7 @@ class WebUIMediaGateway:
     ) -> bool:
         policy = self._resource_policy
         grants = policy.folder_grants if policy is not None else None
-        if policy is None or grants is None or not grants.is_managed:
+        if policy is None or grants is None or not policy.managed_mode:
             return True
         try:
             policy.validate_path(

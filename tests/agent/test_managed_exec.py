@@ -20,12 +20,11 @@ from kohaku.agent.tools.context import RequestContext, request_context
 from kohaku.agent.tools.exec_session import ExecSessionManager, ExecSessionTool
 from kohaku.agent.tools.filesystem import ReadFileTool
 from kohaku.agent.tools.native_process import native_supervisor_available
-from kohaku.agent.tools.registry import HostProcessAdmissionGuard, ToolRegistry
+from kohaku.agent.tools.registry import ToolRegistry
 from kohaku.agent.tools.sandbox import wrap_managed_command
 from kohaku.agent.tools.shell import ExecTool
 from kohaku.agent.turn import ToolOutcome
 from kohaku.context_repo import ContextRepoManager, ResourceAccessPolicy
-from kohaku.security import native_admission
 from kohaku.security.desktop_permissions import (
     DesktopPermissionOwner,
     PermissionSourceBinding,
@@ -33,7 +32,6 @@ from kohaku.security.desktop_permissions import (
 )
 from kohaku.security.folder_grants import (
     FolderGrantStore,
-    FolderGrantView,
     NativeProcessesActiveError,
     NativeProcessesUnknownError,
 )
@@ -508,10 +506,6 @@ class _NativeHostTool(Tool):
         return "host call completed"
 
 
-def _host_guard(grants: FolderGrantView | None) -> HostProcessAdmissionGuard:
-    return HostProcessAdmissionGuard(grants, host_process=lambda name: name == "agent_browser")
-
-
 @pytest.mark.asyncio
 async def test_host_tool_stays_callable_after_sandbox_activation(tmp_path: Path) -> None:
     # No name allowlist: once Sandbox is active, the policy layer (not the
@@ -530,7 +524,6 @@ async def test_host_tool_stays_callable_after_sandbox_activation(tmp_path: Path)
     tool = _NativeHostTool()
     tool.release.set()
     registry.register(tool)
-    registry.set_dispatch_guard(_host_guard(store.view))
     request = RequestContext(
         channel="websocket",
         chat_id="fixture-chat",
@@ -552,66 +545,12 @@ async def test_host_tool_stays_callable_after_sandbox_activation(tmp_path: Path)
 
 
 @pytest.mark.asyncio
-async def test_opaque_native_host_return_keeps_first_activation_unknown(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    # This exercises an in-flight opaque tool reservation without launching a process.
-    monkeypatch.setattr(
-        native_admission,
-        "current_host_identity",
-        lambda: native_admission.HostIdentity("host-a", "boot-a", 101),
-    )
-    home = tmp_path / "agent-home"
-    project = tmp_path / "project"
-    instance = tmp_path / "instance"
-    home.mkdir()
-    project.mkdir()
-    store = FolderGrantStore(
-        agent_home=home,
-        instance_root=instance,
-        path=instance / "webui" / "folder-grants.json",
-    )
-    registry = ToolRegistry()
-    tool = _NativeHostTool()
-    registry.register(tool)
-    registry.set_dispatch_guard(_host_guard(store.view))
-    request = RequestContext(
-        channel="websocket",
-        chat_id="fixture-chat",
-        session_key="websocket:fixture-chat",
-        workspace=home,
-        persistent_session=True,
-    )
-
-    with request_context(request):
-        running = asyncio.create_task(registry.execute("agent_browser", {}))
-        await asyncio.wait_for(tool.started.wait(), timeout=2)
-        with pytest.raises(NativeProcessesActiveError):
-            store.upsert(
-                {"path": str(project), "file_access": "read_only", "commands": False},
-                expected_revision=0,
-            )
-        tool.release.set()
-        assert await asyncio.wait_for(running, timeout=2) == "host call completed"
-
-        with pytest.raises(NativeProcessesUnknownError):
-            store.upsert(
-                {"path": str(project), "file_access": "read_only", "commands": False},
-                expected_revision=0,
-            )
-
-    assert tool.calls == 1
-
-
-@pytest.mark.asyncio
 async def test_managed_temporary_websocket_admits_host_tool_for_policy(tmp_path: Path) -> None:
-    home, project, _store, policy = _managed_tools(tmp_path)
+    home, project, _store, _policy = _managed_tools(tmp_path)
     registry = ToolRegistry()
     tool = _NativeHostTool()
     tool.release.set()
     registry.register(tool)
-    registry.set_dispatch_guard(_host_guard(policy.folder_grants))
     scope_token, request = _bind_managed_turn(home, project, persistent=False)
     try:
         with request:

@@ -94,7 +94,6 @@ from kohaku.agent.tools.exec_session import ExecCompletionSink, ExecSessionManag
 from kohaku.agent.tools.file_state import FileStateStore, bind_file_states, reset_file_states
 from kohaku.agent.tools.message import capture_message_deliveries
 from kohaku.agent.tools.registry import (
-    HostProcessAdmissionGuard,
     PolicyToolView,
     ToolRegistry,
 )
@@ -921,7 +920,11 @@ class AgentLoop:
         self.workspace_scopes = WorkspaceScopeResolver(
             default_workspace=workspace,
             default_restrict_to_workspace=restrict_to_workspace,
-            managed_state=(lambda: folder_grants.is_managed) if folder_grants is not None else None,
+            managed_state=(
+                (lambda: fork_dependencies.resource_policy.managed_mode)
+                if folder_grants is not None
+                else None
+            ),
         )
         self._owned_foreground_manager = fork_dependencies.foreground_manager if _owns_fork_dependencies else None
         self.context = ContextBuilder(
@@ -4489,10 +4492,8 @@ class AgentLoop:
                 and (live_session is None or live_session.policy.persist)
                 and self.context.memory.owns_dream_tools(effective_tools, effective_scope.project_path)
             )
-        policy_grants = self._fork_dependencies.resource_policy.folder_grants
         managed_prompt = bool(
-            policy_grants
-            and policy_grants.is_managed
+            self._fork_dependencies.resource_policy.managed_mode
             and request_ctx.channel == "websocket"
             and request_ctx.persistent_session
         )
@@ -7512,7 +7513,10 @@ class AgentLoop:
         if (
             route_channel == "websocket"
             and grants is not None
-            and (grants.is_managed or local_private_workspace_authority)
+            and (
+                self._fork_dependencies.resource_policy.managed_mode
+                or local_private_workspace_authority
+            )
         ):
             # Every tool stays available in a managed chat. The policy layer
             # decides per call (ask outside Sandbox, deny by explicit rule).
@@ -7558,15 +7562,6 @@ class AgentLoop:
         admitted_tools = tools
         if not issued_dream:
             tools = PolicyToolView(admitted_tools, lambda tool: True)
-            tools.set_dispatch_guard(
-                HostProcessAdmissionGuard(
-                    grants,
-                    host_process=lambda name: (
-                        (tool := admitted_tools.get(name)) is not None
-                        and tool.launches_host_process
-                    ),
-                )
-            )
         apply_surface = getattr(self, "_apply_tool_surface", None)
         surface = None
         if apply_surface is not None and not issued_dream:
