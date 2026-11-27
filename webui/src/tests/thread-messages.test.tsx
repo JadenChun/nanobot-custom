@@ -70,7 +70,6 @@ describe("ThreadMessages", () => {
 
     act(() => { vi.advanceTimersByTime(10_000); });
     rerender(<ThreadMessages messages={messages.slice(0, 5)} isStreaming activeTurnId={turnId} />);
-    const live = screen.getByRole("button", { name: /^Working(?: · |$)/ });
     expect(screen.getAllByRole("button", { name: /^Working(?: · |$)/ })).toHaveLength(1);
     const work = screen.getByTestId("agent-activity-scroll");
     expect(work).toHaveTextContent(/Planning.*Checking.*frame.png/);

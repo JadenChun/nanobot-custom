@@ -1131,6 +1131,7 @@
   },
   "thread": {
     "delegatedChild": {
+      "assignment": "Tugas",
       "partial": "Sebagian",
       "showResult": "Tampilkan hasil",
       "hideResult": "Sembunyikan hasil",

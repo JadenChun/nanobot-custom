@@ -1131,6 +1131,7 @@
   },
   "thread": {
     "delegatedChild": {
+      "assignment": "Tarefa atribuída",
       "partial": "Parcial",
       "showResult": "Mostrar resultado",
       "hideResult": "Ocultar resultado",

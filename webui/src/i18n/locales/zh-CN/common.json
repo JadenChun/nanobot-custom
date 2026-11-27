@@ -1131,6 +1131,7 @@
   },
   "thread": {
     "delegatedChild": {
+      "assignment": "任务说明",
       "partial": "部分完成",
       "showResult": "显示结果",
       "hideResult": "隐藏结果",

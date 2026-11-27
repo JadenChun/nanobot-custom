@@ -1131,6 +1131,7 @@
   },
   "thread": {
     "delegatedChild": {
+      "assignment": "작업 내용",
       "partial": "부분 완료",
       "showResult": "결과 표시",
       "hideResult": "결과 숨기기",

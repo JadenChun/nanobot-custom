@@ -1131,6 +1131,7 @@
   },
   "thread": {
     "delegatedChild": {
+      "assignment": "Assignment",
       "partial": "Partial",
       "showResult": "Show result",
       "hideResult": "Hide result",

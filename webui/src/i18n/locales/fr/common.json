@@ -1131,6 +1131,7 @@
   },
   "thread": {
     "delegatedChild": {
+      "assignment": "Mission",
       "partial": "Partiel",
       "showResult": "Afficher le résultat",
       "hideResult": "Masquer le résultat",

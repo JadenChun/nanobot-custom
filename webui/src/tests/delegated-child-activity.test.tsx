@@ -110,6 +110,12 @@ describe("inline delegated child activity", () => {
       expect(childElement(container)).toBeNull();
       act(() => viewport.current?.jumpToChild("child-a"));
       await waitFor(() => expect(childElement(container)).toHaveFocus());
+      // Let any follow-up scroll frame run to prove the virtualized row stays mounted.
+      await act(async () => {
+        await new Promise((resolve) => window.requestAnimationFrame(() => resolve(undefined)));
+      });
+      expect(scroller.scrollTop).toBeGreaterThan(0);
+      expect(childElement(container)).toHaveFocus();
       expect(childElement(container)).toHaveAttribute("data-jump-highlighted", "true");
       expect(childElement(container)?.closest('[aria-hidden="true"]')).toBeNull();
     } finally {

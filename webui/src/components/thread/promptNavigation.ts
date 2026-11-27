@@ -78,7 +78,8 @@ export function findPromptElement(scrollEl: HTMLElement, promptId: string): HTML
 export function promptTop(scrollEl: HTMLElement, target: HTMLElement): number {
   const scrollRect = scrollEl.getBoundingClientRect();
   const targetRect = target.getBoundingClientRect();
-  const hasLayoutRect = scrollRect.top !== 0 || targetRect.top !== 0;
+  const hasLayoutRect = scrollRect.top !== 0 || targetRect.top !== 0
+    || scrollRect.height !== 0 || targetRect.height !== 0;
   if (hasLayoutRect) {
     return targetRect.top - scrollRect.top + scrollEl.scrollTop;
   }

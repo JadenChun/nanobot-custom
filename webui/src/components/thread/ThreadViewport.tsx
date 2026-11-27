@@ -938,10 +938,17 @@ export const ThreadViewport = forwardRef<ThreadViewportHandle, ThreadViewportPro
     if (activity) {
       activity.scrollTop = Math.max(0, promptTop(activity, row) - (activity.clientHeight - row.offsetHeight) / 2);
     }
-    const top = promptTop(scroller, row) - (scroller.clientHeight - row.offsetHeight) / 2;
-    threadMotionRef.current?.navigateHistoryTo(
-      Math.max(0, Math.min(top, scroller.scrollHeight - scroller.clientHeight)),
-    );
+    const scrollRect = scroller.getBoundingClientRect();
+    const rowRect = row.getBoundingClientRect();
+    const hasRowGeometry = scrollRect.top !== 0 || rowRect.top !== 0
+      || scrollRect.height !== 0 || rowRect.height !== 0
+      || row.offsetTop > 0;
+    if (hasRowGeometry) {
+      const top = promptTop(scroller, row) - (scroller.clientHeight - row.offsetHeight) / 2;
+      threadMotionRef.current?.navigateHistoryTo(
+        Math.max(0, Math.min(top, scroller.scrollHeight - scroller.clientHeight)),
+      );
+    }
     clearChildHighlight();
     row.dataset.jumpHighlighted = "true";
     childHighlightRef.current = { row, timer: window.setTimeout(clearChildHighlight, 2000) };

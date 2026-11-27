@@ -347,14 +347,14 @@ For each package:
   then reports "popup blocked", and its Continue link can open a second tab. Treat a `null` return
   inside the desktop shell as "opened externally" (or expose a `desktop.open_url` command and call it
   directly). Provider OAuth in `SettingsPage.tsx` already ignores the return value.
-- **E2:** Linux build of `native.rs` not compiled in review (only the aarch64-apple-darwin target was available).
+- **E2:** Resolved 2026-11-27 — Linux build of `native.rs` compiled and passed `cargo check` + `cargo test` (20/20).
 - **C1 (grouping parity):** child history keeps each tool result as its own step; the main stream merges
   consecutive calls ("Searched files · 3 searches"). Needs segment ids on child rows.
 - **C2:** `activity-message-model.ts` still falls back to `content` when merging trace rows (only affects
   rows from older servers without `traces`).
 - **C3:** child duration falls back to the child record's `created_at`/`updated_at` when events have no
   timestamps (the reference session has none). A multi-run child shows its whole lifetime.
-- **C4:** the "Assignment" overlay label has no locale entries yet.
+- **C4:** Resolved 2026-11-27 — added `thread.delegatedChild.assignment` across all 10 locale files.
 - **A1:** `spawn_call_id` is missing (turn fallback used) for non-streaming turns with role tools that have no
   durable intent (e.g. `explore`), likely including nested non-streaming child turns.
 - The permission/tool-dispatch workstream was moved to `codex/remove-managed-tool-allowlist`; it is not
