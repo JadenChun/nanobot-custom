@@ -3807,7 +3807,7 @@ class AgentLoop:
         saved: object = session.metadata.get(ACTIVATED_TOOLS_METADATA)
         permissions = self.tools_config.permissions
         deny_checker: Callable[[str], bool] | None = None
-        if permissions is not None and permissions.rules:
+        if permissions.rules:
             from kohaku.agent.permission_rules import match_explicit_rule
 
             workspace = self.workspace

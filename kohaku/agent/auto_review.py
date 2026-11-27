@@ -290,16 +290,17 @@ def sanitize_tool_arguments(
     """Return a sanitized, size-bounded copy of tool arguments for review/UI payloads."""
     if not isinstance(arguments, Mapping):
         return {}
+    typed_args = cast(Mapping[object, object], arguments)
     sanitized = cast(
         dict[str, object],
-        _sanitize_value(arguments, max_str_chars=max_str_chars),
+        _sanitize_value(typed_args, max_str_chars=max_str_chars),
     )
     encoded = json.dumps(sanitized, ensure_ascii=False)
     if len(encoded) <= max_total_chars:
         return sanitized
     tighter = cast(
         dict[str, object],
-        _sanitize_value(arguments, max_str_chars=120),
+        _sanitize_value(typed_args, max_str_chars=120),
     )
     if len(json.dumps(tighter, ensure_ascii=False)) <= max_total_chars:
         return tighter
@@ -319,9 +320,10 @@ def check_auto_review_eligibility(
     """Return an ineligibility reason if Stage 1 requires human approval, else None."""
     if not isinstance(call.arguments, Mapping):
         return "malformed tool arguments require human approval"
+    arguments = cast(Mapping[str, object], call.arguments)
 
     if call.name == "exec":
-        raw_command = call.arguments.get("command")
+        raw_command = arguments.get("command")
         command = raw_command.strip() if isinstance(raw_command, str) else ""
         if not command:
             return "empty exec command requires human approval"
@@ -353,7 +355,7 @@ def check_auto_review_eligibility(
         return None
 
     if call.name in {"write_file", "edit_file", "Write", "Edit"}:
-        raw_path = call.arguments.get("path") or call.arguments.get("file_path")
+        raw_path = arguments.get("path") or arguments.get("file_path")
         path_str = raw_path.strip() if isinstance(raw_path, str) else ""
         if not path_str:
             return f"empty {call.name} path requires human approval"
@@ -383,17 +385,17 @@ def check_auto_review_eligibility(
         return f"explicit '{explicit}' permission rule requires human approval"
 
     if call.name in {"agent_browser", "agent_device"}:
-        return _check_browser_or_device_args(call.name, call.arguments, workspace)
+        return _check_browser_or_device_args(call.name, arguments, workspace)
 
     if call.name == "desktop_use":
-        action = call.arguments.get("action")
+        action = arguments.get("action")
         if not isinstance(action, str) or not action.strip():
             return "empty or malformed desktop_use action requires human approval"
 
-    if call.name == "run_cli_app" and not call.arguments:
+    if call.name == "run_cli_app" and not arguments:
         return "empty run_cli_app arguments require human approval"
 
-    for text in _iter_string_values(call.arguments):
+    for text in _iter_string_values(arguments):
         if sensitive := _check_sensitive_text(text):
             return f"{call.name} {sensitive}"
 
