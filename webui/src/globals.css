@@ -736,16 +736,19 @@
   max-width: 58%;
 }
 
-/*
- * The access control's pill has its own inline padding. Pull it slightly closer
- * to the workspace control so both visual gaps match the attach/workspace gap.
- */
-.thread-composer-access-slot-after-workspace {
-  margin-left: -0.375rem;
+@media (hover: hover) {
+  .thread-composer-workspace-action:hover {
+    background-color: hsl(var(--foreground) / 0.06);
+    color: hsl(var(--foreground));
+  }
 }
 
-.thread-composer-footer-actions .thread-composer-context-usage {
-  margin-right: -0.5rem;
+@media (pointer: coarse) {
+  .thread-composer-context-row :is(.thread-composer-workspace-action, .thread-composer-context-usage)::after {
+    position: absolute;
+    inset: -0.5rem 0;
+    content: "";
+  }
 }
 
 .thread-composer-model-badge {
