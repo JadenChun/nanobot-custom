@@ -5,6 +5,10 @@ This module supplies its backend: the command root runs under sandbox-exec with
 a per-launch profile, and the launch domain (seatbelt_tracking) kills and proves
 the tree. The supervisor itself is not sandboxed.
 
+A Full access launch is only marked; its tree may outlive the command root until
+a stop request. A managed launch also carries confinement rules, gets a private
+temporary folder, and, like a bubblewrap sandbox, ends with its root.
+
 It writes a receipt only for a proven tree. When a requested kill cannot be
 proven within its deadline, it exits without one, so the admission ledger
 records the launch as unknown.
@@ -13,6 +17,7 @@ records the launch as unknown.
 from __future__ import annotations
 
 import os
+import shutil
 import signal
 import stat
 import subprocess
@@ -23,23 +28,31 @@ from pathlib import Path
 from typing import Protocol
 
 from kohaku.agent.tools.native_process_supervisor import (
+    LaunchConfinement,
     NativeLaunchConfig,
     run_supervisor,
     shell_argv,
     spawn_command_root,
+)
+from kohaku.agent.tools.seatbelt_profile import (
+    LAUNCH_TMP_PARAM,
+    managed_cache_env,
+    runtime_denies,
 )
 from kohaku.agent.tools.seatbelt_tracking import (
     NotQuiescent,
     Quiescent,
     host_launch_domain,
 )
-from kohaku.security.darwin_proc import SANDBOX_EXEC
+from kohaku.security.darwin_proc import SANDBOX_EXEC, canonical_path
 
 SANDBOX_MARKER_ENV = "KOHAKU_SANDBOX"
 SANDBOX_MARKER_VALUE = "seatbelt"
 KILL_DEADLINE_SECONDS = 10.0
 _KILL_INTERVAL_SECONDS = 0.02
 _FULL_PROFILE = Path(__file__).with_name("seatbelt") / "full.sbpl"
+# Short, so that Unix sockets created inside it fit the path length limit.
+LAUNCH_TMP_ROOT = Path("/private/tmp")
 NESTED_SANDBOX_SIGNATURE = b"sandbox_apply: Operation not permitted"
 NESTED_SANDBOX_NOTE = (
     b"\n[kohaku] This command tried to apply its own macOS sandbox. A different nested "
@@ -85,6 +98,51 @@ def write_launch_profile(directory: Path, launch_id: str, rules: str) -> Path:
     return path
 
 
+def create_launch_temp(launch_id: str) -> Path:
+    """Create this launch's private temporary folder; never reuse one."""
+    path = LAUNCH_TMP_ROOT / f"kh-{launch_id}"
+    os.mkdir(path, 0o700)
+    os.chmod(path, 0o700)
+    return path
+
+
+def remove_launch_temp(root: Path) -> None:
+    """Delete a launch's temporary folder without following any link.
+
+    Only call this once the launch's tree is proven gone, or never started. The
+    command may have left read-only or flagged entries behind.
+    """
+    if not _is_real_directory(root):
+        return
+    pending = [root]
+    while pending:
+        directory = pending.pop()
+        _clear_flags(directory)
+        with suppress(OSError):
+            os.chmod(directory, 0o700)
+        with suppress(OSError), os.scandir(directory) as entries:
+            for entry in entries:
+                if entry.is_dir(follow_symlinks=False):
+                    pending.append(Path(entry.path))
+                elif entry.stat(follow_symlinks=False).st_nlink == 1:
+                    _clear_flags(Path(entry.path))
+    shutil.rmtree(root, ignore_errors=True)
+
+
+def _is_real_directory(path: Path) -> bool:
+    try:
+        return stat.S_ISDIR(path.lstat().st_mode)
+    except OSError:
+        return False
+
+
+def _clear_flags(path: Path) -> None:
+    chflags: Callable[..., None] | None = getattr(os, "chflags", None)
+    if chflags is not None:
+        with suppress(OSError):
+            chflags(path, 0, follow_symlinks=False)
+
+
 class SeatbeltBackend:
     """Launch under sandbox-exec; kill and prove the tree through its markers."""
 
@@ -96,6 +154,9 @@ class SeatbeltBackend:
     ) -> None:
         self._domain_factory = domain_factory
         self._clock = clock
+        self._confinement: LaunchConfinement | None = None
+        self._params: tuple[tuple[str, str], ...] = ()
+        self._launch_tmp: Path | None = None
         self._domain: TreeDomain | None = None
         self._profile: Path | None = None
         self._child: subprocess.Popen[bytes] | None = None
@@ -110,17 +171,43 @@ class SeatbeltBackend:
         self._domain = self._domain_factory(
             launch_id, root_exited=self._root_exited, protected=(os.getppid(),),
         )
-        rules = _FULL_PROFILE.read_text(encoding="utf-8") + self._domain.profile_markers()
+        receipts = Path(payload["receipt_dir"])
+        profiles = profile_directory(receipts)
+        confinement = payload.get("confinement")
+        if confinement is None:
+            rules = _FULL_PROFILE.read_text(encoding="utf-8")
+        else:
+            self._confinement = confinement
+            self._launch_tmp = create_launch_temp(launch_id)
+            # The command must never read or forge the proof and profile files,
+            # even when a writable folder contains them.
+            private, private_params = runtime_denies(
+                (canonical_path(receipts), canonical_path(profiles)),
+            )
+            rules = confinement["rules"] + private
+            self._params = (
+                *confinement["params"],
+                *private_params,
+                (LAUNCH_TMP_PARAM, str(self._launch_tmp)),
+            )
         self._profile = write_launch_profile(
-            profile_directory(Path(payload["receipt_dir"])), launch_id, rules,
+            profiles, launch_id, rules + self._domain.profile_markers(),
         )
 
     def spawn_root(self, payload: NativeLaunchConfig) -> subprocess.Popen[bytes]:
         if self._profile is None:
             raise RuntimeError("Seatbelt launch profile is not prepared")
         # sandbox-exec replaces itself with the shell, so the root pid is stable.
-        args = [SANDBOX_EXEC, "-f", str(self._profile), "--", *shell_argv(payload)]
-        env = {**payload["env"], SANDBOX_MARKER_ENV: SANDBOX_MARKER_VALUE}
+        args = [SANDBOX_EXEC, "-f", str(self._profile)]
+        env = dict(payload["env"])
+        for name, value in self._params:
+            args += ["-D", f"{name}={value}"]
+        if self._confinement is None:
+            args += ["--", *shell_argv(payload)]
+        else:
+            args += ["--", *self._confinement["argv"]]
+            env.update(managed_cache_env(str(self._launch_tmp)))
+        env[SANDBOX_MARKER_ENV] = SANDBOX_MARKER_VALUE
         self._child = spawn_command_root(args, cwd=payload["cwd"], env=env)
         return self._child
 
@@ -163,13 +250,23 @@ class SeatbeltBackend:
     def tree_quiescent(self, child: subprocess.Popen[bytes]) -> bool:
         # The root has exited, so its profile is already applied.
         self._discard_profile()
-        # After a kill request, kill_step owns observation of the domain.
-        if not self._proven and self._deadline is None and self._domain is not None:
+        if self._confinement is not None:
+            # As with a bubblewrap sandbox, nothing outlives a managed command.
+            self.kill_step(child, root_reported=True)
+        elif not self._proven and self._deadline is None and self._domain is not None:
+            # After a kill request, kill_step owns observation of the domain.
             self._proven = self._domain.poll()
         return self._proven
 
+    def kill_on_control_eof(self) -> bool:
+        return self._confinement is not None and self._confinement["die_with_parent"]
+
     def close(self) -> None:
         self._discard_profile()
+        # An unproven tree may still be using its temporary folder.
+        if self._launch_tmp is not None and (self._proven or self._child is None):
+            remove_launch_temp(self._launch_tmp)
+            self._launch_tmp = None
 
     def _root_exited(self) -> bool:
         return self._child is not None and self._child.returncode is not None

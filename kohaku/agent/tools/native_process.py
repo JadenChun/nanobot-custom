@@ -5,7 +5,10 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import secrets
+import shutil
 import sys
+import tempfile
 from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
@@ -15,6 +18,7 @@ from kohaku.agent.tools.executor_capabilities import (
     tree_ownership,
     tree_ownership_available,
 )
+from kohaku.agent.tools.seatbelt_profile import SeatbeltConfinement
 from kohaku.security.native_admission import (
     NativeProcessReservation,
     process_start_time,
@@ -42,6 +46,10 @@ class NativeProcessHandle:
         self._root_started: asyncio.Future[int] = loop.create_future()
         self._root_done = asyncio.Event()
         self._receipt_path: Path | None = None
+        # Set for a launch with no admission ledger: its private receipt folder,
+        # and the proof read from it just before the folder is removed.
+        self._ephemeral_directory: Path | None = None
+        self._ephemeral_proof = False
         self._status_task = asyncio.create_task(self._read_status())
         self._reap_task = asyncio.create_task(self._reap_supervisor())
         self.stdin = supervisor.stdin
@@ -62,16 +70,26 @@ class NativeProcessHandle:
         """Replace the internal owner cleanup hook after handle registration."""
         self._on_supervisor_exit = callback
 
-    def set_receipt_path(self, path: Path) -> None:
-        """Bind the supervisor's quiescence receipt for this launch."""
+    def set_receipt_path(self, path: Path, *, ephemeral_directory: Path | None = None) -> None:
+        """Bind the supervisor's quiescence receipt for this launch.
+
+        An ephemeral directory holds a receipt nothing else will read; it is
+        removed when the supervisor exits.
+        """
         self._receipt_path = path
+        self._ephemeral_directory = ephemeral_directory
+
+    def _receipt_published(self) -> bool:
+        if self._ephemeral_directory is not None:
+            return self._ephemeral_proof
+        return self._receipt_path is not None and self._receipt_path.is_file()
 
     def quiescence_proven(self) -> bool:
         """Return true only after the supervisor published its tree proof."""
         task = self._reap_task
         if not task.done() or task.cancelled() or task.exception() is not None:
             return False
-        return self._receipt_path is not None and self._receipt_path.is_file()
+        return self._receipt_published()
 
     async def wait_quiescent(self, timeout: float | None = None) -> bool:
         """Wait for supervisor exit and the published tree-quiescence receipt."""
@@ -83,7 +101,7 @@ class NativeProcessHandle:
                 return False
         if task.cancelled() or task.exception() is not None:
             return False
-        return self._receipt_path is not None and self._receipt_path.is_file()
+        return self._receipt_published()
 
     async def _read_status(self) -> None:
         try:
@@ -145,6 +163,11 @@ class NativeProcessHandle:
     async def _reap_supervisor(self) -> None:
         try:
             await self._supervisor.wait()
+            if self._ephemeral_directory is not None:
+                self._ephemeral_proof = (
+                    self._receipt_path is not None and self._receipt_path.is_file()
+                )
+                shutil.rmtree(self._ephemeral_directory, ignore_errors=True)
         finally:
             await self.close_control()
             if self._on_supervisor_exit is not None:
@@ -211,7 +234,7 @@ class NativeProcessHandle:
             raise RuntimeError("native process tree settlement was cancelled")
         if reap_task.exception() is not None:
             raise RuntimeError("native process tree settlement failed") from reap_task.exception()
-        if self._receipt_path is None or not self._receipt_path.is_file():
+        if not self._receipt_published():
             raise RuntimeError("native process tree quiescence proof is missing")
 
     async def close_control(self) -> None:
@@ -280,11 +303,20 @@ async def spawn_native_process(
     env: dict[str, str],
     shell_program: str | None,
     login: bool,
-    reservation: NativeProcessReservation,
+    reservation: NativeProcessReservation | None = None,
+    confinement: SeatbeltConfinement | None = None,
 ) -> NativeProcessHandle:
-    """Start a supervisor, persist its identity, then release its launch gate."""
+    """Start a supervisor, persist its identity, then release its launch gate.
+
+    A launch without a reservation must be a confined one. It has no admission
+    ledger: it ends when this process stops listening, and its proof lives only
+    as long as the handle.
+    """
+    if reservation is None and confinement is None:
+        raise ValueError("an unconfined native launch needs an admission reservation")
     if not native_supervisor_available():
-        reservation.mark_unproven()
+        if reservation is not None:
+            reservation.mark_unproven()
         raise RuntimeError("whole-tree native process proof is unavailable on this platform")
 
     gate_read, gate_write = os.pipe()
@@ -296,10 +328,20 @@ async def spawn_native_process(
     gate_open = False
     transferred = False
     status_stream = None
-    permission_owner = reservation.permission_owner
-    permission_reference = reservation.permission_reference
+    permission_owner = reservation.permission_owner if reservation is not None else None
+    permission_reference = (
+        reservation.permission_reference if reservation is not None else None
+    )
     registered_permission_handle = False
+    ephemeral_directory: Path | None = None
     try:
+        if reservation is None:
+            ephemeral_directory = Path(tempfile.mkdtemp(prefix="kohaku-launch-"))
+            launch_id = secrets.token_hex(16)
+            receipt_dir = ephemeral_directory / "receipts"
+        else:
+            launch_id = reservation.launch_id
+            receipt_dir = reservation.ledger.receipt_dir
         helper = await asyncio.create_subprocess_exec(
             sys.executable,
             "-I",
@@ -318,6 +360,9 @@ async def spawn_native_process(
             stderr=asyncio.subprocess.PIPE,
             close_fds=True,
             pass_fds=(gate_read, status_write, control_read, config_read),
+            # A terminal interrupt must not end the supervisor of a launch that
+            # it has to clean up once this process is gone.
+            start_new_session=reservation is None,
         )
         for fd in (gate_read, status_write, control_read, config_read):
             os.close(fd)
@@ -329,26 +374,37 @@ async def spawn_native_process(
         await asyncio.get_running_loop().connect_read_pipe(lambda: protocol, status_stream)
         handle = NativeProcessHandle(helper, reader, control_write)
         handle.set_receipt_path(
-            reservation.ledger.receipt_dir / f"{reservation.launch_id}.receipt"
+            receipt_dir / f"{launch_id}.receipt",
+            ephemeral_directory=ephemeral_directory,
         )
         control_write = -1
-        payload = json.dumps(
-            {
-                "command": command,
-                "cwd": cwd,
-                "env": env,
-                "shell_program": shell_program or "/bin/bash",
-                "login": login,
-                "launch_id": reservation.launch_id,
-                "receipt_dir": str(reservation.ledger.receipt_dir),
-            },
-            separators=(",", ":"),
-        ).encode()
+        config: dict[str, object] = {
+            "command": command,
+            "cwd": cwd,
+            "env": env,
+            "shell_program": shell_program or "/bin/bash",
+            "login": login,
+            "launch_id": launch_id,
+            "receipt_dir": str(receipt_dir),
+        }
+        if confinement is not None:
+            config["confinement"] = {
+                "rules": confinement.rules,
+                "params": confinement.params,
+                "argv": confinement.argv,
+                "die_with_parent": reservation is None,
+            }
+        payload = json.dumps(config, separators=(",", ":")).encode()
         await asyncio.to_thread(_write_all, config_write, payload)
         os.close(config_write)
         config_write = -1
         await asyncio.wait_for(handle.wait_ready(), timeout=5)
-        if permission_owner is not None and permission_reference is not None:
+        if (
+            reservation is not None
+            and permission_owner is not None
+            and permission_reference is not None
+        ):
+            ledger = reservation.ledger
             owner_tag = reservation.owner
             if owner_tag is None:
                 raise RuntimeError("workspace native reservation is missing its owner tag")
@@ -356,21 +412,24 @@ async def spawn_native_process(
                 permission_reference,
                 handle,
                 handle.close_stdin_now,
-                lambda: reservation.ledger.owner_counts(owner_tag),
+                lambda: ledger.owner_counts(owner_tag),
             ):
                 raise PermissionError("workspace permission changed before native launch")
             registered_permission_handle = True
             handle.set_on_supervisor_exit(
                 lambda: permission_owner.unregister_native_stdin(permission_reference, handle)
             )
-        starttime = process_start_time(helper.pid)
-        if starttime is None:
-            raise RuntimeError("native supervisor identity could not be read")
         def open_gate() -> None:
             if os.write(gate_write, b"GO\n") != 3:
                 raise OSError("native command launch gate did not open")
 
-        reservation.admit_launch(helper.pid, starttime, open_gate)
+        if reservation is None:
+            open_gate()
+        else:
+            starttime = process_start_time(helper.pid)
+            if starttime is None:
+                raise RuntimeError("native supervisor identity could not be read")
+            reservation.admit_launch(helper.pid, starttime, open_gate)
         gate_open = True
         os.close(gate_write)
         gate_write = -1
@@ -379,11 +438,13 @@ async def spawn_native_process(
         return handle
     except BaseException:
         if gate_open:
-            reservation.mark_unproven()
+            if reservation is not None:
+                reservation.mark_unproven()
             if handle is not None:
                 await handle.kill_process_tree()
         else:
-            reservation.cancel_if_unlaunched()
+            if reservation is not None:
+                reservation.cancel_if_unlaunched()
             if helper is not None and helper.returncode is None:
                 with suppress(ProcessLookupError):
                     helper.kill()
@@ -400,6 +461,9 @@ async def spawn_native_process(
                 status_stream.close()
         if handle is not None and not transferred:
             await handle.close_control()
+        # Once a handle exists, it removes the folder when the supervisor exits.
+        if handle is None and ephemeral_directory is not None:
+            shutil.rmtree(ephemeral_directory, ignore_errors=True)
         if registered_permission_handle and handle is not None and not transferred:
             assert permission_owner is not None and permission_reference is not None
             permission_owner.unregister_native_stdin(permission_reference, handle)

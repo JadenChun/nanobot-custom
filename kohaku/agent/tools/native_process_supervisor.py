@@ -21,7 +21,7 @@ import time
 from collections.abc import Callable
 from contextlib import suppress
 from pathlib import Path
-from typing import Protocol, TypedDict, cast
+from typing import IO, NotRequired, Protocol, TypedDict, cast
 
 from kohaku.security.native_admission import (
     QuiescenceReceipt,
@@ -37,6 +37,15 @@ _OUTPUT_BUFFER_LIMIT = 256 * 1024
 _LAUNCH_ID_RE = re.compile(r"^[0-9a-f]{32}$")
 
 
+class LaunchConfinement(TypedDict):
+    """A managed macOS launch: Seatbelt rules, their parameters and the argv."""
+
+    rules: str
+    params: list[tuple[str, str]]
+    argv: list[str]
+    die_with_parent: bool
+
+
 class NativeLaunchConfig(TypedDict):
     command: str
     cwd: str
@@ -45,6 +54,7 @@ class NativeLaunchConfig(TypedDict):
     login: bool
     launch_id: str
     receipt_dir: str
+    confinement: NotRequired[LaunchConfinement]
 
 
 class SupervisorBackend(Protocol):
@@ -72,12 +82,57 @@ class SupervisorBackend(Protocol):
         """True only once no descendant of this launch can still be running."""
         ...
 
+    def kill_on_control_eof(self) -> bool:
+        """True when this launch must not outlive the process that started it."""
+        ...
+
     def close(self) -> None: ...
 
 
 def _send(status_fd: int, payload: dict[str, object]) -> None:
     data = (json.dumps(payload, separators=(",", ":")) + "\n").encode()
     os.write(status_fd, data)
+
+
+def _confinement(value: object) -> LaunchConfinement:
+    error = "native command launch data confinement is invalid"
+    if not isinstance(value, dict):
+        raise ValueError(error)
+    raw = cast(dict[object, object], value)
+    if set(raw) != {"rules", "params", "argv", "die_with_parent"}:
+        raise ValueError(error)
+    rules = raw["rules"]
+    params = raw["params"]
+    argv = raw["argv"]
+    die_with_parent = raw["die_with_parent"]
+    if (
+        not isinstance(rules, str)
+        or not isinstance(params, list)
+        or not isinstance(argv, list)
+        or not argv
+        or not isinstance(die_with_parent, bool)
+    ):
+        raise ValueError(error)
+    pairs: list[tuple[str, str]] = []
+    for item in cast(list[object], params):
+        if not isinstance(item, list):
+            raise ValueError(error)
+        pair = cast(list[object], item)
+        if len(pair) != 2:
+            raise ValueError(error)
+        name, path = pair
+        if not isinstance(name, str) or not name or "=" in name or not isinstance(path, str):
+            raise ValueError(error)
+        pairs.append((name, path))
+    arguments: list[str] = []
+    for argument in cast(list[object], argv):
+        if not isinstance(argument, str):
+            raise ValueError(error)
+        arguments.append(argument)
+    return {
+        "rules": rules, "params": pairs, "argv": arguments,
+        "die_with_parent": die_with_parent,
+    }
 
 
 def _read_exact_json(fd: int) -> NativeLaunchConfig:
@@ -103,7 +158,7 @@ def _read_exact_json(fd: int) -> NativeLaunchConfig:
     required = {
         "command", "cwd", "env", "shell_program", "login", "launch_id", "receipt_dir",
     }
-    if set(data) != required:
+    if set(data) - {"confinement"} != required:
         raise ValueError("native command launch data has an invalid shape")
     command = data["command"]
     cwd = data["cwd"]
@@ -131,7 +186,7 @@ def _read_exact_json(fd: int) -> NativeLaunchConfig:
         if not isinstance(key, str) or not isinstance(value, str):
             raise ValueError("native command launch data environment is invalid")
         env[key] = value
-    return {
+    config: NativeLaunchConfig = {
         "command": command,
         "cwd": cwd,
         "env": env,
@@ -140,6 +195,9 @@ def _read_exact_json(fd: int) -> NativeLaunchConfig:
         "launch_id": launch_id,
         "receipt_dir": receipt_dir,
     }
+    if "confinement" in data:
+        config["confinement"] = _confinement(data["confinement"])
+    return config
 
 
 def _subreaper() -> None:
@@ -184,6 +242,9 @@ class _SubreaperBackend:
     """Linux: adopt every orphan, so ECHILD proves the whole tree has exited."""
 
     def prepare(self, payload: NativeLaunchConfig) -> None:
+        # Linux wraps managed commands in the command itself (bubblewrap).
+        if "confinement" in payload:
+            raise ValueError("this supervisor cannot apply a Seatbelt confinement")
         _subreaper()
 
     def spawn_root(self, payload: NativeLaunchConfig) -> subprocess.Popen[bytes]:
@@ -202,6 +263,9 @@ class _SubreaperBackend:
 
     def tree_quiescent(self, child: subprocess.Popen[bytes]) -> bool:
         return _wait_for_all_children(child.pid)
+
+    def kill_on_control_eof(self) -> bool:
+        return False
 
     def close(self) -> None:
         pass
@@ -228,6 +292,38 @@ def _supervise(
     receipt_finished = threading.Event()
     receipt_errors: list[BaseException] = []
     receipt_published = False
+    output_buffers = {"stdout": bytearray(), "stderr": bytearray()}
+    output_read_registered: set[str] = set()
+    output_write_registered: set[str] = set()
+    output_streams: dict[str, IO[bytes]] = {}
+    output_fds = {"stdout": 1, "stderr": 2}
+
+    def report(status: dict[str, object]) -> None:
+        # A launch that dies with its parent must finish its cleanup even when
+        # nobody is left to read the status.
+        try:
+            _send(status_fd, status)
+        except BrokenPipeError:
+            if not backend.kill_on_control_eof():
+                raise
+
+    def begin_kill(root: subprocess.Popen[bytes]) -> None:
+        nonlocal kill_requested, discard_output
+        kill_requested = True
+        discard_output = True
+        for output_name in ("stdout", "stderr"):
+            output_buffers[output_name].clear()
+            if output_name in output_write_registered:
+                selector.unregister(output_fds[output_name])
+                output_write_registered.discard(output_name)
+            if output_name in output_open and output_name not in output_read_registered:
+                selector.register(
+                    output_streams[output_name],
+                    selectors.EVENT_READ,
+                    ("child_output", output_name),
+                )
+                output_read_registered.add(output_name)
+        backend.request_kill(root)
 
     try:
         backend.prepare(payload)
@@ -250,13 +346,9 @@ def _supervise(
         stdout_stream = child.stdout
         stderr_stream = child.stderr
         assert stdin_stream is not None and stdout_stream is not None and stderr_stream is not None
-        _send(status_fd, {"type": "root", "pid": child.pid})
+        report({"type": "root", "pid": child.pid})
 
-        output_streams = {"stdout": stdout_stream, "stderr": stderr_stream}
-        output_fds = {"stdout": 1, "stderr": 2}
-        output_buffers = {"stdout": bytearray(), "stderr": bytearray()}
-        output_read_registered: set[str] = set()
-        output_write_registered: set[str] = set()
+        output_streams.update(stdout=stdout_stream, stderr=stderr_stream)
         output_sinks_closed: set[str] = set()
         for name, stream in output_streams.items():
             os.set_blocking(stream.fileno(), False)
@@ -281,7 +373,7 @@ def _supervise(
                 if polled is not None:
                     root_returncode = polled
                     root_reported = True
-                    _send(status_fd, {"type": "root_exit", "returncode": polled})
+                    report({"type": "root_exit", "returncode": polled})
 
             for key, _mask in selector.select(timeout=0.02):
                 kind, name = key.data
@@ -324,25 +416,10 @@ def _supervise(
                         continue
                     if not control:
                         selector.unregister(control_fd)
+                        if backend.kill_on_control_eof():
+                            begin_kill(child)
                     elif b"KILL" in control:
-                        kill_requested = True
-                        discard_output = True
-                        for output_name in ("stdout", "stderr"):
-                            output_buffers[output_name].clear()
-                            if output_name in output_write_registered:
-                                selector.unregister(output_fds[output_name])
-                                output_write_registered.discard(output_name)
-                            if (
-                                output_name in output_open
-                                and output_name not in output_read_registered
-                            ):
-                                selector.register(
-                                    output_streams[output_name],
-                                    selectors.EVENT_READ,
-                                    ("child_output", output_name),
-                                )
-                                output_read_registered.add(output_name)
-                        backend.request_kill(child)
+                        begin_kill(child)
                 elif kind == "child_stdin":
                     try:
                         written = os.write(stdin_stream.fileno(), pending_input)
