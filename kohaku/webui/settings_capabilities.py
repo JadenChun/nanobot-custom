@@ -308,9 +308,14 @@ def update_network_safety_settings(
         "webui_default_access_mode",
         "webuiDefaultAccessMode",
     )
-    if raw_allow is None and raw_default_access_mode is None:
+    raw_auto_review = query_first_alias(
+        query,
+        "sandbox_auto_review",
+        "sandboxAutoReview",
+    )
+    if raw_allow is None and raw_default_access_mode is None and raw_auto_review is None:
         raise WebUISettingsError(
-            "webui_allow_local_service_access or webui_default_access_mode is required"
+            "webui_allow_local_service_access, webui_default_access_mode, or sandbox_auto_review is required"
         )
 
     changed = False
@@ -318,6 +323,12 @@ def update_network_safety_settings(
         allow_local = parse_bool(raw_allow, "webui_allow_local_service_access")
         if config.tools.webui_allow_local_service_access != allow_local:
             config.tools.webui_allow_local_service_access = allow_local
+            changed = True
+
+    if raw_auto_review is not None:
+        auto_review = parse_bool(raw_auto_review, "sandbox_auto_review")
+        if config.tools.permissions.sandbox_auto_review != auto_review:
+            config.tools.permissions.sandbox_auto_review = auto_review
             changed = True
 
     default_access_mode: str | None = None
@@ -693,6 +704,7 @@ def network_safety_payload(config: Config) -> dict[str, Any]:
         "webui_allow_local_service_access": config.tools.webui_allow_local_service_access,
         "allow_local_preview_access": config.tools.webui_allow_local_service_access,
         "webui_default_access_mode": read_webui_default_access_mode(),
+        "sandbox_auto_review": config.tools.permissions.sandbox_auto_review,
         "private_service_protection_enabled": True,
         "ssrf_whitelist_count": len(config.tools.ssrf_whitelist),
     }

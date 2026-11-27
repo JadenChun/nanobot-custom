@@ -156,7 +156,30 @@ class ExternalHarnessRunner:
             call: ExternalToolCall, reason: str, allow_save: bool,
         ) -> ExternalApprovalAction:
             try:
-                return await self.approvals.request(request, normalize_tool_call(call), reason, allow_save)
+                normalized = normalize_tool_call(call)
+                if request.auto_review is not None:
+                    if not request.is_authorized():
+                        return "deny"
+                    try:
+                        review = await request.auto_review(normalized, reason)
+                    except Exception as exc:
+                        logger.warning(
+                            "Sandbox auto-review failed for session={}: {}",
+                            request.session_key,
+                            exc,
+                        )
+                    else:
+                        if not request.is_authorized():
+                            return "deny"
+                        if review.decision == "approve":
+                            logger.info(
+                                "Sandbox auto-review approved external escalation for session={} summary={!r} reason={!r}",
+                                request.session_key,
+                                reason,
+                                review.reason,
+                            )
+                            return "approve"
+                return await self.approvals.request(request, normalized, reason, allow_save)
             except asyncio.CancelledError:
                 turn.record_unapproved_call(call.id)
                 raise

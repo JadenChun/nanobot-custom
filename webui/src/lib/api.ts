@@ -1979,13 +1979,17 @@ export async function updateNetworkSafetySettings(
   transport: WebUIMutationTransport,
   update: NetworkSafetySettingsUpdate,
 ): Promise<SettingsPayload> {
+  const payload: Record<string, unknown> = {
+    webui_allow_local_service_access: update.webuiAllowLocalServiceAccess,
+    webui_default_access_mode: update.webuiDefaultAccessMode,
+  };
+  if (update.sandboxAutoReview !== undefined) {
+    payload.sandbox_auto_review = update.sandboxAutoReview;
+  }
   return mutation<SettingsPayload>(
     transport,
     "settings.network_safety.update",
-    {
-      webui_allow_local_service_access: update.webuiAllowLocalServiceAccess,
-      webui_default_access_mode: update.webuiDefaultAccessMode,
-    },
+    payload,
   );
 }
 

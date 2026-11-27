@@ -16,6 +16,7 @@ from kohaku.events import NO_EVENTS, EventSink
 from kohaku.session.harness_binding import SessionHarnessBinding as SessionHarnessBinding
 
 if TYPE_CHECKING:
+    from kohaku.agent.auto_review import AutoReviewResult
     from kohaku.agent.hook import AgentHook
     from kohaku.llm_usage.context import LLMUsageSource
     from kohaku.session.turn_writer import SourceTurnWriter
@@ -80,6 +81,7 @@ class ExternalTurnRequest:
     approval_session_key: str | None = None
     authorize_tool: Callable[[str, dict[str, object]], bool] | None = None
     drain_steer: Callable[[Callable[[], Awaitable[None]], bool], Awaitable[list[str]]] | None = None
+    auto_review: Callable[[ExternalToolCall, str], Awaitable[AutoReviewResult]] | None = None
 
 
 @dataclass(frozen=True, slots=True)

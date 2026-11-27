@@ -301,9 +301,11 @@ export function useSettingsController({
     const currentLocalServiceAccess =
       settings.advanced.webui_allow_local_service_access ?? settings.advanced.allow_local_preview_access ?? true;
     const currentDefaultAccess = visibleWebuiDefaultAccessMode(settings.advanced.webui_default_access_mode);
+    const currentSandboxAutoReview = settings.advanced.sandbox_auto_review ?? false;
     return (
       networkSafetyForm.webuiAllowLocalServiceAccess !== currentLocalServiceAccess ||
-      networkSafetyForm.webuiDefaultAccessMode !== currentDefaultAccess
+      networkSafetyForm.webuiDefaultAccessMode !== currentDefaultAccess ||
+      (networkSafetyForm.sandboxAutoReview ?? false) !== currentSandboxAutoReview
     );
   }, [networkSafetyForm, settings]);
 

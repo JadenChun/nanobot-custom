@@ -398,7 +398,7 @@ class RiskyActionPolicy(ToolPolicy):
 
         self._write_guard.clear()
         self._risky_calls.clear()
-        blocked: list[tuple[str, str, str | None]] = []
+        blocked: list[tuple[str, str, str | None, bool]] = []
         for tool_call in tool_calls:
             prepared = self._prepare_effect_call(tool_call)
             if prepared is None:
@@ -415,9 +415,20 @@ class RiskyActionPolicy(ToolPolicy):
             if reason:
                 self._risky_calls[tool_call.id] = (effect_id, reason)
                 if self.effect_authority is None or not self.effect_authority.permits(effect_id):
-                    blocked.append((effect_id, reason, assessment.save_exclusion_command))
+                    blocked.append((
+                        effect_id,
+                        reason,
+                        assessment.save_exclusion_command,
+                        assessment.private_network_exception,
+                    ))
         if blocked:
-            return self._request_approval(*blocked[0])
+            effect_id, reason, save_exclusion_command, private_network_exception = blocked[0]
+            return self._request_approval(
+                effect_id,
+                reason,
+                save_exclusion_command,
+                private_network_exception=private_network_exception,
+            )
         return ToolPolicyDecision()
 
     def authorize_dispatch(
@@ -460,7 +471,12 @@ class RiskyActionPolicy(ToolPolicy):
                 exec_unsandboxed=assessment.sandbox_exception,
                 exec_private_network=assessment.private_network_exception,
             )
-        return self._request_approval(effect_id, reason, assessment.save_exclusion_command)
+        return self._request_approval(
+            effect_id,
+            reason,
+            assessment.save_exclusion_command,
+            private_network_exception=assessment.private_network_exception,
+        )
 
     def validate_write_target(self, tool_call: ToolCallRequest, tool: Any) -> str | None:
         """Recheck the assessed target through the tool immediately before dispatch."""
@@ -693,7 +709,12 @@ class RiskyActionPolicy(ToolPolicy):
         return f"run tool {tool_call.name}" if explicit == "ask" else None
 
     def _request_approval(
-        self, effect_id: str, summary: str, save_exclusion_command: str | None = None,
+        self,
+        effect_id: str,
+        summary: str,
+        save_exclusion_command: str | None = None,
+        *,
+        private_network_exception: bool = False,
     ) -> ToolPolicyDecision:
         """One decision identifies one concrete effect, never an entire batch."""
         approval_id = uuid.uuid4().hex
@@ -715,6 +736,7 @@ class RiskyActionPolicy(ToolPolicy):
                 "approval_id": approval_id,
                 "effect_id": effect_id or None,
                 **({"save_exclusion_command": save_exclusion_command} if save_exclusion_command else {}),
+                **({"private_network_exception": True} if private_network_exception else {}),
             },
             requires_approval=True,
         )

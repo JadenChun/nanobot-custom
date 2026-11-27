@@ -1237,6 +1237,7 @@ describe("webui API helpers", () => {
     await updateNetworkSafetySettings(mutationTransport, {
       webuiAllowLocalServiceAccess: false,
       webuiDefaultAccessMode: "full",
+      sandboxAutoReview: true,
     });
 
     expect(requestMutation).toHaveBeenCalledWith(
@@ -1244,6 +1245,7 @@ describe("webui API helpers", () => {
       {
         webui_allow_local_service_access: false,
         webui_default_access_mode: "full",
+        sandbox_auto_review: true,
       },
       20_000,
     );

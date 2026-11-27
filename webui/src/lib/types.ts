@@ -1400,6 +1400,7 @@ export interface SettingsPayload {
     webui_allow_local_service_access: boolean;
     allow_local_preview_access?: boolean;
     webui_default_access_mode: WebuiDefaultAccessMode;
+    sandbox_auto_review?: boolean;
     private_service_protection_enabled: boolean;
     mcp_server_count: number;
     exec_enabled: boolean;
@@ -1828,6 +1829,7 @@ export interface WebSearchSettingsUpdate {
 export interface NetworkSafetySettingsUpdate {
   webuiAllowLocalServiceAccess: boolean;
   webuiDefaultAccessMode: WebuiDefaultAccessMode;
+  sandboxAutoReview?: boolean;
 }
 
 export interface ImageGenerationSettingsUpdate {

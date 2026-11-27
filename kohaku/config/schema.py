@@ -771,6 +771,7 @@ class ToolPermissionsConfig(Base):
 
     profile: PermissionProfile = "autonomous"
     rules: dict[str, PermissionAction | dict[str, PermissionAction]] = Field(default_factory=dict)
+    sandbox_auto_review: bool = False
 
 
 class ToolsConfig(Base):

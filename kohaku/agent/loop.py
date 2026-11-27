@@ -3953,8 +3953,12 @@ class AgentLoop:
         events: EventSink,
         decision: ToolPolicyDecision,
         call: ToolCallRequest,
+        *,
+        runtime: LLMRuntime | None = None,
+        user_prompt: str = "",
     ) -> EffectApprovalAuthority | None:
         from kohaku.agent.approvals import PendingTurnApproval
+        from kohaku.agent.auto_review import review_sandbox_escalation
 
         key = context.session_key
         owner = context.execution_owner
@@ -4008,6 +4012,29 @@ class AgentLoop:
             if not self.external_harness.approvals.pending_tool_calls(run.run_id):
                 self.run_control.set_state(key, run.run_id, "running")
                 await self._publish_run_state_for_key(key)
+
+        if (
+            self.tools_config.permissions.sandbox_auto_review
+            and not decision.metadata.get("private_network_exception")
+            and current_run()
+        ):
+            review_workspace = context.policy.workspace or self.workspace
+            review = await review_sandbox_escalation(
+                runtime=runtime,
+                permissions=self.tools_config.permissions,
+                workspace=review_workspace,
+                call=call,
+                summary=summary,
+                user_prompt=user_prompt,
+            )
+            if review.decision == "approve" and current_run():
+                logger.info(
+                    "Sandbox auto-review approved live escalation for session={} summary={!r} reason={!r}",
+                    key,
+                    summary,
+                    review.reason,
+                )
+                return self.approval_admission.issue_live_effect(pending, context, current_run)
 
         action = await self.external_harness.approvals.wait_for_decision(
             approval, is_authorized=current_run, control_session_key=key,
@@ -4076,7 +4103,18 @@ class AgentLoop:
             and source_writer is not None
             and webui_chat_id(run_context.session_key or "") is not None
         ):
-            run_context.request_live_approval = partial(self._await_live_tool_approval, run_context, events)
+            user_prompt = (
+                (request_context.original_user_text if request_context is not None else None)
+                or (transcript_input.current_message if transcript_input.current_role == "user" else None)
+                or ""
+            )
+            run_context.request_live_approval = partial(
+                self._await_live_tool_approval,
+                run_context,
+                events,
+                runtime=runtime,
+                user_prompt=user_prompt,
+            )
         tool_policy: ToolPolicy = risky_policy
         if run_context.internal_tool_policy is not None:
             tool_policy = CompositeToolPolicy((run_context.internal_tool_policy, risky_policy))
@@ -4510,6 +4548,7 @@ class AgentLoop:
                     workspace_is_authorized=partial(self._claude_child_workspace_is_authorized, child),
                     child=child, approval_events=approvals,
                     authorize_tool=partial(self._authorize_claude_child_tool, child, effective_scope.project_path),
+                    tool_permissions=self.tools_config.permissions,
                 )
             if binding is not None:
                 if ephemeral or fresh_history or run_context.request is None or (
@@ -4563,6 +4602,7 @@ class AgentLoop:
                         self._update_run_approval_state, active_session_key, run_context.run_id,
                     ) if active_session_key is not None else None,
                     drain_steer=_drain_external_steer if pending_queue is not None else None,
+                    tool_permissions=self.tools_config.permissions,
                 )
             def build_source_transcript(tools: ToolRegistry) -> SourceTranscript:
                 if run_context.source_history is None:

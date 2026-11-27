@@ -224,6 +224,27 @@ class _PreparedCommand:
     launch_attestation: LaunchConfinementAttestation | None = None
 
 
+DEFAULT_EXEC_DENY_PATTERNS: tuple[str, ...] = (
+    r"\brm\s+-[rf]{1,2}\b",          # rm -r, rm -rf, rm -fr
+    r"\bdel\s+/[fq]\b",              # del /f, del /q
+    r"\brmdir\s+/s\b",               # rmdir /s
+    r"(?:^|[;&|]\s*)format(?!=)\b",   # format (as standalone command only)
+    r"\b(mkfs|diskpart)\b",          # disk operations
+    r"\bdd\s+if=",                   # dd
+    r">\s*/dev/sd",                  # write to disk
+    r"\b(shutdown|reboot|poweroff)\b",  # system power
+    r":\(\)\s*\{.*\};\s*:",          # fork bomb
+    # Block writes to nanobot internal state files (#2989).
+    # history.jsonl / .dream_cursor are managed by append_history();
+    # direct writes corrupt the cursor format and crash /dream.
+    r">>?\s*\S*(?:history\.jsonl|\.dream_cursor)",            # > / >> redirect
+    r"\btee\b[^|;&<>]*(?:history\.jsonl|\.dream_cursor)",     # tee / tee -a
+    r"\b(?:cp|mv)\b(?:\s+[^\s|;&<>]+)+\s+\S*(?:history\.jsonl|\.dream_cursor)",  # cp/mv target
+    r"\bdd\b[^|;&<>]*\bof=\S*(?:history\.jsonl|\.dream_cursor)",  # dd of=
+    r"\bsed\s+-i[^|;&<>]*(?:history\.jsonl|\.dream_cursor)",  # sed -i
+)
+
+
 @tool_parameters(
     tool_parameters_schema(
         command=StringSchema("The shell command to execute"),
@@ -369,25 +390,7 @@ class ExecTool(Tool):
         self.timeout = timeout
         self.working_dir = working_dir
         self.sandbox = sandbox
-        self.deny_patterns = (deny_patterns or []) + [
-            r"\brm\s+-[rf]{1,2}\b",          # rm -r, rm -rf, rm -fr
-            r"\bdel\s+/[fq]\b",              # del /f, del /q
-            r"\brmdir\s+/s\b",               # rmdir /s
-            r"(?:^|[;&|]\s*)format(?!=)\b",   # format (as standalone command only)
-            r"\b(mkfs|diskpart)\b",          # disk operations
-            r"\bdd\s+if=",                   # dd
-            r">\s*/dev/sd",                  # write to disk
-            r"\b(shutdown|reboot|poweroff)\b",  # system power
-            r":\(\)\s*\{.*\};\s*:",          # fork bomb
-            # Block writes to nanobot internal state files (#2989).
-            # history.jsonl / .dream_cursor are managed by append_history();
-            # direct writes corrupt the cursor format and crash /dream.
-            r">>?\s*\S*(?:history\.jsonl|\.dream_cursor)",            # > / >> redirect
-            r"\btee\b[^|;&<>]*(?:history\.jsonl|\.dream_cursor)",     # tee / tee -a
-            r"\b(?:cp|mv)\b(?:\s+[^\s|;&<>]+)+\s+\S*(?:history\.jsonl|\.dream_cursor)",  # cp/mv target
-            r"\bdd\b[^|;&<>]*\bof=\S*(?:history\.jsonl|\.dream_cursor)",  # dd of=
-            r"\bsed\s+-i[^|;&<>]*(?:history\.jsonl|\.dream_cursor)",  # sed -i
-        ]
+        self.deny_patterns = (deny_patterns or []) + list(DEFAULT_EXEC_DENY_PATTERNS)
         self.allow_patterns = allow_patterns or []
         self.restrict_to_workspace = restrict_to_workspace
         if allow_local_preview_access is not None:

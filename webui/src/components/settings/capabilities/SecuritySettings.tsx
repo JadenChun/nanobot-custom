@@ -18,6 +18,7 @@ import type {
 export const DEFAULT_NETWORK_SAFETY_FORM: NetworkSafetySettingsUpdate = {
   webuiAllowLocalServiceAccess: true,
   webuiDefaultAccessMode: "default",
+  sandboxAutoReview: false,
 };
 
 export function networkSafetyFormFromPayload(payload: SettingsPayload): NetworkSafetySettingsUpdate {
@@ -29,6 +30,7 @@ export function networkSafetyFormFromPayload(payload: SettingsPayload): NetworkS
     webuiDefaultAccessMode: visibleWebuiDefaultAccessMode(
       payload.advanced.webui_default_access_mode,
     ),
+    sandboxAutoReview: payload.advanced.sandbox_auto_review ?? false,
   };
 }
 
@@ -121,6 +123,22 @@ export function AdvancedSettings({
               />
             </SettingsRow>
           )}
+          <SettingsRow
+            title={tx("settings.rows.sandboxAutoReview", "Auto-review Sandbox requests")}
+            description={tx(
+              "settings.help.sandboxAutoReview",
+              "Let the active model auto-approve safe Sandbox escalations while high-risk actions still prompt.",
+            )}
+          >
+            <ToggleButton
+              checked={form.sandboxAutoReview ?? false}
+              onChange={(sandboxAutoReview) =>
+                onChangeForm((prev) => ({ ...prev, sandboxAutoReview }))
+              }
+              ariaLabel={tx("settings.rows.sandboxAutoReview", "Auto-review Sandbox requests")}
+              label={(form.sandboxAutoReview ?? false) ? tx("settings.values.on", "On") : tx("settings.values.off", "Off")}
+            />
+          </SettingsRow>
           <RestartSettingsFooter
             dirty={dirty}
             saving={saving}

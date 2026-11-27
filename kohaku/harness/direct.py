@@ -7,17 +7,20 @@ from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from kohaku.agent.auto_review import AutoReviewResult, review_sandbox_escalation
 from kohaku.agent.runner import AgentRunResult
 from kohaku.bus.outbound_events import ExternalApprovalEvent, SessionUpdatedEvent
 from kohaku.events import NO_EVENTS
 from kohaku.harness.anthropic_bridge import LoopbackAnthropicBridge
 from kohaku.harness.backend import (
+    ExternalToolCall,
     ExternalToolPolicy,
     ExternalTurnOutcome,
     ExternalTurnRequest,
     HarnessCapabilityError,
     PendingExternalApproval,
 )
+from kohaku.providers.base import ToolCallRequest
 from kohaku.session.harness_binding import (
     EXTERNAL_ACTIVE_RUN_KEY,
     EXTERNAL_RECOVERY_KEY,
@@ -33,6 +36,7 @@ if TYPE_CHECKING:
     from kohaku.agent.child_backend import ChildTurnRequest
     from kohaku.agent.hook import AgentHook
     from kohaku.agent.turn import TurnContext
+    from kohaku.config.schema import ToolPermissionsConfig
     from kohaku.events import EventSink
     from kohaku.harness.runner import ExternalHarnessRunner
     from kohaku.llm_usage.context import LLMUsageSource
@@ -70,6 +74,7 @@ async def run_direct_turn(
     on_approval_state: Callable[[bool], Awaitable[None]] | None = None,
     drain_steer: Callable[[Callable[[], Awaitable[None]], bool], Awaitable[list[str]]] | None = None,
     authorize_tool: Callable[[str, dict[str, object]], bool] | None = None,
+    tool_permissions: ToolPermissionsConfig | None = None,
 
 ) -> AgentRunResult:
     writer = context.source_writer
@@ -131,8 +136,29 @@ async def run_direct_turn(
             )
             if not launched:
                 raise HarnessCapabilityError("Full access is no longer available for this chat.")
+        trusted_prompt = prompt
         if child is not None:
             prompt = f"{child.instructions}\n\n## Assignment\n{prompt}"
+
+        async def _auto_review(call: ExternalToolCall, reason: str) -> AutoReviewResult:
+            return await review_sandbox_escalation(
+                runtime=runtime,
+                permissions=tool_permissions,
+                workspace=workspace,
+                call=ToolCallRequest(
+                    id=call.id,
+                    name=call.name,
+                    arguments=dict(call.arguments),
+                ),
+                summary=reason,
+                user_prompt=trusted_prompt,
+            )
+
+        auto_review_fn = (
+            _auto_review
+            if policy.sandboxed and tool_permissions is not None and tool_permissions.sandbox_auto_review
+            else None
+        )
         outcome = await runner.run(ExternalTurnRequest(
             context.session_key, writer.run_id, binding, workspace, prompt, runtime, hook, writer,
             is_authorized, policy=policy, usage_source=usage_source,
@@ -143,6 +169,7 @@ async def run_direct_turn(
             approval_session_key=child.admission.root_key if child is not None else None,
             prior_external_session_id=child.prior_external_session_id if child is not None else None,
             on_approval_closed=approval_closed, retain_process=False, drain_steer=drain_steer,
+            auto_review=auto_review_fn,
         ))
         acknowledge = context.followup_request_acknowledged
         if child is not None and outcome.status == "completed" and acknowledge is not None:

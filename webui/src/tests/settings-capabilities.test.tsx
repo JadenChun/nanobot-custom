@@ -131,6 +131,7 @@ describe("Settings capabilities", () => {
     expect(screen.getByRole("button", { name: "Full access" })).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("switch", { name: "Local services" }));
+    fireEvent.click(screen.getByRole("switch", { name: "Auto-review Sandbox requests" }));
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
 
     await waitFor(() =>
@@ -139,6 +140,7 @@ describe("Settings capabilities", () => {
         {
           webui_allow_local_service_access: false,
           webui_default_access_mode: "default",
+          sandbox_auto_review: true,
         },
         20_000,
       ),
