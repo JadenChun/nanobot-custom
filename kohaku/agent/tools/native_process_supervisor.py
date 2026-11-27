@@ -376,6 +376,11 @@ def _supervise(
                     report({"type": "root_exit", "returncode": polled})
 
             for key, _mask in selector.select(timeout=0.02):
+                # An earlier event in this batch, such as a kill, may have
+                # unregistered or re-registered this descriptor. A stale event
+                # that is still ready comes back from the next select.
+                if selector.get_map().get(key.fd) is not key:
+                    continue
                 kind, name = key.data
                 if kind == "input":
                     capacity = _INPUT_BUFFER_LIMIT - len(pending_input)
