@@ -179,6 +179,13 @@ class ExternalHarnessRunner:
                                 review.reason,
                             )
                             return "approve"
+                        logger.info(
+                            "Sandbox auto-review deferred external escalation to user for session={} stage={} summary={!r} reason={!r}",
+                            request.session_key,
+                            review.stage,
+                            reason,
+                            review.reason,
+                        )
                 return await self.approvals.request(request, normalized, reason, allow_save)
             except asyncio.CancelledError:
                 turn.record_unapproved_call(call.id)
