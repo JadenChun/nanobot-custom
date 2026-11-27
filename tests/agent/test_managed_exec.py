@@ -41,6 +41,7 @@ from kohaku.security.workspace_access import (
     build_workspace_scope,
     reset_workspace_scope,
 )
+from tests.darwin.gate import requires_managed_confinement
 
 
 def _managed_tools(tmp_path: Path, *, access: str = "read_write", commands: bool = True):
@@ -101,7 +102,7 @@ def _legacy_exec_tool(tmp_path: Path) -> tuple[Path, FolderGrantStore, ExecTool]
 
 
 @pytest.mark.asyncio
-@pytest.mark.skipif(not managed_bwrap_available(), reason="managed bwrap unavailable")
+@requires_managed_confinement
 async def test_exec_input_files_exposes_only_exact_approved_files(tmp_path: Path) -> None:
     from kohaku.agent.tools.filesystem import ReadFileTool
     from kohaku.config.paths import get_media_dir
@@ -184,7 +185,7 @@ async def test_exec_input_files_exposes_only_exact_approved_files(tmp_path: Path
 
 
 @pytest.mark.asyncio
-@pytest.mark.skipif(not managed_bwrap_available(), reason="managed bwrap unavailable")
+@requires_managed_confinement
 async def test_exec_input_files_admits_workspace_nested_in_instance(tmp_path: Path) -> None:
     from kohaku.agent.tools.filesystem import ReadFileTool
 
@@ -614,9 +615,8 @@ async def test_managed_temporary_websocket_denies_unconfined_host_tool(tmp_path:
 
 
 @pytest.mark.asyncio
+@requires_managed_confinement
 async def test_managed_exec_runs_from_selected_grant_and_obeys_nested_mounts(tmp_path):
-    if not managed_bwrap_available():
-        pytest.skip("bubblewrap is unavailable on this host")
     home, project, store, policy = _managed_tools(tmp_path)
     (project / "marker.txt").write_text("B_MANAGED_MARKER", encoding="utf-8")
     child_read_only = project / "readonly"
@@ -655,11 +655,74 @@ async def test_managed_exec_runs_from_selected_grant_and_obeys_nested_mounts(tmp
         reset_workspace_scope(token)
 
 
-@pytest.mark.asyncio
-async def test_managed_exec_hides_configured_context_and_target_repositories(tmp_path):
-    if not managed_bwrap_available():
-        pytest.skip("bubblewrap is unavailable on this host")
+def _detached_writer(*, root_seconds: float) -> str:
+    """A command that leaves a new-session grandchild which writes after a delay."""
+    script = f"""import os, time
+if os.fork() == 0:
+    os.setsid()
+    if os.fork() == 0:
+        for fd in (0, 1, 2):
+            os.close(fd)
+        open('ready', 'w').write('ready')
+        time.sleep(1.5)
+        open('finished', 'w').write('finished')
+    os._exit(0)
+deadline = time.monotonic() + 5
+while not os.path.exists('ready') and time.monotonic() < deadline:
+    time.sleep(0.005)
+time.sleep({root_seconds})
+"""
+    return f"python3 -c {shlex.quote(script)}"
 
+
+@pytest.mark.asyncio
+@requires_managed_confinement
+async def test_managed_exec_leaves_no_detached_descendant(tmp_path):
+    home, project, _store, policy = _managed_tools(tmp_path)
+    tool = ExecTool(working_dir=str(home), resource_policy=policy, restrict_to_workspace=True)
+    token, request = _bind_managed_turn(home, project)
+    try:
+        with request:
+            result = await tool.execute(command=_detached_writer(root_seconds=0))
+        assert "Exit code: 0" in result
+        assert "could not confirm" not in result
+        assert (project / "ready").exists()
+        await asyncio.sleep(2.0)
+        assert not (project / "finished").exists()
+    finally:
+        reset_workspace_scope(token)
+
+
+@pytest.mark.asyncio
+@requires_managed_confinement
+async def test_stopping_a_managed_session_ends_its_detached_descendant(tmp_path):
+    home, project, _store, policy = _managed_tools(tmp_path)
+    manager = ExecSessionManager()
+    tool = ExecTool(
+        working_dir=str(home),
+        resource_policy=policy,
+        restrict_to_workspace=True,
+        session_manager=manager,
+    )
+    token, request = _bind_managed_turn(home, project)
+    try:
+        with request:
+            await tool.execute(command=_detached_writer(root_seconds=30), yield_time_ms=0)
+        deadline = time.monotonic() + 5
+        while not (project / "ready").exists() and time.monotonic() < deadline:
+            await asyncio.sleep(0.01)
+        assert (project / "ready").exists()
+        await manager.close_all()
+        await asyncio.sleep(2.0)
+        assert not (project / "finished").exists()
+    finally:
+        reset_workspace_scope(token)
+        await manager.close_all()
+
+
+@pytest.mark.asyncio
+@requires_managed_confinement
+async def test_managed_exec_hides_configured_context_and_target_repositories(tmp_path):
     home = tmp_path / "agent-home"
     parent = tmp_path / "granted-parent"
     context_repo = parent / "context"
@@ -728,7 +791,11 @@ async def test_managed_exec_hides_configured_context_and_target_repositories(tmp
         assert "target.canary" not in listing
         assert "CONTEXT_PRIVATE" not in listing
         assert "TARGET_PRIVATE" not in listing
-        assert "Exit code: 0" in listing
+        if sys.platform == "darwin":
+            # Seatbelt refuses the hidden folders instead of showing them empty.
+            assert "Operation not permitted" in listing
+        else:
+            assert "Exit code: 0" in listing
         assert "managed_repository_policy" in repo_cwd
     finally:
         reset_workspace_scope(token)
@@ -1102,9 +1169,8 @@ async def test_lost_native_supervisor_keeps_same_boot_unknown_after_child_exit(t
 
 
 @pytest.mark.asyncio
+@requires_managed_confinement
 async def test_managed_exec_configured_bwrap_does_not_wrap_managed_launch_twice(tmp_path):
-    if not managed_bwrap_available():
-        pytest.skip("bubblewrap is unavailable on this host")
     home, project, _store, policy = _managed_tools(tmp_path)
     tool = ExecTool(
         working_dir=str(home),
@@ -1138,9 +1204,8 @@ def test_managed_exec_rejects_unmaskable_repository_root(tmp_path, monkeypatch, 
 
 
 @pytest.mark.asyncio
+@requires_managed_confinement
 async def test_managed_exec_session_retains_logical_project_cwd(tmp_path):
-    if not managed_bwrap_available():
-        pytest.skip("bubblewrap is unavailable on this host")
     home, project, _store, policy = _managed_tools(tmp_path)
     manager = ExecSessionManager()
     tool = ExecTool(
@@ -1167,9 +1232,8 @@ async def test_managed_exec_session_retains_logical_project_cwd(tmp_path):
 
 
 @pytest.mark.asyncio
+@requires_managed_confinement
 async def test_temporary_websocket_cannot_use_persistent_external_grants(tmp_path):
-    if not managed_bwrap_available():
-        pytest.skip("bubblewrap is unavailable on this host")
     home, project, _store, policy = _managed_tools(tmp_path)
     external = project / "temporary.txt"
     external.write_text("PERSISTENT_ONLY", encoding="utf-8")
@@ -1188,9 +1252,8 @@ async def test_temporary_websocket_cannot_use_persistent_external_grants(tmp_pat
 
 
 @pytest.mark.asyncio
+@requires_managed_confinement
 async def test_process_input_is_blocked_after_grant_revocation_but_poll_remains_available(tmp_path):
-    if not managed_bwrap_available():
-        pytest.skip("bubblewrap is unavailable on this host")
     home, project, store, policy = _managed_tools(tmp_path)
     manager = ExecSessionManager()
     shell_tool = ExecTool(

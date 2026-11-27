@@ -339,6 +339,10 @@ jobs:
           tests/agent/test_native_supervisor_give_up.py
           tests/agent/test_native_process_io.py
           tests/tools/test_exec_session_deadline_tree.py
+          tests/agent/test_seatbelt_profile.py
+          tests/agent/test_seatbelt_confined_launch.py
+          tests/agent/test_seatbelt_shell_wiring.py
+          tests/agent/test_managed_exec.py
 
   webui:
     needs: changes

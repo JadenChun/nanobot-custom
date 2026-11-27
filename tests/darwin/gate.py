@@ -42,6 +42,26 @@ def requires_native_supervisor(test: _Test) -> _Test:
     return test
 
 
+def managed_confinement_marks() -> list[pytest.MarkDecorator]:
+    """Marks for tests that run a command inside the real managed sandbox.
+
+    Linux runs them whenever bubblewrap is usable. macOS confinement also ends
+    each command's process tree with real signals, so it follows the same opt-in
+    as the other native supervisor tests.
+    """
+    if sys.platform == "darwin":
+        return native_supervisor_marks()
+    from kohaku.agent.tools.sandbox import managed_bwrap_available
+
+    return [pytest.mark.skipif(not managed_bwrap_available(), reason="managed bwrap unavailable")]
+
+
+def requires_managed_confinement(test: _Test) -> _Test:
+    for mark in managed_confinement_marks():
+        test = mark(test)
+    return test
+
+
 def darwin_host_skip_reason(platform: str, environ: Mapping[str, str]) -> str | None:
     """Return why darwin_host tests must be skipped, or None when they may run."""
     if platform != "darwin":
