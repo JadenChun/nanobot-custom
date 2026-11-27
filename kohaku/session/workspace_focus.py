@@ -507,6 +507,7 @@ class WorkspaceFocusOwner:
         action: str,
         path: str = "",
         repository: str = "",
+        from_tool: bool = False,
     ) -> WorkspaceScope:
         if action == "clear":
             if path or repository:
@@ -548,10 +549,14 @@ class WorkspaceFocusOwner:
             raise WorkspaceScopeError("workspace path must be an existing directory")
         if self.grants.is_private_path(canonical) and canonical != self.agent_home:
             raise WorkspaceScopeError("folder_access_required", status=403)
+        selection_source: Literal["user", "tool"] = (
+            "tool" if from_tool and action == "select" else "user"
+        )
         scope = build_workspace_scope(
             canonical,
             current.access_mode,
             source_channel=_WEBSOCKET_CHANNEL,
+            selection_source=selection_source,
         )
         self.validate_scope(scope)
         return scope
@@ -608,6 +613,7 @@ class WorkspaceFocusOwner:
                 action=action,
                 path=path,
                 repository=repository,
+                from_tool=True,
             )
             commit = asyncio.create_task(asyncio.to_thread(
                 self.sessions.upsert_session_metadata,

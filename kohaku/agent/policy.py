@@ -67,6 +67,9 @@ __all__ = [
 
 _APPROVAL_REQUIRED = "approval_required"
 _POLICY_BLOCKED = "policy_blocked"
+# Fallback when the policy is evaluated without a bound registry. Bound tools
+# declare this themselves through ``Tool.launches_host_process``.
+_HOST_PROCESS_TOOL_NAMES = frozenset({"agent_browser", "agent_device", "desktop_use", "run_cli_app"})
 
 
 @dataclass(slots=True)
@@ -351,6 +354,10 @@ class RiskyActionPolicy(ToolPolicy):
     # ``None`` retains legacy ``strict`` evaluation for direct callers/tests;
     # AgentLoop passes ``tools_config.permissions`` (default ``autonomous``).
     permissions: ToolPermissionsConfig | None = None
+    # Live Sandbox predicate for this turn (managed mode without Full access).
+    # Host-process tools stay available; in Sandbox, actions that cross the
+    # Sandbox boundary ask first, regardless of profile, like exec exceptions.
+    sandbox_active: Callable[[], bool] | None = field(default=None, repr=False, compare=False)
     _tools: ToolRegistry | None = field(default=None, repr=False, compare=False)
     _write_guard: WriteTargetGuard = field(init=False, repr=False, compare=False)
     _risky_calls: dict[str, tuple[str, str]] = field(
@@ -672,6 +679,8 @@ class RiskyActionPolicy(ToolPolicy):
             return self._refuse_denied_rule(tool_call)
         if explicit == "allow":
             return None
+        if (crossing := self._sandbox_crossing_reason(tool_call)) is not None:
+            return crossing
 
         if tool_call.name == "cron":
             return "schedule a recurring automation" if (explicit == "ask" or profile == "strict") else None
@@ -707,6 +716,45 @@ class RiskyActionPolicy(ToolPolicy):
                 return "perform a state-changing desktop input action"
             return None
         return f"run tool {tool_call.name}" if explicit == "ask" else None
+
+    def _sandbox_crossing_reason(self, tool_call: ToolCallRequest) -> str | None:
+        """Ask before a host-process tool acts outside Sandbox.
+
+        This replaces the old managed tool allowlist. Host-process tools stay
+        visible and callable in a Sandbox chat. Read-only browsing and
+        inspection run as they do in Full access, while actions that change
+        state outside Sandbox need the user's approval for this turn.
+        """
+        if self.sandbox_active is None or not self.sandbox_active():
+            return None
+        tool = self._tools.get(tool_call.name) if self._tools is not None else None
+        if tool is not None:
+            host_process = tool.launches_host_process
+        else:
+            host_process = tool_call.name in _HOST_PROCESS_TOOL_NAMES or tool_call.name.startswith(
+                "trend_vpn_",
+            )
+        if not host_process:
+            return None
+        name = tool_call.name
+        if name == "agent_browser":
+            from kohaku.agent.tools.agent_browser import classify_browser_action
+
+            if classify_browser_action(tool_call.arguments.get("args") or []) == "read_navigation":
+                return None
+            return "use the browser outside Sandbox (state-changing action)"
+        if name == "agent_device":
+            from kohaku.agent.tools.agent_device import classify_device_action
+
+            if classify_device_action(tool_call.arguments.get("args") or []) == "read_navigation":
+                return None
+            return "control a device outside Sandbox (state-changing action)"
+        if name == "desktop_use":
+            action = tool_call.arguments.get("action")
+            if isinstance(action, str) and action in READ_ONLY_DESKTOP_ACTIONS:
+                return None
+            return "control the desktop outside Sandbox"
+        return f"run {name} outside Sandbox"
 
     def _request_approval(
         self,

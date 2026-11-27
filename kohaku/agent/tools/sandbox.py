@@ -190,6 +190,7 @@ def wrap_managed_command(
     cwd: str | Path,
     agent_home: str | Path,
     grants: FolderGrantView,
+    workspace_root: str | Path | None = None,
     include_folder_grants: bool = True,
     grant_snapshot: FolderGrantSnapshot | None = None,
     excluded_roots: Iterable[Path] = (),
@@ -213,6 +214,7 @@ def wrap_managed_command(
         cwd=cwd,
         agent_home=agent_home,
         grants=grants,
+        workspace_root=workspace_root,
         include_folder_grants=include_folder_grants,
         grant_snapshot=grant_snapshot,
         task_roots=task_roots,
@@ -288,6 +290,7 @@ def _managed_mounts(
     cwd: str | Path,
     agent_home: str | Path,
     grants: FolderGrantView,
+    workspace_root: str | Path | None = None,
     include_folder_grants: bool,
     grant_snapshot: FolderGrantSnapshot | None,
     task_roots: Iterable[tuple[str, str, bool]],
@@ -310,6 +313,22 @@ def _managed_mounts(
         raise PermissionError("Sandbox cwd is inside private runtime storage")
 
     mounts: list[tuple[Path, bool, int]] = [(home, True, 0)]
+    if workspace_root is not None:
+        try:
+            ws_root = Path(workspace_root).expanduser().resolve(strict=True)
+        except (OSError, RuntimeError, ValueError):
+            ws_root = None
+        if (
+            ws_root is not None
+            and ws_root.is_dir()
+            and ws_root != home
+            and ws_root != Path(ws_root.anchor)
+            and ws_root != Path.home().expanduser().resolve(strict=False)
+            and not grants.is_private_path(ws_root)
+            and not grants.overlaps_private_root(ws_root)
+            and not overlaps_system_control(ws_root)
+        ):
+            mounts.append((ws_root, True, 0))
     if snapshot.enabled and include_folder_grants:
         for grant in snapshot.grants:
             root = Path(grant.path)
@@ -463,6 +482,7 @@ def prepare_managed_seatbelt(
     cwd: str | Path,
     agent_home: str | Path,
     grants: FolderGrantView,
+    workspace_root: str | Path | None = None,
     include_folder_grants: bool = True,
     grant_snapshot: FolderGrantSnapshot | None = None,
     excluded_roots: Iterable[Path] = (),
@@ -484,6 +504,7 @@ def prepare_managed_seatbelt(
         cwd=cwd,
         agent_home=agent_home,
         grants=grants,
+        workspace_root=workspace_root,
         include_folder_grants=include_folder_grants,
         grant_snapshot=grant_snapshot,
         task_roots=task_roots,

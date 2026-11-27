@@ -3,13 +3,16 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import os
+import re
 import shlex
 import shutil
 import subprocess
 import time
 from collections.abc import Sequence
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
 import httpx
@@ -52,6 +55,170 @@ _CONFIG_OWNED_OPTIONS = frozenset({
     "--no-pin-tab",
     "--executable-path",
 })
+# Screenshot options that only shape the image. Without a path or
+# ``--screenshot-dir``, agent-browser writes the image to a temporary directory.
+_TEMP_SCREENSHOT_FLAGS = frozenset({"--full", "-f", "--annotate", "--json"})
+_LEADING_TEMP_SCREENSHOT_FLAGS = _TEMP_SCREENSHOT_FLAGS | frozenset({"--headed"})
+_TEMP_SCREENSHOT_VALUE_OPTIONS = frozenset({"--screenshot-format", "--screenshot-quality"})
+# Local or script URLs read host files or run code; they are not read-navigation.
+_NON_NAVIGATION_URL_SCHEMES = ("file:", "javascript:", "data:", "view-source:")
+_IMAGE_PATH_KEYS = ("path", "file", "screenshot", "output")
+_IMAGE_PATH_PATTERN = re.compile(
+    r"""(["']?)([^\s"'<>|*?\r\n]+\.(?:png|jpe?g))\1""",
+    re.IGNORECASE,
+)
+_DEFAULT_MAX_INLINE_SCREENSHOT_BYTES = 900 * 1024
+try:
+    _max_inline_screenshot_bytes = int(
+        os.environ.get(
+            "KOHAKU_AGENT_BROWSER_MAX_INLINE_BYTES",
+            _DEFAULT_MAX_INLINE_SCREENSHOT_BYTES,
+        )
+    )
+except (TypeError, ValueError):
+    _max_inline_screenshot_bytes = _DEFAULT_MAX_INLINE_SCREENSHOT_BYTES
+_MAX_INLINE_SCREENSHOT_BYTES = max(1, _max_inline_screenshot_bytes)
+
+
+def _is_temp_screenshot(args: Sequence[str]) -> bool:
+    """Return whether args are ``[global shaping flags] screenshot [@ref] [shaping options]``.
+
+    Any other positional argument could be an output path, so it is not
+    accepted here.
+    """
+    if not args:
+        return False
+    seen_screenshot = False
+    refs = 0
+    index = 0
+    while index < len(args):
+        arg = args[index]
+        option, has_value, _ = arg.partition("=")
+        if not seen_screenshot:
+            if arg == "screenshot":
+                seen_screenshot = True
+                index += 1
+                continue
+            if option in _LEADING_TEMP_SCREENSHOT_FLAGS and not has_value:
+                index += 1
+                continue
+            if option in _TEMP_SCREENSHOT_VALUE_OPTIONS:
+                if not has_value and index + 1 >= len(args):
+                    return False
+                index += 1 if has_value else 2
+                continue
+            return False
+        if option in _TEMP_SCREENSHOT_FLAGS and not has_value:
+            index += 1
+            continue
+        if option in _TEMP_SCREENSHOT_VALUE_OPTIONS:
+            if not has_value and index + 1 >= len(args):
+                return False
+            index += 1 if has_value else 2
+            continue
+        if arg.startswith("@") and refs == 0:
+            refs += 1
+            index += 1
+            continue
+        return False
+    return seen_screenshot and index == len(args)
+
+
+def _is_local_filesystem_path(arg: str) -> bool:
+    """Return True if *arg* looks like a bare local filesystem path."""
+    if arg.startswith(("http://", "https://")):
+        return False
+    if arg in {"~", ".", ".."} or arg.startswith(("/", "~/", "./", "../", "\\")):
+        return True
+    if len(arg) >= 3 and arg[0].isalpha() and arg[1] == ":" and arg[2] in ("/", "\\"):
+        return True
+    return False
+
+
+def _is_screenshot_invocation(args: Sequence[str]) -> bool:
+    normalized = [arg.strip().lower() for arg in args]
+    return "screenshot" in normalized or any(
+        arg == "--screenshot" or arg.startswith("--screenshot=") for arg in normalized
+    )
+
+
+def _find_image_path_in_json(obj: object) -> str | None:
+    if isinstance(obj, dict):
+        mapping = cast(dict[str, Any], obj)
+        for key in _IMAGE_PATH_KEYS:
+            value = mapping.get(key)
+            if isinstance(value, str) and value.strip().lower().endswith((".png", ".jpg", ".jpeg")):
+                return value.strip()
+        for value in mapping.values():
+            found = _find_image_path_in_json(value)
+            if found is not None:
+                return found
+    elif isinstance(obj, list):
+        for item in cast(list[Any], obj):
+            found = _find_image_path_in_json(item)
+            if found is not None:
+                return found
+    return None
+
+
+def _extract_screenshot_path(stdout_text: str, cwd: str) -> Path | None:
+    stripped = stdout_text.strip()
+    if not stripped:
+        return None
+    candidate: str | None = None
+    if stripped.startswith("{"):
+        try:
+            parsed = json.loads(stripped)
+        except json.JSONDecodeError:
+            parsed = None
+        if parsed is not None:
+            candidate = _find_image_path_in_json(parsed)
+    if candidate is None:
+        for line in stdout_text.splitlines():
+            lower_line = line.lower()
+            marker = "saved to "
+            idx = lower_line.find(marker)
+            if idx != -1:
+                after = line[idx + len(marker) :].strip().strip("\"'")
+                if after.lower().endswith((".png", ".jpg", ".jpeg")):
+                    candidate = after
+                    break
+    if candidate is None:
+        match = _IMAGE_PATH_PATTERN.search(stdout_text)
+        if match is not None:
+            candidate = match.group(2)
+    if not candidate:
+        return None
+    path = Path(candidate).expanduser()
+    if not path.is_absolute():
+        path = Path(cwd) / path
+    return path
+
+
+def _inline_screenshot_image(path: Path) -> dict[str, Any] | None:
+    try:
+        if not path.is_file():
+            return None
+        size = path.stat().st_size
+    except OSError:
+        return None
+    if size <= 0 or size > _MAX_INLINE_SCREENSHOT_BYTES:
+        return None
+    try:
+        data = path.read_bytes()
+    except OSError:
+        return None
+    if data.startswith(b"\x89PNG\r\n\x1a\n"):
+        mime = "image/png"
+    elif data.startswith(b"\xff\xd8\xff"):
+        mime = "image/jpeg"
+    else:
+        return None
+    encoded = base64.b64encode(data).decode("ascii")
+    return {
+        "type": "image_url",
+        "image_url": {"url": f"data:{mime};base64,{encoded}"},
+    }
 
 
 def _config_owned_option(args: Sequence[str]) -> str | None:
@@ -82,9 +249,14 @@ def classify_browser_action(args: object) -> str:
         return "state_changing"
     normalized_args = [arg.strip().lower() for arg in cast(Sequence[object], args) if isinstance(arg, str)]
     option_names = [arg.split("=", 1)[0] for arg in normalized_args]
+    if any(arg.startswith(_NON_NAVIGATION_URL_SCHEMES) for arg in normalized_args):
+        return "state_changing"
+    if _is_temp_screenshot(normalized_args):
+        # Viewing the page: the image goes to agent-browser's temporary directory.
+        return "read_navigation"
     # Screenshots are potentially file-producing even when no output path is
-    # present in the invocation.  Treat every screenshot form, including
-    # option-based forms such as ``open --screenshot=page.png``, as a write.
+    # present in the invocation. Every other screenshot form, including
+    # option-based forms such as ``open --screenshot=page.png``, is a write.
     if "screenshot" in normalized_args or any(
         arg.startswith("--screenshot") for arg in normalized_args
     ):
@@ -105,6 +277,12 @@ def classify_browser_action(args: object) -> str:
     action = next((arg for arg in normalized_args if arg and not arg.startswith("-")), "")
     if action not in READ_NAVIGATION_ACTIONS:
         return "state_changing"
+    trailing_args = normalized_args[normalized_args.index(action) + 1 :]
+    if action in {"open", "goto", "navigate"} and any(
+        not arg.startswith("-") and _is_local_filesystem_path(arg)
+        for arg in trailing_args
+    ):
+        return "state_changing"
     # A second CLI action indicates a mixed/ambiguous request. Safe action
     # arguments (URLs, selectors, offsets) are not action names and remain
     # valid for the first command.
@@ -112,7 +290,7 @@ def classify_browser_action(args: object) -> str:
         "click", "type", "fill", "submit", "evaluate", "input", "press", "app",
         "settings", "close", "record", "upload", "download",
     })
-    if any(arg in action_names for arg in normalized_args[normalized_args.index(action) + 1:]):
+    if any(arg in action_names for arg in trailing_args):
         return "state_changing"
     return "read_navigation"
 
@@ -180,6 +358,10 @@ class AgentBrowserTool(Tool):
 
     @property
     def exclusive(self) -> bool:
+        return True
+
+    @property
+    def launches_host_process(self) -> bool:
         return True
 
     @property
@@ -338,13 +520,7 @@ class AgentBrowserTool(Tool):
         timeout: int | None = None,
         working_dir: str | None = None,
         **kwargs: Any,
-    ) -> str | ToolOutcome:
-        if self._resource_policy is not None and not self._resource_policy.allows_unconfined_automation():
-            return ToolOutcome(
-                content="Error: Browser automation requires unrestricted native workspace access",
-                stop_reason="policy_blocked",
-                policy_metadata={"policy": "workspace_access", "requires_approval": False},
-            )
+    ) -> str | list[dict[str, Any]] | ToolOutcome:
         if not args:
             return "Error: args must include at least one CLI argument"
         if len(args) > 80:
@@ -385,6 +561,15 @@ class AgentBrowserTool(Tool):
 
         run_timeout = timeout if timeout is not None else self.timeout
         cwd = working_dir or self.working_dir or os.getcwd()
+        if self._resource_policy is not None:
+            confined = self._resource_policy.automation_working_dir(working_dir, self.working_dir)
+            if confined is None:
+                return ToolOutcome(
+                    content="Error: working_dir is outside the workspace for this chat",
+                    stop_reason="policy_blocked",
+                    policy_metadata={"policy": "workspace_access", "requires_approval": False},
+                )
+            cwd = str(confined)
 
         npx_command = _resolve_npx()
         if not npx_command:
@@ -474,7 +659,7 @@ class AgentBrowserTool(Tool):
         if stderr_truncated:
             stderr_text = stderr_text[: self.max_output_chars]
 
-        return json.dumps(
+        payload_text = json.dumps(
             {
                 "command": command,
                 "cwd": cwd,
@@ -491,6 +676,26 @@ class AgentBrowserTool(Tool):
             },
             ensure_ascii=False,
         )
+        if result.returncode == 0 and _is_screenshot_invocation(args):
+            screenshot_path = _extract_screenshot_path(stdout_text, cwd)
+            grants = (
+                self._resource_policy.folder_grants
+                if self._resource_policy is not None
+                else None
+            )
+            is_private = (
+                screenshot_path is not None
+                and grants is not None
+                and grants.is_private_path(screenshot_path)
+            )
+            image_block = (
+                _inline_screenshot_image(screenshot_path)
+                if screenshot_path is not None and not is_private
+                else None
+            )
+            if image_block is not None:
+                return [{"type": "text", "text": payload_text}, image_block]
+        return payload_text
 
 
 __all__ = [

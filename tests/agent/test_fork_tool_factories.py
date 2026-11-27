@@ -56,11 +56,19 @@ def automation_scope(workspace, access_mode):
 @pytest.mark.parametrize(
     "default_restricted, access_mode, destinations, allowed",
     [
-        (True, None, ("inside",), False),
+        (True, None, ("inside",), True),
+        (True, None, ("sibling",), False),
+        (False, "restricted", ("inside",), True),
         (False, "restricted", ("sibling",), False),
         (True, "full", ("inside", "sibling"), True),
     ],
-    ids=["default-restricted", "turn-restricted", "turn-full"],
+    ids=[
+        "default-restricted-inside",
+        "default-restricted-sibling",
+        "turn-restricted-inside",
+        "turn-restricted-sibling",
+        "turn-full",
+    ],
 )
 async def test_foreground_automation_requires_native_access(
     context, monkeypatch, name, default_restricted, access_mode, destinations, allowed,

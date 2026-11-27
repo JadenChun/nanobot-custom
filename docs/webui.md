@@ -72,7 +72,7 @@ Use the WebUI as the primary setup surface:
 
 1. Open **Settings → Models** and configure a provider, credential, and active model preset.
 2. Send `Hello!` in a new topic to prove the selected model works.
-3. Use **Working in** to focus the current topic on a folder, then grant that folder access in **Settings → Folders & projects** if needed.
+3. Use **Working in** to focus the current topic on a folder (which is writable in Sandbox by default), and use **Settings → Folders & projects** if you need extra writable roots or explicit read-only overrides.
 4. Add only one capability next: a chat channel in **Settings → Channels**, a web/voice/image provider in **Settings**, or an App/MCP integration in **Apps**.
 5. Restart when the WebUI shows a restart requirement, then test that capability with the smallest possible request.
 
@@ -85,7 +85,7 @@ This path avoids hand-editing `config.json` for normal setup. Use the reference 
 | Topics | Start persistent topics or temporary chats; switch, search, reorder, fork, or delete persistent topics |
 | Agent activity | See thinking, tool calls, file edits with diffs, command output, and generated artifacts in context |
 | Context usage | Inspect current context size, per-round token and cache usage, and compaction progress |
-| Working in | Focus the current topic on a folder without creating a new topic |
+| Working in | Focus the current topic on a writable workspace folder without creating a new topic |
 | Folders & projects | Review folder grants and remembered repository details |
 | Composer | Send text, images, voice input, slash commands, and `@` mentions for topics, Apps, or MCP presets |
 | Channels | Connect and validate chat platforms, install their optional support, and manage saved channel setup |
@@ -170,11 +170,14 @@ or a result you must retain.
 ## Folders, projects, and access
 
 Every regular topic shows **Working in** with its current folder and access
-status. Choose **Agent home** to return to the configured agent workspace, or
-enter an absolute path or use **Browse…** to focus the same conversation on a
-different folder. A folder change keeps the conversation, history, memory, and
-runtime in place. The operating-system folder chooser may be unavailable; manual
-path entry remains available. Temporary chats do not offer folder management.
+status. Selecting a folder in **Working in** makes that workspace writable in
+Sandbox; **Settings → Folders** adds extra writable roots or explicit read-only
+overrides (which take precedence over the workspace). Choose **Agent home** to
+return to the configured agent workspace, or enter an absolute path or use
+**Browse…** to focus the same conversation on a different folder. A folder
+change keeps the conversation, history, memory, and runtime in place. The
+operating-system folder chooser may be unavailable; manual path entry remains
+available. Temporary chats do not offer folder management.
 
 The selected folder supplies project context and the working location for the
 current topic. The configured agent home continues to supply instance identity,
@@ -241,10 +244,12 @@ stopped, the access change remains pending rather than being treated as
 complete.
 
 Regular local topics start in **Sandbox**. Sandbox allows ordinary reads under
-your operating-system account and runs normal commands, but writes are limited
-to the agent home, saved read/write folders, and private temporary or cache
-storage. An explicit read-only folder overrides a writable parent. This boundary
-applies from the first message, before any folder has been saved. **Full
+your operating-system account and runs normal commands, while writes are limited
+to the user-selected **Working in** workspace, the agent home, extra saved
+read/write folders from **Settings → Folders**, and private temporary or cache
+storage. An explicit read-only folder overrides a writable parent or the active
+workspace. This boundary applies from the first message, before any folder has
+been saved. **Full
 access** is a separate, chat-specific choice; it lets that topic read and change
 files and run commands beyond those limits, subject to your operating-system
 account permissions. Kohaku asks for confirmation before enabling it. You can

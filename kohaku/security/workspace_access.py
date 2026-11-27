@@ -91,16 +91,20 @@ class WorkspaceScope:
     restrict_to_workspace: bool
     sandbox_status: WorkspaceSandboxStatus
     source_channel: str | None = None
+    selection_source: Literal["user", "tool"] = "user"
 
     @property
     def project_name(self) -> str:
         return self.project_path.name or str(self.project_path)
 
     def metadata(self) -> dict[str, str]:
-        return {
+        data = {
             "project_path": str(self.project_path),
             "access_mode": self.access_mode,
         }
+        if self.selection_source == "tool":
+            data["selection_source"] = "tool"
+        return data
 
     def payload(self) -> dict[str, Any]:
         return {
@@ -249,6 +253,7 @@ def build_workspace_scope(
     access_mode: str,
     *,
     source_channel: str | None = None,
+    selection_source: Literal["user", "tool"] = "user",
     preserve_path_identity: bool = False,
 ) -> WorkspaceScope:
     mode = _normalize_access_mode(access_mode)
@@ -269,6 +274,7 @@ def build_workspace_scope(
             preserve_workspace_identity=preserve_path_identity,
         ),
         source_channel=source_channel,
+        selection_source=selection_source,
     )
 
 
@@ -329,10 +335,13 @@ def validate_workspace_scope_payload(
         raw_mode = default_access_mode(default_restrict_to_workspace)
     if not isinstance(raw_mode, str):
         raise WorkspaceScopeError("access_mode must be a string")
+    raw_source = scope_data.get("selection_source")
+    selection_source: Literal["user", "tool"] = "tool" if raw_source == "tool" else "user"
     return build_workspace_scope(
         project,
         raw_mode,
         source_channel=source_channel,
+        selection_source=selection_source,
         preserve_path_identity=preserve_path_identity,
     )
 

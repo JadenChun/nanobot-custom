@@ -1139,6 +1139,7 @@ class ExecTool(Tool):
                     cwd=cwd,
                     agent_home=policy.workspace,
                     grants=grants,
+                    workspace_root=policy.implicit_writable_workspace(),
                     include_folder_grants=policy.folder_grants_allowed,
                     grant_snapshot=grant_snapshot,
                     excluded_roots=policy.managed_repository_roots(),

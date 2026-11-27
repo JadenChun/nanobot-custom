@@ -135,12 +135,32 @@ class ResourceAccessPolicy:
             return focus.task_reference
         return None
 
-    def allows_unconfined_automation(self) -> bool:
-        """Allow raw host automation only in native unrestricted scope."""
+    def sandbox_active(self) -> bool:
+        """Whether this turn runs in Sandbox (managed and not under Full access)."""
+        return self.managed_mode and self._current_full_reference() is None
+
+    def automation_working_dir(self, requested: str | None, default: str | None) -> Path | None:
+        """Resolve a host-automation working directory under the current scope.
+
+        Host automation (browser/device) is admitted by the policy layer, not
+        here. This only keeps the process's relative-path anchor inside the
+        workspace when the scope is restricted. It returns ``None`` when a
+        requested directory leaves the restricted workspace.
+        """
         access = current_tool_workspace(
             self.workspace, restrict_to_workspace=self.restrict_to_workspace,
         )
-        return not (access.restrict_to_workspace or self.managed_mode)
+        root = access.allowed_root
+        if root is None:
+            return Path(requested or default or os.getcwd()).expanduser()
+        root = root.expanduser().resolve(strict=False)
+        if requested is None:
+            return root
+        candidate = Path(requested).expanduser()
+        if not candidate.is_absolute():
+            candidate = root / candidate
+        candidate = candidate.resolve(strict=False)
+        return candidate if _is_under(candidate, root) else None
 
     @staticmethod
     def _current_full_reference(
@@ -187,11 +207,48 @@ class ResourceAccessPolicy:
     def extra_write_dirs(self) -> list[Path]:
         return self.context_manager.write_roots()
 
+    def implicit_writable_workspace(self) -> Path | None:
+        """Return the user-selected WebSocket workspace root if implicitly writable in Sandbox."""
+        from kohaku.agent.tools.context import current_request_context
+
+        request = current_request_context()
+        if request is not None and not request.persistent_session:
+            return None
+        scope = current_workspace_scope()
+        if (
+            scope is None
+            or scope.source_channel != "websocket"
+            or scope.selection_source != "user"
+        ):
+            return None
+        candidate = scope.project_path.expanduser().resolve(strict=False)
+        if not candidate.is_dir():
+            return None
+        if candidate == Path(candidate.anchor):
+            return None
+        if candidate == Path.home().expanduser().resolve(strict=False):
+            return None
+        if self._is_managed_repository_path(candidate):
+            return None
+        if _overlaps_system_control(candidate):
+            return None
+        if self.folder_grants is not None and (
+            self.folder_grants.is_private_path(candidate)
+            or (
+                candidate != self.workspace.expanduser().resolve(strict=False)
+                and self.folder_grants.overlaps_private_root(candidate)
+            )
+        ):
+            return None
+        return candidate
+
     def readable_roots_summary(self, *, limit: int = 8) -> tuple[list[str], bool]:
         """Return a small privacy-filtered summary, never a capability grant."""
         candidates: list[Path] = [self.workspace]
+        if (implicit_ws := self.implicit_writable_workspace()) is not None:
+            candidates.append(implicit_ws)
         candidates.extend(self.context_manager.read_roots())
-        if self.folder_grants is not None and self.folder_grants.is_managed:
+        if self.folder_grants is not None and self.managed_mode:
             try:
                 candidates.extend(Path(grant.path) for grant in self.folder_grants.snapshot().grants)
             except FolderGrantsUnavailableError:
@@ -357,6 +414,10 @@ class ResourceAccessPolicy:
         choices: list[tuple[Path, bool, int]] = []
         if _is_under(path, self.workspace):
             choices.append((self.workspace, True, 0))
+        if (implicit_ws := self.implicit_writable_workspace()) is not None and _is_under(
+            path, implicit_ws
+        ):
+            choices.append((implicit_ws, True, 0))
         for root in self.context_manager.write_roots():
             canonical = root.expanduser().resolve(strict=False)
             if _is_under(path, canonical):
@@ -728,3 +789,10 @@ def _is_under(path: Path, directory: Path) -> bool:
         return True
     except ValueError:
         return False
+
+
+def _overlaps_system_control(path: Path) -> bool:
+    return any(
+        _is_under(path, Path(root)) or _is_under(Path(root), path)
+        for root in ("/proc", "/sys", "/dev", "/run", "/System", "/private/var/run")
+    )

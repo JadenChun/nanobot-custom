@@ -127,6 +127,10 @@ class AgentDeviceTool(Tool):
         return True
 
     @property
+    def launches_host_process(self) -> bool:
+        return True
+
+    @property
     def supports_parallel_calls(self) -> bool:
         """Simulator/emulator state is shared and must be serialized."""
         return False
@@ -175,12 +179,6 @@ class AgentDeviceTool(Tool):
         working_dir: str | None = None,
         **kwargs: Any,
     ) -> str | ToolOutcome:
-        if self._resource_policy is not None and not self._resource_policy.allows_unconfined_automation():
-            return ToolOutcome(
-                content="Error: Device automation requires unrestricted native workspace access",
-                stop_reason="policy_blocked",
-                policy_metadata={"policy": "workspace_access", "requires_approval": False},
-            )
         if not args:
             return "Error: args must include at least one CLI argument"
         if len(args) > 120:
@@ -210,6 +208,15 @@ class AgentDeviceTool(Tool):
 
         run_timeout = timeout if timeout is not None else self.timeout
         cwd = working_dir or self.working_dir or os.getcwd()
+        if self._resource_policy is not None:
+            confined = self._resource_policy.automation_working_dir(working_dir, self.working_dir)
+            if confined is None:
+                return ToolOutcome(
+                    content="Error: working_dir is outside the workspace for this chat",
+                    stop_reason="policy_blocked",
+                    policy_metadata={"policy": "workspace_access", "requires_approval": False},
+                )
+            cwd = str(confined)
 
         npx_command = _resolve_npx()
         if not npx_command:

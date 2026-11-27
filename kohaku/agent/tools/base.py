@@ -436,6 +436,16 @@ class Tool(ABC):
         """Whether this tool should run alone even if concurrency is enabled."""
         return False
 
+    @property
+    def launches_host_process(self) -> bool:
+        """Whether calls start host work that the exec Sandbox does not confine.
+
+        Such tools (browser, device, or desktop automation, for example) stay
+        available in every permission mode. In a Sandbox turn the policy layer
+        asks before actions that cross the Sandbox boundary.
+        """
+        return False
+
     # --- Plugin metadata ---
 
     config_key: str = ""

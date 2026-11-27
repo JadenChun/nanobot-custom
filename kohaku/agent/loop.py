@@ -94,11 +94,8 @@ from kohaku.agent.tools.exec_session import ExecCompletionSink, ExecSessionManag
 from kohaku.agent.tools.file_state import FileStateStore, bind_file_states, reset_file_states
 from kohaku.agent.tools.message import capture_message_deliveries
 from kohaku.agent.tools.registry import (
-    MANAGED_WEBUI_TOOL_NAMES,
-    ManagedToolDispatchGuard,
     PolicyToolView,
     ToolRegistry,
-    is_managed_mcp_tool,
 )
 from kohaku.agent.tools.runtime_control import AgentRuntimeControl
 from kohaku.agent.trace import sanitize_trace
@@ -923,7 +920,15 @@ class AgentLoop:
         self.workspace_scopes = WorkspaceScopeResolver(
             default_workspace=workspace,
             default_restrict_to_workspace=restrict_to_workspace,
-            managed_state=(lambda: folder_grants.is_managed) if folder_grants is not None else None,
+            managed_state=(
+                (
+                    lambda: fork_dependencies.resource_policy.sandbox_default
+                    or fork_dependencies.resource_policy.managed_mode
+                    or folder_grants.is_managed
+                )
+                if folder_grants is not None
+                else None
+            ),
         )
         self._owned_foreground_manager = fork_dependencies.foreground_manager if _owns_fork_dependencies else None
         self.context = ContextBuilder(
@@ -3810,9 +3815,28 @@ class AgentLoop:
         session = ctx.require_session()
         registered = PolicyToolView(tools, lambda tool: True)
         saved: object = session.metadata.get(ACTIVATED_TOOLS_METADATA)
+        permissions = self.tools_config.permissions
+        deny_checker: Callable[[str], bool] | None = None
+        if permissions.rules:
+            from kohaku.agent.permission_rules import match_explicit_rule
+
+            workspace = self.workspace
+
+            def _is_explicitly_denied(tool_name: str) -> bool:
+                return (
+                    match_explicit_rule(
+                        permissions,
+                        ToolCallRequest(id="", name=tool_name, arguments={}),
+                        workspace=workspace,
+                    )
+                    == "deny"
+                )
+
+            deny_checker = _is_explicitly_denied
         surface = ToolSurface(
             registered,
             ToolSurfaceState.from_metadata(saved) if not ctx.fresh_history else ToolSurfaceState(),
+            deny_checker=deny_checker,
         )
         if sustained_goal_turn(session.metadata, message_metadata=ctx.msg.metadata):
             surface.activate(["create_goal", "update_goal"])
@@ -3962,7 +3986,7 @@ class AgentLoop:
         active_goal: str | None = None,
     ) -> EffectApprovalAuthority | None:
         from kohaku.agent.approvals import PendingTurnApproval
-        from kohaku.agent.auto_review import review_sandbox_escalation
+        from kohaku.agent.auto_review import review_sandbox_escalation, sanitize_tool_arguments
 
         key = context.session_key
         owner = context.execution_owner
@@ -3990,11 +4014,18 @@ class AgentLoop:
             save_exclusion_command=decision.metadata.get("save_exclusion_command")
             if isinstance(decision.metadata.get("save_exclusion_command"), str) else None,
         )
-        command = call.arguments.get("command")
+        if call.name == "exec":
+            command = call.arguments.get("command")
+            serialized_arguments = json.dumps({"command": command} if isinstance(command, str) else {})
+        else:
+            serialized_arguments = json.dumps(
+                sanitize_tool_arguments(call.arguments),
+                ensure_ascii=False,
+            )
         approval = PendingTurnApproval(
             pending.approval_id, key, source.incarnation, context.run_id, source.generation,
             effect, call.name,
-            json.dumps({"command": command} if isinstance(command, str) else {}),
+            serialized_arguments,
             summary, pending.saveable_command(),
         )
 
@@ -4118,6 +4149,7 @@ class AgentLoop:
             context_manager=run_context.policy.context_manager,
             effect_authority=run_context.policy.effect_authority,
             permissions=self.tools_config.permissions,
+            sandbox_active=self._fork_dependencies.resource_policy.sandbox_active,
         )
         request = run_context.request
         live_controls = request.metadata.get("live_turn_controls") if request is not None else None
@@ -4467,12 +4499,17 @@ class AgentLoop:
                 and (live_session is None or live_session.policy.persist)
                 and self.context.memory.owns_dream_tools(effective_tools, effective_scope.project_path)
             )
-        policy_grants = self._fork_dependencies.resource_policy.folder_grants
+        resource_policy = self._fork_dependencies.resource_policy
         managed_prompt = bool(
-            policy_grants
-            and policy_grants.is_managed
-            and request_ctx.channel == "websocket"
+            request_ctx.channel == "websocket"
             and request_ctx.persistent_session
+            and (
+                resource_policy.managed_mode
+                or (
+                    resource_policy.folder_grants is not None
+                    and (resource_policy.sandbox_default or resource_policy.managed_webui_only)
+                )
+            )
         )
         transcript_builder = partial(
             self.context.build_transcript,
@@ -7434,7 +7471,6 @@ class AgentLoop:
         if not session.policy.persist:
             disabled_tools.update({"repository_catalog", "save_knowledge"})
         grants = self._fork_dependencies.resource_policy.folder_grants
-        managed_tool_names = MANAGED_WEBUI_TOOL_NAMES
         run_context = ctx.run_context
         local_private_workspace_authority = False
         if (
@@ -7488,14 +7524,22 @@ class AgentLoop:
                 owner.is_temporary_full_reference(full_reference)
                 and owner.is_current_full_reference(full_reference)
             )
+        resource_policy = self._fork_dependencies.resource_policy
         if (
             route_channel == "websocket"
             and grants is not None
-            and (grants.is_managed or local_private_workspace_authority)
-        ):
-            managed_registry = PolicyToolView(
-                tools, lambda tool: tool.name in managed_tool_names or is_managed_mcp_tool(tool),
+            and (
+                resource_policy.managed_mode
+                or resource_policy.sandbox_default
+                or resource_policy.managed_webui_only
+                or local_private_workspace_authority
             )
+        ):
+            # Every tool stays available in a managed chat. The policy layer
+            # decides per call (ask outside Sandbox, deny by explicit rule).
+            # A per-turn view only keeps the WebUI-local tools below out of the
+            # shared registry.
+            managed_registry = PolicyToolView(tools, lambda tool: True)
             if self.tools_config.file.enable:
                 from kohaku.agent.tools.workspace import (
                     RequestFolderAccessTool,
@@ -7535,15 +7579,6 @@ class AgentLoop:
         admitted_tools = tools
         if not issued_dream:
             tools = PolicyToolView(admitted_tools, lambda tool: True)
-        tools.set_dispatch_guard(
-            ManagedToolDispatchGuard(
-                self._fork_dependencies.resource_policy.folder_grants,
-                allowed_names=managed_tool_names,
-                allowed_live=lambda name: (
-                    (tool := admitted_tools.get(name)) is not None and is_managed_mcp_tool(tool)
-                ),
-            )
-        )
         apply_surface = getattr(self, "_apply_tool_surface", None)
         surface = None
         if apply_surface is not None and not issued_dream:

@@ -78,7 +78,9 @@ class SelectWorkspaceTool(Tool):
     def description(self) -> str:
         return (
             "Select an existing readable project folder or catalog repository for this chat, "
-            "or clear focus back to agent home. Selection does not grant access."
+            "or clear focus back to agent home. Changes relative-path focus only and never "
+            "grants write permission; writes to ungranted folders still require user folder "
+            "selection or a grant."
         )
 
     @property

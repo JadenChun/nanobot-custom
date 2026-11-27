@@ -18,10 +18,8 @@ from kohaku.agent.tools.base import (
 from kohaku.agent.tools.context import RequestContext, request_context
 from kohaku.agent.tools.mcp import MCPToolWrapper
 from kohaku.agent.tools.registry import (
-    MANAGED_WEBUI_TOOL_NAMES,
-    ManagedToolDispatchGuard,
+    ToolDispatchGuard,
     ToolRegistry,
-    managed_webui_tool_names,
 )
 from kohaku.config.schema import AgentDefaults
 from kohaku.providers.base import LLMProvider, LLMResponse, ToolCallRequest
@@ -52,6 +50,18 @@ class _RecordingTool(Tool):
         _ = kwargs
         self._calls.append(self._name)
         return "safe result"
+
+
+class _DenyGuard(ToolDispatchGuard):
+    """A live guard (like Dream's operation fence) that withdraws one tool."""
+
+    def __init__(self, denied: str) -> None:
+        self._denied = denied
+
+    def error(self, name: str) -> str | None:
+        if name != self._denied:
+            return None
+        return f"Tool '{name}' is not available in the current run."
 
 
 def _managed_store(tmp_path: Path) -> tuple[Path, FolderGrantStore]:
@@ -86,18 +96,30 @@ def _mcp_tool(server: str, raw_name: str, session: object) -> MCPToolWrapper:
     )
 
 
-def test_configured_mcp_tools_are_managed_capabilities() -> None:
-    session = SimpleNamespace(call_tool=AsyncMock())
-    search = _mcp_tool("comfy", "search", session)
+@pytest.mark.asyncio
+async def test_managed_chat_has_no_tool_name_allowlist(tmp_path: Path) -> None:
+    # Tool availability in a managed chat is the policy layer's decision; the
+    # dispatch guard never withholds a tool by name.
+    home, store = _managed_store(tmp_path)
+    calls: list[str] = []
     registry = ToolRegistry()
-    registry.register(search)
-    allowed = managed_webui_tool_names(registry.iter_tools())
-
-    assert MANAGED_WEBUI_TOOL_NAMES.issubset(allowed)
-    assert search.name in allowed
-    assert registry.filtered([name for name in registry.tool_names if name in allowed]).has(
-        search.name
+    for name in ("agent_browser", "create_goal", "my", "list_dir"):
+        registry.register(_RecordingTool(name, calls))
+    request = RequestContext(
+        channel="websocket",
+        chat_id="fixture-chat",
+        session_key="websocket:fixture-chat",
+        workspace=home,
+        persistent_session=True,
     )
+
+    with request_context(request):
+        assert store.view.is_managed
+        assert all(registry.dispatch_error(name) is None for name in registry.tool_names)
+        result = await registry.execute("agent_browser", {})
+
+    assert result == "safe result"
+    assert calls == ["agent_browser"]
 
 
 @pytest.mark.asyncio
@@ -109,12 +131,6 @@ async def test_managed_chat_calls_configured_mcp_tool(tmp_path: Path) -> None:
     search = _mcp_tool("comfy", "search", session)
     registry = ToolRegistry()
     registry.register(search)
-    registry.set_dispatch_guard(
-        ManagedToolDispatchGuard(
-            store.view,
-            allowed_names=managed_webui_tool_names([search]),
-        )
-    )
     request = RequestContext(
         channel="websocket",
         chat_id="fixture-chat",
@@ -136,7 +152,7 @@ async def test_managed_typo_remains_an_unknown_tool(tmp_path: Path) -> None:
     home, store = _managed_store(tmp_path)
     registry = ToolRegistry()
     registry.register(_RecordingTool("list_dir", []))
-    registry.set_dispatch_guard(ManagedToolDispatchGuard(store.view))
+    registry.set_dispatch_guard(ToolDispatchGuard())
     request = RequestContext(
         channel="websocket",
         chat_id="fixture-chat",
@@ -150,7 +166,7 @@ async def test_managed_typo_remains_an_unknown_tool(tmp_path: Path) -> None:
 
     assert isinstance(error, ToolPreparationError)
     assert error.kind is ToolPreparationErrorKind.UNKNOWN_TOOL
-    assert "managed folder access" not in str(error)
+    assert "not available in the current run" not in str(error)
 
 
 @pytest.mark.asyncio
@@ -160,11 +176,11 @@ async def test_admission_race_denial_gets_one_safe_recovery(
     home, store = _managed_store(tmp_path)
     registry = ToolRegistry()
     registry.register(_RecordingTool("list_dir", []))
-    registry.set_dispatch_guard(ManagedToolDispatchGuard(store.view))
+    registry.set_dispatch_guard(ToolDispatchGuard())
 
     @contextmanager
     def denied(_name: str):
-        yield "Tool 'list_dir' is unavailable with managed folder access."
+        yield "Tool 'list_dir' is not available in the current run."
 
     monkeypatch.setattr(registry, "dispatch_admission", denied)
     provider = MagicMock(spec=LLMProvider)
@@ -204,17 +220,15 @@ async def test_admission_race_denial_gets_one_safe_recovery(
 @pytest.mark.asyncio
 async def test_managed_unavailable_tool_gets_one_safe_recovery(tmp_path: Path) -> None:
     home, store = _managed_store(tmp_path)
+    _ = store
     calls: list[str] = []
     safe = _RecordingTool("list_dir", calls)
     stale_host_tool = _RecordingTool("agent_browser", calls)
     full_registry = ToolRegistry()
     full_registry.register(safe)
     full_registry.register(stale_host_tool)
-    managed_names = managed_webui_tool_names(full_registry.iter_tools())
     registry = full_registry.filtered(["list_dir"])
-    registry.set_dispatch_guard(
-        ManagedToolDispatchGuard(store.view, allowed_names=managed_names)
-    )
+    registry.set_dispatch_guard(_DenyGuard("agent_browser"))
     provider = MagicMock(spec=LLMProvider)
     provider.chat_with_retry = AsyncMock(side_effect=[
         LLMResponse(
@@ -262,11 +276,11 @@ async def test_managed_unavailable_tool_gets_one_safe_recovery(tmp_path: Path) -
         message for message in recovery_request
         if message.get("tool_call_id") == "unavailable"
     )
-    assert "managed folder access" in str(tool_message["content"])
+    assert "not available in the current run" in str(tool_message["content"])
     guidance = [
         message["content"] for message in result.messages
         if message.get("role") == "user"
         and str(message.get("content", "")).startswith("[Internal recovery note]")
     ]
     assert len(guidance) == 1
-    assert "unconfined host capability" in str(guidance[0])
+    assert "not available in the current run" in str(guidance[0])

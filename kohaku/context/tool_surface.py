@@ -10,11 +10,13 @@ from __future__ import annotations
 import math
 import re
 from collections import Counter
+from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, cast
 
+from kohaku.agent.tools.base import Tool
+
 if TYPE_CHECKING:
-    from kohaku.agent.tools.base import Tool
     from kohaku.agent.tools.registry import ToolRegistry
     from kohaku.providers.base import LLMProvider
 
@@ -78,6 +80,30 @@ def _document_for(tool: Tool) -> str:
     )
 
 
+class _BlockedSearchTool(Tool):
+    """Search-result placeholder for a deferred tool blocked by an explicit deny rule."""
+
+    def __init__(self, tool: Tool) -> None:
+        self._tool = tool
+        self.namespace = tool.namespace
+        self.exposure = tool.exposure
+
+    @property
+    def name(self) -> str:
+        return self._tool.name
+
+    @property
+    def description(self) -> str:
+        return f"Blocked by explicit permission deny rule: {self._tool.name}"
+
+    @property
+    def parameters(self) -> dict[str, Any]:
+        return self._tool.parameters
+
+    async def execute(self, **kwargs: Any) -> Any:
+        raise PermissionError(self.description)
+
+
 @dataclass
 class ToolSurface:
     """Compute the model-visible tool list for one turn."""
@@ -85,16 +111,27 @@ class ToolSurface:
     registry: ToolRegistry
     state: ToolSurfaceState = field(default_factory=ToolSurfaceState)
     requested_namespaces: set[str] = field(default_factory=set)
+    deny_checker: Callable[[str], bool] | None = None
+
+    def is_explicitly_denied(self, tool_name: str) -> bool:
+        """Return True when an explicit permission deny rule blocks ``tool_name``."""
+        return self.deny_checker is not None and bool(self.deny_checker(tool_name))
+
+    def _search_result(self, tool: Tool) -> Tool:
+        return _BlockedSearchTool(tool) if self.is_explicitly_denied(tool.name) else tool
 
     def activate(self, names: list[str]) -> None:
-        available = {tool.name for tool in self.deferred_tools()}
+        available = {
+            tool.name for tool in self.deferred_tools()
+            if not self.is_explicitly_denied(tool.name)
+        }
         self.state = self.state.with_activated([name for name in names if name in available])
 
     def activate_requested_namespaces(self) -> list[str]:
         """Activate small explicitly requested namespaces and return the rest."""
         namespaces: dict[str, list[str]] = {name: [] for name in self.requested_namespaces}
         for tool in self.deferred_tools():
-            if tool.namespace in namespaces:
+            if tool.namespace in namespaces and not self.is_explicitly_denied(tool.name):
                 namespaces[tool.namespace].append(tool.name)
         for names in namespaces.values():
             if 0 < len(names) <= MAX_SEARCH_RESULTS:
@@ -115,7 +152,10 @@ class ToolSurface:
 
     def visible_names(self) -> tuple[str, ...]:
         """Direct tools followed by the append-only activated tail."""
-        allowed = {tool.name for tool in self.deferred_tools()}
+        allowed = {
+            tool.name for tool in self.deferred_tools()
+            if not self.is_explicitly_denied(tool.name)
+        }
         deferred = [name for name in self.state.activated if name in allowed]
         return (*self.direct_names(), *deferred)
 
@@ -144,10 +184,14 @@ class ToolSurface:
             else:
                 direct.append(definition)
         for name in self.state.activated:
-            if name in tail:
+            if name in tail and not self.is_explicitly_denied(name):
                 direct.append(tail.pop(name))
         if native:
-            direct.extend({**definition, "defer_loading": True} for definition in tail.values())
+            direct.extend(
+                {**definition, "defer_loading": True}
+                for name, definition in tail.items()
+                if not self.is_explicitly_denied(name)
+            )
         return direct
 
     def namespace_index(self) -> list[str]:
@@ -191,7 +235,10 @@ class ToolSurface:
         size = max(1, min(MAX_SEARCH_RESULTS, limit))
         query_terms = _tokens(query)
         if not query_terms:
-            return sorted(candidates, key=lambda tool: tool.name)[:size]
+            return [
+                self._search_result(tool)
+                for tool in sorted(candidates, key=lambda tool: tool.name)[:size]
+            ]
 
         documents = [_tokens(_document_for(tool)) for tool in candidates]
         average = sum(len(document) for document in documents) / len(documents)
@@ -223,4 +270,4 @@ class ToolSurface:
                 scored.append((score, tool.name))
         scored.sort(key=lambda item: (-item[0], item[1]))
         by_name = {tool.name: tool for tool in candidates}
-        return [by_name[name] for _, name in scored[:size]]
+        return [self._search_result(by_name[name]) for _, name in scored[:size]]

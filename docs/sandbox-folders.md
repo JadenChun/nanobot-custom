@@ -2,17 +2,23 @@
 
 Local WebUI chats start in **Sandbox**. It permits ordinary reads under your OS
 account and runs normal Bash commands and their children. Writes are limited to
-the agent home, approved writable folders, and private temporary/cache storage.
-An explicit read-only child overrides a writable parent. The map is a navigation
+the user-selected **Working in** workspace (matching `claude_sdk` harness
+workspace-write behavior), the agent home, additional approved writable folders
+from **Settings → Folders** (or one-shot `Once` grants), and private
+temporary/cache storage. Model-called `select_workspace` changes relative-path
+focus only and never widens write authority. An explicit `read_only` child
+overrides a writable parent or the active workspace. The map is a navigation
 index, not an exclusive list of accessible files.
 
 **Full access** uses ordinary OS-account access without the Sandbox write boundary.
-It remains a chat-specific, explicitly selected mode. Returning to Sandbox uses
-the existing process retirement flow: running commands keep their launch access
-until they finish. Sandbox never silently falls back to Full access. The write
-boundary applies as soon as a chat is in Sandbox, before any folder has been
-saved. A working Linux Bubblewrap installation is required for Sandbox commands;
-failures identify that requirement.
+It remains a chat-specific, explicitly selected mode (volatile across restarts).
+Returning to Sandbox uses the existing process retirement flow: running commands
+keep their launch access until they finish. Sandbox never silently falls back to
+Full access. Sandbox applies per-chat by default in WebUI—there is no
+gateway-wide `.folder-grants-active` tool gate or static tool allowlist—and
+enforces the write boundary as soon as a chat is in Sandbox, before any folder
+has been saved. A working Linux Bubblewrap installation (or macOS Seatbelt) is
+required for Sandbox commands; failures identify that requirement.
 
 Private Kohaku authority, sessions and runtime credentials remain protected by
 file tools and hidden inside Sandbox commands. Host process memory/environment
@@ -24,25 +30,45 @@ file tools for their permitted files. Ordinary indexed project folders do not
 acquire these special policies. Network policy is unchanged: a remote
 (non-loopback) WebUI client can preview only files inside the focused folder.
 
-Configured MCP servers are trusted integrations and their enabled tools are
-available in managed WebUI chats. An MCP server runs outside the Sandbox
-filesystem boundary, so review its command and `enabledTools` before enabling
-it. A shell command that targets a private or internal URL is rejected before
-launch; one such denial may be followed by a fresh model turn for unrelated
-permitted work, without replaying the command or its skipped batch.
+Configured MCP servers and installed `nanobot.tools` plugins are trusted
+integrations on configuration/install (`launches_host_process = False` by
+default) and their enabled tools are available in managed WebUI chats. An MCP
+server runs outside the Sandbox filesystem boundary, so review its command and
+`enabledTools` before enabling it. Kohaku's own runtime and `config.json`
+remain masked inside Sandbox and protected from unapproved agent writes and
+auto-review approvals.
+
+Managed WebUI chats do not use a static tool allowlist: all enabled tools
+remain discoverable and callable in both **Sandbox** and **Full access** modes,
+governed by `RiskyActionPolicy` (`deny` → `allow` → Sandbox host-process
+crossing → profile/`ask` rules) and the generalized 2-stage auto-reviewer
+(`auto_review.py`). Host-process tools (`agent_browser`, `agent_device`,
+`desktop_use`, `run_cli_app`, `trend_vpn_*`) declare
+`Tool.launches_host_process = True`: read-only actions and path-less screenshots
+run without prompting, while state-changing host actions in Sandbox ask for
+approval (unless explicitly allowed) and resolve their working directory via
+`automation_working_dir()`. Explicit `deny` rules block activation in
+`tool_search` and report the policy block transparently. A shell command that
+targets a private or internal URL is rejected before launch; one such denial
+may be followed by a fresh model turn for unrelated permitted work, without
+replaying the command or its skipped batch.
 
 ## Folders Settings
 
-Use **Settings → Folders → Add folder** for any existing directory. Git is
-optional. Give it a friendly name and purpose, choose its **Sandbox access**, and
-choose whether to **Include in Agent map**:
+Use **Settings → Folders → Add folder** for any existing directory when you need
+additional writable roots or priority-higher explicit `read_only` overrides
+beyond the active **Working in** workspace. Git is optional. Give it a friendly
+name and purpose, choose its **Sandbox access**, and choose whether to
+**Include in Agent map**:
 
 - **Inherit/default** removes the folder's own explicit rule. The nearest live
-  ancestor rule applies; otherwise the Sandbox default is read-only. The agent
-  home and configured context policies remain separate built-in capabilities.
-- **Read-only** keeps programs and file tools from writing there.
-- **Read and write** permits writes. An existing ancestor grant is reused when it
-  already provides that access.
+  ancestor rule applies (or the user-selected **Working in** workspace when
+  applicable); otherwise the Sandbox default is read-only. The agent home and
+  configured context policies remain separate built-in capabilities.
+- **Read-only** keeps programs and file tools from writing there, overriding
+  writable parents and the active **Working in** workspace.
+- **Read and write** permits additional writes outside the active workspace. An
+  existing ancestor grant is reused when it already provides that access.
 
 The list joins saved grants and directory metadata by canonical path. It nests
 locations beneath their nearest saved ancestor and keeps unrelated roots
@@ -92,9 +118,10 @@ separate trusted grant store. Existing read-only rules remain unchanged.
 The internal mode identifier `restricted` and the stored grant `commands` field
 remain wire-compatible. The UI calls the mode Sandbox; that legacy command bit
 does not restrict Sandbox execution and is preserved during metadata-only edits.
-New folder grants include commands implicitly. Existing CLI/channel workspace
-restriction settings and the optional legacy `tools.exec.sandbox` setting remain
-separate. Do not enable the legacy sandbox globally to implement these modes.
+New folder grants include commands implicitly. Existing non-WebUI channel
+workspace restriction settings (`restrict_to_workspace` for CLI, API, and chat
+channels) and the optional legacy `tools.exec.sandbox` setting remain separate.
+Do not enable the legacy sandbox globally to implement these modes.
 
 Sandbox inherits the installed toolchain PATH without copying credential
 environment variables. Package caches use private temporary storage. Cached
