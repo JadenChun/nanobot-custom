@@ -72,6 +72,13 @@ def managed_profile(
     if allow_network:
         rules.append((_PROFILE_DIR / "network.sbpl").read_text(encoding="utf-8"))
     rules.append("(allow file-read*)")
+    # The blanket read above would also reach the user's other terminals, where a
+    # command could read typed input or change the mode. Only its own ptys stay open.
+    rules.append('(deny file-read* file-ioctl (regex #"^/dev/ttys[0-9]+"))')
+    rules.append(
+        '(allow file-read* file-ioctl (require-all (regex #"^/dev/ttys[0-9]+") '
+        '(extension "com.apple.sandbox.pty")))'
+    )
 
     # Local sockets follow the file rules: usable where the command may write.
     sockets: list[str] = []

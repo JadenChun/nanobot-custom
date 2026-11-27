@@ -6,7 +6,10 @@ Pure generation: nothing is launched. Path spelling is faked off macOS.
 from __future__ import annotations
 
 import os
+import platform
 import re
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -126,6 +129,69 @@ def test_other_processes_stay_private_and_the_default_is_deny() -> None:
     assert deny < rules.index("(allow process-info* (target same-sandbox))")
     assert rules.count("(allow process-info") == 1
     assert "(allow default)" not in rules
+
+
+def test_other_terminals_are_closed_again_after_the_blanket_read() -> None:
+    rules, _ = _profile(mounts=((Path("/work/project"), True),), allow_network=True)
+    tty = '(regex #"^/dev/ttys[0-9]+")'
+
+    everything = rules.index("(allow file-read*)")
+    deny = rules.index(f"(deny file-read* file-ioctl {tty})")
+    own = rules.index(
+        f'(allow file-read* file-ioctl (require-all {tty} (extension "com.apple.sandbox.pty")))',
+    )
+
+    assert everything < deny < own
+    # Nothing afterwards names terminals again.
+    assert "/dev/ttys" not in rules[rules.index("\n", own):]
+
+
+_TTY_CHECK = """
+import os, sys, termios
+try:
+    os.open(sys.argv[1], os.O_RDONLY | os.O_NOCTTY | os.O_NONBLOCK)
+except PermissionError:
+    print("outside refused")
+else:
+    print("outside OPENED")
+master, slave = os.openpty()
+own = os.open(os.ttyname(slave), os.O_RDWR | os.O_NOCTTY)
+termios.tcsetattr(own, termios.TCSANOW, termios.tcgetattr(own))
+os.write(master, b"own\\n")
+print(os.read(own, 16).decode().strip(), "pty works")
+"""
+
+
+@pytest.mark.skipif(
+    sys.platform != "darwin" or platform.machine() != "arm64",
+    reason="requires sandbox-exec on Apple Silicon macOS",
+)
+def test_a_confined_command_cannot_open_another_terminal(tmp_path: Path) -> None:
+    rules, params = managed_profile(
+        hidden=(), mounts=(), protected=(), input_files=(), unix_sockets=(),
+        allow_network=False,
+    )
+    command = [darwin_proc.SANDBOX_EXEC, "-p", rules]
+    for name, value in (*params, (LAUNCH_TMP_PARAM, str(tmp_path.resolve()))):
+        command += ["-D", f"{name}={value}"]
+    master, slave = os.openpty()
+    try:
+        os.write(master, b"typed elsewhere\n")
+        completed = subprocess.run(
+            [*command, "--", sys.executable, "-I", "-S", "-c", _TTY_CHECK, os.ttyname(slave)],
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=20,
+            close_fds=True,
+        )
+    finally:
+        os.close(slave)
+        os.close(master)
+
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout.splitlines() == ["outside refused", "own pty works"]
 
 
 def test_every_parameter_reference_is_defined() -> None:
