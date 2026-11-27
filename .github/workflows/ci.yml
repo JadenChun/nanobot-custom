@@ -308,6 +308,21 @@ jobs:
     env:
       # A hosted runner is disposable, so tests that signal real processes may run.
       KOHAKU_DARWIN_DESTRUCTIVE_TESTS: "1"
+      MACOS_EXECUTOR_TESTS: >-
+        tests/darwin
+        tests/agent/test_executor_capabilities.py
+        tests/agent/test_executor_capability_parity.py
+        tests/security/test_darwin_proc.py
+        tests/agent/test_seatbelt_tracking.py
+        tests/agent/test_macos_seatbelt_switch.py
+        tests/agent/test_native_process_supervisor_darwin.py
+        tests/agent/test_native_supervisor_give_up.py
+        tests/agent/test_native_process_io.py
+        tests/tools/test_exec_session_deadline_tree.py
+        tests/agent/test_seatbelt_profile.py
+        tests/agent/test_seatbelt_confined_launch.py
+        tests/agent/test_seatbelt_shell_wiring.py
+        tests/agent/test_managed_exec.py
 
     steps:
       - uses: actions/checkout@v4
@@ -327,22 +342,24 @@ jobs:
         run: uv sync --extra dev
 
       - name: Run macOS executor tests
-        run: >-
-          uv run --no-sync python -m pytest -q
-          tests/darwin
-          tests/agent/test_executor_capabilities.py
-          tests/agent/test_executor_capability_parity.py
-          tests/security/test_darwin_proc.py
-          tests/agent/test_seatbelt_tracking.py
-          tests/agent/test_macos_seatbelt_switch.py
-          tests/agent/test_native_process_supervisor_darwin.py
-          tests/agent/test_native_supervisor_give_up.py
-          tests/agent/test_native_process_io.py
-          tests/tools/test_exec_session_deadline_tree.py
-          tests/agent/test_seatbelt_profile.py
-          tests/agent/test_seatbelt_confined_launch.py
-          tests/agent/test_seatbelt_shell_wiring.py
-          tests/agent/test_managed_exec.py
+        run: uv run --no-sync python -m pytest -q $MACOS_EXECUTOR_TESTS
+
+      # The same tests against the built wheel, from a folder with no kohaku source,
+      # so the packaged profiles and the real supervisor are what run.
+      - name: Check the installed wheel
+        env:
+          KOHAKU_SKIP_WEBUI_BUILD: "1"
+        run: |
+          uv build --wheel --out-dir "$RUNNER_TEMP/wheel"
+          uv venv --python 3.14 "$RUNNER_TEMP/wheel-venv"
+          wheel=$(ls "$RUNNER_TEMP"/wheel/*.whl)
+          uv pip install --python "$RUNNER_TEMP/wheel-venv/bin/python" "${wheel}[dev]"
+          mkdir "$RUNNER_TEMP/wheel-tests"
+          cp -R tests conftest.py pyproject.toml "$RUNNER_TEMP/wheel-tests/"
+          cd "$RUNNER_TEMP/wheel-tests"
+          "$RUNNER_TEMP/wheel-venv/bin/python" -c \
+            'import kohaku; assert "site-packages" in kohaku.__file__, kohaku.__file__'
+          "$RUNNER_TEMP/wheel-venv/bin/python" -m pytest -q $MACOS_EXECUTOR_TESTS
 
   webui:
     needs: changes
