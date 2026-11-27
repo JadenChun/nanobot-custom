@@ -194,7 +194,6 @@ class WorkspaceFocusOwner:
             baseline_root = self._baseline_access_root(target, declared_grant)
             if baseline_root is None or len(Path(root_path).parts) >= len(baseline_root.parts):
                 from kohaku.agent.tools.native_process import native_supervisor_available
-                from kohaku.agent.tools.sandbox import managed_bwrap_available
 
                 # A live Once reference is not a capability override.  Configured
                 # context-repository protection and exec policy still decide, so
@@ -210,11 +209,12 @@ class WorkspaceFocusOwner:
                     )
                 )
                 managed_repository = self._is_managed_repository_target(target)
+                sandbox_backend = _managed_command_backend()
                 command_ready = (
                     exists
                     and task_commands
                     and not managed_repository
-                    and managed_bwrap_available()
+                    and sandbox_backend is not None
                     and native_supervisor_available()
                     and self._reference_path_allowed(
                         target, "exec", permission_owner, task_reference,
@@ -223,7 +223,7 @@ class WorkspaceFocusOwner:
                 command_reason = (
                     None if command_ready else
                     "supervisor_unavailable" if not native_supervisor_available() else
-                    "sandbox_unavailable" if not managed_bwrap_available() else
+                    "sandbox_unavailable" if sandbox_backend is None else
                     "managed_repository_policy" if managed_repository else
                     "not_granted"
                 )
@@ -238,7 +238,7 @@ class WorkspaceFocusOwner:
                     "commands": {
                         "requested": True,
                         "available": command_ready,
-                        "backend": "bwrap" if command_ready else "none",
+                        "backend": sandbox_backend if command_ready and sandbox_backend else "none",
                         "reason": command_reason,
                     },
                 }
@@ -874,13 +874,12 @@ class WorkspaceFocusOwner:
         elif not commands_requested and reason is None:
             reason = "not_granted"
         elif commands_requested:
-            from kohaku.agent.tools.sandbox import managed_bwrap_available
-
-            if not managed_bwrap_available():
+            sandbox_backend = _managed_command_backend()
+            if sandbox_backend is None:
                 reason = "unsupported_platform" if not _linux_host() else "sandbox_unavailable"
             else:
                 commands_available = True
-                backend = "bwrap"
+                backend = sandbox_backend
                 reason = None
         return {
             "boundary": "folder",
@@ -953,6 +952,18 @@ class WorkspaceFocusOwner:
         if any(_is_under(path, root.resolve(strict=False)) for root in self.policy.context_manager.read_roots()):
             return "configured"
         return "none"
+
+
+def _managed_command_backend() -> str | None:
+    """Name the sandbox that can confine a managed command on this host."""
+    # Resolve at call time so the sandbox module remains the patch point.
+    from kohaku.agent.tools import sandbox
+
+    if sandbox.managed_bwrap_available():
+        return "bwrap"
+    if sandbox.managed_seatbelt_available():
+        return "seatbelt"
+    return None
 
 
 def _linux_host() -> bool:

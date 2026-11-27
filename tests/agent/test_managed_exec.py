@@ -21,7 +21,7 @@ from kohaku.agent.tools.exec_session import ExecSessionManager, ExecSessionTool
 from kohaku.agent.tools.filesystem import ReadFileTool
 from kohaku.agent.tools.native_process import native_supervisor_available
 from kohaku.agent.tools.registry import ManagedToolDispatchGuard, ToolRegistry
-from kohaku.agent.tools.sandbox import managed_bwrap_available, wrap_managed_command
+from kohaku.agent.tools.sandbox import wrap_managed_command
 from kohaku.agent.tools.shell import ExecTool
 from kohaku.agent.turn import ToolOutcome
 from kohaku.context_repo import ContextRepoManager, ResourceAccessPolicy
@@ -903,11 +903,12 @@ os._exit(0)
 
 
 @pytest.mark.asyncio
-async def test_once_bwrap_descendant_is_supervised_until_owner_receipt(tmp_path: Path) -> None:
-    """A real task-only bwrap tree stays owned through its quiescence receipt."""
-    if sys.platform != "linux" or not managed_bwrap_available():
-        pytest.skip("Linux bubblewrap and native supervision are required")
-
+@requires_managed_confinement
+async def test_once_sandbox_descendant_is_supervised_until_owner_receipt(tmp_path: Path) -> None:
+    """A real task-only sandboxed tree stays owned through its quiescence receipt."""
+    # macOS ends the tree with real signals after the root exits, so its proof can
+    # already have arrived when the result does. Linux shows it still pending.
+    proof_pending = sys.platform == "linux"
     home = tmp_path / "agent-home"
     project = tmp_path / "task-project"
     instance = tmp_path / "instance"
@@ -994,29 +995,34 @@ os._exit(0)
         elapsed = time.monotonic() - started
         assert not isinstance(result, ToolOutcome), repr(result)
         assert "Exit code: 0" in result
-        assert elapsed < 1.3, f"tool waited for detached bwrap descendant ({elapsed:.3f}s)"
+        assert elapsed < 1.3 or not proof_pending, (
+            f"tool waited for detached sandbox descendant ({elapsed:.3f}s)"
+        )
         assert started_marker.read_text(encoding="utf-8") == "started"
         assert descendant_ready_marker.read_text(encoding="utf-8") == "ready"
         assert not finished_marker.exists()
         owner_tag = owner.native_owner_tag(reference)
         assert owner_tag is not None
-        assert store.view.tagged_native_process_counts(owner_tag) == (1, 0)
+        if proof_pending:
+            assert store.view.tagged_native_process_counts(owner_tag) == (1, 0)
 
         active, unknown = owner.retire_task_reference(
             reference,
             reason="task_cancelled",
             active_turn=False,
         )
-        assert (active, unknown) == (1, 0)
-        projection = owner.projection(
-            session_key="websocket:once-bwrap-chat",
-            source_binding=source_binding,
-            task_turn_id="once-bwrap-turn",
-            task_input_event_id="once-bwrap-event",
-        )
-        assert projection["task_access"] is not None
-        assert projection["task_access"]["state"] == "retiring"
-        assert projection["retirement"]["active_processes"] == 1
+        assert unknown == 0
+        if proof_pending:
+            assert active == 1
+            projection = owner.projection(
+                session_key="websocket:once-bwrap-chat",
+                source_binding=source_binding,
+                task_turn_id="once-bwrap-turn",
+                task_input_event_id="once-bwrap-event",
+            )
+            assert projection["task_access"] is not None
+            assert projection["task_access"]["state"] == "retiring"
+            assert projection["retirement"]["active_processes"] == 1
 
         for _attempt in range(100):
             projection = owner.projection(
@@ -1034,7 +1040,8 @@ os._exit(0)
         assert projection["task_access"]["state"] == "expired"
         assert projection["retirement"] is None
         assert store.view.tagged_native_process_counts(owner_tag) == (0, 0)
-        assert not finished_marker.exists(), "detached bwrap namespace child outlived its root"
+        await asyncio.sleep(2.0)
+        assert not finished_marker.exists(), "detached sandbox child outlived its root"
     finally:
         reset_workspace_scope(token)
 

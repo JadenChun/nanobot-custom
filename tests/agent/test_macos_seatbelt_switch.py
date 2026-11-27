@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 
 from kohaku.agent.tools import executor_capabilities as capabilities
-from kohaku.agent.tools import native_process
+from kohaku.agent.tools import native_process, sandbox
 from kohaku.config.loader import load_config
 from kohaku.security import darwin_proc
 from kohaku.security.desktop_permissions import WorkspacePermissionUnavailableError
@@ -80,23 +80,31 @@ def test_switch_changes_nothing_off_macos(monkeypatch, self_test, platform: str)
     assert self_test.runs == []
 
 
+def _macos(monkeypatch: pytest.MonkeyPatch, *, profile_ok: bool) -> None:
+    """Report macOS everywhere a projection asks, with a chosen profile probe."""
+    _platform(monkeypatch, "darwin")
+    monkeypatch.setattr(sandbox, "current_platform", lambda: "darwin")
+    monkeypatch.setattr(sandbox, "_seatbelt_profile_probe", lambda: profile_ok)
+    monkeypatch.setattr(sandbox, "managed_bwrap_available", lambda: False)
+    monkeypatch.setattr("kohaku.session.workspace_focus._linux_host", lambda: False)
+
+
 @pytest.mark.parametrize(
-    ("switch", "full_expected", "once_expected"),
+    ("switch", "profile_ok", "full_expected", "once_expected"),
     [
-        (False, (False, "none", "supervisor_unavailable"),
+        (False, True, (False, "none", "supervisor_unavailable"),
          (False, "none", "supervisor_unavailable")),
+        (True, True, (True, "native", None), (True, "seatbelt", None)),
         # Ownership alone opens Full access. Once also needs confinement.
-        (True, (True, "native", None), (False, "none", "sandbox_unavailable")),
+        (True, False, (True, "native", None), (False, "none", "sandbox_unavailable")),
     ],
 )
 def test_macos_projections_follow_the_switch(
-    tmp_path: Path, monkeypatch, self_test, switch: bool,
+    tmp_path: Path, monkeypatch, self_test, switch: bool, profile_ok: bool,
     full_expected: tuple[bool, str, str | None],
     once_expected: tuple[bool, str, str | None],
 ) -> None:
-    _platform(monkeypatch, "darwin")
-    monkeypatch.setattr("kohaku.session.workspace_focus._linux_host", lambda: False)
-    monkeypatch.setattr("kohaku.agent.tools.sandbox.managed_bwrap_available", lambda: False)
+    _macos(monkeypatch, profile_ok=profile_ok)
     capabilities.configure_macos_seatbelt(switch)
     owner, sessions, _home = _build(tmp_path)
     enable = functools.partial(
@@ -161,3 +169,25 @@ def test_loading_without_process_policy_leaves_the_switch_alone(
     load_config(path, apply_network_policy=False)
 
     assert capabilities.macos_seatbelt_ready() is True
+
+
+@pytest.mark.parametrize(
+    ("switch", "profile_ok", "expected"),
+    [
+        (False, True, (False, "none", "unsupported_platform")),
+        (True, True, (True, "seatbelt", None)),
+        (True, False, (False, "none", "unsupported_platform")),
+    ],
+)
+def test_macos_sandbox_commands_follow_the_switch(
+    tmp_path: Path, monkeypatch, self_test, switch: bool, profile_ok: bool,
+    expected: tuple[bool, str, str | None],
+) -> None:
+    _macos(monkeypatch, profile_ok=profile_ok)
+    capabilities.configure_macos_seatbelt(switch)
+    owner, _sessions, home = _build(tmp_path)
+
+    access = owner.effective_access(home)
+
+    assert access["policy"] == "managed"
+    assert _commands(access) == expected
