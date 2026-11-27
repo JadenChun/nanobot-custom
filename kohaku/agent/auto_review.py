@@ -5,9 +5,10 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal, cast
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 from kohaku.agent.permission_rules import match_explicit_rule, sandbox_exec_risk_reason
 from kohaku.agent.tools.shell import DEFAULT_EXEC_DENY_PATTERNS
@@ -19,8 +20,10 @@ if TYPE_CHECKING:
 
 AutoReviewDecision = Literal["approve", "ask_user"]
 
-DEFAULT_AUTO_REVIEW_TIMEOUT_S = 20.0
+DEFAULT_AUTO_REVIEW_TIMEOUT_S = 30.0
 DEFAULT_AUTO_REVIEW_MAX_TOKENS = 1024
+DEFAULT_RECENT_CONVERSATION_TURNS = 6
+DEFAULT_RECENT_CONVERSATION_MAX_CHARS = 400
 
 _COMPILED_EXEC_DENY_PATTERNS: tuple[re.Pattern[str], ...] = tuple(
     re.compile(pattern) for pattern in DEFAULT_EXEC_DENY_PATTERNS
@@ -48,16 +51,24 @@ _CODE_FENCE_RE = re.compile(
 )
 
 _SYSTEM_PROMPT = (
-    "You are a conservative security reviewer evaluating whether a proposed local "
-    "Sandbox escalation command may be auto-approved without interrupting the user.\n\n"
+    "You are a security reviewer evaluating whether a proposed Sandbox escalation "
+    "shell command may be auto-approved without interrupting the user.\n\n"
+    "Context:\n"
+    "- Every command sent to you is requesting to run outside the OS sandbox (for example, "
+    "to talk to Docker/local daemons, run user-installed local CLI utilities, or use host "
+    "dev/project tooling). Do NOT reject a command merely because it runs outside the "
+    "sandbox or invokes a local CLI binary located outside the active workspace folder.\n"
+    "- Use both `user_request` and `recent_conversation` (when provided) to understand "
+    "short follow-up messages (e.g. 'ok it is sent now', 'go ahead', 'do the same for X').\n\n"
     "Rules:\n"
-    "- Return {\"decision\": \"approve\", \"reason\": \"<short reason>\"} ONLY when the "
-    "proposed command directly fulfills the user's explicit request, stays bounded to "
-    "the active workspace or expected local project tooling, and does not exfiltrate "
-    "secrets or damage host state.\n"
-    "- When in doubt, or if the command is broader than requested, accesses sensitive "
-    "data, or could cause unexpected side effects, return "
-    "{\"decision\": \"ask_user\", \"reason\": \"<short reason>\"}.\n"
+    "- Return {\"decision\": \"approve\", \"reason\": \"<short reason>\"} when the "
+    "proposed command aligns with the user's request and recent conversation, performs "
+    "routine local project/tooling/service work, and does not destroy data, exfiltrate "
+    "secrets, or trigger unexpected external side effects.\n"
+    "- Return {\"decision\": \"ask_user\", \"reason\": \"<short reason>\"} when the "
+    "command is destructive, accesses sensitive credentials/private data, performs "
+    "unrequested external actions (pushing code, publishing, sending external messages, "
+    "modifying remote/production infrastructure), or is unrelated to the user's intent.\n"
     "- Respond ONLY with a single valid JSON object matching "
     "{\"decision\": \"approve\" | \"ask_user\", \"reason\": \"<short reason>\"}. "
     "Do not include any other text."
@@ -123,12 +134,61 @@ def check_auto_review_eligibility(
     return None
 
 
+def _extract_message_text(content: object) -> str:
+    if isinstance(content, str):
+        return content.strip()
+    if isinstance(content, list):
+        parts: list[str] = []
+        for item in cast(list[object], content):
+            if isinstance(item, Mapping):
+                block = cast(Mapping[str, Any], item)
+                if block.get("type") == "text" and isinstance(block.get("text"), str):
+                    text = str(block["text"]).strip()
+                    if text:
+                        parts.append(text)
+        return "\n".join(parts).strip()
+    return ""
+
+
+def extract_recent_conversation(
+    messages: Sequence[Mapping[str, Any]] | None,
+    *,
+    current_user_prompt: str = "",
+    max_turns: int = DEFAULT_RECENT_CONVERSATION_TURNS,
+    max_chars_per_turn: int = DEFAULT_RECENT_CONVERSATION_MAX_CHARS,
+) -> list[dict[str, str]]:
+    """Extract recent trusted user/assistant text turns, excluding all tool output."""
+    if not messages or max_turns <= 0:
+        return []
+    extracted: list[dict[str, str]] = []
+    for raw in messages:
+        role = raw.get("role")
+        if role not in {"user", "assistant"}:
+            continue
+        text = _extract_message_text(raw.get("content"))
+        if not text:
+            continue
+        if len(text) > max_chars_per_turn:
+            text = text[: max_chars_per_turn - 1].rstrip() + "…"
+        extracted.append({"role": str(role), "text": text})
+    normalized_current = current_user_prompt.strip()
+    if (
+        normalized_current
+        and extracted
+        and extracted[-1]["role"] == "user"
+        and extracted[-1]["text"] == normalized_current[:max_chars_per_turn]
+    ):
+        extracted.pop()
+    return extracted[-max_turns:]
+
+
 def _build_review_user_message(
     *,
     user_prompt: str,
     call: ToolCallRequest,
     workspace: Path,
     summary: str,
+    recent_conversation: Sequence[Mapping[str, str]] | None = None,
 ) -> str:
     raw_command = call.arguments.get("command")
     command = raw_command.strip() if isinstance(raw_command, str) else ""
@@ -138,7 +198,7 @@ def _build_review_user_message(
         if isinstance(raw_working_dir, str) and raw_working_dir.strip()
         else str(workspace)
     )
-    payload = {
+    payload: dict[str, Any] = {
         "user_request": user_prompt.strip() or "(no explicit user prompt provided)",
         "workspace": str(workspace),
         "approval_summary": summary,
@@ -148,6 +208,12 @@ def _build_review_user_message(
             "working_dir": working_dir,
         },
     }
+    if recent_conversation:
+        payload["recent_conversation"] = [
+            {"role": str(item["role"]), "text": str(item["text"])}
+            for item in recent_conversation
+            if "role" in item and "text" in item
+        ]
     return json.dumps(payload, ensure_ascii=False, indent=2)
 
 
@@ -193,6 +259,7 @@ async def review_sandbox_escalation(
     call: ToolCallRequest,
     summary: str,
     user_prompt: str,
+    recent_conversation: Sequence[Mapping[str, str]] | None = None,
     timeout_s: float = DEFAULT_AUTO_REVIEW_TIMEOUT_S,
     max_tokens: int = DEFAULT_AUTO_REVIEW_MAX_TOKENS,
 ) -> AutoReviewResult:
@@ -225,6 +292,7 @@ async def review_sandbox_escalation(
         call=call,
         workspace=workspace,
         summary=summary,
+        recent_conversation=recent_conversation,
     )
     messages: list[dict[str, object]] = [
         {"role": "system", "content": _SYSTEM_PROMPT},

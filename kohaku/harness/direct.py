@@ -7,7 +7,11 @@ from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from kohaku.agent.auto_review import AutoReviewResult, review_sandbox_escalation
+from kohaku.agent.auto_review import (
+    AutoReviewResult,
+    extract_recent_conversation,
+    review_sandbox_escalation,
+)
 from kohaku.agent.runner import AgentRunResult
 from kohaku.bus.outbound_events import ExternalApprovalEvent, SessionUpdatedEvent
 from kohaku.events import NO_EVENTS
@@ -140,6 +144,11 @@ async def run_direct_turn(
         if child is not None:
             prompt = f"{child.instructions}\n\n## Assignment\n{prompt}"
 
+        recent_conversation = extract_recent_conversation(
+            context.source_history.messages() if context.source_history is not None else None,
+            current_user_prompt=trusted_prompt,
+        )
+
         async def _auto_review(call: ExternalToolCall, reason: str) -> AutoReviewResult:
             return await review_sandbox_escalation(
                 runtime=runtime,
@@ -152,6 +161,7 @@ async def run_direct_turn(
                 ),
                 summary=reason,
                 user_prompt=trusted_prompt,
+                recent_conversation=recent_conversation,
             )
 
         auto_review_fn = (

@@ -4018,7 +4018,18 @@ class AgentLoop:
             and not decision.metadata.get("private_network_exception")
             and current_run()
         ):
+            from kohaku.agent.auto_review import extract_recent_conversation
+
             review_workspace = context.policy.workspace or self.workspace
+            history_messages = (
+                context.source_history.messages()
+                if context.source_history is not None
+                else None
+            )
+            recent_conversation = extract_recent_conversation(
+                history_messages,
+                current_user_prompt=user_prompt,
+            )
             review = await review_sandbox_escalation(
                 runtime=runtime,
                 permissions=self.tools_config.permissions,
@@ -4026,6 +4037,7 @@ class AgentLoop:
                 call=call,
                 summary=summary,
                 user_prompt=user_prompt,
+                recent_conversation=recent_conversation,
             )
             if review.decision == "approve" and current_run():
                 logger.info(
@@ -4035,6 +4047,13 @@ class AgentLoop:
                     review.reason,
                 )
                 return self.approval_admission.issue_live_effect(pending, context, current_run)
+            logger.info(
+                "Sandbox auto-review deferred to user for session={} stage={} summary={!r} reason={!r}",
+                key,
+                review.stage,
+                summary,
+                review.reason,
+            )
 
         action = await self.external_harness.approvals.wait_for_decision(
             approval, is_authorized=current_run, control_session_key=key,
