@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 
 from kohaku.agent.auto_review import (
     AutoReviewResult,
-    extract_recent_conversation,
+    build_auto_review_context,
     review_sandbox_escalation,
 )
 from kohaku.agent.runner import AgentRunResult
@@ -144,12 +144,16 @@ async def run_direct_turn(
         if child is not None:
             prompt = f"{child.instructions}\n\n## Assignment\n{prompt}"
 
-        recent_conversation = extract_recent_conversation(
-            context.source_history.messages() if context.source_history is not None else None,
-            current_user_prompt=trusted_prompt,
+        history_messages = (
+            context.source_history.messages() if context.source_history is not None else None
         )
 
         async def _auto_review(call: ExternalToolCall, reason: str) -> AutoReviewResult:
+            review_context = build_auto_review_context(
+                history_messages,
+                current_user_prompt=trusted_prompt,
+                tools_used=context.tools_used,
+            )
             return await review_sandbox_escalation(
                 runtime=runtime,
                 permissions=tool_permissions,
@@ -161,7 +165,7 @@ async def run_direct_turn(
                 ),
                 summary=reason,
                 user_prompt=trusted_prompt,
-                recent_conversation=recent_conversation,
+                review_context=review_context,
             )
 
         auto_review_fn = (
