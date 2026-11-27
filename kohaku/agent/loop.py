@@ -3959,6 +3959,7 @@ class AgentLoop:
         *,
         runtime: LLMRuntime | None = None,
         user_prompt: str = "",
+        active_goal: str | None = None,
     ) -> EffectApprovalAuthority | None:
         from kohaku.agent.approvals import PendingTurnApproval
         from kohaku.agent.auto_review import review_sandbox_escalation
@@ -4021,7 +4022,20 @@ class AgentLoop:
             and not decision.metadata.get("private_network_exception")
             and current_run()
         ):
+            from kohaku.agent.auto_review import build_auto_review_context
+
             review_workspace = context.policy.workspace or self.workspace
+            history_messages = (
+                context.source_history.messages()
+                if context.source_history is not None
+                else None
+            )
+            review_context = build_auto_review_context(
+                history_messages,
+                current_user_prompt=user_prompt,
+                active_goal=active_goal,
+                tools_used=context.tools_used,
+            )
             review = await review_sandbox_escalation(
                 runtime=runtime,
                 permissions=self.tools_config.permissions,
@@ -4029,6 +4043,7 @@ class AgentLoop:
                 call=call,
                 summary=summary,
                 user_prompt=user_prompt,
+                review_context=review_context,
             )
             if review.decision == "approve" and current_run():
                 logger.info(
@@ -4038,6 +4053,13 @@ class AgentLoop:
                     review.reason,
                 )
                 return self.approval_admission.issue_live_effect(pending, context, current_run)
+            logger.info(
+                "Sandbox auto-review deferred to user for session={} stage={} summary={!r} reason={!r}",
+                key,
+                review.stage,
+                summary,
+                review.reason,
+            )
 
         action = await self.external_harness.approvals.wait_for_decision(
             approval, is_authorized=current_run, control_session_key=key,
@@ -4111,12 +4133,22 @@ class AgentLoop:
                 or (transcript_input.current_message if transcript_input.current_role == "user" else None)
                 or ""
             )
+            active_goal_text: str | None = None
+            if session is not None:
+                from kohaku.session.goal_state import goal_state_raw, parse_goal_state
+
+                parsed_goal = parse_goal_state(goal_state_raw(session.metadata))
+                if parsed_goal and parsed_goal.get("active"):
+                    raw_obj = parsed_goal.get("objective")
+                    if isinstance(raw_obj, str) and raw_obj.strip():
+                        active_goal_text = raw_obj.strip()
             run_context.request_live_approval = partial(
                 self._await_live_tool_approval,
                 run_context,
                 events,
                 runtime=runtime,
                 user_prompt=user_prompt,
+                active_goal=active_goal_text,
             )
         tool_policy: ToolPolicy = risky_policy
         if run_context.internal_tool_policy is not None:
