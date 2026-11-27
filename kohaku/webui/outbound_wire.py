@@ -104,6 +104,9 @@ class DelegatedChildWirePayload(TypedDict):
     pending_approval_id: str | None
     blocked_run_id: str | None
     result_disposition: str | None
+    spawn_call_id: str | None
+    duration_ms: NotRequired[int]
+    step_count: NotRequired[int]
     harness: NotRequired[str]
 
 
@@ -210,6 +213,15 @@ def encode_context_compaction(
     return payload
 
 
+DELEGATED_CHILD_RUN_TOTAL_FIELDS = ("duration_ms", "step_count")
+DELEGATED_CHILD_RUN_TOTAL_STATES = frozenset({"completed", "failed", "stopped"})
+
+
+def delegated_child_run_total(value: object) -> int | None:
+    """Validate a run total that can be represented exactly in the WebUI."""
+    return value if type(value) is int and 0 <= value < 2**53 else None
+
+
 def encode_delegated_child(
     chat_id: str,
     event: DelegatedChildEvent,
@@ -251,7 +263,13 @@ def encode_delegated_child(
         "pending_approval_id": event.pending_approval_id,
         "blocked_run_id": event.blocked_run_id,
         "result_disposition": event.result_disposition,
+        "spawn_call_id": event.spawn_call_id,
     }
+    if event.state in DELEGATED_CHILD_RUN_TOTAL_STATES:
+        if (duration_ms := delegated_child_run_total(event.duration_ms)) is not None:
+            payload["duration_ms"] = duration_ms
+        if (step_count := delegated_child_run_total(event.step_count)) is not None:
+            payload["step_count"] = step_count
     if event.harness == "claude_sdk":
         payload["harness"] = event.harness
     return payload

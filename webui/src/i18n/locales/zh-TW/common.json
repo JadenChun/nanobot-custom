@@ -1130,6 +1130,15 @@
     "error": "連線錯誤"
   },
   "thread": {
+    "delegatedChild": {
+      "assignment": "任務說明",
+      "partial": "部分完成",
+      "showResult": "顯示結果",
+      "hideResult": "隱藏結果",
+      "stepCount_one": "{{count}} 步",
+      "stepCount_many": "{{count}} 步",
+      "stepCount_other": "{{count}} 步"
+    },
     "runStopped": "執行已停止",
     "compaction": {
       "cancelled": "上下文壓縮已取消",
@@ -1207,6 +1216,13 @@
       "sessionInfo": "對話詳細資料"
     },
     "sessionInfo": {
+      "subagents": "子代理",
+      "subagentsCount": "子代理（{{count}}）",
+      "jumpTo": "跳轉",
+      "jumpToSubagent": "跳轉至{{task}}",
+      "subagentNotLoaded": "目前載入的歷史記錄中沒有這項活動",
+      "openHistory": "開啟歷史記錄",
+      "openSubagentHistory": "開啟{{task}}的歷史記錄",
       "title": "對話",
       "untitled": "未命名話題",
       "automations": "自動任務",

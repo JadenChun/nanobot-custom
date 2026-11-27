@@ -25,7 +25,6 @@ use tauri::{
     webview::{NewWindowResponse, WebviewWindow},
     AppHandle, Manager, Wry,
 };
-#[cfg(target_os = "linux")]
 use tauri_plugin_opener::OpenerExt;
 use url::Url;
 #[cfg(target_os = "linux")]
@@ -707,14 +706,12 @@ fn has_credentials(url: &Url) -> bool {
     !url.username().is_empty() || url.password().is_some()
 }
 
-#[cfg(target_os = "linux")]
 fn is_safe_external(url: &Url) -> bool {
     matches!(url.scheme(), "http" | "https")
         && url.host_str().is_some()
         && !has_credentials(url)
 }
 
-#[cfg(target_os = "linux")]
 fn open_external_url(app: &AppHandle<Wry>, url: Url) {
     let app = app.clone();
     let href = url.to_string();
@@ -800,22 +797,59 @@ pub fn create_setup_window(app: &AppHandle<Wry>) -> tauri::Result<()> {
     let selected = app.state::<GatewayNavigation>().inner().clone();
     let setup = macos_setup_url();
     let config = &app.config().app.windows[0];
+    let opener_app = app.clone();
+    // Returns whether the webview may navigate. Safe off-site links go to the
+    // system browser instead.
+    let route = move |target: &Url| {
+        let action = classify_link(
+            target,
+            &setup,
+            selected.read().ok().as_deref().and_then(Option::as_ref),
+        );
+        if action == LinkAction::OpenExternal {
+            open_external_url(&opener_app, target.clone());
+        }
+        action == LinkAction::Allow
+    };
+    let popup_route = route.clone();
     tauri::WebviewWindowBuilder::from_config(app, config)?
-        .on_navigation(move |target| {
-            macos_navigation_allowed(
-                target,
-                &setup,
-                selected.read().ok().as_deref().and_then(Option::as_ref),
-            )
+        // Wry exposes no user gesture or target frame here, so scripted and
+        // subframe navigations to safe off-site links open externally too.
+        .on_navigation(move |target| route(target))
+        .on_new_window(move |target, _| {
+            popup_route(&target);
+            new_window_response()
         })
-        // Wry does not expose a trusted user gesture in the popup callback.
-        // Keep external navigation and popups closed rather than opening them.
-        .on_new_window(|_, _| new_window_response())
         .build()?;
     Ok(())
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", test))]
+#[derive(Debug, PartialEq, Eq)]
+enum LinkAction {
+    Allow,
+    OpenExternal,
+    Deny,
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn classify_link(target: &Url, setup: &Url, selected: Option<&Url>) -> LinkAction {
+    if macos_navigation_allowed(target, setup, selected) {
+        LinkAction::Allow
+    } else if is_safe_external(target)
+        // The chat URL's credential must stay inside the webview, even if the
+        // gateway selection changed while that load was pending.
+        && !target
+            .fragment()
+            .is_some_and(|fragment| fragment.contains("bootstrapSecret="))
+    {
+        LinkAction::OpenExternal
+    } else {
+        LinkAction::Deny
+    }
+}
+
+#[cfg(any(target_os = "macos", test))]
 fn macos_navigation_allowed(target: &Url, setup: &Url, selected: Option<&Url>) -> bool {
     // URL origins for the custom tauri: scheme are opaque; match the exact
     // bundled setup URL, then use normal origin checks for the HTTP gateway.
@@ -858,6 +892,56 @@ mod tests {
         assert!(!macos_navigation_allowed(&old, &setup, Some(&current)));
         let other_page = setup.join("other.html").unwrap();
         assert!(!macos_navigation_allowed(&other_page, &setup, Some(&current)));
+    }
+
+    #[test]
+    fn link_classification_separates_in_app_external_and_denied() {
+        let setup = Url::parse("tauri://localhost").unwrap();
+        let gateway = Url::parse("http://127.0.0.1:18881/").unwrap();
+        let classify = |target: &str, selected: Option<&Url>| {
+            classify_link(&Url::parse(target).unwrap(), &setup, selected)
+        };
+
+        for target in [
+            "tauri://localhost",
+            "tauri://localhost/",
+            "http://127.0.0.1:18881/",
+            "http://127.0.0.1:18881/chat?x=1#/?bootstrapSecret=s",
+        ] {
+            assert_eq!(classify(target, Some(&gateway)), LinkAction::Allow, "{target}");
+        }
+        for target in [
+            "https://github.com/example/repo/pull/1",
+            "http://example.invalid/path?q=1#section",
+            "HTTPS://EXAMPLE.INVALID/",
+            // Another port is another origin, including on loopback.
+            "http://127.0.0.1:3000/",
+        ] {
+            assert_eq!(classify(target, Some(&gateway)), LinkAction::OpenExternal, "{target}");
+            assert_eq!(classify(target, None), LinkAction::OpenExternal, "{target}");
+        }
+        for target in [
+            "file:///etc/passwd",
+            "javascript:alert(1)",
+            "data:text/html,hello",
+            "about:blank",
+            "blob:https://example.invalid/id",
+            "mailto:someone@example.invalid",
+            "vscode://file/tmp/a",
+            "tauri://localhost/other.html",
+            "ftp://example.invalid/",
+            "ws://example.invalid/",
+            "https://user@example.invalid/",
+            "http://user@127.0.0.1:18881/",
+        ] {
+            assert_eq!(classify(target, Some(&gateway)), LinkAction::Deny, "{target}");
+        }
+        // A chat URL that no longer matches the selection must not carry its
+        // credential into the system browser.
+        let chat = "http://127.0.0.1:18881/#/?bootstrapSecret=s";
+        assert_eq!(classify(chat, None), LinkAction::Deny);
+        let replaced = Url::parse("http://127.0.0.1:18882/").unwrap();
+        assert_eq!(classify(chat, Some(&replaced)), LinkAction::Deny);
     }
 
     #[test]

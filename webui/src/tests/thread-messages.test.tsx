@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -70,20 +70,10 @@ describe("ThreadMessages", () => {
 
     act(() => { vi.advanceTimersByTime(10_000); });
     rerender(<ThreadMessages messages={messages.slice(0, 5)} isStreaming activeTurnId={turnId} />);
-    const earlier = screen.getByRole("button", { name: "Activity" });
-    const live = screen.getByRole("button", { name: /^Working(?: · |$)/ });
     expect(screen.getAllByRole("button", { name: /^Working(?: · |$)/ })).toHaveLength(1);
-    // Keep chronological order: earlier work folds above the intermediate
-    // commentary, and the active work stream stays open at the bottom below it.
-    const liveOrder = [
-      screen.getByText("Inspect the clip"), screen.getByText("Planning"),
-      earlier, screen.getByText("Checking"), live,
-    ];
-    for (let index = 1; index < liveOrder.length; index += 1) {
-      expect(liveOrder[index - 1].compareDocumentPosition(liveOrder[index]) & Node.DOCUMENT_POSITION_FOLLOWING)
-        .toBe(Node.DOCUMENT_POSITION_FOLLOWING);
-    }
-    expect(screen.getByText("frame.png", { exact: false })).toBeVisible();
+    const work = screen.getByTestId("agent-activity-scroll");
+    expect(work).toHaveTextContent(/Planning.*Checking.*frame.png/);
+    expect(within(work).getByText("frame.png", { exact: false })).toBeVisible();
 
     act(() => { vi.advanceTimersByTime(10_000); });
     rerender(<ThreadMessages messages={messages} isStreaming activeTurnId={turnId} />);
@@ -353,7 +343,7 @@ describe("ThreadMessages", () => {
     expect(screen.getByText("stable final answer").closest("p")).toBe(paragraph);
   });
 
-  it("keeps live Markdown mounted when a later tool activity arrives", async () => {
+  it("moves live Markdown into activity when a later tool starts", async () => {
     await act(async () => {
       await preloadMarkdownText();
     });
@@ -372,7 +362,7 @@ describe("ThreadMessages", () => {
       role: "assistant",
       content: "**I will check that.**",
       createdAt: 2,
-      isStreaming: false,
+      isStreaming: true,
       turnId,
       turnPhase: "answer",
       turnSeq: 1,
@@ -409,8 +399,14 @@ describe("ThreadMessages", () => {
       />,
     );
 
-    expect(screen.getByText("I will check that.")).toBe(paragraph);
-    expect(screen.getByText(/working/i)).toBeInTheDocument();
+    const note = screen.getByText("I will check that.");
+    expect(note.tagName).toBe("STRONG");
+    expect(note.closest("[data-testid='activity-model-message']")).toBeInTheDocument();
+    expect(note.closest(".markdown-content")).toHaveClass("text-muted-foreground");
+    expect(within(screen.getByTestId("agent-activity-scroll")).getByText("I will check that.")).toBeVisible();
+    expect(screen.getAllByText("I will check that.")).toHaveLength(1);
+    expect(within(screen.getByTestId("agent-activity-scroll")).queryByRole("button", { name: "Copy" }))
+      .not.toBeInTheDocument();
   });
 
   it("projects a turn in causal order independently of streaming state", () => {
@@ -475,8 +471,7 @@ describe("ThreadMessages", () => {
 
     expect(order(units)).toEqual([
       "u1",
-      "a1",
-      "activity:t1,r1",
+      "activity:a1,t1,r1",
       "a2",
     ]);
 
@@ -487,7 +482,8 @@ describe("ThreadMessages", () => {
     const finalAnswer = screen.getByText("Inspection complete.");
     const earlierActivity = screen.getByRole("button", { name: "Activity" });
     const tailWorking = screen.getByRole("status", { name: /^Working(?: · |$)/ });
-    expect(firstAnswer.compareDocumentPosition(earlierActivity) & Node.DOCUMENT_POSITION_FOLLOWING)
+    expect(firstAnswer.closest("[data-testid='activity-model-message']")).toBeInTheDocument();
+    expect(earlierActivity.compareDocumentPosition(firstAnswer) & Node.DOCUMENT_POSITION_FOLLOWING)
       .toBeTruthy();
     expect(earlierActivity.compareDocumentPosition(finalAnswer) & Node.DOCUMENT_POSITION_FOLLOWING)
       .toBeTruthy();
@@ -496,7 +492,7 @@ describe("ThreadMessages", () => {
 
     rerender(<ThreadMessages messages={messages} isStreaming={false} activeTurnId={null} />);
     const completedActivity = screen.getByRole("button", { name: /worked/i });
-    expect(firstAnswer.compareDocumentPosition(completedActivity) & Node.DOCUMENT_POSITION_FOLLOWING)
+    expect(completedActivity.compareDocumentPosition(firstAnswer) & Node.DOCUMENT_POSITION_FOLLOWING)
       .toBeTruthy();
     expect(completedActivity.compareDocumentPosition(finalAnswer) & Node.DOCUMENT_POSITION_FOLLOWING)
       .toBeTruthy();
@@ -592,24 +588,17 @@ describe("ThreadMessages", () => {
         : unit.message.id
     ))).toEqual([
       "user",
-      "activity:reasoning-before,ok-reasoning",
-      "ok",
-      "activity:first-tool,second-tool,final-reasoning",
+      "activity:reasoning-before,ok-reasoning,ok,first-tool,second-tool,final-reasoning",
       "final",
     ]);
-    expect(units.map((unit) => unit.sourceMessageCount)).toEqual([1, 1, 1, 3, 1]);
+    expect(units.map((unit) => unit.sourceMessageCount)).toEqual([1, 5, 1]);
 
     render(<ThreadMessages messages={messages} isStreaming={false} />);
-
-    const activityShells = screen.getAllByRole("button", { name: /^(?:Activity|Worked)/ });
-    const ok = screen.getByText("ok");
-    const final = screen.getByText("finished");
-    expect(activityShells).toHaveLength(2);
-    expect(activityShells[0].compareDocumentPosition(ok) & Node.DOCUMENT_POSITION_FOLLOWING)
-      .toBeTruthy();
-    expect(ok.compareDocumentPosition(activityShells[1]) & Node.DOCUMENT_POSITION_FOLLOWING)
-      .toBeTruthy();
-    expect(activityShells[1].compareDocumentPosition(final) & Node.DOCUMENT_POSITION_FOLLOWING)
+    const activity = screen.getByRole("button", { name: /^Worked/ });
+    expect(activity).toHaveAttribute("aria-expanded", "false");
+    fireEvent.click(activity);
+    expect(within(screen.getByTestId("agent-activity-scroll")).getByText("ok")).toBeVisible();
+    expect(activity.compareDocumentPosition(screen.getByText("finished")) & Node.DOCUMENT_POSITION_FOLLOWING)
       .toBeTruthy();
   });
 
@@ -1526,7 +1515,7 @@ describe("ThreadMessages", () => {
     expect(screen.queryByText("Worked for 0s")).not.toBeInTheDocument();
   });
 
-  it("keeps answer slices on either side of activity in generation order", () => {
+  it("folds pre-tool prose without adding a second copy or fork action", () => {
     const messages: UIMessage[] = [
       {
         id: "early",
@@ -1551,17 +1540,13 @@ describe("ThreadMessages", () => {
     ];
 
     const units = buildDisplayUnits(messages);
-    expect(units).toHaveLength(3);
+    expect(units).toHaveLength(2);
     expect(units[0]).toMatchObject({
-      type: "message",
-      message: { id: "early", content: "starting…" },
-      sourceMessageCount: 1,
+      type: "activity",
+      messages: [{ id: "early", activityKind: "model" }, { id: "t1" }],
+      sourceMessageCount: 2,
     });
-    expect(units[1].type === "activity" ? units[1].messages.map((m) => m.id) : []).toEqual([
-      "t1",
-    ]);
-    expect(units[1].sourceMessageCount).toBe(1);
-    expect(units[2]).toMatchObject({
+    expect(units[1]).toMatchObject({
       type: "message",
       message: { id: "late", content: "final reply" },
       sourceMessageCount: 1,
@@ -1575,9 +1560,12 @@ describe("ThreadMessages", () => {
       />,
     );
 
-    expect(screen.getAllByRole("button", { name: "Copy" })).toHaveLength(2);
+    expect(screen.getAllByRole("button", { name: "Copy" })).toHaveLength(1);
     expect(screen.getAllByRole("button", { name: "Fork" })).toHaveLength(1);
-    expect(screen.getByText("starting…").closest("[data-testid='activity-model-message']")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: /^Worked/ }));
+    const note = screen.getByText("starting…").closest("[data-testid='activity-model-message']");
+    expect(note).toBeVisible();
+    expect(note?.querySelector("[data-assistant-footer]")).toBeNull();
     expect(screen.getByText("final reply").closest("[data-testid='activity-model-message']")).toBeNull();
   });
 
@@ -1612,16 +1600,12 @@ describe("ThreadMessages", () => {
 
     const units = buildDisplayUnits(messages);
 
-    expect(units).toHaveLength(3);
+    expect(units).toHaveLength(2);
     expect(units[0]).toMatchObject({
-      type: "message",
-      message: { id: "early", content: "generated the file" },
-      sourceMessageCount: 1,
+      type: "activity",
+      messages: [{ id: "early", activityKind: "model" }, { id: "t1" }],
     });
-    expect(units[1].type === "activity" ? units[1].messages.map((m) => m.id) : []).toEqual([
-      "t1",
-    ]);
-    expect(units[2]).toMatchObject({
+    expect(units[1]).toMatchObject({
       type: "message",
       message: {
         id: "attachment",
@@ -1675,7 +1659,7 @@ describe("ThreadMessages", () => {
 
     rerender(<ThreadMessages {...props} isStreaming={false} activeTurnId={null} />);
 
-    expect(container.querySelectorAll('[data-assistant-footer] [aria-label="Copy"]')).toHaveLength(3);
+    expect(container.querySelectorAll('[data-assistant-footer] [aria-label="Copy"]')).toHaveLength(2);
     expect(container.querySelectorAll('[data-assistant-footer] [aria-label="Fork"]')).toHaveLength(2);
   });
 
@@ -1862,7 +1846,6 @@ describe("ThreadMessages", () => {
       .filter(Boolean);
 
     expect(assistantFlags).toEqual([
-      ["a1", false],
       ["a2", true],
       ["a3", true],
     ]);
@@ -1930,7 +1913,7 @@ describe("ThreadMessages", () => {
     expect(unitKeysForDisplay(liveUnits)[1]).toBe("turn-t-1-activity-1");
   });
 
-  it("keeps live ComfyUI MCP progress below an intermediate response instead of hoisting it above", () => {
+  it("keeps live ComfyUI MCP progress below the note in the same fold", () => {
     vi.useFakeTimers();
     const startedAt = 1_800_000_000_000;
     const turnId = "turn-comfy";
@@ -2026,8 +2009,7 @@ describe("ThreadMessages", () => {
     expect(commentary.compareDocumentPosition(pendingBottom) & Node.DOCUMENT_POSITION_FOLLOWING)
       .toBeTruthy();
 
-    // Phase 3: ComfyUI MCP tool starts running — its live Working fold and
-    // progress bar stay at the bottom below the intermediate commentary.
+    // Phase 3: the tool starts, moving the note into the fold above its progress.
     act(() => { vi.advanceTimersByTime(143_000); });
     rerender(
       <ThreadMessages
@@ -2042,11 +2024,12 @@ describe("ThreadMessages", () => {
     const liveComfyFold = screen.getByRole("button", { name: "Working · 3m 8s" });
     expect(liveComfyFold).toHaveAttribute("aria-expanded", "true");
     expect(screen.queryByRole("status", { name: /^Working(?: · |$)/ })).toBeNull();
-    expect(screen.getByRole("button", { name: "Activity" })
-      .compareDocumentPosition(commentary) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(commentary.compareDocumentPosition(liveComfyFold) & Node.DOCUMENT_POSITION_FOLLOWING)
-      .toBeTruthy();
-    expect(screen.getByText(/Sampling step 9\/20/)).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Activity" })).toBeNull();
+    const work = within(screen.getByTestId("agent-activity-scroll"));
+    const note = work.getByText("Checked the project state first. Rendering style probes now.");
+    const progress = work.getByText(/Sampling step 9\/20/);
+    expect(note.compareDocumentPosition(progress) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(progress).toBeVisible();
     expect(screen.getByTestId("activity-progress-bar")).toHaveAttribute("aria-valuenow", "45");
 
     // Phase 4: turn completes — chronological order is preserved and only the
@@ -2078,10 +2061,10 @@ describe("ThreadMessages", () => {
 
     expect(screen.queryByRole("button", { name: /^Working(?: · |$)/ })).toBeNull();
     expect(screen.queryByRole("status", { name: /^Working(?: · |$)/ })).toBeNull();
-    expect(screen.getByRole("button", { name: "Activity" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Activity" })).toBeNull();
     const completedComfy = screen.getByRole("button", { name: "Worked for 3m 8s" });
     const doneText = screen.getByText("All three style probes are ready.");
-    expect(commentary.compareDocumentPosition(completedComfy) & Node.DOCUMENT_POSITION_FOLLOWING)
+    expect(completedComfy.compareDocumentPosition(note) & Node.DOCUMENT_POSITION_FOLLOWING)
       .toBeTruthy();
     expect(completedComfy.compareDocumentPosition(doneText) & Node.DOCUMENT_POSITION_FOLLOWING)
       .toBeTruthy();
@@ -2188,7 +2171,7 @@ describe("ThreadMessages", () => {
     expect(screen.getByRole("status", { name: "Working · 3s" })).toBeInTheDocument();
   });
 
-  it("removes reserved footer gaps under intermediate responses and tightens within-turn spacing", () => {
+  it("does not reserve an answer footer under an activity note", () => {
     const messages: UIMessage[] = [
       { id: "u1", role: "user", content: "so what next?", turnId: "t1", createdAt: 1 },
       {
@@ -2223,12 +2206,9 @@ describe("ThreadMessages", () => {
     );
 
     const units = Array.from(container.querySelectorAll("[data-thread-display-unit]"));
-    expect(units).toHaveLength(4);
-    // User -> first activity keeps standard turn spacing (mt-5).
+    expect(units).toHaveLength(2);
     expect(units[1]).toHaveClass("mt-5");
-    // Intermediate assistant -> next activity uses tighter within-turn spacing (mt-3).
-    expect(units[3]).toHaveClass("mt-3");
-    // Intermediate assistant does not mount an invisible reserved 40px footer slot.
-    expect(units[2].querySelector("[data-assistant-footer]")).not.toBeInTheDocument();
+    expect(units[1].querySelector("[data-assistant-footer]")).not.toBeInTheDocument();
+    expect(within(units[1]).getByText("First intermediate update.")).toBeVisible();
   });
 });

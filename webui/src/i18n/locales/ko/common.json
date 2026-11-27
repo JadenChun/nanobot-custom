@@ -1130,6 +1130,15 @@
     "error": "연결 오류"
   },
   "thread": {
+    "delegatedChild": {
+      "assignment": "작업 내용",
+      "partial": "부분 완료",
+      "showResult": "결과 표시",
+      "hideResult": "결과 숨기기",
+      "stepCount_one": "{{count}}단계",
+      "stepCount_many": "{{count}}단계",
+      "stepCount_other": "{{count}}단계"
+    },
     "runStopped": "실행이 중지되었습니다",
     "compaction": {
       "cancelled": "컨텍스트 압축이 취소되었습니다",
@@ -1207,6 +1216,13 @@
       "sessionInfo": "세션 세부 정보"
     },
     "sessionInfo": {
+      "subagents": "하위 에이전트",
+      "subagentsCount": "하위 에이전트 ({{count}})",
+      "jumpTo": "이동",
+      "jumpToSubagent": "{{task}}(으)로 이동",
+      "subagentNotLoaded": "이 활동은 현재 표시 중인 기록에 없습니다",
+      "openHistory": "기록 열기",
+      "openSubagentHistory": "{{task}} 기록 열기",
       "title": "세션",
       "untitled": "제목 없는 주제",
       "automations": "자동화",

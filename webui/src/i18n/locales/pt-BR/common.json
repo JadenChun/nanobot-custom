@@ -1130,6 +1130,15 @@
     "error": "Erro de conexão"
   },
   "thread": {
+    "delegatedChild": {
+      "assignment": "Tarefa atribuída",
+      "partial": "Parcial",
+      "showResult": "Mostrar resultado",
+      "hideResult": "Ocultar resultado",
+      "stepCount_one": "{{count}} etapa",
+      "stepCount_many": "{{count}} etapas",
+      "stepCount_other": "{{count}} etapas"
+    },
     "runStopped": "Execução interrompida",
     "compaction": {
       "cancelled": "Compactação do contexto cancelada",
@@ -1207,6 +1216,13 @@
       "sessionInfo": "Detalhes da sessão"
     },
     "sessionInfo": {
+      "subagents": "Subagentes",
+      "subagentsCount": "Subagentes ({{count}})",
+      "jumpTo": "Ir para",
+      "jumpToSubagent": "Ir para {{task}}",
+      "subagentNotLoaded": "Esta atividade não está no trecho carregado do histórico",
+      "openHistory": "Abrir histórico",
+      "openSubagentHistory": "Abrir o histórico de {{task}}",
       "title": "Sessão",
       "untitled": "Tópico sem título",
       "automations": "Automações",

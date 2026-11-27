@@ -2335,7 +2335,10 @@ class AgentLoop:
                 task_label_truncated=child.task_label_truncated,
                 result_summary=child.result_summary,
                 result_summary_truncated=child.result_summary_truncated,
+                duration_ms=child.duration_ms,
+                step_count=child.step_count,
                 parent_run_id=child.attempt_id,
+                spawn_call_id=child.spawn_call_id,
                 child_run_id=child.current_run_id,
                 parent_store_identity=(
                     parent_source.store_identity if parent_source is not None else None

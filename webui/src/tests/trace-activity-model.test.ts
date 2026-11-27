@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import { describeTraceLine } from "@/components/thread/activity/trace-activity-model";
+import {
+  describeTraceLine,
+  traceLinesForMessage,
+} from "@/components/thread/activity/trace-activity-model";
 import type { GenericToolStatus } from "@/components/thread/activity/generic-tool-model";
+import type { UIMessage } from "@/lib/types";
 
 function describeTrace(line: string, status: GenericToolStatus = "done") {
   return describeTraceLine(line, status);
@@ -104,5 +108,52 @@ describe("trace activity semantics", () => {
     expect(
       describeTrace('exec({"command":"git status --short"})', "done"),
     ).toMatchObject({ label: "Checked git status", detail: "" });
+  });
+});
+
+describe("trace lines of an activity row", () => {
+  const row = (extra: Partial<UIMessage>): UIMessage => ({
+    id: "row",
+    role: "tool",
+    kind: "trace",
+    content: "src/a.ts:1: raw tool output",
+    createdAt: 0,
+    ...extra,
+  });
+
+  it("prefers the traces the server sent", () => {
+    expect(traceLinesForMessage(row({
+      traces: ['grep({"pattern":"token"})'],
+      toolEvents: [{ phase: "start", call_id: "a", name: "read_file" }],
+    }))).toEqual(['grep({"pattern":"token"})']);
+  });
+
+  it("builds lines from the start events instead of the output", () => {
+    expect(traceLinesForMessage(row({
+      toolEvents: [
+        { phase: "end", call_id: "a", name: "read_file", result: "raw" },
+        { phase: "start", call_id: "a", name: "read_file", arguments: { path: "a.ts" } },
+        { phase: "start", call_id: "b", name: "grep", arguments: { pattern: "x" } },
+        { phase: "progress", call_id: "b", name: "grep", message: "half" },
+      ],
+    }))).toEqual(['read_file({"path":"a.ts"})', 'grep({"pattern":"x"})']);
+  });
+
+  it("names the call when only its result event is on the row", () => {
+    const lines = traceLinesForMessage(row({
+      toolEvents: [{ phase: "end", call_id: "a", name: "grep", result: "raw" }],
+    }));
+    expect(lines).toEqual(["grep()"]);
+  });
+
+  it("never falls back to content when the row has tool events", () => {
+    expect(traceLinesForMessage(row({
+      toolEvents: [{ phase: "end", call_id: "a" }],
+    }))).toEqual([]);
+  });
+
+  it("keeps the content line of a legacy row without tool events", () => {
+    expect(traceLinesForMessage(row({ content: "Reading files" }))).toEqual(["Reading files"]);
+    expect(traceLinesForMessage(row({ content: "  " }))).toEqual([]);
   });
 });

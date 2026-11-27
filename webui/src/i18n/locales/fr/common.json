@@ -1130,6 +1130,15 @@
     "error": "Erreur de connexion"
   },
   "thread": {
+    "delegatedChild": {
+      "assignment": "Mission",
+      "partial": "Partiel",
+      "showResult": "Afficher le résultat",
+      "hideResult": "Masquer le résultat",
+      "stepCount_one": "{{count}} étape",
+      "stepCount_many": "{{count}} étapes",
+      "stepCount_other": "{{count}} étapes"
+    },
     "runStopped": "Exécution arrêtée",
     "compaction": {
       "cancelled": "Compression du contexte annulée",
@@ -1207,6 +1216,13 @@
       "sessionInfo": "Détails de la session"
     },
     "sessionInfo": {
+      "subagents": "Sous-agents",
+      "subagentsCount": "Sous-agents ({{count}})",
+      "jumpTo": "Accéder",
+      "jumpToSubagent": "Accéder à {{task}}",
+      "subagentNotLoaded": "Cette activité ne figure pas dans la partie chargée de l’historique",
+      "openHistory": "Ouvrir l’historique",
+      "openSubagentHistory": "Ouvrir l’historique de {{task}}",
       "title": "Session",
       "untitled": "Sujet sans titre",
       "automations": "Automatisations",

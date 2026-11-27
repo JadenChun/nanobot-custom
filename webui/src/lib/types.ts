@@ -141,16 +141,22 @@ export interface DelegatedChildPayload {
   child_session_key: string;
   child_id: string;
   profile: string;
+  /** Creation time from the child inventory, in Unix seconds. */
+  created_at?: number;
   harness?: ChatHarness;
   state: string;
   task_label?: string;
   task_label_truncated?: boolean;
   result_summary?: string | null;
   result_summary_truncated?: boolean;
+  duration_ms?: number;
+  step_count?: number;
   outcome?: string | null;
   runtime_generation: number;
   turn_id?: string | null;
   parent_run_id?: string | null;
+  /** Parent tool call that spawned this child. Absent on older records. */
+  spawn_call_id?: string | null;
   child_run_id?: string | null;
   parent_store_identity?: string;
   parent_incarnation?: string;
@@ -180,16 +186,20 @@ export interface DelegatedChildSummaryPayload {
   child_session_key: string;
   child_id: string;
   profile: string;
+  created_at?: number;
   harness?: ChatHarness;
   state: string;
   task_label: string | null;
   task_label_truncated: boolean;
   result_summary: string | null;
   result_summary_truncated: boolean;
+  duration_ms?: number;
+  step_count?: number;
   outcome: string | null;
   runtime_generation: number | null;
   turn_id?: string | null;
   parent_run_id: string | null;
+  spawn_call_id?: string | null;
   child_run_id: string | null;
   parent_store_identity: string | null;
   parent_incarnation: string | null;
@@ -1954,10 +1964,13 @@ export type InboundEvent =
       task_label_truncated: boolean;
       result_summary: string | null;
       result_summary_truncated: boolean;
+      duration_ms?: number;
+      step_count?: number;
       outcome?: string | null;
       runtime_generation: number;
       turn_id?: string | null;
       parent_run_id?: string | null;
+      spawn_call_id?: string | null;
       child_run_id?: string | null;
       parent_store_identity?: string;
       parent_incarnation?: string;
