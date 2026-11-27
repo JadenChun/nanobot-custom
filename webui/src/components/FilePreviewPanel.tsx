@@ -1,6 +1,17 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
-import { AlertCircle, ChevronLeft, ChevronRight, Download, Loader2, Music, Play, X } from "lucide-react";
+import {
+  AlertCircle,
+  ChevronLeft,
+  ChevronRight,
+  Download,
+  ExternalLink,
+  FolderOpen,
+  Loader2,
+  Music,
+  Play,
+  X,
+} from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import { CodeBlock } from "@/components/CodeBlock";
@@ -8,8 +19,22 @@ import { MarkdownText } from "@/components/MarkdownText";
 import { splitFilePath } from "@/components/FileReferenceChip";
 import { MobileVideoPlayer } from "@/components/MobileVideoPlayer";
 import { ThreadInspectorDialog } from "@/components/thread/ThreadInspector";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { useMobileBack } from "@/hooks/useMobileBack";
-import { ApiError, fetchFilePreview } from "@/lib/api";
+import {
+  ApiError,
+  fetchFilePreview,
+  openLocalFilePreview,
+  type LocalFilePreviewAction,
+  type WebUIMutationTransport,
+} from "@/lib/api";
 import { useMediaSource } from "@/lib/mobile-media";
 import { isMobileRuntimeActive } from "@/lib/mobile-runtime";
 import { isLinuxDesktopWebKit } from "@/lib/runtime";
@@ -22,6 +47,7 @@ interface FilePreviewPanelProps {
   sessionKey: string;
   path: string;
   token: string;
+  transport?: WebUIMutationTransport | null;
   refreshKey?: number;
   modal?: boolean;
   active?: boolean;
@@ -50,6 +76,7 @@ export function FilePreviewPanel({
   sessionKey,
   path,
   token,
+  transport = null,
   refreshKey = 0,
   modal = true,
   active = true,
@@ -58,6 +85,8 @@ export function FilePreviewPanel({
 }: FilePreviewPanelProps) {
   const { t } = useTranslation();
   const [state, setState] = useState<PreviewState>({ status: "loading" });
+  const [actionBusy, setActionBusy] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
   const [activePath, setActivePath] = useState(path);
   const [viewMode, setViewMode] = useState<"formatted" | "source">("formatted");
@@ -72,6 +101,7 @@ export function FilePreviewPanel({
 
   useEffect(() => {
     setViewMode("formatted");
+    setActionError(null);
   }, [activePath]);
 
   useEffect(() => {
@@ -151,6 +181,37 @@ export function FilePreviewPanel({
       .map((part, index) => ({ part, index: navTrail.parts.length - 3 + index }));
   }, [navTrail]);
   const canNavigateBack = isDirectory || activePath !== path;
+  const canOpenLocally = (
+    state.status === "ready"
+    && state.payload.local_actions === true
+    && transport !== null
+    && !isMobileRuntimeActive()
+  );
+  const openWithApps = state.status === "ready" ? (state.payload.open_with_apps ?? []) : [];
+  const defaultOpenApp = openWithApps.find((app) => app.default) ?? null;
+
+  const triggerLocalOpen = async (action: LocalFilePreviewAction, appId?: string) => {
+    if (!transport || actionBusy) return;
+    setActionBusy(true);
+    setActionError(null);
+    try {
+      await openLocalFilePreview(transport, {
+        sessionKey,
+        path: previewPath,
+        action,
+        appId,
+      });
+    } catch (error: unknown) {
+      setActionError(
+        error instanceof Error && error.message
+          ? error.message
+          : t("filePreview.openFailed", { defaultValue: "Could not open file on this device." }),
+      );
+    } finally {
+      setActionBusy(false);
+    }
+  };
+
   const errorMessage = state.status === "error"
     ? (state.error instanceof ApiError
       ? (state.error.status === 404 && /API route not found/i.test(state.error.message)
@@ -276,6 +337,75 @@ export function FilePreviewPanel({
             ))}
           </div>
         ) : null}
+        {canOpenLocally ? (
+          <button
+            type="button"
+            disabled={actionBusy}
+            onClick={() => void triggerLocalOpen("reveal")}
+            className={cn(
+              "inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md",
+              "text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-50",
+              "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+            )}
+            title={t("filePreview.openInFolder", { defaultValue: "Open in folder" })}
+            aria-label={t("filePreview.openInFolder", { defaultValue: "Open in folder" })}
+            data-testid="file-preview-open-folder"
+          >
+            <FolderOpen className="h-4 w-4" aria-hidden />
+          </button>
+        ) : null}
+        {canOpenLocally && !isDirectory ? (
+          <DropdownMenu modal={false}>
+            <DropdownMenuTrigger asChild>
+              <button
+                type="button"
+                disabled={actionBusy}
+                className={cn(
+                  "inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md",
+                  "text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-50",
+                  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                )}
+                title={t("filePreview.openWith", { defaultValue: "Open with" })}
+                aria-label={t("filePreview.openWith", { defaultValue: "Open with" })}
+                data-testid="file-preview-open-with"
+              >
+                <ExternalLink className="h-4 w-4" aria-hidden />
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="min-w-48">
+              <DropdownMenuLabel className="text-[11px] font-medium text-muted-foreground">
+                {t("filePreview.openWith", { defaultValue: "Open with" })}
+              </DropdownMenuLabel>
+              <DropdownMenuItem onSelect={() => void triggerLocalOpen("open")}>
+                {defaultOpenApp
+                  ? t("filePreview.openInDefaultNamed", {
+                      app: defaultOpenApp.name,
+                      defaultValue: "{{app}} (Default)",
+                    })
+                  : t("filePreview.openInDefault", { defaultValue: "Open in default app" })}
+              </DropdownMenuItem>
+              {openWithApps.length > 0 ? (
+                <>
+                  {openWithApps.some((app) => !app.default) ? <DropdownMenuSeparator /> : null}
+                  {openWithApps
+                    .filter((app) => !app.default)
+                    .map((app) => (
+                      <DropdownMenuItem
+                        key={app.id}
+                        onSelect={() => void triggerLocalOpen("open_with", app.id)}
+                      >
+                        {app.name}
+                      </DropdownMenuItem>
+                    ))}
+                </>
+              ) : (
+                <DropdownMenuItem onSelect={() => void triggerLocalOpen("open_with")}>
+                  {t("filePreview.chooseApp", { defaultValue: "Choose application..." })}
+                </DropdownMenuItem>
+              )}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        ) : null}
         {state.status === "ready" && resolvedMediaUrl ? (
           <a
             href={resolvedMediaUrl}
@@ -311,7 +441,31 @@ export function FilePreviewPanel({
         ) : null}
       </div>
 
-      <div className="min-h-0 flex-1 overflow-auto">
+      {actionError ? (
+        <div
+          role="alert"
+          className="flex shrink-0 items-center justify-between gap-2 border-b border-destructive/25 bg-destructive/10 px-3 py-1.5 text-xs text-destructive"
+        >
+          <span className="min-w-0 truncate">{actionError}</span>
+          <button
+            type="button"
+            onClick={() => setActionError(null)}
+            className="shrink-0 rounded px-1 py-0.5 hover:bg-destructive/10"
+            aria-label={t("filePreview.dismissError", { defaultValue: "Dismiss error" })}
+          >
+            <X className="h-3.5 w-3.5" aria-hidden />
+          </button>
+        </div>
+      ) : null}
+
+      <div
+        className={cn(
+          "min-h-0 flex-1",
+          state.status === "ready" && state.payload.kind === "pdf"
+            ? "overflow-hidden"
+            : "overflow-auto",
+        )}
+      >
         {state.status === "loading" ? (
           <div className="flex h-full items-center justify-center gap-2 text-sm text-muted-foreground">
             <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
@@ -385,16 +539,18 @@ export function FilePreviewPanel({
             </div>
           </div>
         ) : state.payload.kind === "pdf" && resolvedMediaUrl ? (
-          <Suspense
-            fallback={(
-              <div className="flex h-full items-center justify-center gap-2 text-sm text-muted-foreground">
-                <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
-                {t("filePreview.loading", { defaultValue: "Loading preview..." })}
-              </div>
-            )}
-          >
-            <LazyPdfPreview src={resolvedMediaUrl} fileName={fileName} />
-          </Suspense>
+          visible ? (
+            <Suspense
+              fallback={(
+                <div className="flex h-full items-center justify-center gap-2 text-sm text-muted-foreground">
+                  <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+                  {t("filePreview.loading", { defaultValue: "Loading preview..." })}
+                </div>
+              )}
+            >
+              <LazyPdfPreview src={resolvedMediaUrl} fileName={fileName} />
+            </Suspense>
+          ) : null
         ) : state.payload.kind === "image"
           || state.payload.kind === "video"
           || state.payload.kind === "audio"

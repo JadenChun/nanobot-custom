@@ -4082,6 +4082,7 @@ export function ThreadShell({
           sessionKey={historyKey}
           path={filePreviewPath}
           token={token}
+          transport={client}
           refreshKey={filePreviewRefreshKey}
           modal={!inspectorDocked}
           visible={inspectorVisible && inspectorTab === "file"}

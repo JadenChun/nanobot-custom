@@ -63,10 +63,14 @@ from kohaku.session.recovery import RecoveryActionError, recovery_state_from_met
 from kohaku.session.source_store import SavedSourceMetadata, SourceSnapshot, SourceState
 from kohaku.triggers.local_types import LocalTrigger
 from kohaku.webui.file_preview import (
+    LocalFileOpenAction,
     WebUIFilePreviewError,
     file_preview_availability_payload,
     file_preview_payload,
     file_preview_reference,
+    list_local_open_apps,
+    open_local_file_preview_path,
+    resolve_file_preview_path,
 )
 from kohaku.webui.gateway_tokens import GatewayTokenStore, token_response_payload
 from kohaku.webui.generated_asset_index import (
@@ -343,10 +347,12 @@ WEBSOCKET_MUTATION_ROUTES = {
     "settings.mcp.oauth_complete": "/api/settings/mcp-oauth/complete",
     "settings.mcp.oauth_cancel": "/api/settings/mcp-oauth/cancel",
     "desktop.notify": "/api/desktop/notify",
+    "file_preview.open": "/api/file-preview/open",
 }
 
 _LOCAL_ONLY_WEBUI_MUTATION_PATHS = frozenset({
     "/api/desktop/notify",
+    "/api/file-preview/open",
     "/api/workspaces/pick-folder",
     "/api/workspaces/grants/upsert",
     "/api/workspaces/grants/revoke",
@@ -1213,6 +1219,7 @@ class GatewayHTTPHandler:
             return True
         return path in {
             "/api/desktop/notify",
+            "/api/file-preview/open",
             "/api/webui/skills/install",
             "/api/webui/skills/update",
             "/api/webui/skills/delete",
@@ -1285,6 +1292,11 @@ class GatewayHTTPHandler:
         response = await self._dispatch_recovery_route(request, got)
         if response is not None:
             return response
+
+        if got == "/api/file-preview/open":
+            return await asyncio.to_thread(
+                self._handle_file_preview_open, connection, request,
+            )
 
         if got == "/api/generated-assets":
             return await self._handle_all_generated_assets(request)
@@ -2635,7 +2647,140 @@ class GatewayHTTPHandler:
             return _http_error(e.status, e.message)
         except WorkspaceAccessActionError as exc:
             return _http_error(exc.status, exc.message)
+        if not is_probe:
+            payload = dict(payload)
+            payload["local_actions"] = local_access
+            if local_access and payload.get("kind") != "directory":
+                resolved_str = payload.get("path")
+                if isinstance(resolved_str, str) and resolved_str:
+                    payload["open_with_apps"] = list_local_open_apps(Path(resolved_str))
         return _http_json_response(payload)
+
+    def _handle_file_preview_open(self, connection: Any, request: WsRequest) -> Response:
+        if not self.check_api_token(request):
+            return _http_error(401, "Unauthorized")
+        if not getattr(request, _WEBUI_MUTATION_REQUEST_ATTR, False):
+            return _http_error(405, "WebUI file actions require an authenticated WebSocket")
+        local_access = (
+            _is_loopback_host(self.config.host)
+            and _is_local_browser_request(connection, request.headers)
+        )
+        if not local_access:
+            return _http_error(403, "local_ui_required")
+        body = _mutation_payload(request)
+        if body is None:
+            return _http_error(400, "invalid payload")
+        raw_session_key = body.get("session_key")
+        if not isinstance(raw_session_key, str) or not raw_session_key.strip():
+            return _http_error(400, "missing session_key")
+        decoded_key = raw_session_key.strip()
+        if not _is_websocket_channel_session_key(decoded_key):
+            return _http_error(404, "session not found")
+        raw_path = body.get("path")
+        if not isinstance(raw_path, str) or not raw_path.strip():
+            return _http_error(400, "missing path")
+        raw_action = body.get("action")
+        if raw_action not in {"reveal", "open", "open_with"}:
+            return _http_error(400, "invalid action")
+        action = cast(LocalFileOpenAction, raw_action)
+        raw_app_id = body.get("app_id")
+        if raw_app_id is not None and not isinstance(raw_app_id, str):
+            return _http_error(400, "invalid app_id")
+        app_id = raw_app_id.strip() if isinstance(raw_app_id, str) and raw_app_id.strip() else None
+
+        requested_path = raw_path
+        path = str(Path.home() / raw_path[2:]) if raw_path.startswith("~/") else raw_path
+        from kohaku.session.workspace_access_recovery import WorkspaceAccessActionError
+
+        try:
+            scope = self.workspaces.scope_for_session_key(decoded_key)
+            focus_owner = self.workspaces.focus_owner
+            policy = focus_owner.policy if focus_owner is not None else None
+            managed_access = bool(focus_owner is not None and focus_owner.managed)
+            permission_owner = None
+            permission_reference = None
+            if self.workspace_access_recovery is not None:
+                try:
+                    permission_owner, permission_reference = (
+                        self.workspace_access_recovery.preview_permission_context(
+                            decoded_key.split(":", 1)[1],
+                        )
+                    )
+                except WorkspaceAccessActionError:
+                    pass
+
+            def _resolve_target(
+                target_path: str | None,
+                *,
+                referenced_path: Path | None = None,
+            ) -> Path:
+                return resolve_file_preview_path(
+                    target_path,
+                    scope=scope,
+                    resource_policy=policy,
+                    managed_access=managed_access or permission_reference is not None,
+                    allow_folder_grants=True,
+                    permission_owner=permission_owner,
+                    permission_reference=permission_reference,
+                    restrict_to_root=None,
+                    referenced_path=referenced_path,
+                )
+
+            try:
+                resolved = _resolve_target(path)
+            except WebUIFilePreviewError as direct_err:
+                if direct_err.status not in {403, 404}:
+                    raise
+                canonical_events_loader: (
+                    Callable[[Sequence[str]], Mapping[str, Mapping[str, Any]]] | None
+                ) = None
+                sessions = self.session_manager
+                if sessions is not None:
+                    saved_source = sessions.read_saved_source_metadata(decoded_key)
+                    if saved_source is not None:
+                        bound_state = saved_source.state
+                        bound_sessions = sessions
+
+                        def _load_canonical_events(
+                            event_ids: Sequence[str],
+                        ) -> dict[str, dict[str, Any]]:
+                            return bound_sessions.read_canonical_events_by_ids(
+                                decoded_key,
+                                list(event_ids),
+                                expected_source=bound_state,
+                            )
+
+                        canonical_events_loader = _load_canonical_events
+                transcript_lines = read_transcript_lines_for_preview(
+                    decoded_key,
+                    candidates=(requested_path, path),
+                    canonical_events_loader=canonical_events_loader,
+                )
+                referenced_path = (
+                    file_preview_reference(requested_path, transcript_lines)
+                    or file_preview_reference(path, transcript_lines)
+                )
+                resolved_path = path
+                if referenced_path is None:
+                    resolved_relative = _resolve_relative_preview_path(decoded_key, path)
+                    if resolved_relative is not None:
+                        resolved_path = resolved_relative
+                        extra_lines = read_transcript_lines_for_preview(
+                            decoded_key,
+                            candidates=(resolved_path,),
+                            canonical_events_loader=canonical_events_loader,
+                        )
+                        referenced_path = file_preview_reference(resolved_path, extra_lines)
+                if referenced_path is None and resolved_path == path:
+                    raise
+                resolved = _resolve_target(resolved_path, referenced_path=referenced_path)
+
+            result = open_local_file_preview_path(resolved, action=action, app_id=app_id)
+        except WebUIFilePreviewError as e:
+            return _http_error(e.status, e.message)
+        except WorkspaceAccessActionError as exc:
+            return _http_error(exc.status, exc.message)
+        return _http_json_response(result)
 
     async def _handle_all_generated_assets(self, request: WsRequest) -> Response:
         if not self.check_api_token(request):

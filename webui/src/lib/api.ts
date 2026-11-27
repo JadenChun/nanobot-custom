@@ -962,6 +962,32 @@ export async function fetchFilePreviewAvailability(
   return payload.available !== false;
 }
 
+export type LocalFilePreviewAction = "reveal" | "open" | "open_with";
+
+export async function openLocalFilePreview(
+  transport: WebUIMutationTransport,
+  params: {
+    sessionKey: string;
+    path: string;
+    action: LocalFilePreviewAction;
+    appId?: string;
+  },
+): Promise<{ ok: boolean; action: LocalFilePreviewAction; path: string }> {
+  const payload: Record<string, unknown> = {
+    session_key: params.sessionKey,
+    path: params.path,
+    action: params.action,
+  };
+  if (params.appId) {
+    payload.app_id = params.appId;
+  }
+  return mutation<{ ok: boolean; action: LocalFilePreviewAction; path: string }>(
+    transport,
+    "file_preview.open",
+    payload,
+  );
+}
+
 export async function fetchSessionAutomations(
   token: string,
   key: string,

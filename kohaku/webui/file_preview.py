@@ -3,11 +3,15 @@
 from __future__ import annotations
 
 import mimetypes
+import os
 import re
+import shutil
+import subprocess
+import sys
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path, PurePosixPath
 from posixpath import normpath
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, Literal, cast
 from urllib.parse import unquote, urlparse
 
 from kohaku.config.paths import get_media_dir
@@ -524,3 +528,281 @@ def _language_for_path(path: Path) -> str:
         "yaml": "yaml",
         "yml": "yaml",
     }.get(ext, ext or "text")
+
+
+LocalFileOpenAction = Literal["reveal", "open", "open_with"]
+_DESKTOP_ENTRY_ID_RE = re.compile(r"^[A-Za-z0-9._-]+\.desktop$")
+_MAX_OPEN_WITH_APPS = 12
+
+
+def resolve_file_preview_path(
+    raw_path: str | None,
+    *,
+    scope: WorkspaceScope,
+    resource_policy: ResourceAccessPolicy | None = None,
+    managed_access: bool = False,
+    allow_folder_grants: bool = False,
+    permission_owner: DesktopPermissionOwner | None = None,
+    permission_reference: WorkspacePermissionReference | None = None,
+    restrict_to_root: Path | None = None,
+    referenced_path: Path | None = None,
+) -> Path:
+    """Resolve and authorize a preview target path (file or directory)."""
+    return _resolve_preview_path(
+        raw_path,
+        scope=scope,
+        resource_policy=resource_policy,
+        managed_access=managed_access,
+        allow_folder_grants=allow_folder_grants,
+        permission_owner=permission_owner,
+        permission_reference=permission_reference,
+        restrict_to_root=restrict_to_root,
+        allow_directory=True,
+        referenced_path=referenced_path,
+    )
+
+
+def _xdg_application_dirs() -> list[Path]:
+    dirs: list[Path] = []
+    home = Path.home()
+    data_home = Path(os.environ.get("XDG_DATA_HOME", "").strip() or (home / ".local/share"))
+    dirs.append(data_home / "applications")
+    raw_data_dirs = os.environ.get(
+        "XDG_DATA_DIRS",
+        "/usr/local/share:/usr/share:/var/lib/flatpak/exports/share",
+    )
+    for item in raw_data_dirs.split(":"):
+        cleaned = item.strip()
+        if cleaned:
+            dirs.append(Path(cleaned) / "applications")
+    dirs.append(home / ".local/share/flatpak/exports/share/applications")
+    dirs.append(Path("/var/lib/flatpak/exports/share/applications"))
+    seen: set[Path] = set()
+    unique: list[Path] = []
+    for candidate in dirs:
+        if candidate not in seen:
+            seen.add(candidate)
+            unique.append(candidate)
+    return unique
+
+
+def _find_desktop_file(desktop_id: str) -> Path | None:
+    if not _DESKTOP_ENTRY_ID_RE.fullmatch(desktop_id):
+        return None
+    for root in _xdg_application_dirs():
+        candidate = root / desktop_id
+        try:
+            if candidate.is_file():
+                return candidate
+        except OSError:
+            continue
+    return None
+
+
+def _desktop_entry_name(desktop_file: Path) -> str:
+    try:
+        text = desktop_file.read_text(encoding="utf-8", errors="ignore")
+    except OSError:
+        return desktop_file.stem
+    in_entry = False
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("[") and line.endswith("]"):
+            if in_entry:
+                break
+            in_entry = line == "[Desktop Entry]"
+            continue
+        if in_entry and line.startswith("Name="):
+            value = line.split("=", 1)[1].strip()
+            if value:
+                return value
+    return desktop_file.stem
+
+
+def _mime_type_for_local_open(path: Path) -> str | None:
+    guessed = guess_media_mime(path.name) or mimetypes.guess_type(path.name)[0]
+    if guessed:
+        return guessed
+    if sys.platform.startswith("linux") and shutil.which("gio"):
+        try:
+            proc = subprocess.run(
+                ["gio", "info", "-a", "standard::content-type", str(path)],
+                capture_output=True,
+                text=True,
+                timeout=2.0,
+                check=False,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return None
+        for line in proc.stdout.splitlines():
+            if "standard::content-type:" in line:
+                value = line.split(":", 1)[1].strip()
+                if value:
+                    return value
+    return None
+
+
+def list_local_open_apps(path: Path) -> list[dict[str, Any]]:
+    """Return registered desktop applications capable of opening ``path``."""
+    if not sys.platform.startswith("linux") or path.is_dir():
+        return []
+    if not shutil.which("gio"):
+        return []
+    mime = _mime_type_for_local_open(path)
+    if not mime:
+        return []
+    try:
+        proc = subprocess.run(
+            ["gio", "mime", mime],
+            capture_output=True,
+            text=True,
+            timeout=2.0,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return []
+    if proc.returncode != 0:
+        return []
+
+    default_id: str | None = None
+    ordered_ids: list[str] = []
+    for raw_line in proc.stdout.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        match = re.search(r"([A-Za-z0-9._-]+\.desktop)\b", line)
+        if match is None:
+            continue
+        desktop_id = match.group(1)
+        if line.lower().startswith("default application") and default_id is None:
+            default_id = desktop_id
+        if desktop_id not in ordered_ids:
+            ordered_ids.append(desktop_id)
+
+    apps: list[dict[str, Any]] = []
+    for desktop_id in ordered_ids:
+        desktop_file = _find_desktop_file(desktop_id)
+        if desktop_file is None:
+            continue
+        apps.append({
+            "id": desktop_id,
+            "name": _desktop_entry_name(desktop_file),
+            "default": desktop_id == default_id,
+        })
+        if len(apps) >= _MAX_OPEN_WITH_APPS:
+            break
+    return apps
+
+
+def _spawn_detached(argv: Sequence[str]) -> None:
+    try:
+        subprocess.Popen(
+            list(argv),
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+    except OSError as exc:
+        raise WebUIFilePreviewError(500, "failed to launch desktop application") from exc
+
+
+def open_local_file_preview_path(
+    path: Path,
+    *,
+    action: LocalFileOpenAction,
+    app_id: str | None = None,
+) -> dict[str, Any]:
+    """Open or reveal an already-authorized local file in the host desktop."""
+    if not path.exists():
+        raise WebUIFilePreviewError(404, "file not found")
+
+    if sys.platform == "darwin":
+        if action == "reveal":
+            cmd = ["open", str(path)] if path.is_dir() else ["open", "-R", str(path)]
+            _spawn_detached(cmd)
+        elif action == "open_with" and app_id:
+            _spawn_detached(["open", "-a", app_id, str(path)])
+        else:
+            _spawn_detached(["open", str(path)])
+        return {"ok": True, "action": action, "path": str(path)}
+
+    if sys.platform == "win32":
+        if action == "reveal":
+            if path.is_dir():
+                _spawn_detached(["explorer", str(path)])
+            else:
+                _spawn_detached(["explorer", f"/select,{path}"])
+        elif action == "open_with":
+            _spawn_detached(["rundll32.exe", "shell32.dll,OpenAs_RunDLL", str(path)])
+        else:
+            startfile = getattr(os, "startfile", None)
+            if callable(startfile):
+                try:
+                    startfile(str(path))
+                except OSError as exc:
+                    raise WebUIFilePreviewError(500, "failed to open file") from exc
+            else:
+                raise WebUIFilePreviewError(500, "failed to open file")
+        return {"ok": True, "action": action, "path": str(path)}
+
+    # Linux / BSD desktop
+    if action == "reveal":
+        if not path.is_dir() and shutil.which("gdbus"):
+            try:
+                uri = path.resolve().as_uri()
+                escaped_uri = uri.replace("\\", "\\\\").replace("'", "\\'")
+                proc = subprocess.run(
+                    [
+                        "gdbus",
+                        "call",
+                        "--session",
+                        "--dest",
+                        "org.freedesktop.FileManager1",
+                        "--object-path",
+                        "/org/freedesktop/FileManager1",
+                        "--method",
+                        "org.freedesktop.FileManager1.ShowItems",
+                        f"['{escaped_uri}']",
+                        "",
+                    ],
+                    capture_output=True,
+                    text=True,
+                    timeout=5.0,
+                    check=False,
+                )
+                if proc.returncode == 0:
+                    return {"ok": True, "action": action, "path": str(path)}
+            except (OSError, subprocess.SubprocessError):
+                pass
+        folder = path if path.is_dir() else path.parent
+        opener = shutil.which("xdg-open") or shutil.which("gio")
+        if opener and opener.endswith("gio"):
+            _spawn_detached([opener, "open", str(folder)])
+        elif opener:
+            _spawn_detached([opener, str(folder)])
+        else:
+            raise WebUIFilePreviewError(503, "no desktop file manager opener available")
+        return {"ok": True, "action": action, "path": str(path)}
+
+    if action == "open_with" and app_id:
+        allowed_ids = {str(entry["id"]) for entry in list_local_open_apps(path)}
+        desktop_file = _find_desktop_file(app_id) if app_id in allowed_ids else None
+        if desktop_file is None:
+            raise WebUIFilePreviewError(400, "invalid application selection")
+        gio = shutil.which("gio")
+        if not gio:
+            raise WebUIFilePreviewError(503, "gio launcher is unavailable")
+        _spawn_detached([gio, "launch", str(desktop_file), str(path)])
+        return {"ok": True, "action": action, "path": str(path)}
+
+    opener = shutil.which("xdg-open") or shutil.which("gio")
+    if opener and opener.endswith("gio"):
+        _spawn_detached([opener, "open", str(path)])
+    elif opener:
+        _spawn_detached([opener, str(path)])
+    else:
+        raise WebUIFilePreviewError(503, "no desktop opener available")
+    return {"ok": True, "action": action, "path": str(path)}

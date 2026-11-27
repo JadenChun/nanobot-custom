@@ -322,4 +322,162 @@ describe("FilePreviewPanel", () => {
     expect(download).toHaveAttribute("href", "/api/media/sig/inv9");
     expect(download).toHaveAttribute("download", "INV-000009.pdf");
   });
+
+  it("unmounts PdfPreview when hidden and remounts cleanly when reopened", async () => {
+    vi.mocked(fetchFilePreview).mockResolvedValue({
+      kind: "pdf",
+      path: "/workspace/report.pdf",
+      display_path: "report.pdf",
+      project_path: "/workspace",
+      language: "",
+      content: "",
+      size: 12345,
+      truncated: false,
+      mime: "application/pdf",
+      media_url: "/api/media/sig/report",
+    });
+
+    const { rerender } = render(
+      <FilePreviewPanel
+        sessionKey="websocket:chat-1"
+        path="report.pdf"
+        token="tok"
+        modal={false}
+        visible={true}
+        onClose={() => {}}
+      />,
+    );
+
+    expect(await screen.findByTestId("mock-pdf-preview")).toBeInTheDocument();
+
+    rerender(
+      <FilePreviewPanel
+        sessionKey="websocket:chat-1"
+        path="report.pdf"
+        token="tok"
+        modal={false}
+        visible={false}
+        onClose={() => {}}
+      />,
+    );
+
+    expect(screen.queryByTestId("mock-pdf-preview")).not.toBeInTheDocument();
+
+    rerender(
+      <FilePreviewPanel
+        sessionKey="websocket:chat-1"
+        path="report.pdf"
+        token="tok"
+        modal={false}
+        visible={true}
+        onClose={() => {}}
+      />,
+    );
+
+    expect(await screen.findByTestId("mock-pdf-preview")).toBeInTheDocument();
+  });
+
+  it("shows Open in folder and Open with actions for local previews and invokes file_preview.open", async () => {
+    const user = userEvent.setup();
+    const requestMutation = vi.fn().mockResolvedValue({
+      ok: true,
+      action: "reveal",
+      path: "/workspace/INV-000009.pdf",
+    });
+    vi.mocked(fetchFilePreview).mockResolvedValue({
+      kind: "pdf",
+      path: "/workspace/INV-000009.pdf",
+      display_path: "INV-000009.pdf",
+      project_path: "/workspace",
+      language: "",
+      content: "",
+      size: 878937,
+      truncated: false,
+      mime: "application/pdf",
+      media_url: "/api/media/sig/inv9",
+      local_actions: true,
+      open_with_apps: [
+        { id: "org.onlyoffice.desktopeditors.desktop", name: "ONLYOFFICE", default: true },
+        { id: "org.gnome.Papers.desktop", name: "Papers", default: false },
+      ],
+    });
+
+    render(
+      <FilePreviewPanel
+        sessionKey="websocket:chat-1"
+        path="INV-000009.pdf"
+        token="tok"
+        transport={{ requestMutation }}
+        onClose={() => {}}
+      />,
+    );
+
+    const openFolder = await screen.findByTestId("file-preview-open-folder");
+    await user.click(openFolder);
+    expect(requestMutation).toHaveBeenCalledWith(
+      "file_preview.open",
+      {
+        session_key: "websocket:chat-1",
+        path: "/workspace/INV-000009.pdf",
+        action: "reveal",
+      },
+      20_000,
+    );
+
+    const openWith = screen.getByTestId("file-preview-open-with");
+    await user.click(openWith);
+    await user.click(await screen.findByRole("menuitem", { name: "ONLYOFFICE (Default)" }));
+    expect(requestMutation).toHaveBeenCalledWith(
+      "file_preview.open",
+      {
+        session_key: "websocket:chat-1",
+        path: "/workspace/INV-000009.pdf",
+        action: "open",
+      },
+      20_000,
+    );
+
+    await user.click(openWith);
+    await user.click(await screen.findByRole("menuitem", { name: "Papers" }));
+    expect(requestMutation).toHaveBeenCalledWith(
+      "file_preview.open",
+      {
+        session_key: "websocket:chat-1",
+        path: "/workspace/INV-000009.pdf",
+        action: "open_with",
+        app_id: "org.gnome.Papers.desktop",
+      },
+      20_000,
+    );
+  });
+
+  it("hides Open in folder and Open with when local_actions is false", async () => {
+    vi.mocked(fetchFilePreview).mockResolvedValue({
+      kind: "pdf",
+      path: "/workspace/remote.pdf",
+      display_path: "remote.pdf",
+      project_path: "/workspace",
+      language: "",
+      content: "",
+      size: 1024,
+      truncated: false,
+      mime: "application/pdf",
+      media_url: "/api/media/sig/remote",
+      local_actions: false,
+    });
+
+    render(
+      <FilePreviewPanel
+        sessionKey="websocket:chat-1"
+        path="remote.pdf"
+        token="tok"
+        transport={{ requestMutation: vi.fn() }}
+        onClose={() => {}}
+      />,
+    );
+
+    await screen.findByTestId("mock-pdf-preview");
+    expect(screen.queryByTestId("file-preview-open-folder")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("file-preview-open-with")).not.toBeInTheDocument();
+  });
 });

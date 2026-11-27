@@ -469,6 +469,95 @@ async def test_consolidated_transcript_text_ref_hydrates_for_external_preview(
         payload = json.loads(resp.body)
         assert payload["kind"] == "pdf"
         assert payload["path"] == str(target)
+        assert payload["local_actions"] is False
     finally:
         await lease.close()
         set_config_path(previous_config)
+
+
+async def test_file_preview_open_mutation_local_and_security_boundaries(
+    preview_client: PreviewClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from types import SimpleNamespace
+
+    from kohaku.webui import file_preview as fp
+
+    target = preview_client.project / "invoice.pdf"
+    target.write_bytes(b"%PDF-1.7\ncontent")
+    private_file = preview_client.instance / "credentials" / "private.txt"
+    private_file.parent.mkdir(parents=True, exist_ok=True)
+    private_file.write_text("top-secret", encoding="utf-8")
+
+    calls: list[tuple[Path, str, str | None]] = []
+
+    def _fake_open(path: Path, *, action: str, app_id: str | None = None) -> dict[str, object]:
+        calls.append((path, action, app_id))
+        return {"ok": True, "action": action, "path": str(path)}
+
+    monkeypatch.setattr("kohaku.webui.ws_http.open_local_file_preview_path", _fake_open)
+
+    local_conn = SimpleNamespace(
+        remote_address=("127.0.0.1", 54321),
+        request=Request("/ws", Headers({"Host": ORIGIN_HOST})),
+    )
+    http_handler = preview_client.services.http
+    # Loopback preview request exposes local_actions=True.
+    preview_resp = await preview_client.services.endpoint.process_request(
+        local_conn,
+        Request(
+            f"/api/sessions/{quote(preview_client.key, safe='')}/file-preview?{urlencode({'path': str(target)})}",
+            Headers({"Authorization": f"Bearer {preview_client.desktop_token}", "Host": ORIGIN_HOST}),
+        ),
+        is_allowed=lambda _client: True,
+    )
+    assert preview_resp.status_code == 200
+    assert json.loads(preview_resp.body)["local_actions"] is True
+
+    resp = await http_handler.dispatch_webui_mutation(
+        local_conn,
+        "file_preview.open",
+        {
+            "session_key": preview_client.key,
+            "path": str(target),
+            "action": "reveal",
+        },
+    )
+    assert resp.status_code == 200, resp.body
+    assert json.loads(resp.body) == {"ok": True, "action": "reveal", "path": str(target)}
+    assert calls == [(target.resolve(), "reveal", None)]
+
+    # Private instance file must stay rejected with 403 even for local requests.
+    denied = await http_handler.dispatch_webui_mutation(
+        local_conn,
+        "file_preview.open",
+        {
+            "session_key": preview_client.key,
+            "path": str(private_file),
+            "action": "open",
+        },
+    )
+    assert denied.status_code == 403
+
+    # Non-loopback client must be rejected with 403 local_ui_required.
+    remote_conn = SimpleNamespace(
+        remote_address=("192.168.1.50", 54321),
+        request=Request("/ws", Headers({"Host": ORIGIN_HOST})),
+    )
+    remote_denied = await http_handler.dispatch_webui_mutation(
+        remote_conn,
+        "file_preview.open",
+        {
+            "session_key": preview_client.key,
+            "path": str(target),
+            "action": "reveal",
+        },
+    )
+    assert remote_denied.status_code == 403
+
+    # Invalid desktop app_id must be rejected by open_local_file_preview_path.
+    monkeypatch.setattr(fp, "list_local_open_apps", lambda _p: [{"id": "good.desktop", "name": "Good", "default": True}])
+    if fp.sys.platform.startswith("linux"):
+        with pytest.raises(fp.WebUIFilePreviewError) as exc_info:
+            fp.open_local_file_preview_path(target, action="open_with", app_id="../evil.desktop")
+        assert exc_info.value.status == 400

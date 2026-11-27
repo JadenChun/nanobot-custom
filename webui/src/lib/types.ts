@@ -2368,6 +2368,12 @@ export interface FilePreviewEntry {
   size: number;
 }
 
+export interface FilePreviewOpenWithApp {
+  id: string;
+  name: string;
+  default?: boolean;
+}
+
 export interface FilePreviewPayload {
   kind?: "text" | "image" | "video" | "audio" | "pdf" | "directory";
   path: string;
@@ -2381,6 +2387,10 @@ export interface FilePreviewPayload {
   mime?: string;
   media_url?: string;
   entries?: FilePreviewEntry[];
+  /** True when the preview is served to a local desktop/loopback client. */
+  local_actions?: boolean;
+  /** Registered host desktop applications capable of opening this file. */
+  open_with_apps?: FilePreviewOpenWithApp[];
 }
 
 export type WebUIMutationOutcome =
