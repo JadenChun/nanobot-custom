@@ -508,6 +508,45 @@ async def test_media_route_serves_svg_with_strict_csp(
     assert "sandbox" in resp.headers.get("content-security-policy", "")
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "filename,raw_bytes,expected_mime",
+    [
+        ("invoice.pdf", b"%PDF-1.7\n\x00pdf", "application/pdf"),
+        ("voice.mp3", b"ID3\x03\x00\x00\x00\x00", "audio/mpeg"),
+    ],
+)
+async def test_media_route_serves_pdf_and_audio_with_nosniff(
+    bus: MagicMock,
+    tmp_path: Path,
+    filename: str,
+    raw_bytes: bytes,
+    expected_mime: str,
+) -> None:
+    """Signed media route serves PDFs (without sandbox CSP) and audio with nosniff."""
+    media = tmp_path / "media"
+    media.mkdir()
+    target = media / filename
+    target.write_bytes(raw_bytes)
+
+    channel = _ch(bus, port=29929)
+    with patch("kohaku.webui.media_gateway.get_media_dir", return_value=media):
+        url_path = _sign_media_path(channel, target)
+        assert url_path is not None
+        server_task = asyncio.create_task(channel.start())
+        try:
+            resp = await _http_get(f"http://127.0.0.1:29929{url_path}")
+        finally:
+            await channel.stop()
+            await server_task
+
+    assert resp.status_code == 200
+    assert resp.content == raw_bytes
+    assert resp.headers["content-type"].startswith(expected_mime)
+    assert resp.headers.get("x-content-type-options") == "nosniff"
+    assert "sandbox" not in resp.headers.get("content-security-policy", "")
+
+
 @pytest.mark.parametrize("streamed", [False, True])
 async def test_markdown_publication_transfers_exact_custody_through_real_recorder(
     bus: MagicMock, tmp_path: Path, streamed: bool,

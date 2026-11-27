@@ -1964,16 +1964,21 @@ def read_transcript_lines_for_preview(
     session_key: str,
     *,
     candidates: Sequence[str | None],
+    canonical_events_loader: Callable[[Sequence[str]], Mapping[str, Mapping[str, Any]]] | None = None,
 ) -> list[dict[str, Any]]:
     """Read display transcript rows relevant to file-preview reference resolution.
 
     Skips decoding/JSON-parsing multi-MB records (e.g. large tool outputs or
     inline media) that cannot mention any candidate filename, while keeping
-    user turn markers and small streaming deltas so turn grouping stays exact.
+    user turn markers, consolidated text references, and small streaming deltas
+    so turn grouping stays exact.
     """
     needles = _preview_candidate_needles(candidates)
     if needles is None:
-        return read_transcript_lines(session_key)
+        return hydrate_consolidated_transcript_lines(
+            read_transcript_lines(session_key),
+            canonical_events_loader,
+        )
     _migrate_legacy_transcript(session_key)
     matched: list[dict[str, Any]] = []
     for chunk_id in _chunk_ids(session_key):
@@ -1996,7 +2001,12 @@ def read_transcript_lines_for_preview(
                             or b'"delta"' in raw_line
                         )
                     )
-                    if not (has_needle or is_small_marker):
+                    is_text_ref = (
+                        canonical_events_loader is not None
+                        and len(raw_line) <= 65536
+                        and b'"_webui_text_ref"' in raw_line
+                    )
+                    if not (has_needle or is_small_marker or is_text_ref):
                         continue
                     try:
                         obj = json.loads(raw_line.decode("utf-8"))
@@ -2006,7 +2016,7 @@ def read_transcript_lines_for_preview(
                         matched.append(cast(dict[str, Any], obj))
         except OSError:
             continue
-    return matched
+    return hydrate_consolidated_transcript_lines(matched, canonical_events_loader)
 
 
 def webui_transcript_signature(session_key: str) -> tuple[tuple[str, int, int], ...]:

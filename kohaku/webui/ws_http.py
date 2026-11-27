@@ -192,37 +192,49 @@ _PREVIEW_ABSOLUTE_PATH_RE = re.compile(
 _PREVIEW_PATH_CACHE_TTL_S = 60.0
 _PREVIEW_PATH_CACHE_MAX = 8
 _PREVIEW_PATH_LIMIT = 20_000
-_preview_path_cache: dict[str, tuple[float, tuple[str, ...]]] = {}
+_preview_path_cache: dict[
+    str, tuple[float, tuple[tuple[str, int, int], ...], tuple[str, ...]]
+] = {}
 _preview_path_lock = threading.Lock()
 
 
 def _transcript_absolute_paths(session_key: str) -> tuple[str, ...]:
     now = time.monotonic()
+    signature = webui_transcript_signature(session_key)
     with _preview_path_lock:
         cached = _preview_path_cache.get(session_key)
-        if cached is not None and now - cached[0] < _PREVIEW_PATH_CACHE_TTL_S:
-            return cached[1]
+        if (
+            cached is not None
+            and cached[1] == signature
+            and now - cached[0] < _PREVIEW_PATH_CACHE_TTL_S
+        ):
+            return cached[2]
     seen: dict[str, int] = {}
     sequence = 0
     try:
-        from kohaku.webui.transcript import read_transcript_lines
-
         for record in read_transcript_lines(session_key):
             blob = json.dumps(record, ensure_ascii=False)
             for match in _PREVIEW_ABSOLUTE_PATH_RE.findall(blob):
-                candidate = match.rstrip(".,;:)]}")
-                if 3 < len(candidate) <= 4096:
-                    sequence += 1
-                    seen[candidate] = sequence
-                if len(seen) >= _PREVIEW_PATH_LIMIT:
-                    break
+                raw_candidate = match.rstrip(".,;:)]}'\"")
+                cleaned = re.sub(
+                    r"\s+\(\d[\d,.\s]*(?:bytes?|kb|mb|gb|b)\)\s*$",
+                    "",
+                    raw_candidate,
+                    flags=re.IGNORECASE,
+                ).rstrip(".,;:)]}'\"")
+                for candidate in (cleaned, raw_candidate):
+                    if 3 < len(candidate) <= 4096:
+                        sequence += 1
+                        seen[candidate] = sequence
+                    if len(seen) >= _PREVIEW_PATH_LIMIT:
+                        break
     except Exception:
         seen = {}
     paths = tuple(
         sorted(seen, key=lambda candidate: seen[candidate], reverse=True)
     )
     with _preview_path_lock:
-        _preview_path_cache[session_key] = (now, paths)
+        _preview_path_cache[session_key] = (now, signature, paths)
         if len(_preview_path_cache) > _PREVIEW_PATH_CACHE_MAX:
             oldest = min(_preview_path_cache, key=lambda key: _preview_path_cache[key][0])
             _preview_path_cache.pop(oldest, None)
@@ -2565,10 +2577,7 @@ class GatewayHTTPHandler:
                     permission_owner=permission_owner,
                     permission_reference=permission_reference,
                     restrict_to_root=None if full_preview_access else scope.project_path,
-                    image_url=lambda target: self.media.sign_media_read(
-                        target,
-                        allow_folder_grants=full_preview_access,
-                    ),
+                    media_url=self.media.sign_authorized_preview_media,
                     referenced_path=referenced_path,
                 )
 
@@ -2577,9 +2586,30 @@ class GatewayHTTPHandler:
             except WebUIFilePreviewError as direct_err:
                 if direct_err.status not in {403, 404}:
                     raise
+                canonical_events_loader: (
+                    Callable[[Sequence[str]], Mapping[str, Mapping[str, Any]]] | None
+                ) = None
+                sessions = self.session_manager
+                if sessions is not None:
+                    saved_source = sessions.read_saved_source_metadata(decoded_key)
+                    if saved_source is not None:
+                        bound_state = saved_source.state
+                        bound_sessions = sessions
+
+                        def _load_canonical_events(
+                            event_ids: Sequence[str],
+                        ) -> dict[str, dict[str, Any]]:
+                            return bound_sessions.read_canonical_events_by_ids(
+                                decoded_key,
+                                list(event_ids),
+                                expected_source=bound_state,
+                            )
+
+                        canonical_events_loader = _load_canonical_events
                 transcript_lines = read_transcript_lines_for_preview(
                     decoded_key,
                     candidates=(requested_path, path),
+                    canonical_events_loader=canonical_events_loader,
                 )
                 referenced_path = (
                     file_preview_reference(requested_path, transcript_lines)
@@ -2593,6 +2623,7 @@ class GatewayHTTPHandler:
                         extra_lines = read_transcript_lines_for_preview(
                             decoded_key,
                             candidates=(resolved_path,),
+                            canonical_events_loader=canonical_events_loader,
                         )
                         referenced_path = file_preview_reference(resolved_path, extra_lines)
                 if referenced_path is None and resolved_path == path:

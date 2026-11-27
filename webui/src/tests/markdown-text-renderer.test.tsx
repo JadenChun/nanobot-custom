@@ -733,4 +733,51 @@ describe("MarkdownTextRenderer", () => {
 
     expect(container.querySelector(".katex")).toBeInTheDocument();
   });
+
+  it("renders file:// links as clickable FileReferenceChip instead of raw file anchors", () => {
+    const onOpenFilePreview = vi.fn();
+    const { container } = render(
+      <MarkdownTextRenderer onOpenFilePreview={onOpenFilePreview}>
+        {"Created [INV-000009.pdf](file:///home/jaden/Documents/INV-000009.pdf)"}
+      </MarkdownTextRenderer>,
+    );
+
+    expect(container.querySelector('a[href^="file:"]')).toBeNull();
+    const chip = screen.getByTestId("inline-file-path");
+    expect(chip).toHaveTextContent("INV-000009.pdf");
+    fireEvent.click(chip);
+    expect(onOpenFilePreview).toHaveBeenCalledWith("/home/jaden/Documents/INV-000009.pdf");
+  });
+
+  it("never renders raw file:// anchors or file:// images for non-file targets", () => {
+    const { container } = render(
+      <MarkdownTextRenderer>
+        {"[folder](file:///home/jaden/folder/) and ![pic](file:///home/jaden/pic.png)"}
+      </MarkdownTextRenderer>,
+    );
+
+    expect(container.querySelector('a[href^="file:"]')).toBeNull();
+    expect(container.querySelector('img[src^="file:"]')).toBeNull();
+  });
+
+  it.each(["demo.mp4", "voice.m4a", "quote.docx"])(
+    "probes availability for bare media and document filename %s",
+    async (filename) => {
+      const onOpenFilePreview = vi.fn();
+      const resolve = vi.fn().mockResolvedValue(true);
+      render(
+        <FilePreviewAvailabilityProvider resolve={resolve}>
+          <MarkdownTextRenderer onOpenFilePreview={onOpenFilePreview}>
+            {`Generated \`${filename}\``}
+          </MarkdownTextRenderer>
+        </FilePreviewAvailabilityProvider>,
+      );
+
+      const chip = screen.getByTestId("inline-file-path");
+      await waitFor(() => expect(resolve).toHaveBeenCalledWith(filename));
+      await waitFor(() => expect(chip).toHaveAttribute("role", "button"));
+      fireEvent.click(chip);
+      expect(onOpenFilePreview).toHaveBeenCalledWith(filename);
+    },
+  );
 });

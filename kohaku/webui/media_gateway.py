@@ -162,6 +162,23 @@ class WebUIMediaGateway:
             return sign_existing_media_path(path, secret=self.secret, media_dir=self._media_dir)
         return self.sign_or_stage_media_path(path, allow_folder_grants=allow_folder_grants)
 
+    def sign_authorized_preview_media(self, path: Path) -> dict[str, str] | None:
+        """Stage (if unmanaged) and sign a file already authorized by file-preview policy.
+
+        Callers MUST have already validated ``path`` through ``_resolve_preview_path``
+        (workspace boundary, ``resource_policy``, session permissions, or an explicit
+        assistant transcript reference). Uses read-only deterministic staging so repeated
+        previews never mint custody publication records.
+        """
+        managed = stage_managed_media_path(
+            path,
+            media_dir=self._media_dir,
+            authorize_source=None,
+        )
+        if managed is None:
+            return None
+        return sign_existing_media_path(managed, secret=self.secret, media_dir=self._media_dir)
+
     def augment_transcript_media(
         self,
         paths: list[str],
