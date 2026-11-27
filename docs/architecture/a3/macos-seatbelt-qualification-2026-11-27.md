@@ -118,6 +118,24 @@ credential helper, the Docker daemon, `brew install`, long-lived development ser
 Macs, and a side-by-side comparison with Codex. Children started through launchd or XPC cannot be
 seen by the leftover scan.
 
+## Review fixes
+
+Review of the branch found three defects. They were fixed after the runs recorded above, so those
+results and CI run 45941759662 do not cover the fixes.
+
+1. **Other terminals in Sandbox.** The blanket file read came after the terminal rule, so a
+   command could open another terminal of the same user, read typed input and change its mode.
+   The profile now denies reads and ioctls on `/dev/ttys*` after the blanket read, and allows them
+   again only for ptys the command opened itself. A test runs this under the real `sandbox-exec`.
+2. **Kill during a pending output write.** If one select batch held a kill (or a control EOF) and
+   an output write, the supervisor raised `KeyError` and exited with 125 without a receipt. On macOS
+   this left escaped descendants and the launch temporary folder behind. The relay now skips events
+   whose registration changed earlier in the same batch. The test replaces signals and the receipt,
+   so it does not exercise real cleanup.
+3. **Cached host check failures.** One failed self-test or profile probe disabled the macOS
+   executor until restart. Success is still cached for good. A failure is now retried after five
+   minutes, on the next call, and concurrent callers share one attempt.
+
 ## Decisions needed before default on
 
 1. **setuid programs in Full access.** `sudo`, `ps` and `top` are refused. Accept this, or keep
