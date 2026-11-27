@@ -921,7 +921,11 @@ class AgentLoop:
             default_workspace=workspace,
             default_restrict_to_workspace=restrict_to_workspace,
             managed_state=(
-                (lambda: fork_dependencies.resource_policy.managed_mode)
+                (
+                    lambda: fork_dependencies.resource_policy.sandbox_default
+                    or fork_dependencies.resource_policy.managed_mode
+                    or folder_grants.is_managed
+                )
                 if folder_grants is not None
                 else None
             ),
@@ -4495,10 +4499,17 @@ class AgentLoop:
                 and (live_session is None or live_session.policy.persist)
                 and self.context.memory.owns_dream_tools(effective_tools, effective_scope.project_path)
             )
+        resource_policy = self._fork_dependencies.resource_policy
         managed_prompt = bool(
-            self._fork_dependencies.resource_policy.managed_mode
-            and request_ctx.channel == "websocket"
+            request_ctx.channel == "websocket"
             and request_ctx.persistent_session
+            and (
+                resource_policy.managed_mode
+                or (
+                    resource_policy.folder_grants is not None
+                    and (resource_policy.sandbox_default or resource_policy.managed_webui_only)
+                )
+            )
         )
         transcript_builder = partial(
             self.context.build_transcript,
@@ -7513,11 +7524,14 @@ class AgentLoop:
                 owner.is_temporary_full_reference(full_reference)
                 and owner.is_current_full_reference(full_reference)
             )
+        resource_policy = self._fork_dependencies.resource_policy
         if (
             route_channel == "websocket"
             and grants is not None
             and (
-                self._fork_dependencies.resource_policy.managed_mode
+                resource_policy.managed_mode
+                or resource_policy.sandbox_default
+                or resource_policy.managed_webui_only
                 or local_private_workspace_authority
             )
         ):
