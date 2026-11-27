@@ -1130,6 +1130,14 @@
     "error": "Lỗi kết nối"
   },
   "thread": {
+    "delegatedChild": {
+      "partial": "Một phần",
+      "showResult": "Hiện kết quả",
+      "hideResult": "Ẩn kết quả",
+      "stepCount_one": "{{count}} bước",
+      "stepCount_many": "{{count}} bước",
+      "stepCount_other": "{{count}} bước"
+    },
     "runStopped": "Đã dừng tác vụ",
     "compaction": {
       "cancelled": "Đã hủy nén ngữ cảnh",

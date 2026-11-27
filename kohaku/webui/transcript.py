@@ -37,6 +37,11 @@ from kohaku.webui.metadata import (
     WEBUI_MESSAGE_SOURCE_METADATA_KEY,
     WEBUI_TURN_METADATA_KEY,
 )
+from kohaku.webui.outbound_wire import (
+    DELEGATED_CHILD_RUN_TOTAL_FIELDS,
+    DELEGATED_CHILD_RUN_TOTAL_STATES,
+    delegated_child_run_total,
+)
 from kohaku.webui.session_identity import webui_chat_id, webui_session_key
 
 WEBUI_TRANSCRIPT_SCHEMA_VERSION = 3
@@ -500,6 +505,11 @@ def validate_retained_transcript_record(row: dict[str, object]) -> None:
             for name in integer_fields
         ):
             raise ValueError("invalid retained delegated-child activity")
+        if any(
+            name in row and delegated_child_run_total(row[name]) is None
+            for name in DELEGATED_CHILD_RUN_TOTAL_FIELDS
+        ):
+            raise ValueError("invalid retained delegated-child run totals")
         boolean_fields = ("holds_capacity", "can_stop", "owned_work")
         if any(
             row.get(name) is not None and type(row.get(name)) is not bool
@@ -4123,6 +4133,10 @@ def replay_transcript_to_ui_messages(
             spawn_call_id = rec.get("spawn_call_id")
             if isinstance(spawn_call_id, str) and spawn_call_id:
                 child["spawn_call_id"] = spawn_call_id
+            if state in DELEGATED_CHILD_RUN_TOTAL_STATES:
+                for name in DELEGATED_CHILD_RUN_TOTAL_FIELDS:
+                    if (total := delegated_child_run_total(rec.get(name))) is not None:
+                        child[name] = total
             for name in (
                 "parent_generation", "root_generation", "child_generation",
                 "run_sequence", "state_sequence", "control_epoch",
@@ -4169,7 +4183,27 @@ def replay_transcript_to_ui_messages(
                 if next_version == prior_version:
                     if _delegated_child_facts(previous) != _delegated_child_facts(child):
                         continue
-                    continue
+                    if any(
+                        name in previous and name in child and previous[name] != child[name]
+                        for name in DELEGATED_CHILD_RUN_TOTAL_FIELDS
+                    ):
+                        continue
+                    if not any(
+                        name in child and name not in previous
+                        for name in DELEGATED_CHILD_RUN_TOTAL_FIELDS
+                    ):
+                        continue
+                # Omission is compatible with older records, but only within the
+                # same child run (the parent run is also shared by follow-ups).
+                if (
+                    state in DELEGATED_CHILD_RUN_TOTAL_STATES
+                    and next_version[0] == prior_version[0]
+                    and child["child_run_id"]
+                    and child["child_run_id"] == previous.get("child_run_id")
+                ):
+                    for name in DELEGATED_CHILD_RUN_TOTAL_FIELDS:
+                        if name in previous and name not in child:
+                            child[name] = previous[name]
                 # The child stays with the turn that spawned it, not a follow-up's turn.
                 anchor_turn_id = previous.get("turn_id") or child["turn_id"]
                 child["turn_id"] = anchor_turn_id

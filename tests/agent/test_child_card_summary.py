@@ -43,10 +43,17 @@ def _append(sessions, tree, child_id, run_id, *messages):
     child = tree.child(child_id)
     backend = sessions.source_backend(child.session_key)
     snapshot = backend.source.load_source_snapshot(child.session_key)
+    events = [new_source_event(message, run_id=run_id) for message in messages]
+    for event in events:
+        # The source constructor strips untrusted links; emulate runtime linkage.
+        if calls := event.get("tool_calls"):
+            event["_execution_ids"] = [f"exec-{run_id}-{call['id']}" for call in calls]
+        elif event["role"] == "tool":
+            event["_execution_id"] = f"exec-{run_id}-{event['tool_call_id']}"
     backend.source.append_source_events(
         child.session_key,
         snapshot.state,
-        [new_source_event(message, run_id=run_id) for message in messages],
+        events,
     )
     sessions.invalidate(child.session_key)
 
@@ -389,7 +396,7 @@ async def test_uncertain_and_legacy_records_have_no_run_totals(tmp_path):
         assert getattr(broken, field) is None
 
 
-async def test_child_event_wire_transcript_and_hydration_carry_run_totals(tmp_path, monkeypatch):
+async def test_child_event_wire_transcript_and_hydration_carry_run_totals():
     from dataclasses import replace
 
     from kohaku.agent.loop import AgentLoop
@@ -408,7 +415,8 @@ async def test_child_event_wire_transcript_and_hydration_carry_run_totals(tmp_pa
 
     legacy = _make_admission()
     finished = replace(legacy, duration_ms=62_500, step_count=2)
-    for admission, expected in ((finished, (62_500, 2)), (legacy, (None, None))):
+    empty = replace(legacy, duration_ms=0, step_count=0)
+    for admission, expected in ((finished, (62_500, 2)), (empty, (0, 0)), (legacy, (None, None))):
         loop = AgentLoop.__new__(AgentLoop)
         loop.bus = SimpleNamespace(publish_outbound=AsyncMock())
         token = bind_request_context(RequestContext(
@@ -441,5 +449,22 @@ async def test_child_event_wire_transcript_and_hydration_carry_run_totals(tmp_pa
             assert (payload.get("duration_ms"), payload.get("step_count")) == expected
             assert ("duration_ms" in payload) is (expected[0] is not None)
             assert ("step_count" in payload) is (expected[1] is not None)
-    with pytest.raises(ValueError):
-        validate_retained_transcript_record({**wire, "step_count": -1})
+    for invalid in (-1, True, 1.2, "3", None, 2**53):
+        with pytest.raises(ValueError):
+            validate_retained_transcript_record({**wire, "step_count": invalid})
+        [row] = replay_transcript_to_ui_messages([{**wire, "step_count": invalid}])
+        assert "step_count" not in row["delegatedChild"]
+
+    def replay(*updates):
+        [message] = replay_transcript_to_ui_messages(updates)
+        return message["delegatedChild"]
+
+    with_totals = {**wire, "duration_ms": 62_500, "step_count": 2}
+    assert replay(wire, with_totals)["step_count"] == 2
+    later = {**wire, "state_sequence": wire["state_sequence"] + 1}
+    assert replay(with_totals, later)["step_count"] == 2
+    followup = {
+        **wire, "run_sequence": wire["run_sequence"] + 1,
+        "child_run_id": "child-run-b", "state": "active", "outcome": None,
+    }
+    assert "step_count" not in replay(with_totals, followup, with_totals)

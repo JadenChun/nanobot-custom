@@ -1130,6 +1130,14 @@
     "error": "Kesalahan koneksi"
   },
   "thread": {
+    "delegatedChild": {
+      "partial": "Sebagian",
+      "showResult": "Tampilkan hasil",
+      "hideResult": "Sembunyikan hasil",
+      "stepCount_one": "{{count}} langkah",
+      "stepCount_many": "{{count}} langkah",
+      "stepCount_other": "{{count}} langkah"
+    },
     "runStopped": "Proses dihentikan",
     "compaction": {
       "cancelled": "Pemadatan konteks dibatalkan",

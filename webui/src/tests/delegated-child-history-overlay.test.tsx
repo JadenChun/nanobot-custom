@@ -121,11 +121,13 @@ describe("DelegatedChildHistoryOverlay", () => {
     }));
 
     const onClose = vi.fn();
+    const legacyTitle = "A".repeat(80);
+    const legacyChild = { ...summaryChild, task_label: legacyTitle };
     render(
       <DelegatedChildHistoryOverlay
-        child={summaryChild}
+        child={legacyChild}
         rootKey={root.session_key}
-        rootRows={[canonicalChild, summaryChild]}
+        rootRows={[canonicalChild, legacyChild]}
         expectedRoot={root}
         provenanceComplete
         token="tok"
@@ -133,6 +135,7 @@ describe("DelegatedChildHistoryOverlay", () => {
       />,
     );
 
+    expect(screen.getByRole("heading", { name: "A".repeat(59) + "…" })).toHaveAttribute("title", legacyTitle);
     expect(await screen.findByText("Summary-only history · read only")).toBeInTheDocument();
     expect(screen.getByText(/A summary of the old delegated work\./)).toBeInTheDocument();
     expect(screen.getByText(/A message with a real epoch-zero timestamp\./)).toBeInTheDocument();

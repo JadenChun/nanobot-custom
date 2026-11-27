@@ -211,7 +211,7 @@ async def test_transcript_projection_advances_sequence_and_clears_result_on_next
     completed_projection = tree.child(admission.child_id)
     assert completed_projection is not None
     assert completed_projection.state_sequence == before_sequence + 1
-    assert completed_projection.result_summary == "Found two edge cases."
+    assert completed_projection.result_summary == "Found\n  two   edge cases."
     assert completed_projection.result_summary_truncated is False
 
     active = await tree.activate(admission.child_id)

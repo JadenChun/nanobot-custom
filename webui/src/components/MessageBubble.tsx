@@ -2,6 +2,7 @@ import { ClaudeBadge } from "@/components/thread/ClaudeBadge";
 import {
   useCallback,
   useEffect,
+  useId,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -10,12 +11,14 @@ import {
   type ReactNode,
 } from "react";
 import {
+  Bot,
   Check,
   ChevronRight,
   CircleAlert,
   CircleHelp,
   Clock3,
   Copy,
+  FileText,
   ImageIcon,
   Loader2,
   Quote,
@@ -31,7 +34,8 @@ import { MarkdownText } from "@/components/MarkdownText";
 import { SlashCommandText } from "@/components/SlashCommandText";
 import { ReasoningRow } from "@/components/thread/activity/ReasoningRow";
 import { ContextCompactionNotice } from "@/components/thread/ContextCompactionNotice";
-import { SubagentStatus } from "@/components/thread/SubagentStatus";
+import { SubagentStatus, subagentTaskLabel } from "@/components/thread/SubagentStatus";
+import { formatWorkDuration } from "@/components/thread/working-status";
 import { UserMessageText } from "@/components/UserMessageText";
 import {
   Tooltip,
@@ -100,37 +104,73 @@ export function DelegatedChildRow({
   statusAvailable: boolean;
 }) {
   const { t } = useTranslation();
-  const taskLabel = child.task_label?.trim() || child.profile || "Delegated task";
+  const taskLabel = subagentTaskLabel(child);
+  const id = useId();
+  const resultId = `${id}-result`;
+  const statusId = `${id}-status`;
+  const [expandedRun, setExpandedRun] = useState<string | null>(null);
+  const run = JSON.stringify([child.child_id, child.run_sequence, child.child_run_id]);
+  const expanded = expandedRun === run;
+  const settled = child.history_kind === "summary" || [
+    "completed", "failed", "stopped", "refused", "uncertain", "interrupted",
+  ].includes(child.state);
+  const result = settled ? child.result_summary : null;
+  const resultAction = expanded
+    ? t("thread.delegatedChild.hideResult", "Hide result")
+    : t("thread.delegatedChild.showResult", "Show result");
   return (
     <section
       className="my-1 max-w-[49.5rem]"
       data-delegated-child={child.child_id}
-      aria-label={taskLabel}
+      aria-label={taskLabel.short}
     >
-      <button
-        type="button"
-        className="flex min-h-11 w-full items-center gap-3 rounded-control px-2.5 py-2 text-start text-[13px] transition-colors enabled:hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-default"
-        onClick={(event) => onOpen?.(child, event.currentTarget)}
-        disabled={!onOpen}
-        aria-label={t("thread.delegatedChild.inspectTask", {
-          task: taskLabel,
-          defaultValue: "Inspect {{task}} activity",
-        })}
-      >
-        <span className="min-w-0 flex-1 space-y-0.5">
-          <span className="flex flex-wrap items-center gap-2 break-words font-medium leading-snug text-foreground">
-            <span className="min-w-0 break-words">{taskLabel}</span>
+      <div className="flex min-w-0 items-center">
+        <button
+          type="button"
+          className="flex min-h-11 min-w-0 flex-1 items-center gap-x-2 rounded-control px-2 py-1 text-start text-[13px] transition-colors enabled:hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-default"
+          onClick={(event) => onOpen?.(child, event.currentTarget)}
+          disabled={!onOpen}
+          aria-describedby={statusId}
+          aria-label={t("thread.delegatedChild.inspectTask", {
+            task: taskLabel.short,
+            defaultValue: "Inspect {{task}} activity",
+          })}
+        >
+          <Bot aria-hidden className="size-4 shrink-0 text-muted-foreground" />
+          <span className="min-w-0 flex-1 truncate font-medium" title={taskLabel.full}>{taskLabel.short}</span>
+          <span id={statusId} className="flex min-w-0 items-center gap-x-1 whitespace-nowrap sm:gap-x-2">
             {child.harness === "claude_sdk" ? <ClaudeBadge /> : null}
+            <SubagentStatus child={child} available={statusAvailable} compact />
+            {settled && child.duration_ms !== undefined ? (
+              <span className="shrink-0 text-xs tabular-nums text-muted-foreground">{formatWorkDuration(child.duration_ms)}</span>
+            ) : null}
+            {settled && child.step_count !== undefined ? (
+              <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
+                {t("thread.delegatedChild.stepCount", { count: child.step_count, defaultValue: "{{count}} steps" })}
+              </span>
+            ) : null}
           </span>
-          <SubagentStatus child={child} available={statusAvailable} />
-          {child.result_summary ? (
-            <span className="line-clamp-2 whitespace-pre-wrap break-words leading-snug text-muted-foreground">
-              {child.result_summary}
-            </span>
-          ) : null}
-        </span>
-        {onOpen ? <ChevronRight aria-hidden className="size-4 shrink-0 text-muted-foreground rtl:rotate-180" /> : null}
-      </button>
+          {onOpen ? <ChevronRight aria-hidden className="size-4 shrink-0 text-muted-foreground rtl:rotate-180" /> : null}
+        </button>
+        {result ? (
+          <button
+            type="button"
+            aria-label={resultAction}
+            title={resultAction}
+            aria-expanded={expanded}
+            aria-controls={resultId}
+            className="inline-flex size-11 shrink-0 items-center justify-center rounded-control text-muted-foreground hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring aria-expanded:text-foreground"
+            onClick={() => setExpandedRun(expanded ? null : run)}
+          >
+            <FileText aria-hidden className="size-4" />
+          </button>
+        ) : null}
+      </div>
+      {result ? (
+        <div id={resultId} hidden={!expanded} className="ms-8 border-s border-border/60 py-2 ps-3 pe-2 text-xs">
+          {expanded ? <MarkdownText>{result}</MarkdownText> : null}
+        </div>
+      ) : null}
     </section>
   );
 }

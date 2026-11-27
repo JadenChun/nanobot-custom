@@ -1130,6 +1130,14 @@
     "error": "连接出错"
   },
   "thread": {
+    "delegatedChild": {
+      "partial": "部分完成",
+      "showResult": "显示结果",
+      "hideResult": "隐藏结果",
+      "stepCount_one": "{{count}} 步",
+      "stepCount_many": "{{count}} 步",
+      "stepCount_other": "{{count}} 步"
+    },
     "runStopped": "运行已停止",
     "compaction": {
       "cancelled": "上下文压缩已取消",

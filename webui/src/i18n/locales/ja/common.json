@@ -1130,6 +1130,14 @@
     "error": "接続エラー"
   },
   "thread": {
+    "delegatedChild": {
+      "partial": "一部完了",
+      "showResult": "結果を表示",
+      "hideResult": "結果を非表示",
+      "stepCount_one": "{{count}} ステップ",
+      "stepCount_many": "{{count}} ステップ",
+      "stepCount_other": "{{count}} ステップ"
+    },
     "runStopped": "実行を停止しました",
     "compaction": {
       "cancelled": "コンテキストの圧縮をキャンセルしました",

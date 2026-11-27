@@ -80,6 +80,38 @@ function merge(
 }
 
 describe("delegated child projection ordering", () => {
+  it("accepts optional non-negative safe run totals and does not invent metrics for old rows", () => {
+    const settled = child({ state: "completed", outcome: "partial" });
+    expect(parseDelegatedChildPayload({ ...settled, duration_ms: 0, step_count: 0 }))
+      .toMatchObject({ duration_ms: 0, step_count: 0 });
+    expect(parseDelegatedChildPayload(settled)).not.toHaveProperty("step_count");
+    for (const invalid of [-1, true, null, "2", 1.5, Infinity, 2 ** 53]) {
+      expect(parseDelegatedChildPayload({ ...settled, step_count: invalid })).toBeNull();
+    }
+  });
+
+  it("keeps same-run totals across hydration but never carries them to a follow-up", () => {
+    const settled = child({ state: "completed", outcome: "partial", state_sequence: 4 });
+    const metrics = { ...settled, duration_ms: 62_500, step_count: 2 };
+    const enriched = merge([row(settled)], [metrics], "hydration");
+    expect(enriched.refreshRequired).toBe(false);
+    expect(enriched.messages[0]?.delegatedChild).toMatchObject({ step_count: 2 });
+
+    const sameRun = merge(enriched.messages, [{ ...settled, state_sequence: 5 }]);
+    expect(sameRun.messages[0]?.delegatedChild).toMatchObject({ duration_ms: 62_500, step_count: 2 });
+    const conflict = merge(enriched.messages, [{ ...metrics, step_count: 999 }]);
+    expect(conflict.refreshRequired).toBe(true);
+    expect(conflict.messages[0]?.delegatedChild).toMatchObject({ step_count: 2 });
+
+    const followup = merge(sameRun.messages, [child({
+      run_sequence: 2, child_run_id: "child-run-2",
+    })]);
+    const stale = merge(followup.messages, [metrics], "hydration");
+    expect(stale.messages[0]?.delegatedChild).toMatchObject({ run_sequence: 2, state: "active" });
+    expect(stale.messages[0]?.delegatedChild).not.toHaveProperty("step_count");
+    expect(stale.messages[0]?.delegatedChild).not.toHaveProperty("duration_ms");
+  });
+
   it("retains an explicit source-less summary beside a canonical sibling without control authority", () => {
     const summary = {
       history_kind: "summary",

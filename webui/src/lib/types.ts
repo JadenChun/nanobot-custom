@@ -147,6 +147,8 @@ export interface DelegatedChildPayload {
   task_label_truncated?: boolean;
   result_summary?: string | null;
   result_summary_truncated?: boolean;
+  duration_ms?: number;
+  step_count?: number;
   outcome?: string | null;
   runtime_generation: number;
   turn_id?: string | null;
@@ -188,6 +190,8 @@ export interface DelegatedChildSummaryPayload {
   task_label_truncated: boolean;
   result_summary: string | null;
   result_summary_truncated: boolean;
+  duration_ms?: number;
+  step_count?: number;
   outcome: string | null;
   runtime_generation: number | null;
   turn_id?: string | null;
@@ -1957,6 +1961,8 @@ export type InboundEvent =
       task_label_truncated: boolean;
       result_summary: string | null;
       result_summary_truncated: boolean;
+      duration_ms?: number;
+      step_count?: number;
       outcome?: string | null;
       runtime_generation: number;
       turn_id?: string | null;

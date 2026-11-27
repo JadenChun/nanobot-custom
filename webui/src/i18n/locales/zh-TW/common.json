@@ -1130,6 +1130,14 @@
     "error": "連線錯誤"
   },
   "thread": {
+    "delegatedChild": {
+      "partial": "部分完成",
+      "showResult": "顯示結果",
+      "hideResult": "隱藏結果",
+      "stepCount_one": "{{count}} 步",
+      "stepCount_many": "{{count}} 步",
+      "stepCount_other": "{{count}} 步"
+    },
     "runStopped": "執行已停止",
     "compaction": {
       "cancelled": "上下文壓縮已取消",

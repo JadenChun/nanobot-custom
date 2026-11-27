@@ -4,7 +4,7 @@ import * as Dialog from "@radix-ui/react-dialog";
 import { ArrowLeft, ChevronRight } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
-import { SubagentStatus } from "@/components/thread/SubagentStatus";
+import { SubagentStatus, subagentTaskLabel } from "@/components/thread/SubagentStatus";
 import { ThreadInspectorDialog } from "@/components/thread/ThreadInspector";
 import { ThreadMessages } from "@/components/thread/ThreadMessages";
 import { Button } from "@/components/ui/button";
@@ -508,7 +508,7 @@ export function DelegatedChildHistoryOverlay({
   }, active);
 
   const displayedChild = currentChild ?? child;
-  const taskLabel = displayedChild.task_label?.trim() || displayedChild.profile || "Delegated task";
+  const taskLabel = subagentTaskLabel(displayedChild);
   const displayMessages = provenanceComplete
     ? projectWebuiThreadMessages(childThreadMessages(messages, overview, !hasMoreBefore))
     : [];
@@ -534,7 +534,9 @@ export function DelegatedChildHistoryOverlay({
           </Button>
         ) : null}
         <div className="min-w-0 flex-1 py-0.5">
-          <Title className="break-words text-sm font-semibold leading-5 sm:text-base">{taskLabel}</Title>
+          <Title title={taskLabel.full} className="break-words text-sm font-semibold leading-5 sm:text-base">
+            {taskLabel.short}
+          </Title>
           <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1">
             {displayedChild.harness === "claude_sdk" ? <ClaudeBadge /> : null}
             <span aria-live="polite">
@@ -604,7 +606,7 @@ export function DelegatedChildHistoryOverlay({
   if (!modal) {
     return (
       <section
-        aria-label={taskLabel}
+        aria-label={taskLabel.short}
         className="flex min-h-0 min-w-0 flex-1 flex-col"
         data-testid="delegated-child-history"
       >

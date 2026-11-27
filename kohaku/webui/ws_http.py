@@ -134,7 +134,12 @@ from kohaku.webui.native_folder_picker import (
     native_folder_picker_available,
     pick_native_folder,
 )
-from kohaku.webui.outbound_wire import ExternalApprovalWirePayload
+from kohaku.webui.outbound_wire import (
+    DELEGATED_CHILD_RUN_TOTAL_FIELDS,
+    DELEGATED_CHILD_RUN_TOTAL_STATES,
+    ExternalApprovalWirePayload,
+    delegated_child_run_total,
+)
 from kohaku.webui.session_automations import (
     all_automations_payload,
     serialize_automation_jobs,
@@ -4756,6 +4761,10 @@ def _hydrated_child_payload(
         "result_disposition": None,
         "holds_capacity": payload.get("holds_capacity") if type(payload.get("holds_capacity")) is bool else None,
     }
+    if state in DELEGATED_CHILD_RUN_TOTAL_STATES:
+        for name in DELEGATED_CHILD_RUN_TOTAL_FIELDS:
+            if (total := delegated_child_run_total(payload.get(name))) is not None:
+                child[name] = total
     updated_at: object = payload.get("updated_at")
     created_at: object = payload.get("created_at")
     child["created_at"] = (

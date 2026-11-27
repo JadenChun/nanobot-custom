@@ -1,9 +1,7 @@
 # Subagent display and response format implementation plan
 
-Status: planned 2026-11-27. Package P0 (prompt response format) is implemented
-in the working tree and not yet committed. All other packages are still open.
-Implementers: Claude Sonnet 5.5 workers, one per work package, each with explicit file ownership.
-The orchestrator reviews every package's diff and tests before accepting it.
+Status as of 2026-11-27: P0, C, E, A, and B are implemented on
+`codex/subagent-response-display`. D and F have not started.
 
 Reference session that reproduces every issue:
 parent `websocket:85f41d61-7609-46ac-af28-815123da98f5` and child
@@ -31,7 +29,7 @@ parent `websocket:85f41d61-7609-46ac-af28-815123da98f5` and child
 7. **The final answer is visually distinct.** Interim progress notes inside a turn render as muted
    activity text, and only the final reply gets the answer bubble.
 
-## Defaults for open questions (change before dispatching the affected package)
+## Confirmed decisions and separate work
 
 | Question | Default in this plan | Affects |
 |---|---|---|
@@ -63,7 +61,8 @@ ruff check kohaku/ tests/
 pytest <package test paths> -q
 # Strict types: zero new diagnostic signatures (docs/migration/p6-error-attribution.md)
 uv run --no-sync basedpyright --outputjson > /tmp/<pkg>-after.json   # compare with baseline
-uv run --no-sync python scripts/check_type_regressions.py <before.json> <after.json>
+uv run --no-sync python scripts/check_type_regressions.py <before.json> <after.json> \
+  --baseline-root "$PWD" --current-root "$PWD"
 # WebUI
 cd webui && bun run test && bun run build
 # Desktop
@@ -82,7 +81,7 @@ Each worker captures the basedpyright "before" report before editing any Python 
   `[name](/abs/path:line)`.
 - `format_hint.md`: new `websocket` branch saying the app renders GFM and that links and paths are clickable.
 - Tests: 113 passing, ruff clean. The fresh-workspace prompt is 7,259 characters, under the 8,000 cap.
-- Remaining: commit. Also update the workspace `SOUL.md` ("I am nanobot") to the kohaku template (user's call).
+- The workspace `SOUL.md` ("I am nanobot") is a separate, user-owned follow-up.
 
 ---
 
@@ -299,52 +298,34 @@ For each package:
 
 | Package | Status | Notes |
 |---|---|---|
-| P0 | implemented, uncommitted | 113 tests pass |
+| P0 | PASS | 113 tests pass; committed in `a813dbf01`. |
 | C | PASS 2026-11-27 | Child history rows carry `traces` from `replay_transcript_to_ui_messages`, calls matched by `tool_call_id` across pages; response adds `assignment` + `duration_ms`; overlay pins the assignment. Reference child: 124/124 rows matched ("Read file …", "Searched files"). Orchestrator re-run: 42 py + 41 TS tests pass; basedpyright 962→962, 0 new. Pre-existing unrelated failures: `test_claude_child_approval_and_stop_survive_parent_reconnect[approve\|deny]` (HTTP 401 on unchanged code too). |
 | E | PASS 2026-11-27 | `native.rs` only: `classify_link` (Allow / OpenExternal / Deny), macOS on_navigation + on_new_window route safe http(s) to the system browser; chat URLs carrying `bootstrapSecret` never leave the webview. cargo test 21/21. Manual macOS click test pending. MACOS.md updated. |
 | A | PASS 2026-11-27 | Optional `spawn_call_id` in child record, event, wire, transcript and TS types (old records read as none). Child renders right after its spawning tool row inside the activity group; legacy records land after their turn's last work row, before the final answer. Reference session: child moved from below a later turn's answer into its own turn. Orchestrator re-run: 47 py + 39 TS tests pass, ruff clean; basedpyright 962→962. Extra approved edits: `loop.py` (`_publish_delegated_child`), `ws_http.py` (`_hydrated_child_payload`), `ThreadMessages.tsx` (2 props), `tests/webui/test_managed_display_origin.py` stub. |
-| B | IN PROGRESS (stopped for handoff 2026-11-27) | Backend mostly done; frontend not started. See "Handoff: package B" below. |
+| B | PASS 2026-11-27 | Short titles, partial status, run metrics, and a separate Markdown result disclosure. See "Package B verification" below. |
 | D | not started | |
 | F | not started | |
 
-## Handoff: package B (resume here)
+## Package B verification
 
-Branch: `codex/subagent-response-display` (from `staging` @ 6aaebd722). User-confirmed decisions: optional
-`label` ≤60 chars with first-sentence fallback; `outcome="partial"` with state `completed`, shown as a warning.
-Approved scope extension: optional `duration_ms` (run start→finish, never `updated_at`) and `step_count`
-(tool results executed by the child) carried end to end; omitted for old records and live children.
+- Optional `label` (60 characters) and a first-sentence, workspace-relative fallback are persisted at admission.
+  The row and history header also shorten old labels without rewriting stored data.
+- `outcome="partial"` keeps the lifecycle state `completed` and remains eligible for follow-up. Iteration-limit
+  failures remain failures. The result preview keeps the final reply's Markdown structure and is shown on demand.
+- Settled run duration and tool-result count are optional display facts, carried through live events, replay, and
+  hydration. Zero is valid; live and old records without totals show no metrics. A new run cannot inherit totals
+  from an earlier one. The history action and Markdown result disclosure are separate controls.
+- The 35 package-specific Python tests are green; 78 tests passed in the focused Python rerun. The full WebUI
+  suite passed 2,002 tests and the production build succeeded. Ruff passed. The full-source BasedPyright diagnostic
+  comparison against `38e587efb` found 962 → 962 diagnostics across 547 files, with zero new signatures.
+- The broader Python selection passed 373 tests and skipped 5. Its only two failures, the gateway reconnect
+  tests for mobile approve/deny, fail with HTTP 401 on macOS. Both were reproduced from an unchanged export
+  of `38e587efb`. They were neither skipped in code nor fixed by B.
+- The reference child was checked read-only: its stored legacy outcome is still "Completed" and it has no
+  persisted run totals. Its 160-character stored title projects to 60 characters. New partial rows and the
+  Markdown disclosure were verified with WebUI component tests; no live desktop app check was run.
 
-Done (tests in `tests/agent/test_child_card_summary.py`, 32 pass):
-- `label` on explore/delegate tools → child record; fallback label derivation.
-- `outcome="partial"` (explorer loop guard, `repeated_no_progress`, unparsed first-run explore report;
-  follow-up runs partial only with explicit `partial:true`). `max_iterations` stays failed. Background
-  delivery still reports "failed" for `repeated_no_progress`.
-- Follow-up/fork/recovery gates accept `SETTLED_RESULT_OUTCOMES` (completed + partial).
-- `DelegatedChildEvent` fields + `loop.py _publish_delegated_child` pass `duration_ms`/`step_count`.
-
-Remaining, in order:
-1. Fix `_tool_step` in `tests/agent/test_child_card_summary.py` (~54): add `_execution_ids` on the assistant
-   event and the matching `_execution_id` on the tool result. Then the two failing tests
-   (`test_summary_is_the_final_reply_with_newlines`, `test_finished_run_persists_its_own_duration_and_step_count`)
-   should verify the already-written summary/totals code.
-2. Wire totals (third failing test): `kohaku/webui/outbound_wire.py` (`NotRequired[int]`, encode when not None);
-   `kohaku/webui/transcript.py` (`_DELEGATED_CHILD_CANONICAL_FIELDS`, int ≥0 validation in
-   `validate_retained_transcript_record`, replay next to `spawn_call_id`); `kohaku/webui/ws_http.py`
-   `_hydrated_child_payload` only.
-3. Run `pytest tests/agent -q -k "explore or delegat or child"` and `pytest tests/webui -q -k "child or delegated"`;
-   expect old assertions on 160-char labels / collapsed summaries / explorer "completed" to need updating.
-4. Frontend (tests first): fields in `lib/types.ts` + `delegated-child-projection.ts` (`CHILD_FACT_KEYS`, both
-   parsers; a new run must not keep the previous run's totals); "Partial" + warning icon in `SubagentStatus.tsx`;
-   compact settled `DelegatedChildRow` (`MessageBubble.tsx`) with duration + steps and a "Show result"
-   disclosure using `MarkdownText`, keeping the live line and aria labels; update `message-bubble.test.tsx`
-   (~1196); short title in the overlay header; strings in all 10 locales.
-5. basedpyright after-report vs. the frozen before-report (recreate the baseline from `staging` @ 6aaebd722 if
-   `/tmp/pkg-b/before.json` is gone) with `scripts/check_type_regressions.py`; `cd webui && bun run test && bun run build`.
-6. Reference session `c8bce12e…` (read-only): stored record still says Completed (old records are not rewritten).
-
-Then: D and F (wave 4) per their contracts above. Known pre-existing failures:
-`test_claude_child_approval_and_stop_survive_parent_reconnect[approve|deny]` and 17 full-suite tests failing on HEAD.
-`tsc -p tsconfig.json` (non-build config) had 178 error lines with no baseline; `tsconfig.build.json` passes.
+Next: D and F (wave 4), as separate work from B.
 
 ## Follow-ups found during review
 
@@ -363,9 +344,6 @@ Then: D and F (wave 4) per their contracts above. Known pre-existing failures:
 - **C4:** the "Assignment" overlay label has no locale entries yet.
 - **A1:** `spawn_call_id` is missing (turn fallback used) for non-streaming turns with role tools that have no
   durable intent (e.g. `explore`), likely including nested non-streaming child turns.
-- **Shared tree note (2026-11-27):** a separate permission/tool-dispatch workstream is editing
-  `kohaku/agent/tools/*`, `policy.py`, `memory.py`, `runner.py`, `loop.py`, `delegation.py` concurrently. Its
-  in-progress state broke collection of `test_managed_exec.py`, `test_managed_mcp_access.py`,
-  `test_p6_dream_compact_boundaries.py`, `test_seatbelt_shell_wiring.py` at review time. 17 full-suite
-  failures also fail on clean HEAD. Commit this plan's packages separately from that work.
+- The permission/tool-dispatch workstream was moved to `codex/remove-managed-tool-allowlist`; it is not
+  included in this feature branch.
 

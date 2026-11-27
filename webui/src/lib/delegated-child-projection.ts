@@ -58,6 +58,9 @@ const CHILD_FACT_KEYS = [
   "result_summary_truncated",
 ] as const satisfies readonly (keyof DelegatedChildPayload)[];
 
+const CHILD_RUN_TOTAL_KEYS = ["duration_ms", "step_count"] as const;
+const CHILD_RUN_TOTAL_STATES = new Set(["completed", "failed", "stopped"]);
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -88,6 +91,20 @@ function nonNegativeInteger(record: Record<string, unknown>, key: string): numbe
     : null;
 }
 
+function parseChildRunTotals(
+  record: Record<string, unknown>,
+  state: string | null,
+): Pick<DelegatedChildPayload, (typeof CHILD_RUN_TOTAL_KEYS)[number]> | null {
+  const totals: Pick<DelegatedChildPayload, (typeof CHILD_RUN_TOTAL_KEYS)[number]> = {};
+  for (const key of CHILD_RUN_TOTAL_KEYS) {
+    if (!hasOwn(record, key)) continue;
+    const count = nonNegativeInteger(record, key);
+    if (count === null) return null;
+    if (state && CHILD_RUN_TOTAL_STATES.has(state)) totals[key] = count;
+  }
+  return totals;
+}
+
 function booleanField(record: Record<string, unknown>, key: string): boolean | null {
   return typeof record[key] === "boolean" ? record[key] as boolean : null;
 }
@@ -108,6 +125,7 @@ export function parseDelegatedChildPayload(value: unknown): DelegatedChildPayloa
   const childId = nonEmptyString(value, "child_id");
   const profile = nonEmptyString(value, "profile");
   const state = nonEmptyString(value, "state");
+  const runTotals = parseChildRunTotals(value, state);
   const taskLabel = value.task_label;
   const taskLabelTruncated = booleanField(value, "task_label_truncated");
   const resultSummary = requiredNullableString(value, "result_summary");
@@ -144,6 +162,7 @@ export function parseDelegatedChildPayload(value: unknown): DelegatedChildPayloa
     || !childId
     || !profile
     || !state
+    || runTotals === null
     || typeof taskLabel !== "string"
     || codePointLength(taskLabel) > 160
     || taskLabelTruncated === null
@@ -182,6 +201,7 @@ export function parseDelegatedChildPayload(value: unknown): DelegatedChildPayloa
     child_session_key: childSessionKey,
     child_id: childId,
     profile,
+    ...runTotals,
     ...(value.harness === "claude_sdk" ? { harness: "claude_sdk" } : {}),
     task_label: taskLabel,
     task_label_truncated: taskLabelTruncated,
@@ -242,6 +262,7 @@ export function parseDelegatedChildSummaryPayload(
   const childId = nonEmptyString(value, "child_id");
   const profile = nonEmptyString(value, "profile");
   const state = nonEmptyString(value, "state");
+  const runTotals = parseChildRunTotals(value, state);
   const taskLabel = nullableString(value, "task_label");
   const taskLabelTruncated = booleanField(value, "task_label_truncated");
   const resultSummary = nullableString(value, "result_summary");
@@ -271,6 +292,7 @@ export function parseDelegatedChildSummaryPayload(
     || !childId
     || !profile
     || !state
+    || runTotals === null
     || taskLabel === undefined
     || (taskLabel !== null && codePointLength(taskLabel) > 160)
     || taskLabelTruncated === null
@@ -304,6 +326,7 @@ export function parseDelegatedChildSummaryPayload(
     child_session_key: childSessionKey,
     child_id: childId,
     profile,
+    ...runTotals,
     ...(value.harness === "claude_sdk" ? { harness: "claude_sdk" } : {}),
     state,
     task_label: taskLabel,
@@ -495,8 +518,27 @@ function compareVersion(a: DelegatedChildPayload, b: DelegatedChildPayload): num
 
 function canonicalFactsEqual(a: DelegatedChildPayload, b: DelegatedChildPayload): boolean {
   return CHILD_FACT_KEYS.every((key) => a[key] === b[key])
+    && CHILD_RUN_TOTAL_KEYS.every((key) => a[key] === undefined || b[key] === undefined || a[key] === b[key])
     // An older record may omit the spawning call; only two different calls conflict.
     && (!a.spawn_call_id || !b.spawn_call_id || a.spawn_call_id === b.spawn_call_id);
+}
+
+/** An older projection can omit display-only metrics for this same child run. */
+function withRunTotals<T extends DelegatedChildReference>(
+  payload: T,
+  fallback: DelegatedChildPayload,
+): T {
+  if (!CHILD_RUN_TOTAL_STATES.has(payload.state)
+    || !payload.child_run_id
+    || payload.child_run_id !== fallback.child_run_id
+    || payload.run_sequence !== fallback.run_sequence) return payload;
+  let result = payload;
+  for (const key of CHILD_RUN_TOTAL_KEYS) {
+    if (payload[key] === undefined && fallback[key] !== undefined) {
+      result = { ...result, [key]: fallback[key] };
+    }
+  }
+  return result;
 }
 
 /**
@@ -693,10 +735,10 @@ export function mergeDelegatedChildRows(
       refreshRequired = true;
       continue;
     }
-    // A stale or equal payload changes no state, but may supply a missing anchor.
+    // Stale events can supply an anchor, but not metadata for the displayed run.
     const payload = order < 0
-      ? withSpawnAnchor(candidate, parsedCurrent, candidate)
-      : withSpawnAnchor(current!, parsedCurrent, candidate);
+      ? withRunTotals(withSpawnAnchor(candidate, parsedCurrent, candidate), parsedCurrent)
+      : withSpawnAnchor(order === 0 ? withRunTotals(current!, candidate) : current!, parsedCurrent, candidate);
     if (payload === current) continue;
     const next = messages.slice();
     next[index] = {

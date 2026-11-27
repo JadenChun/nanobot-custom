@@ -1130,6 +1130,14 @@
     "error": "연결 오류"
   },
   "thread": {
+    "delegatedChild": {
+      "partial": "부분 완료",
+      "showResult": "결과 표시",
+      "hideResult": "결과 숨기기",
+      "stepCount_one": "{{count}}단계",
+      "stepCount_many": "{{count}}단계",
+      "stepCount_other": "{{count}}단계"
+    },
     "runStopped": "실행이 중지되었습니다",
     "compaction": {
       "cancelled": "컨텍스트 압축이 취소되었습니다",

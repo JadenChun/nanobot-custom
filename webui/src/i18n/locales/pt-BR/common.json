@@ -1130,6 +1130,14 @@
     "error": "Erro de conexão"
   },
   "thread": {
+    "delegatedChild": {
+      "partial": "Parcial",
+      "showResult": "Mostrar resultado",
+      "hideResult": "Ocultar resultado",
+      "stepCount_one": "{{count}} etapa",
+      "stepCount_many": "{{count}} etapas",
+      "stepCount_other": "{{count}} etapas"
+    },
     "runStopped": "Execução interrompida",
     "compaction": {
       "cancelled": "Compactação do contexto cancelada",
