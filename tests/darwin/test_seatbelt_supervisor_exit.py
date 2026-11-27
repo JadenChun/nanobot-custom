@@ -1,7 +1,9 @@
 """The Darwin supervisor on a real host, without any signal (A3-2M, WP4).
 
-Every command here exits by itself and nothing asks for a kill, so these are safe
-on a developer Mac. Kill behaviour is in test_seatbelt_supervisor_host.py.
+Every command here exits by itself and nothing asks for a kill. A failing test
+still ends its launch through the real signaller, so these follow the darwin_host
+opt-in like the other real-host tests. Kill behaviour is in
+test_seatbelt_supervisor_host.py.
 """
 
 from __future__ import annotations
@@ -19,7 +21,10 @@ from kohaku.agent.tools.native_process import NativeProcessHandle, spawn_native_
 from kohaku.agent.tools.native_process_supervisor_darwin import profile_directory
 from kohaku.security.native_admission import NativeAdmissionLedger
 
-pytestmark = pytest.mark.skipif(sys.platform != "darwin", reason="requires macOS Seatbelt")
+pytestmark = [
+    pytest.mark.skipif(sys.platform != "darwin", reason="requires macOS Seatbelt"),
+    pytest.mark.darwin_host,
+]
 
 
 @pytest.fixture(autouse=True)
