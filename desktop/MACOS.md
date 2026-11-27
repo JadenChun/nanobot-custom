@@ -30,8 +30,10 @@ The shell remembers selectors under
 explicit `XDG_CONFIG_HOME`). Chat's website data uses a nonpersistent
 WKWebView store; backend chat history remains in the selected profile. The
 host grants navigation only to the packaged setup page and the verified
-gateway origin, denies external popups and navigation, and exposes native
-commands only to the local setup page. macOS asks for microphone permission
+gateway origin. Off-site `http`/`https` links and popups (without embedded
+credentials) open in the system browser instead of the webview; every other
+scheme is denied, and the webview never opens a second window. Native
+commands are exposed only to the local setup page. macOS asks for microphone permission
 after Kohaku opens chat for the first time. If you deny access, use
 **Privacy & Security** in System Settings to permit access. The qualification
 below predates the microphone change.
