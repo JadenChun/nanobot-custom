@@ -2,8 +2,9 @@
 
 ## Status
 
-**AC8.1 and AC8.2 pass. The switch stays off (AC8.3).** The workload matrix found limits that need
-the user's decision before `tools.exec.macosSeatbelt` can default to on. This record covers the
+**AC8.1 and AC8.2 pass.** The workload matrix found limits that were put to the user before the
+executor could default to on. **Update 2026-11-27: the owner chose on by default, as on Linux, and
+the `tools.exec.macosSeatbelt` switch was removed.** The limits below remain documented limits. This record covers the
 macOS executor in [packet A3-2M](../../audits/implementation-packets/A3-2M-macos-seatbelt-executor.md)
 on branch `codex/macos-seatbelt-executor`. It is not full A3 or merge acceptance.
 
@@ -136,7 +137,7 @@ results and CI run 45941759662 do not cover the fixes.
    executor until restart. Success is still cached for good. A failure is now retried after five
    minutes, on the next call, and concurrent callers share one attempt.
 
-## Decisions needed before default on
+## Decisions that were needed before default on (now accepted as limits)
 
 1. **setuid programs in Full access.** `sudo`, `ps` and `top` are refused. Accept this, or keep
    the switch off.

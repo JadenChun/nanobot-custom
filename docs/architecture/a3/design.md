@@ -163,7 +163,7 @@ separately from the stronger unrestricted-native proof path.
 **Later observation (2026-11-27, not part of the pin).** Branch
 `codex/macos-seatbelt-executor` adds a macOS executor for the first two rows: Seatbelt confinement
 and whole-tree proof through per-launch Seatbelt markers, on Apple Silicon only, behind
-`tools.exec.macosSeatbelt` (off by default). Linux behaviour is unchanged. Its guarantees differ
+the host self-test (on by default; there is no operator switch). Linux behaviour is unchanged. Its guarantees differ
 from Linux, and some workloads fail; see
 [packet A3-2M](../../audits/implementation-packets/A3-2M-macos-seatbelt-executor.md#5-executor-capability-matrix-target-state)
 and the [qualification record](macos-seatbelt-qualification-2026-11-27.md).

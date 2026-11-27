@@ -1,6 +1,6 @@
 # A3-2M — macOS Seatbelt executor (Sandbox and Full access)
 
-**Status.** WP0-WP8 are implemented on branch `codex/macos-seatbelt-executor`; see §11. AC8.1 and AC8.2 pass ([qualification](../../architecture/a3/macos-seatbelt-qualification-2026-11-27.md)). AC8.3 is open: `tools.exec.macosSeatbelt` stays off by default, so macOS still fails closed unless an operator turns it on. Three decisions are needed before it can default to on (§10): setuid programs, Keychain access from Sandbox, and Swift/Xcode builds. A full code review is still to be done. Linux behaviour is unchanged.
+**Status.** WP0-WP8 are implemented on branch `codex/macos-seatbelt-executor`; see §11. AC8.1 and AC8.2 pass ([qualification](../../architecture/a3/macos-seatbelt-qualification-2026-11-27.md)). **Update 2026-11-27: the owner decided the executor is on by default, as on Linux. The `tools.exec.macosSeatbelt` switch is removed; the host self-test is the only gate, and a host that fails it still fails closed.** The three limits in §10 (setuid programs, Keychain access from Sandbox, Swift/Xcode builds) are not resolved by this; they remain documented limits of the macOS executor. A full code review is still to be done. Linux behaviour is unchanged.
 **Platform.** macOS 27.2.1 (Apple Silicon) is the evidence host. Linux behaviour stays the same.
 **Parent packets.** [A3-2 runtime and processes](A3-2-runtime-process-ownership.md) §2 asks for the executor-mode matrix and per-OS proofs before a new backend. This packet supplies them for macOS.
 **Design references.** [A3 design capability table](../../architecture/a3/design.md) · [D1 platform scope](../../architecture/a3/decisions.md) · [macOS qualification 2026-11-16](../../architecture/a3/macos-qualification-2026-11-16.md) · OpenAI Codex Seatbelt implementation (`codex-rs/sandboxing/src/seatbelt.rs`, `seatbelt_base_policy.sbpl`, `codex-rs/core/src/spawn.rs`, read on 2026-11-26)
@@ -25,7 +25,7 @@ The refusals are intentional and correct. The macOS executor was never built. Th
 - **D-M4.** The reason codes on the wire stay the same: `supervisor_unavailable` and `sandbox_unavailable`. Only additive values are allowed, such as the `commands.backend` value `"seatbelt"`.
 - **D-M6 (user, 2026-11-26).** G5 is decided: Apple Silicon only. Intel Macs stay refused until an x86_64 host passes the self-test.
 - **D-M7 (user, 2026-11-26).** The recommended option is accepted for the remaining gates: G1(a) accept the private `sandbox_check` and the deprecated `sandbox-exec` behind a fail-closed self-test; G2(a) refuse nested-Seatbelt tools with a clear error and export a `KOHAKU_SANDBOX=seatbelt` marker so tools can detect it; G3(b) Codex-style Mach-service allowlist only when network is allowed, with Keychain access tested before any claim is made (WP8); G4(a) `input_files` are read live at the approved path; G6(a) CI allows exactly one named `macos` job.
-- **D-M5.** Ship behind a config switch that defaults to off until WP8 qualification passes, then turn it on by default. With the switch off, macOS behaves as it does today: fail closed.
+- **D-M5.** Ship behind a config switch that defaults to off until WP8 qualification passes, then turn it on by default. **Superseded 2026-11-27:** the switch is removed and the executor is on by default, gated only by the host self-test. A host that fails the self-test fails closed, as before.
 
 ## 3. Gates (all decided on 2026-11-26)
 
@@ -354,7 +354,7 @@ Write sets don't overlap. Every package keeps the strict-type repair gate from `
 **Deviation.** `workspaces.py`, `workspace_access_recovery.py` and `exec_session.py` needed no further change: the WP1 seam and WP4/WP5 routing already covered them.
 
 **Evidence.**
-- AC6.1: `tests/agent/test_macos_seatbelt_switch.py`.
+- AC6.1: `tests/agent/test_macos_executor_gate.py` (was `test_macos_seatbelt_switch.py`).
 - AC6.2: the session-close and deadline descendant cases in the `macos` job (run 45940179923: 239 passed, 7 skipped).
 - AC6.3: the parity test passes.
 
