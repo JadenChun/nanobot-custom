@@ -642,6 +642,7 @@ async def test_delegated_child_activity_carries_root_origin_and_drops_after_repl
             pending_approval_id=None,
             blocked_run_id=None,
             background_result=None,
+            spawn_call_id=None,
         )
         token = bind_request_context(RequestContext(
             channel="websocket",

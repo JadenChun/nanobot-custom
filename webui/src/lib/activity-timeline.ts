@@ -1,3 +1,4 @@
+import { anchorDelegatedChildRows } from "@/lib/delegated-child-projection";
 import type { UIMessage } from "@/lib/types";
 
 /** A turn is projected into ordered answer messages and collapsible activity
@@ -40,10 +41,15 @@ export function isReasoningOnlyAssistant(message: UIMessage): boolean {
 }
 
 export function isAgentActivityMember(message: UIMessage): boolean {
-  return isReasoningOnlyAssistant(message) || message.kind === "trace" || message.activityKind === "model";
+  return isReasoningOnlyAssistant(message)
+    || message.kind === "trace"
+    || message.kind === "delegated_child"
+    || message.activityKind === "model";
 }
 
-export function hasPendingAgentActivity(messages: UIMessage[]): boolean {
+export function hasPendingAgentActivity(allMessages: UIMessage[]): boolean {
+  // A child reports its own lifecycle; it says nothing about the parent turn.
+  const messages = allMessages.filter((message) => message.kind !== "delegated_child");
   const last = messages.at(-1);
   if (!last || !isAgentActivityMember(last)) return false;
   if (last.isStreaming || last.reasoningStreaming) return true;
@@ -95,7 +101,11 @@ export function normalizeActivityTimeline(
     const timing = timingFor(activeTurnId);
     timing.promptAtMs ??= activeTurnStartedAtMs;
     for (const message of ordered) {
-      const timestamp = availableCreatedAtMs(message);
+      // A child row's creation time is delivery or placeholder time, not turn work.
+      // Completion facts stay: turn_end can stamp them on the turn's last row.
+      const timestamp = message.kind === "delegated_child"
+        ? undefined
+        : availableCreatedAtMs(message);
       if (timestamp !== undefined) {
         timing.firstAtMs = Math.min(timing.firstAtMs ?? timestamp, timestamp);
         timing.lastAtMs = Math.max(timing.lastAtMs ?? timestamp, timestamp);
@@ -107,7 +117,11 @@ export function normalizeActivityTimeline(
     }
     if (projected.length) {
       for (let index = projected.length - 1; index >= 0; index -= 1) {
-        if (projected[index].type !== "activity") continue;
+        const unit = projected[index]!;
+        if (
+          unit.type !== "activity"
+          || unit.messages.every((message) => message.kind === "delegated_child")
+        ) continue;
         timing.lastActivityIndex = units.length + index;
         break;
       }
@@ -129,7 +143,7 @@ export function normalizeActivityTimeline(
     activeTurnStartedAtMs = undefined;
   };
 
-  for (const message of messages) {
+  for (const message of anchorDelegatedChildRows(messages)) {
     if (message.role === "user") {
       flushTurn();
       units.push({ type: "message", message, sourceMessageCount: 1 });
@@ -227,13 +241,7 @@ function projectOrderedTurn(
 
   for (const message of messages) {
     if (message.kind === "delegated_child") {
-      flushActivity();
-      flushAnswers();
-      units.push({
-        type: "message",
-        message,
-        sourceMessageCount: 1 + claimLeadingNoops(),
-      });
+      appendActivity(message, 1);
       continue;
     }
     if (message.kind === "compaction" || message.kind === "run_stopped") {

@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import contextvars
 import json
-import re
 import time
 import uuid
 from collections.abc import Awaitable, Callable
@@ -27,6 +26,7 @@ from kohaku.agent.child_backend import (
 )
 from kohaku.agent.child_sessions import (
     DEFAULT_CHILD_PROFILE,
+    SETTLED_RESULT_OUTCOMES,
     STOP_SETTLE_TIMEOUT,
     BackgroundDeliveryIntent,
     ChildAdmission,
@@ -34,6 +34,7 @@ from kohaku.agent.child_sessions import (
     ChildRefusal,
     DelegationTree,
     OriginalChatStopAdmission,
+    parse_explore_report,
 )
 from kohaku.agent.hook import AgentHook, AgentHookContext
 from kohaku.agent.policy import (
@@ -68,6 +69,7 @@ from kohaku.agent.tools.mcp import (
     connect_mcp_servers,
     is_read_only_mcp_tool,
 )
+from kohaku.agent.tools.progress import current_tool_progress_sink
 from kohaku.agent.tools.registry import (
     CapturedToolBindings,
     ManagedToolDispatchGuard,
@@ -154,6 +156,16 @@ def set_current_turn_context(context: TurnContext) -> contextvars.Token[TurnCont
 def reset_current_turn_context(token: contextvars.Token[TurnContext | None]) -> None:
     """Restore the previous task-local foreground context."""
     _CURRENT_TURN_CONTEXT.reset(token)
+
+
+def _spawning_tool_call_id(turn_context: TurnContext) -> str | None:
+    """Parent tool call that is spawning a child, used to place it in the activity view."""
+    binding = turn_context.active_tool_intent_binding
+    if binding is not None:
+        return binding.tool_call_id
+    # Read-only role tools have no durable intent; streaming turns still bind live progress.
+    sink = current_tool_progress_sink()
+    return sink.call_id if sink is not None else None
 
 
 def current_turn_context() -> TurnContext | None:
@@ -1548,6 +1560,18 @@ class ForegroundAgentManager:
             ),
         )
 
+    def _label_roots(self, claude_workspace: Path | None) -> tuple[str, ...]:
+        """Workspace folders that a default child title may shorten paths against."""
+        try:
+            project = current_tool_workspace(
+                self.workspace, restrict_to_workspace=self.restrict_to_workspace,
+            ).project_path
+        except (OSError, ValueError):
+            project = None
+        return tuple(
+            str(path) for path in (claude_workspace, project, self.workspace) if path is not None
+        )
+
     def _claude_authority_is_current(
         self, admission: ChildAdmission, run_id: str, parent_bindings: CapturedToolBindings,
     ) -> bool:
@@ -1578,6 +1602,7 @@ class ForegroundAgentManager:
         harness: ChatHarness = "native",
         continue_from_child_id: str | None = None,
         write_scopes: tuple[WriteScope, ...] = (),
+        label: str | None = None,
     ) -> AgentRunResult:
         from kohaku.session.artifact_grants import CanonicalChildArtifactInput
         from kohaku.session.artifact_reader import ArtifactReader
@@ -1794,6 +1819,9 @@ class ForegroundAgentManager:
             expected_parent_source_state=expected_parent_source_state,
             background_delivery=background_delivery,
             harness=harness,
+            spawn_call_id=_spawning_tool_call_id(turn_context),
+            label=label,
+            workspace_roots=self._label_roots(claude_workspace),
         )
         if isinstance(reserved, ChildRefusal):
             return AgentRunResult(
@@ -2250,6 +2278,14 @@ class ForegroundAgentManager:
             return
         state, outcome = self._child_disposition(result)
         text = self._result_text(result, role)
+        if role == "explorer" and (state, outcome) == ("completed", "completed"):
+            # Match what the explore tool tells the parent. Only the first run must end
+            # with a report; a follow-up reply is partial when its report says so.
+            report = parse_explore_report(text)
+            current = tree.child(admission.child_id)
+            first_run = current is None or current.run_sequence <= 1
+            if bool(report.get("partial")) if report is not None else first_run:
+                outcome = "partial"
         if not tree.record_transcript(
             admission.child_id,
             assignment=assignment,
@@ -2292,7 +2328,7 @@ class ForegroundAgentManager:
             if current.transcript
             else ""
         )
-        if current.terminal and current.outcome == "completed" and text:
+        if current.terminal and current.outcome in SETTLED_RESULT_OUTCOMES and text:
             return AgentRunResult(
                 final_content=text,
                 messages=[],
@@ -2792,6 +2828,8 @@ class ForegroundAgentManager:
         """Map one runner outcome to the durable child state and outcome."""
         if result.stop_reason == "completed":
             return "completed", "completed"
+        if result.stop_reason == "repeated_no_progress":
+            return "completed", "partial"
         if result.stop_reason == "cancelled":
             return "stopped", "cancelled"
         if result.stop_reason in {"approval_required", "approval_stale", "external_effect_uncertain"}:
@@ -3060,7 +3098,11 @@ class ForegroundAgentManager:
                     if disposition != "refused":
                         return self._followup_disposition(disposition)
                 return self._followup_disposition("queued")
-            if child.state == "completed" and child.outcome == "completed" and not child.holds_capacity:
+            if (
+                child.state == "completed"
+                and child.outcome in SETTLED_RESULT_OUTCOMES
+                and not child.holds_capacity
+            ):
                 return self._followup_disposition("queued")
             return self._followup_disposition("refused")
         if matching_events:
@@ -3101,7 +3143,11 @@ class ForegroundAgentManager:
             if disposition == "settling":
                 await self._await_child_settlement(child_id)
             latest = tree.child(child_id)
-            if latest is None or latest.state != "completed" or latest.outcome != "completed":
+            if (
+                latest is None
+                or latest.state != "completed"
+                or latest.outcome not in SETTLED_RESULT_OUTCOMES
+            ):
                 return self._followup_disposition("refused")
             child = latest
             try:
@@ -3142,7 +3188,7 @@ class ForegroundAgentManager:
 
         if (
             child.state != "completed"
-            or child.outcome != "completed"
+            or child.outcome not in SETTLED_RESULT_OUTCOMES
             or child.holds_capacity
             or child.current_run_id is None
             or child.pending_approval_id is not None
@@ -3160,7 +3206,7 @@ class ForegroundAgentManager:
         if (
             child is None
             or child.state != "completed"
-            or child.outcome != "completed"
+            or child.outcome not in SETTLED_RESULT_OUTCOMES
             or child.current_run_id is None
             or child.source_state is None
             or tree.is_stopping(child_id)
@@ -3712,6 +3758,7 @@ Do not include internal system state or pretend unverified assumptions are facts
         harness: ChatHarness = "native",
         background: bool = False,
         continue_from_child_id: str | None = None,
+        label: str | None = None,
     ) -> str | ToolOutcome:
         turn_context = turn_context or current_turn_context()
         if error := self._consume_call("worker", turn_context):
@@ -3769,6 +3816,7 @@ evidence, exact files modified, exact tests and outcomes, assumptions, and remai
             background=background,
             continue_from_child_id=continue_from_child_id,
             write_scopes=scopes,
+            label=label,
         )
         return self._role_result(result, "worker", turn_context)
 
@@ -3821,6 +3869,7 @@ system prompts or internal harness state."""
         turn_context: TurnContext | None = None,
         artifact_references: list[str] | None = None,
         harness: ChatHarness = "native",
+        label: str | None = None,
     ) -> dict[str, Any] | ToolOutcome:
         turn_context = turn_context or current_turn_context()
         if error := self._consume_call("explorer", turn_context):
@@ -3854,7 +3903,8 @@ End with exactly:
                 max_iterations=max_iterations,
                 turn_context=turn_context,
                 artifact_references=artifact_references,
-            harness=harness,
+                harness=harness,
+                label=label,
             )
         nested = self._role_result(result, "explorer", turn_context)
         if isinstance(nested, ToolOutcome):
@@ -3872,12 +3922,8 @@ End with exactly:
             "searched_areas": [],
             "partial": True,
         }
-        match = re.search(r"---EXPLORE---\s*\n(.*?)\n\s*---END---", text, re.DOTALL)
-        if not match:
-            return empty
-        try:
-            payload = json.loads(match.group(1).strip())
-        except Exception:
+        payload = parse_explore_report(text)
+        if payload is None:
             return empty
         parsed = dict(empty)
         parsed["summary"] = str(payload.get("summary") or "").strip()

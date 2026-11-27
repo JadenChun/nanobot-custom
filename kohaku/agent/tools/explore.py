@@ -53,6 +53,11 @@ class ExploreTool(Tool):
                 "enum": ["quick", "medium", "deep"],
                 "default": "medium",
             },
+            "label": {
+                "type": "string",
+                "description": "Short title shown in the UI.",
+                "maxLength": 60,
+            },
             "artifact_references": {
                 "type": "array",
                 "items": {"type": "string", "pattern": "^artifact:[0-9a-f]{32}$"},
@@ -74,6 +79,7 @@ class ExploreTool(Tool):
         thoroughness: str = "medium",
         artifact_references: list[str] | None = None,
         harness: ChatHarness = "native",
+        label: str | None = None,
         **_: Any,
     ) -> str | ToolOutcome:
         result = await self._manager.run_explore(
@@ -82,6 +88,7 @@ class ExploreTool(Tool):
             max_iterations=self._max_iterations,
             artifact_references=artifact_references,
             harness=harness,
+            label=label,
         )
 
         if isinstance(result, ToolOutcome):
@@ -97,6 +104,7 @@ class ExploreTool(Tool):
             turn_context=context,
             artifact_references=kwargs.get("artifact_references"),
             harness=kwargs.get("harness", "native"),
+            label=kwargs.get("label"),
         )
         if isinstance(result, ToolOutcome):
             return result

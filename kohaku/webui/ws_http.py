@@ -173,6 +173,7 @@ from kohaku.webui.transcript import (
     delete_webui_transcript_result,
     read_transcript_lines,
     read_transcript_lines_for_preview,
+    replay_transcript_to_ui_messages,
     webui_transcript_signature,
 )
 from kohaku.webui.workspaces import (
@@ -555,6 +556,8 @@ def _resolve_bootstrap_model_name(
 
 # One thread response stays within this budget by paging, not by trimming.
 THREAD_PROJECTION_BUDGET_BYTES = 1_500_000
+_CHILD_ASSIGNMENT_MAX_CHARS = 100_000
+_CHILD_FINISHED_STATES = frozenset({"completed", "failed", "uncertain", "stopped", "refused"})
 
 _MOBILE_COMMAND_NAMES = frozenset({
     "/new",
@@ -4742,6 +4745,7 @@ def _hydrated_child_payload(
         "result_summary_truncated": payload.get("result_summary_truncated") is True,
         "outcome": payload.get("outcome") if isinstance(payload.get("outcome"), str) else None,
         "parent_run_id": payload.get("attempt_id") if isinstance(payload.get("attempt_id"), str) else None,
+        "spawn_call_id": payload.get("spawn_call_id") if isinstance(payload.get("spawn_call_id"), str) else None,
         "child_run_id": payload.get("current_run_id") if isinstance(payload.get("current_run_id"), str) else None,
         "root_key": root_key,
         "run_sequence": run_sequence,
@@ -4922,6 +4926,8 @@ def _child_history_response(
         parent_binding = _origin_digest(parent_state)
         root_binding = _origin_digest(root_state)
         visible_events = _canonical_child_visible_events(snapshot)
+        tool_calls = _canonical_child_tool_calls(visible_events)
+        overview = _child_overview_fields(payload, [event for _index, event in visible_events])
         page_end = len(visible_events)
         if before:
             cursor = _decode_child_cursor(before, kind="child_history")
@@ -4953,6 +4959,7 @@ def _child_history_response(
                 visible_events[page_start:page_end],
                 scope=scope,
                 allow_folder_grants=allow_folder_grants,
+                tool_calls=tool_calls,
             )
             has_more = page_start > 0
             cursor_value = (
@@ -4978,6 +4985,7 @@ def _child_history_response(
                 "parent_session_key": ancestry.parent_key,
                 "root_key": ancestry.root_key,
                 "source": _source_origin_payload(child_state),
+                **overview,
                 "page": {
                     "before_cursor": cursor_value,
                     "has_more_before": has_more,
@@ -4996,6 +5004,7 @@ def _child_history_response(
             effective_limit = max(1, effective_limit // 2)
 
     legacy_messages: list[dict[str, Any]] = []
+    legacy_records: list[Mapping[str, Any]] = []
     raw_messages = payload.get("transcript")
     if not isinstance(raw_messages, list) and handler.session_manager is not None:
         session_data = handler.session_manager.read_session_file(child_key)
@@ -5008,6 +5017,7 @@ def _child_history_response(
             role = message.get("role")
             if role not in {"user", "assistant"}:
                 continue
+            legacy_records.append(message)
             text = _canonical_child_display_text(message.get("content"))
             row: dict[str, Any] = {
                 "id": f"delegated-summary-{index}",
@@ -5030,6 +5040,7 @@ def _child_history_response(
         "parent_session_key": ancestry.parent_key,
         "root_key": ancestry.root_key,
         "source": None,
+        **_child_overview_fields(payload, legacy_records),
         "page": {
             "before_cursor": None,
             "has_more_before": False,
@@ -5072,13 +5083,14 @@ def _canonical_child_rows(
     *,
     scope: WorkspaceScope,
     allow_folder_grants: bool,
+    tool_calls: Mapping[int, Mapping[str, Any]],
 ) -> list[dict[str, Any]]:
     from kohaku.attachments.context import media_paths_for_message
     from kohaku.runtime_context import public_history_message
     from kohaku.session.history_visibility import is_hidden_history_message
 
     rows: list[dict[str, Any]] = []
-    for _index, event in selected_events:
+    for index, event in selected_events:
         role = event.get("role")
         if role not in {"user", "assistant", "tool"} or is_hidden_history_message(event):
             continue
@@ -5116,8 +5128,109 @@ def _canonical_child_rows(
             row["toolEvents"] = tool_events
         if role == "tool":
             row["kind"] = "trace"
+            row.update(_child_tool_trace_fields(tool_events, tool_calls.get(index)))
         rows.append(row)
     return rows
+
+
+def _canonical_child_tool_calls(
+    visible_events: Sequence[tuple[int, Mapping[str, Any]]],
+) -> dict[int, Mapping[str, Any]]:
+    """Pair each tool result with the assistant call it answers, across page edges."""
+    from kohaku.runtime_context import public_history_message
+
+    open_calls: dict[str, Mapping[str, Any]] = {}
+    matched: dict[int, Mapping[str, Any]] = {}
+    for index, event in visible_events:
+        role = event.get("role")
+        if role == "assistant":
+            for call in _canonical_child_tool_events(public_history_message(event)):
+                open_calls[call["call_id"]] = call
+        elif role == "tool":
+            call_id = event.get("tool_call_id")
+            if isinstance(call_id, str) and call_id in open_calls:
+                matched[index] = open_calls[call_id]
+    return matched
+
+
+def _child_tool_trace_fields(
+    result_events: Sequence[Mapping[str, Any]],
+    call: Mapping[str, Any] | None,
+) -> dict[str, Any]:
+    """Describe one tool result with the parent transcript's activity projection.
+
+    The line names the call and its arguments. The output stays in the tool
+    event as result detail and is never the row's text.
+    """
+    events: list[dict[str, Any]] = []
+    for result_event in result_events:
+        event = dict(result_event)
+        if call is not None:
+            arguments: object = call.get("arguments")
+            # Unparsed arguments are shown verbatim; keep the trace on one line.
+            if isinstance(arguments, str) and "\n" in arguments:
+                arguments = json.dumps(arguments, ensure_ascii=False)
+            event["arguments"] = arguments
+        events.append(event)
+    projected = replay_transcript_to_ui_messages(
+        [{"event": "message", "kind": "tool_hint", "tool_events": events}]
+    )
+    if not projected:
+        return {"content": ""}
+    return {name: projected[0][name] for name in ("content", "traces", "toolEvents")}
+
+
+def _child_overview_fields(
+    payload: Mapping[str, Any],
+    events: Sequence[Mapping[str, Any]],
+) -> dict[str, object]:
+    """Facts about the whole child that every history page carries."""
+    from kohaku.runtime_context import public_history_message
+
+    fields: dict[str, object] = {}
+    assignment: object = payload.get("assignment")
+    if not isinstance(assignment, str) or not assignment.strip():
+        first_request = next((event for event in events if event.get("role") == "user"), None)
+        assignment = (
+            _canonical_child_display_text(public_history_message(first_request).get("content"))
+            if first_request is not None
+            else ""
+        )
+    if assignment.strip():
+        fields["assignment"] = assignment[:_CHILD_ASSIGNMENT_MAX_CHARS]
+    duration_ms = _child_duration_ms(payload, events)
+    if duration_ms is not None:
+        fields["duration_ms"] = duration_ms
+    return fields
+
+
+def _child_duration_ms(
+    payload: Mapping[str, Any],
+    events: Sequence[Mapping[str, Any]],
+) -> int | None:
+    """Time from the first to the last record of a finished child, when known."""
+    if payload.get("state") not in _CHILD_FINISHED_STATES:
+        return None
+    if events:
+        first = _child_timestamp_fields(events[0])
+        last = _child_timestamp_fields(events[-1])
+        if first["timestampAvailable"] and last["timestampAvailable"]:
+            elapsed = cast(int, last["createdAt"]) - cast(int, first["createdAt"])
+            return elapsed if elapsed >= 0 else None
+    # Source events need not carry times; the child record spans the same run.
+    # Settling a delivered background result moves updated_at past that run.
+    delivery = payload.get("background_result")
+    if isinstance(delivery, dict) and cast(dict[str, Any], delivery).get("state") != "pending":
+        return None
+    created_at: object = payload.get("created_at")
+    updated_at: object = payload.get("updated_at")
+    if (
+        not isinstance(created_at, (int, float))
+        or not isinstance(updated_at, (int, float))
+        or not 0 < created_at <= updated_at
+    ):
+        return None
+    return round((updated_at - created_at) * 1000)
 
 
 def _canonical_child_visible_events(

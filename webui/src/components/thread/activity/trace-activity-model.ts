@@ -1,3 +1,6 @@
+import { toolTraceLinesFromEvents } from "@/lib/tool-traces";
+import type { UIMessage } from "@/lib/types";
+
 import type { GenericToolStatus } from "./generic-tool-model";
 import { safeActivityDetail, summarizeShellCommand } from "./activity-text";
 import { presentWebSearchAction } from "./web-search-model";
@@ -10,6 +13,25 @@ export interface TraceDescription {
   icon?: "clock";
   url?: string;
   host?: string;
+}
+
+/**
+ * The lines an activity row describes. A row with tool events names its calls
+ * (start events first); its content may be raw tool output and is never a line.
+ */
+export function traceLinesForMessage(message: UIMessage): string[] {
+  if (message.traces?.length) return message.traces;
+  const events = message.toolEvents;
+  if (!events?.length) return message.content.trim() ? [message.content] : [];
+  // One line per call, taken from its start event when the row has one.
+  const startByCallId = new Map(
+    events
+      .filter((event) => event.phase === "start" && event.call_id)
+      .map((event) => [event.call_id, event]),
+  );
+  return toolTraceLinesFromEvents(
+    events.map((event) => startByCallId.get(event.call_id) ?? event),
+  );
 }
 
 export function describeTraceLine(

@@ -151,6 +151,8 @@ export interface DelegatedChildPayload {
   runtime_generation: number;
   turn_id?: string | null;
   parent_run_id?: string | null;
+  /** Parent tool call that spawned this child. Absent on older records. */
+  spawn_call_id?: string | null;
   child_run_id?: string | null;
   parent_store_identity?: string;
   parent_incarnation?: string;
@@ -190,6 +192,7 @@ export interface DelegatedChildSummaryPayload {
   runtime_generation: number | null;
   turn_id?: string | null;
   parent_run_id: string | null;
+  spawn_call_id?: string | null;
   child_run_id: string | null;
   parent_store_identity: string | null;
   parent_incarnation: string | null;
@@ -1958,6 +1961,7 @@ export type InboundEvent =
       runtime_generation: number;
       turn_id?: string | null;
       parent_run_id?: string | null;
+      spawn_call_id?: string | null;
       child_run_id?: string | null;
       parent_store_identity?: string;
       parent_incarnation?: string;

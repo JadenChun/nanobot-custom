@@ -90,7 +90,7 @@ interface MessageBubbleProps {
   delegatedStatusAvailable?: boolean;
 }
 
-function DelegatedChildRow({
+export function DelegatedChildRow({
   child,
   onOpen,
   statusAvailable,

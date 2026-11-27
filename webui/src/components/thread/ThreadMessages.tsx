@@ -513,6 +513,8 @@ const ThreadDisplayUnit = memo(function ThreadDisplayUnit({
             cliApps={cliApps}
             mcpPresets={mcpPresets}
             onOpenFilePreview={onOpenFilePreview}
+            onOpenChildHistory={onOpenChildHistory}
+            delegatedStatusAvailable={delegatedStatusAvailable}
           />
         ) : (
           <MessageBubble

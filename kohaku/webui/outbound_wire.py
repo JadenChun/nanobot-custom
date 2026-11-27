@@ -104,6 +104,7 @@ class DelegatedChildWirePayload(TypedDict):
     pending_approval_id: str | None
     blocked_run_id: str | None
     result_disposition: str | None
+    spawn_call_id: str | None
     harness: NotRequired[str]
 
 
@@ -251,6 +252,7 @@ def encode_delegated_child(
         "pending_approval_id": event.pending_approval_id,
         "blocked_run_id": event.blocked_run_id,
         "result_disposition": event.result_disposition,
+        "spawn_call_id": event.spawn_call_id,
     }
     if event.harness == "claude_sdk":
         payload["harness"] = event.harness

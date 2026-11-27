@@ -423,6 +423,7 @@ _DELEGATED_CHILD_CANONICAL_FIELDS = (
     "blocked_run_id",
     "result_disposition",
     "harness",
+    "spawn_call_id",
 )
 
 
@@ -483,7 +484,7 @@ def validate_retained_transcript_record(row: dict[str, object]) -> None:
             "parent_session_key", "outcome", "parent_run_id", "child_run_id", "parent_store_identity",
             "parent_incarnation", "root_key", "root_store_identity",
             "root_incarnation", "child_store_identity", "child_incarnation",
-            "pending_approval_id", "blocked_run_id", "result_disposition",
+            "pending_approval_id", "blocked_run_id", "result_disposition", "spawn_call_id",
         )
         if any(
             row.get(name) is not None and not isinstance(row.get(name), str)
@@ -4119,6 +4120,9 @@ def replay_transcript_to_ui_messages(
             ):
                 value = rec.get(name)
                 child[name] = value if isinstance(value, str) and value else None
+            spawn_call_id = rec.get("spawn_call_id")
+            if isinstance(spawn_call_id, str) and spawn_call_id:
+                child["spawn_call_id"] = spawn_call_id
             for name in (
                 "parent_generation", "root_generation", "child_generation",
                 "run_sequence", "state_sequence", "control_epoch",
@@ -4166,12 +4170,15 @@ def replay_transcript_to_ui_messages(
                     if _delegated_child_facts(previous) != _delegated_child_facts(child):
                         continue
                     continue
-                if child["turn_id"] is None:
-                    child["turn_id"] = previous.get("turn_id")
+                # The child stays with the turn that spawned it, not a follow-up's turn.
+                anchor_turn_id = previous.get("turn_id") or child["turn_id"]
+                child["turn_id"] = anchor_turn_id
+                if "spawn_call_id" not in child and "spawn_call_id" in previous:
+                    child["spawn_call_id"] = previous["spawn_call_id"]
                 messages[existing_index] = {
                     **messages[existing_index],
                     "delegatedChild": child,
-                    **({"turnId": turn_id} if isinstance(turn_id, str) and turn_id else {}),
+                    **({"turnId": anchor_turn_id} if anchor_turn_id else {}),
                 }
             continue
 
@@ -4408,7 +4415,12 @@ def replay_transcript_to_ui_messages(
                     continue
                 segment = _ensure_activity_segment()
                 close_interrupted_assistant()
-                last = messages[-1] if messages else None
+                # A child row sits inside its spawning call's activity, so the call's
+                # later events still belong to the trace row before it.
+                last_index = len(messages) - 1
+                while last_index >= 0 and messages[last_index].get("kind") == "delegated_child":
+                    last_index -= 1
+                last = messages[last_index] if last_index >= 0 else None
                 if (
                     last
                     and last.get("kind") == "trace"
@@ -4436,7 +4448,7 @@ def replay_transcript_to_ui_messages(
                         "activitySegmentId": last.get("activitySegmentId") or segment,
                         **_turn_fields(rec, "activity"),
                     }
-                    messages[-1] = merged
+                    messages[last_index] = merged
                 else:
                     messages.append(
                         {

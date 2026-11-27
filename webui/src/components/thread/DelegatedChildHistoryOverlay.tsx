@@ -1,7 +1,7 @@
 import { ClaudeBadge } from "@/components/thread/ClaudeBadge";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft, ChevronRight } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import { SubagentStatus } from "@/components/thread/SubagentStatus";
@@ -46,7 +46,13 @@ export interface DelegatedChildHistoryOverlayProps {
   onClose: () => void;
 }
 
-interface ChildHistoryPage {
+/** Facts about the whole child, repeated by the gateway on every history page. */
+interface ChildHistoryOverview {
+  assignment: string | null;
+  durationMs: number | null;
+}
+
+interface ChildHistoryPage extends ChildHistoryOverview {
   messages: UIMessage[];
   historyKind: "canonical" | "summary";
   beforeCursor: string | null;
@@ -203,7 +209,15 @@ function parseHistoryPage(
   ) {
     throw new Error("This delegated history page is incomplete. Return to the parent chat and refresh.");
   }
+  const { assignment, duration_ms: durationMs } = payload as WebuiThreadPersistedPayload & {
+    assignment?: unknown;
+    duration_ms?: unknown;
+  };
   return {
+    assignment: typeof assignment === "string" && assignment.trim() ? assignment : null,
+    durationMs: typeof durationMs === "number" && Number.isFinite(durationMs) && durationMs >= 0
+      ? durationMs
+      : null,
     messages: messages.filter((message): message is UIMessage => message !== null),
     historyKind: payload.history_kind,
     beforeCursor: page.before_cursor,
@@ -282,6 +296,58 @@ function captureScrollAnchor(scroller: HTMLElement, content: HTMLElement | null)
   };
 }
 
+/**
+ * Adapt loaded history to the main thread renderer. The pinned block already
+ * shows the opening request, and the child's duration belongs to the turn, which
+ * the timeline reads from `latencyMs` (set on a trace row, never on an answer).
+ */
+function childThreadMessages(
+  messages: UIMessage[],
+  { assignment, durationMs }: ChildHistoryOverview,
+  atStart: boolean,
+): UIMessage[] {
+  const first = messages[0];
+  const repeatsAssignment = atStart
+    && first?.role === "user"
+    && first.content.trim() === assignment?.trim();
+  const rows = repeatsAssignment ? messages.slice(1) : messages;
+  if (durationMs === null) return rows;
+  const lastTrace = rows.map((message) => message.kind).lastIndexOf("trace");
+  return rows.map((message, index) => (
+    index === lastTrace ? { ...message, latencyMs: durationMs } : message
+  ));
+}
+
+function PinnedAssignment({ text }: { text: string }) {
+  const { t } = useTranslation();
+  const [open, setOpen] = useState(false);
+  const firstLine = text.trim().split("\n", 1)[0];
+  return (
+    <div className="shrink-0 border-b border-border/60 bg-muted/20 px-4 py-2 text-xs sm:px-5">
+      <button
+        type="button"
+        className="flex w-full min-w-0 items-center gap-1.5 text-start text-muted-foreground"
+        aria-expanded={open}
+        onClick={() => setOpen((value) => !value)}
+      >
+        <ChevronRight
+          className={open ? "size-3.5 shrink-0 rotate-90" : "size-3.5 shrink-0 rtl:rotate-180"}
+          aria-hidden
+        />
+        <span className="shrink-0 font-medium text-foreground">
+          {t("thread.delegatedChild.assignment", { defaultValue: "Assignment" })}
+        </span>
+        {open ? null : <span className="min-w-0 truncate">{firstLine}</span>}
+      </button>
+      {open ? (
+        <div className="mt-1.5 max-h-[40vh] overflow-y-auto whitespace-pre-wrap break-words ps-5 leading-5 text-foreground">
+          {text}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 export function DelegatedChildHistoryOverlay({
   child,
   rootKey,
@@ -307,6 +373,10 @@ export function DelegatedChildHistoryOverlay({
   const pendingScrollAnchorRef = useRef<PendingScrollAnchor | null>(null);
   const [messages, setMessages] = useState<UIMessage[]>([]);
   const [historyKind, setHistoryKind] = useState<"canonical" | "summary" | null>(null);
+  const [overview, setOverview] = useState<ChildHistoryOverview>({
+    assignment: null,
+    durationMs: null,
+  });
   const [beforeCursor, setBeforeCursor] = useState<string | null>(null);
   const [hasMoreBefore, setHasMoreBefore] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -328,6 +398,7 @@ export function DelegatedChildHistoryOverlay({
     const requestId = ++requestRef.current;
     setMessages([]);
     setHistoryKind(null);
+    setOverview({ assignment: null, durationMs: null });
     setBeforeCursor(null);
     setHasMoreBefore(false);
     setLoading(true);
@@ -356,6 +427,7 @@ export function DelegatedChildHistoryOverlay({
       if (controller.signal.aborted || requestRef.current !== requestId) return;
       setMessages(page.messages);
       setHistoryKind(page.historyKind);
+      setOverview({ assignment: page.assignment, durationMs: page.durationMs });
       setBeforeCursor(page.beforeCursor);
       setHasMoreBefore(page.hasMoreBefore);
       setLoading(false);
@@ -437,7 +509,9 @@ export function DelegatedChildHistoryOverlay({
 
   const displayedChild = currentChild ?? child;
   const taskLabel = displayedChild.task_label?.trim() || displayedChild.profile || "Delegated task";
-  const displayMessages = provenanceComplete ? projectWebuiThreadMessages(messages) : [];
+  const displayMessages = provenanceComplete
+    ? projectWebuiThreadMessages(childThreadMessages(messages, overview, !hasMoreBefore))
+    : [];
   const readOnlyLabel = historyKind === "summary"
     ? t("thread.delegatedChild.summaryHistory", "Summary-only history · read only")
     : t("thread.delegatedChild.readOnly", "Read only");
@@ -485,6 +559,9 @@ export function DelegatedChildHistoryOverlay({
         <p role="alert" className="shrink-0 border-b border-destructive/30 bg-destructive/5 px-4 py-2 text-xs text-destructive">
           {error}
         </p>
+      ) : null}
+      {provenanceComplete && overview.assignment ? (
+        <PinnedAssignment key={child.child_session_key} text={overview.assignment} />
       ) : null}
       <div
         ref={scrollerRef}
