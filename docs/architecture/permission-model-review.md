@@ -1,6 +1,6 @@
 # Permission model review: sandbox, policy and workspace scope
 
-Status: **design accepted (2026-11-27).** Implementation proceeds in three phases (see [§6](#6-phased-refactor-plan) and [`managed-allowlist-removal-handoff.md`](managed-allowlist-removal-handoff.md)).
+Status: **implemented (Phases 1–3 complete on `codex/remove-managed-tool-allowlist`, 2026-11-27).** See [`managed-allowlist-removal-handoff.md`](managed-allowlist-removal-handoff.md) for the implementation record and verification summary.
 
 ## 1. Why this review
 

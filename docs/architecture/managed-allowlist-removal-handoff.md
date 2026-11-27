@@ -1,10 +1,9 @@
-# Work Plan & Handoff: Remove Managed Tool Allowlist (Phase 1)
+# Work Plan & Handoff: Remove Managed Tool Allowlist (Phases 1–3)
 
-Status: **design finalized (2026-11-27), ready for Phase 1 implementation.**
-Read [`permission-model-review.md`](permission-model-review.md) for the full architectural rationale, locked-in decisions, and Phases 2–3 context.
+Status: **Phases 1, 2, and 3 implemented and verified (2026-11-27), ready for PR review against `staging`.**
+Read [`permission-model-review.md`](permission-model-review.md) for the full architectural rationale and locked-in decisions.
 
-Branch: `codex/remove-managed-tool-allowlist` (branched from `staging` at `6aaebd722`, current HEAD `b84bfa23c`).
-Commit `b84bfa23c` already completed the first pass of removing the static allowlist. This document specifies the exact remaining work to finish **Phase 1** cleanly and hand off to validation/merge.
+Branch: `codex/remove-managed-tool-allowlist` (merged up-to-date with `origin/staging`).
 
 ---
 

@@ -794,5 +794,5 @@ def _is_under(path: Path, directory: Path) -> bool:
 def _overlaps_system_control(path: Path) -> bool:
     return any(
         _is_under(path, Path(root)) or _is_under(Path(root), path)
-        for root in ("/proc", "/sys", "/dev", "/run")
+        for root in ("/proc", "/sys", "/dev", "/run", "/System", "/private/var/run")
     )
