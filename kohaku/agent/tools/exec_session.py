@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import functools
 import time
 import uuid
 from collections import deque
@@ -27,6 +28,7 @@ from kohaku.agent.tools.schema import (
     StringSchema,
     tool_parameters_schema,
 )
+from kohaku.agent.tools.seatbelt_profile import SeatbeltConfinement
 from kohaku.security.folder_grants import FolderGrantSnapshot
 from kohaku.security.native_admission import NativeProcessReservation
 
@@ -479,6 +481,7 @@ class ExecSessionManager:
         notify_on_exit: bool = False,
         origin: RequestContext | None = None,
         native_admission: NativeProcessReservation | None = None,
+        confinement: SeatbeltConfinement | None = None,
         resource_policy: ResourceAccessPolicy | None = None,
         allow_folder_grants: bool = False,
         grant_snapshot: FolderGrantSnapshot | None = None,
@@ -509,7 +512,11 @@ class ExecSessionManager:
                         origin,
                     )
                 try:
-                    process = await self._spawn(
+                    spawn = (
+                        self._spawn if confinement is None
+                        else functools.partial(self._spawn, confinement=confinement)
+                    )
+                    process = await spawn(
                         command,
                         cwd,
                         env,
@@ -766,10 +773,17 @@ class ExecSessionManager:
         login: bool,
         *,
         native_admission: NativeProcessReservation | None = None,
+        confinement: SeatbeltConfinement | None = None,
     ) -> asyncio.subprocess.Process | NativeProcessHandle:
         from kohaku.agent.tools.shell import ExecTool
 
-        return await ExecTool._spawn(  # pyright: ignore[reportPrivateUsage]
+        spawn = (
+            ExecTool._spawn if confinement is None  # pyright: ignore[reportPrivateUsage]
+            else functools.partial(
+                ExecTool._spawn, confinement=confinement,  # pyright: ignore[reportPrivateUsage]
+            )
+        )
+        return await spawn(
             command, cwd, env, shell_program, login,
             stdin=asyncio.subprocess.PIPE,
             process_tree=True,

@@ -7,11 +7,10 @@ Managed command execution rests on two independent guarantees:
   authority can be retired with nothing left running.
 
 Linux gets confinement from bubblewrap and ownership from the subreaper
-supervisor. macOS gets ownership from Seatbelt markers, only when the operator
-enabled it (tools.exec.macosSeatbelt) and the host passes the self-test. Anything
-else reports neither, so shell admission fails closed there. Platform support is
-added by teaching the two selectors below a new value, not by branching in call
-sites.
+supervisor. macOS gets both from Seatbelt, only when the operator enabled it
+(tools.exec.macosSeatbelt) and the host passes the self-test. Anything else
+reports neither, so shell admission fails closed there. Platform support is added
+by teaching the two selectors below a new value, not by branching in call sites.
 
 The legacy managed_bwrap_available and native_supervisor_available functions
 remain the entry points that existing call sites and tests patch. The latter
@@ -89,12 +88,14 @@ def tree_ownership() -> TreeOwnership | None:
 
 def confinement() -> Confinement | None:
     """Name the OS fence that can wrap a managed command here."""
-    if current_platform() == "linux":
-        # Resolve at call time so the sandbox module remains the patch point.
-        from kohaku.agent.tools import sandbox
+    # Resolve at call time so the sandbox module remains the patch point.
+    from kohaku.agent.tools import sandbox
 
-        if sandbox.managed_bwrap_available():
-            return "bwrap"
+    platform = current_platform()
+    if platform == "linux" and sandbox.managed_bwrap_available():
+        return "bwrap"
+    if platform == "darwin" and sandbox.managed_seatbelt_available():
+        return "seatbelt"
     return None
 
 

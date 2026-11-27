@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import functools
 import os
 import re
 import shlex
@@ -61,6 +62,8 @@ from kohaku.agent.tools.native_process import (
 )
 from kohaku.agent.tools.sandbox import (
     managed_bwrap_available,
+    managed_seatbelt_available,
+    prepare_managed_seatbelt,
     wrap_command,
     wrap_managed_command,
 )
@@ -71,6 +74,7 @@ from kohaku.agent.tools.schema import (
     StringSchema,
     tool_parameters_schema,
 )
+from kohaku.agent.tools.seatbelt_profile import SeatbeltConfinement
 from kohaku.agent.turn import ToolOutcome
 from kohaku.config.paths import get_media_dir
 from kohaku.config_base import Base
@@ -99,6 +103,8 @@ from kohaku.security.workspace_policy import is_path_within
 
 _IS_WINDOWS = sys.platform == "win32"
 _PROCESS_TREE_OWNER_ATTR = "_nanobot_process_tree_owner"
+# Longer than the supervisor's deadline for ending a confined command's tree.
+_CONFINED_SETTLE_SECONDS = 15.0
 _approved_exec: ContextVar[tuple[Path | None, bool, bool]] = ContextVar(
     "nanobot_approved_exec", default=(None, False, False),
 )
@@ -210,6 +216,8 @@ class _PreparedCommand:
     shell_program: str | None
     login: bool
     managed: bool = False
+    # macOS confinement applied by the supervisor; bubblewrap is part of command.
+    confinement: SeatbeltConfinement | None = None
     sandbox_exception: bool = False
     logical_cwd: str | None = None
     grant_snapshot: FolderGrantSnapshot | None = None
@@ -473,7 +481,8 @@ class ExecTool(Tool):
         """
         policy = self.resource_policy
         if policy is not None and policy.managed_mode and not self._full_access_active():
-            return "managed" if managed_bwrap_available() else None
+            confined = managed_bwrap_available() or managed_seatbelt_available()
+            return "managed" if confined else None
         if not self.sandbox or _IS_WINDOWS:
             return None
         workspace = self.working_dir or os.getcwd()
@@ -852,7 +861,11 @@ class ExecTool(Tool):
 
         process: asyncio.subprocess.Process | NativeProcessHandle | None = None
         try:
-            process = await self._spawn(
+            spawn = (
+                self._spawn if prepared.confinement is None
+                else functools.partial(self._spawn, confinement=prepared.confinement)
+            )
+            process = await spawn(
                 prepared.command,
                 prepared.cwd,
                 prepared.env,
@@ -875,6 +888,15 @@ class ExecTool(Tool):
                 if await self.process_tree_quiescent(process):
                     raise ExecProcessStopped() from exc
                 raise
+
+            # A confined command ends with its root. Wait briefly for the proof,
+            # so that no leftover process is still running when the result returns.
+            unsettled = (
+                prepared.confinement is not None
+                and native_admission is None
+                and isinstance(process, NativeProcessHandle)
+                and not await process.wait_quiescent(_CONFINED_SETTLE_SECONDS)
+            )
 
             # Safety-net reap: asyncio *should* have reaped the child via
             # communicate(), but in containers the child-watcher sometimes
@@ -905,6 +927,18 @@ class ExecTool(Tool):
                 )
 
             self._release_process_tree(process)
+            if unsettled:
+                result += ("\n\nSandbox could not confirm that every process started by this "
+                           "command has exited.")
+            if (
+                prepared.confinement is not None and process.returncode != 0
+                and "operation not permitted" in result.lower()
+            ):
+                result += ("\n\nSandbox may have blocked this operation. Commands can change files "
+                           "only in folders with read/write access, and cannot run setuid programs "
+                           "or reach processes outside the command. Review access in Folders, or "
+                           "request the user's approval. This did not switch to Full access.")
+                return ToolResult.error(result)
             if prepared.managed and process.returncode != 0 and "read-only file system" in result.lower():
                 result += ("\n\nSandbox blocked a write. Commands are allowed, but file changes need "
                            "read/write access to that folder. Review its Sandbox access in Folders, "
@@ -946,6 +980,7 @@ class ExecTool(Tool):
                 notify_on_exit=notify_on_exit,
                 origin=origin,
                 native_admission=native_admission,
+                confinement=prepared.confinement,
                 resource_policy=self.resource_policy if prepared.managed else None,
                 allow_folder_grants=(
                     self.resource_policy.folder_grants_allowed
@@ -1076,6 +1111,7 @@ class ExecTool(Tool):
             return launch_admission
         grant_snapshot: FolderGrantSnapshot | None = None
         logical_cwd = cwd
+        confinement: SeatbeltConfinement | None = None
         if apply_managed_sandbox:
             policy = self.resource_policy
             grants = policy.folder_grants if policy is not None else None
@@ -1094,7 +1130,11 @@ class ExecTool(Tool):
                 selected_shell, shell_error = self._resolve_shell(shell)
                 if shell_error:
                     return shell_error
-                command = wrap_managed_command(
+                confine = (
+                    prepare_managed_seatbelt if managed_seatbelt_available()
+                    else wrap_managed_command
+                )
+                confined = confine(
                     command,
                     cwd=cwd,
                     agent_home=policy.workspace,
@@ -1111,7 +1151,10 @@ class ExecTool(Tool):
                 )
             except (OSError, PermissionError, RuntimeError, ValueError) as exc:
                 return ToolResult.error(f"Error: Sandbox command confinement is unavailable ({exc})")
-            cwd = str(policy.workspace)
+            if isinstance(confined, SeatbeltConfinement):
+                confinement, cwd = confined, confined.cwd
+            else:
+                command, cwd = confined, str(policy.workspace)
         if not managed and self.sandbox and workspace_root:
             root = Path(workspace_root).resolve()
             if not is_path_within(Path(cwd).resolve(), root) and not any(
@@ -1172,6 +1215,7 @@ class ExecTool(Tool):
             shell_program=shell_program,
             login=False if apply_managed_sandbox or login is None else login,
             managed=apply_managed_sandbox,
+            confinement=confinement,
             sandbox_exception=sandbox_exception,
             logical_cwd=logical_cwd,
             grant_snapshot=grant_snapshot,
@@ -1283,9 +1327,14 @@ class ExecTool(Tool):
         stdin: int = asyncio.subprocess.DEVNULL,
         process_tree: bool = False,
         native_admission: NativeProcessReservation | None = None,
+        confinement: SeatbeltConfinement | None = None,
     ) -> asyncio.subprocess.Process | NativeProcessHandle:
-        """Launch *command* in a platform-appropriate shell."""
-        if native_admission is not None:
+        """Launch *command* in a platform-appropriate shell.
+
+        A confinement is only ever launched through the supervisor, which applies
+        it; there is no unconfined fallback.
+        """
+        if native_admission is not None or confinement is not None:
             if native_supervisor_available():
                 return await spawn_native_process(
                     command=command,
@@ -1294,8 +1343,9 @@ class ExecTool(Tool):
                     shell_program=shell_program,
                     login=login,
                     reservation=native_admission,
+                    confinement=confinement,
                 )
-            if not native_admission.cancel_if_unlaunched():
+            if native_admission is not None and not native_admission.cancel_if_unlaunched():
                 native_admission.mark_unproven()
             raise RuntimeError("whole-tree native process supervisor is unavailable")
         if _IS_WINDOWS:
